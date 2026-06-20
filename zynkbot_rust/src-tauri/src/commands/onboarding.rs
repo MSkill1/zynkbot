@@ -435,7 +435,7 @@ pub async fn index_system_documentation() -> Result<String, String> {
 pub async fn apply_einstein_seed(user_id: String) -> Result<serde_json::Value, String> {
     println!("[Einstein] Applying pre-computed Einstein seed for user: {}", user_id);
 
-    let seed_sql = include_str!("../../../../scripts/db/einstein_seed.sql");
+    let seed_sql = include_str!("../../seeds/einstein_seed.sql");
     let sql = seed_sql
         .replace("ZYNKBOT_SEED_USER_ID", &user_id)
         .replace("'::vector", "'")

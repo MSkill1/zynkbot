@@ -42,7 +42,7 @@ echo ""
 # Stop running processes
 # ============================================
 echo "Stopping any running Zynkbot processes..."
-pkill -f "zynkbot" 2>/dev/null || true
+pkill -f "zynkbot_rust" 2>/dev/null || true
 pkill -f "START_ZYNKBOT" 2>/dev/null || true
 sleep 1
 echo "Done."

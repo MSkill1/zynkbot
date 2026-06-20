@@ -688,7 +688,7 @@ async fn call_xai_for_memory_decision(prompt: &str) -> Result<String, String> {
 
     match xai::send_message(
         &api_key,
-        "grok-2-1212",
+        "grok-3",
         messages,
         Some(4096),  // Match main conversation limit
         Some(0.3),
