@@ -1,0 +1,130 @@
+.chat-message {
+  margin-bottom: 0.5rem;
+  padding: 1rem;
+  background: #22232a;
+  border-radius: 8px;
+  border-left: 3px solid #44475a;
+}
+
+.message-user {
+  margin-bottom: 0.25rem;
+}
+
+.message-bot {
+  padding-top: 1rem;
+  border-top: 1px solid #282a36;
+}
+
+.message-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.message-header strong {
+  color: #8be9fd;
+  font-size: 0.95rem;
+}
+
+.message-content {
+  color: #ececec;
+  line-height: 1.6;
+  font-size: 0.95rem;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  max-width: 100%;
+}
+
+.schema-badge {
+  padding: 0.2rem 0.6rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge-personal {
+  background: #bd93f9;
+  color: #1a1a1a;
+}
+
+.badge-utility {
+  background: #50fa7b;
+  color: #1a1a1a;
+}
+
+.badge-ethics {
+  background: #ffb86c;
+  color: #1a1a1a;
+}
+
+.memory-indicator {
+  background: #44475a;
+  color: #8be9fd;
+  padding: 0.2rem 0.6rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+}
+
+.recalled-memories-detail {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #1a1b26;
+  border-radius: 6px;
+  border-left: 3px solid #8be9fd;
+}
+
+.recalled-memories-detail details {
+  cursor: pointer;
+}
+
+.recalled-memories-detail summary {
+  color: #8be9fd;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0.5rem;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.recalled-memories-detail summary::-webkit-details-marker {
+  display: none;
+}
+
+.recalled-memories-detail summary::before {
+  content: "▶";
+  display: inline-block;
+  transition: transform 0.2s;
+  font-size: 0.8rem;
+}
+
+.recalled-memories-detail details[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.recalled-memories-detail summary:hover {
+  background: #2a2b36;
+  border-radius: 4px;
+}
+
+.recalled-memories-detail ul {
+  margin: 0.75rem 0 0 0;
+  padding-left: 1.5rem;
+  list-style-type: disc;
+}
+
+.recalled-memories-detail li {
+  color: #ececec;
+  line-height: 1.6;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.recalled-memories-detail li::marker {
+  color: #8be9fd;
+}

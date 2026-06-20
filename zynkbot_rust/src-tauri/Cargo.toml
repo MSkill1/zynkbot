@@ -1,0 +1,99 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "A local-first AI companion with persistent memory"
+authors = ["ContainAI"]
+license = "AGPL-3.0"
+repository = "https://github.com/MSkill1/zynkbot"
+edition = "2021"
+rust-version = "1.77.2"
+default-run = "app"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.9.2", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2.6"
+tauri-plugin-shell = "2"
+
+# HTTP client for Flask backend communication, OpenAI API, and model downloads
+reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
+futures = "0.3"  # Stream processing for SSE token streaming
+
+# Environment variable loading
+dotenv = "0.15"
+
+# Async runtime (needed for reqwest)
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Directory walking for knowledge base
+walkdir = "2"
+
+# Candle - Pure Rust ML framework with BERT NER token classification
+# Using PR #3212 commit with BertForTokenClassification support
+candle-core = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773", features = ["cuda"] }
+candle-nn = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773", features = ["cuda"] }
+candle-transformers = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773", features = ["cuda"] }
+
+# Model loading from Hugging Face
+hf-hub = "0.4"
+
+# Tokenizers for BERT models (pure Rust, no C++ esaxx to avoid MT/MD conflict)
+# Enable required features but exclude esaxx_fast (C++ implementation)
+tokenizers = { version = "0.20", default-features = false, features = ["onig", "progressbar"] }
+
+# Utilities
+once_cell = "1.20"
+lazy_static = "1.4"
+anyhow = "1.0"
+dirs = "5.0"  # User directories for model cache
+sha2 = "0.10"  # SHA-256 hashing for content-based sync comparison
+
+# Database (SQLite)
+sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "chrono", "uuid", "json"] }
+
+# Array operations (for tensor manipulation)
+ndarray = "0.16"
+
+# Regex for PHI detection (HIPAA mode)
+regex = "1.10"
+
+# Web search (HTML parsing)
+scraper = "0.20"
+urlencoding = "2.1"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+
+# ZynkSync - Manual device management and synchronization
+hostname = "0.4"
+uuid = { version = "1.0", features = ["v4"] }
+rand = "0.8"
+axum = "0.7"  # HTTP server for receiving sync requests
+tower = "0.4"  # Middleware for axum
+
+# ZynkLink - File watching and P2P sync (temporarily disabled due to build issues on Linux)
+# notify = "7.0"
+# webrtc = "0.11"
+
+# Whisper - Temporarily disabled due to GGML symbol conflicts with llama-cpp-2
+# Both whisper.cpp and llama.cpp include GGML, causing duplicate symbols during linking
+# Re-enable when: (1) whisper.cpp/llama.cpp resolve GGML conflicts, or (2) use dynamic linking
+# whisper-rs = { version = "0.12", features = ["whisper-cpp-log"] }
+# hound = "3.5"        # WAV file handling
+# tempfile = "3.8"     # Temporary audio files
+
+# Local LLM inference (GGUF models) - Used by local_models.rs for Llama 3, Mistral, etc
+llama-cpp-2 = { version = "0.1", features = ["cuda"] }

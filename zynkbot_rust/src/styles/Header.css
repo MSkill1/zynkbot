@@ -1,0 +1,85 @@
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  background-color: #181a20;
+  color: white;
+  padding: 10px 20px;
+}
+
+.controls {
+  display: flex;
+  gap: 20px;
+}
+
+.controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: white;
+  font-weight: 500;
+}
+
+.controls select {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid #61dafb;
+  background-color: #1e2228;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  min-width: 150px;
+}
+
+.controls select:hover {
+  background-color: #2a2f38;
+  border-color: #4fa8c5;
+}
+
+.controls select:focus {
+  outline: none;
+  border-color: #61dafb;
+  box-shadow: 0 0 0 2px rgba(97, 218, 251, 0.2);
+}
+
+.controls option {
+  background-color: #1e2228;
+  color: #ffffff;
+  padding: 8px;
+  font-weight: 500;
+}
+
+/* Header buttons styling */
+.header-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.header-btn {
+  background: #44475a;
+  color: #8be9fd;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  outline: none;
+}
+
+.header-btn:hover {
+  background: #8be9fd;
+  color: #22232a;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(139, 233, 253, 0.3);
+}
+
+.header-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}

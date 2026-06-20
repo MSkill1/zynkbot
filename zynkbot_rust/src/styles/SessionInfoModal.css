@@ -1,0 +1,79 @@
+.session-info-modal {
+  background: #22232a;
+  border: 2px solid #44475a;
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 600px;
+  width: 90%;
+  position: relative;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.info-section {
+  margin-bottom: 1.5rem;
+  background: #181a20;
+  padding: 1rem;
+  border-radius: 8px;
+  border-left: 3px solid #8be9fd;
+}
+
+.info-label {
+  color: #8be9fd;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.info-value-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.info-value {
+  flex: 1;
+  background: #282a36;
+  color: #50fa7b;
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  word-break: break-all;
+  border: 1px solid #44475a;
+}
+
+.copy-btn {
+  background: #44475a;
+  color: #8be9fd;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  min-width: 90px;
+}
+
+.copy-btn:hover {
+  background: #8be9fd;
+  color: #22232a;
+  transform: translateY(-2px);
+}
+
+.info-note {
+  background: rgba(80, 250, 123, 0.1);
+  border: 1px solid #50fa7b;
+  border-radius: 6px;
+  padding: 0.75rem;
+  text-align: center;
+  color: #ececec;
+  font-size: 0.9rem;
+  margin-top: 1rem;
+}
+
+.info-note strong {
+  color: #50fa7b;
+  font-weight: 700;
+}

@@ -1,0 +1,259 @@
+.getting-started-modal-container {
+  max-width: 850px;
+  max-height: 90vh;
+  background: #22232a;
+  border: 2px solid #44475a;
+  border-radius: 12px;
+  padding: 2.5rem;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.getting-started-modal-container h2 {
+  color: #8be9fd;
+  font-size: 2rem;
+  margin: 0 0 1rem 0;
+  text-align: center;
+}
+
+.guide-intro {
+  color: #ececec;
+  font-size: 1.05rem;
+  line-height: 1.7;
+  margin-bottom: 2rem;
+  text-align: center;
+  padding: 1rem;
+  background: rgba(139, 233, 253, 0.08);
+  border-radius: 8px;
+  border-left: 3px solid #8be9fd;
+}
+
+/* Guide Steps */
+.guide-step {
+  background: #181a20;
+  border: 1px solid #44475a;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.step-number {
+  background: linear-gradient(135deg, #8be9fd, #50fa7b);
+  color: #22232a;
+  font-size: 1.5rem;
+  font-weight: 700;
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.step-header h3 {
+  color: #ffb86c;
+  font-size: 1.4rem;
+  margin: 0;
+}
+
+.guide-step p {
+  color: #ececec;
+  line-height: 1.6;
+  margin: 0.75rem 0;
+}
+
+.guide-step ol,
+.guide-step ul {
+  color: #ececec;
+  line-height: 1.8;
+  margin: 0.75rem 0 0.75rem 1.5rem;
+}
+
+.guide-step li {
+  margin: 0.5rem 0;
+}
+
+.guide-step strong {
+  color: #50fa7b;
+}
+
+.guide-step code {
+  background: #282a36;
+  color: #ff79c6;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+}
+
+/* Info Boxes */
+.info-box {
+  background: rgba(189, 147, 249, 0.1);
+  border: 2px solid #bd93f9;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 1rem;
+  color: #ececec;
+  line-height: 1.6;
+}
+
+.info-box.warning {
+  background: rgba(255, 184, 108, 0.1);
+  border-color: #ffb86c;
+}
+
+.info-box strong {
+  color: #bd93f9;
+}
+
+.info-box.warning strong {
+  color: #ffb86c;
+}
+
+/* Example Queries */
+.example-queries {
+  margin: 1rem 0;
+}
+
+.query-box {
+  background: #282a36;
+  border-left: 3px solid #50fa7b;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.query-box strong {
+  color: #50fa7b;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.query-box ul {
+  margin: 0.5rem 0 0 1rem;
+}
+
+.query-box li {
+  color: #ececec;
+  margin: 0.5rem 0;
+}
+
+/* Feature List */
+.feature-list {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.feature-item {
+  background: #282a36;
+  border-left: 3px solid #8be9fd;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.feature-item strong {
+  color: #8be9fd;
+  font-size: 1.1rem;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.feature-item p {
+  color: #ececec;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.feature-item em {
+  color: #50fa7b;
+  font-style: italic;
+}
+
+/* Guide Footer */
+.guide-footer {
+  background: linear-gradient(135deg, rgba(139, 233, 253, 0.08), rgba(80, 250, 123, 0.08));
+  border: 2px solid #44475a;
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+  margin-top: 2rem;
+}
+
+.guide-footer p {
+  color: #ececec;
+  font-size: 1.05rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.guide-footer-tip {
+  margin-top: 1rem !important;
+  padding-top: 1rem;
+  border-top: 1px solid #44475a;
+}
+
+.guide-footer strong {
+  color: #8be9fd;
+}
+
+.guide-footer em {
+  color: #50fa7b;
+  font-style: italic;
+}
+
+/* Close Button */
+.modal-close {
+  position: absolute;
+  top: 1.5rem;
+  right: 1.5rem;
+  background: none;
+  border: none;
+  color: #ececec;
+  font-size: 2rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  width: 40px;
+  height: 40px;
+  z-index: 10;
+}
+
+.modal-close:hover {
+  color: #ff5555;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .getting-started-modal-container {
+    padding: 1.5rem;
+    max-width: 95vw;
+  }
+
+  .getting-started-modal-container h2 {
+    font-size: 1.5rem;
+  }
+
+  .step-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .step-number {
+    width: 35px;
+    height: 35px;
+    font-size: 1.2rem;
+  }
+
+  .guide-step {
+    padding: 1rem;
+  }
+}

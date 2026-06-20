@@ -1,0 +1,367 @@
+/* Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+/* Modal Container - Unique class to avoid conflicts */
+.why-modal-container {
+  background: #22232a;
+  border: 2px solid #44475a;
+  border-radius: 12px;
+  padding: 2.5rem;
+  max-width: 1000px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  display: block; /* Force vertical stacking */
+}
+
+/* Modal Title */
+.modal-title {
+  color: #8be9fd;
+  font-size: 2.5rem;
+  font-weight: 700;
+  text-align: center;
+  margin: 0 0 2rem 0;
+  padding-bottom: 1.5rem;
+  border-bottom: 2px solid #44475a;
+}
+
+/* Close Button */
+.modal-close {
+  position: absolute;
+  top: 1.5rem;
+  right: 1.5rem;
+  background: none;
+  border: none;
+  color: #ececec;
+  font-size: 2rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  width: 40px;
+  height: 40px;
+  z-index: 10;
+}
+
+.modal-close:hover {
+  color: #ff5555;
+}
+
+/* Sections */
+.privacy-section,
+.modes-section,
+.networks-section,
+.cta-section {
+  margin-bottom: 3rem;
+}
+
+.privacy-section h2,
+.modes-section h2,
+.networks-section h2,
+.cta-section h2 {
+  color: #8be9fd;
+  font-size: 1.6rem;
+  margin-bottom: 1.5rem;
+  margin-top: 0;
+}
+
+.section-intro {
+  color: #ececec;
+  font-size: 1rem;
+  line-height: 1.7;
+  margin-bottom: 1.5rem;
+}
+
+.section-intro strong {
+  color: #50fa7b;
+}
+
+/* Comparison Table */
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #181a20;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.comparison-table thead th {
+  padding: 1rem;
+  font-weight: 700;
+  font-size: 1rem;
+  border: 1px solid #44475a;
+  text-align: left;
+}
+
+.comparison-table thead .feature-col {
+  background: #282a36;
+  color: #ffb86c;
+  width: 25%;
+}
+
+.comparison-table thead .chatgpt-col {
+  background: rgba(255, 85, 85, 0.15);
+  color: #ff5555;
+  width: 37.5%;
+}
+
+.comparison-table thead .zynkbot-col {
+  background: rgba(80, 250, 123, 0.15);
+  color: #50fa7b;
+  width: 37.5%;
+}
+
+.comparison-table tbody td {
+  padding: 1rem;
+  border: 1px solid #44475a;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.comparison-table .feature-cell {
+  background: #282a36;
+  color: #ffb86c;
+  font-weight: 600;
+}
+
+.comparison-table .chatgpt-cell {
+  background: rgba(255, 85, 85, 0.08);
+  color: #ff5555;
+}
+
+.comparison-table .zynkbot-cell {
+  background: rgba(80, 250, 123, 0.08);
+  color: #50fa7b;
+  font-weight: 600;
+}
+
+/* Mode Cards Grid */
+.modes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.mode-card {
+  background: #181a20;
+  padding: 1.25rem;
+  border-radius: 8px;
+  border-left: 3px solid #8be9fd;
+  transition: all 0.2s ease;
+}
+
+.mode-card:hover {
+  transform: translateX(4px);
+  box-shadow: 0 4px 12px rgba(139, 233, 253, 0.2);
+  border-left-color: #50fa7b;
+}
+
+.mode-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.mode-icon {
+  font-size: 1.5rem;
+}
+
+.mode-name {
+  color: #8be9fd;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.mode-card p {
+  color: #ececec;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Feature Cards */
+.feature-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.feature-card {
+  background: #181a20;
+  padding: 1.5rem;
+  border-radius: 8px;
+  border-left: 3px solid #bd93f9;
+  transition: all 0.2s ease;
+}
+
+.feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 6px 16px rgba(189, 147, 249, 0.25);
+  border-left-color: #ff79c6;
+}
+
+.feature-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.feature-card h3 {
+  color: #bd93f9;
+  font-size: 1.1rem;
+  margin: 0 0 0.75rem 0;
+}
+
+.feature-card p {
+  color: #ececec;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.feature-card strong {
+  color: #ff79c6;
+}
+
+/* Highlight Box */
+.highlight-box {
+  background: rgba(189, 147, 249, 0.1);
+  border: 2px solid #bd93f9;
+  border-radius: 8px;
+  padding: 1.25rem;
+  text-align: center;
+  color: #ececec;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.highlight-box strong {
+  color: #ff79c6;
+  font-size: 1.05rem;
+}
+
+/* CTA Section */
+.cta-section {
+  background: linear-gradient(135deg, rgba(139, 233, 253, 0.08), rgba(80, 250, 123, 0.08));
+  border: 2px solid #44475a;
+  border-radius: 12px;
+  padding: 2rem;
+  text-align: center;
+}
+
+.cta-section h2 {
+  color: #ffb86c;
+  margin-bottom: 1rem;
+}
+
+.cta-section > p {
+  color: #ececec;
+  line-height: 1.7;
+  margin-bottom: 1.5rem;
+}
+
+.cta-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 2rem;
+}
+
+.cta-item {
+  background: #282a36;
+  padding: 0.75rem;
+  border-radius: 6px;
+  color: #50fa7b;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.cta-button {
+  background: linear-gradient(135deg, #50fa7b, #8be9fd);
+  color: #22232a;
+  border: none;
+  padding: 1rem 3rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 16px rgba(80, 250, 123, 0.3);
+}
+
+.cta-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(80, 250, 123, 0.5);
+}
+
+.cta-note {
+  margin-top: 1.5rem;
+  color: #9aa5c4;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+/* Footer */
+.modal-footer {
+  text-align: center;
+  color: #8be9fd;
+  font-size: 1.1rem;
+  font-weight: 500;
+  padding-top: 2rem;
+  border-top: 1px solid #44475a;
+  margin-top: 2rem;
+}
+
+.modal-footer strong {
+  color: #8be9fd;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .why-modal-container {
+    width: 95vw;
+    padding: 1.5rem;
+    max-height: 95vh;
+  }
+
+  .privacy-section h2,
+  .modes-section h2,
+  .networks-section h2,
+  .cta-section h2 {
+    font-size: 1.3rem;
+  }
+
+  .modes-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .cta-checklist {
+    grid-template-columns: 1fr;
+  }
+
+  .comparison-table {
+    font-size: 0.85rem;
+  }
+
+  .comparison-table thead th,
+  .comparison-table tbody td {
+    padding: 0.75rem;
+  }
+}

@@ -1,0 +1,70 @@
+GNU AFFERO GENERAL PUBLIC LICENSE
+Version 3, 19 November 2007
+
+Copyright (C) 2024-2026 Matthew Skillman
+
+"Zynkbot" is a trademark of Matthew Skillman. Use of the trademark is subject to
+the terms described in the TRADEMARK file.
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+You should have received a copy of the GNU Affero General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+ADDITIONAL TERMS (per AGPL Section 7):
+
+Prohibition on Surveillance Capitalism:
+This software may not be used by organizations whose primary business model
+involves mass surveillance, data mining for behavioral prediction, or the sale
+of user attention to advertisers without explicit, informed, opt-in consent
+from each user.
+
+Specifically prohibited uses include (but are not limited to):
+- Deployment as part of advertising-funded services that profile users
+- Integration with systems designed for mass behavioral surveillance
+- Deployment in contexts that violate user privacy rights under GDPR, CCPA,
+  or equivalent regulations
+
+This restriction is enforceable under Section 7 of the AGPL v3 license.
+
+---
+
+COMMERCIAL DISTRIBUTION LICENSE:
+
+This software is free to download, use, modify, and contribute to — including
+within a commercial organization — under the terms of the AGPL v3 license above.
+
+A separate commercial license is required only if you intend to distribute
+or sell this software, or a product that incorporates it, to third parties.
+
+Requires a commercial license:
+- Selling or licensing a product that incorporates Zynkbot code
+- Offering Zynkbot as a hosted service for a fee (SaaS or managed service)
+- White-labeling or rebranding Zynkbot for distribution to customers
+
+Does NOT require a commercial license:
+- Personal use, evaluation, or testing — take as long as you need
+- Internal use at any organization, commercial or otherwise
+- Modifying or building on the code for your own purposes
+- Contributing code, documentation, or fixes to this repository
+- Educational, research, and non-profit use
+
+For commercial distribution licensing:
+Contact: matt@containai.ai
+Subject: Zynkbot Commercial License Inquiry
+
+See COMMERCIAL_LICENSE.md for full details.
+
+---
+
+Full AGPL v3 license text: https://www.gnu.org/licenses/agpl-3.0.txt

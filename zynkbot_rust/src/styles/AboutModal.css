@@ -1,0 +1,162 @@
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.about-modal-container {
+  background: #22232a;
+  border: 2px solid #44475a;
+  border-radius: 12px;
+  padding: 2.5rem;
+  max-width: 800px;
+  max-height: 85vh;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.about-modal-content {
+  max-width: 800px;
+}
+
+.modal-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: none;
+  color: #ececec;
+  font-size: 2rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+}
+
+.modal-close:hover {
+  color: #ff5555;
+}
+
+.about-modal-container h2 {
+  color: #ffb86c;
+  margin-bottom: 1.5rem;
+  font-size: 1.8rem;
+}
+
+.about-section {
+  margin-bottom: 2rem;
+}
+
+.about-section h3 {
+  color: #8be9fd;
+  margin-bottom: 1rem;
+  font-size: 1.3rem;
+}
+
+/* Feature items with proper spacing */
+.feature-item {
+  background: #181a20;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  border-radius: 6px;
+  border-left: 3px solid #50fa7b;
+}
+
+.feature-item strong {
+  color: #50fa7b;
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+.feature-item p {
+  color: #ececec;
+  line-height: 1.6;
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+/* Technical description paragraphs */
+.tech-description {
+  color: #ececec;
+  line-height: 1.6;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+}
+
+.tech-description strong {
+  color: #8be9fd;
+}
+
+/* Performance note box */
+.performance-note {
+  background: #282a36;
+  border-left: 3px solid #ffb86c;
+  padding: 1rem;
+  margin-top: 1rem;
+  border-radius: 6px;
+}
+
+.performance-note strong {
+  color: #ffb86c;
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+}
+
+.performance-note p {
+  color: #ececec;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Links section */
+.about-links {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.about-link {
+  flex: 1;
+  min-width: 200px;
+  background: #44475a;
+  color: #8be9fd;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  text-align: center;
+  text-decoration: none;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.about-link:hover {
+  background: #8be9fd;
+  color: #22232a;
+  transform: translateY(-2px);
+}
+
+/* Footer */
+.about-footer {
+  text-align: center;
+  color: #8be9fd;
+  font-size: 1rem;
+  font-weight: 500;
+  padding-top: 1.5rem;
+  border-top: 1px solid #44475a;
+}
+
+.about-footer p {
+  margin: 0;
+}

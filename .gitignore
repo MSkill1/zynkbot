@@ -1,0 +1,69 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Rust build output
+target/
+
+# Frontend / Node
+node_modules/
+zynkbot_rust/node_modules/
+dist/
+zynkbot_rust/build/
+
+# ML Models (large files, auto-downloaded on first run)
+models/
+zynkbot_rust/src-tauri/models/
+*.gguf
+*.safetensors
+
+# Database files
+*.db
+*.sqlite
+
+# Secrets and certificates
+*.key
+*.pem
+*.crt
+certificates/
+
+# Zynkbot runtime state files
+.zynk_device_id
+.zynkbot.pid
+.zynk_session_host
+.zynk_user_id
+.zynk_user_info.txt
+user_profile.json
+api_keys.json
+
+# Logs
+*.log
+logs/
+memory_logs/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Claude Code local settings (personal dev permissions, machine-specific paths)
+.claude/settings.local.json
+
+# Generated directory listings
+directory_structure.txt
+
+# Misc build artifacts
+*.o
+*.d
+*.so
+*.a
+*.out
+*.exe
+*.bak
+*.deb
+*.backup

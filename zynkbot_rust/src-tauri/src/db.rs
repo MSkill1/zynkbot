@@ -1,0 +1,147 @@
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use std::path::PathBuf;
+
+pub fn get_app_data_dir() -> PathBuf {
+    let data_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("zynkbot");
+    std::fs::create_dir_all(&data_dir).ok();
+    data_dir
+}
+
+pub fn get_db_path() -> PathBuf {
+    get_app_data_dir().join("zynkbot.db")
+}
+
+pub fn get_user_profile_path() -> PathBuf {
+    get_app_data_dir().join("user_profile.json")
+}
+
+pub fn get_db_url() -> String {
+    format!("sqlite://{}?mode=rwc", get_db_path().display())
+}
+
+pub async fn create_pool() -> Result<SqlitePool, sqlx::Error> {
+    let url = get_db_url();
+    println!("[Rust DB] Opening SQLite database: {}", url);
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(20)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect(&url)
+        .await?;
+
+    sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await?;
+    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
+    sqlx::query("PRAGMA synchronous=NORMAL").execute(&pool).await?;
+    // Wait up to 15s for a contended write lock before failing. Defensive: callers
+    // should not hold transactions across slow non-DB work (see kb_rag.rs).
+    sqlx::query("PRAGMA busy_timeout=15000").execute(&pool).await?;
+
+    // Run migrations — idempotent, sqlx tracks applied versions in _sqlx_migrations
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| sqlx::Error::Configuration(format!("Migration failed: {}", e).into()))?;
+
+    println!("[Rust DB] ✅ Connected to SQLite (schema up to date)");
+    Ok(pool)
+}
+
+#[allow(dead_code)]
+pub async fn test_connection(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let result: (i32,) = sqlx::query_as("SELECT 1").fetch_one(pool).await?;
+    println!("[Rust DB] Test query result: {}", result.0);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory DB failed");
+        sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await.unwrap();
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migration failed");
+        pool
+    }
+
+    #[tokio::test]
+    async fn migration_creates_all_tables() {
+        let pool = test_pool().await;
+        let expected = [
+            "memories", "memory_links",
+            "kb_documents", "kb_chunks",
+            "zynk_devices", "zynk_device_pairings", "zynk_sync_state",
+            "user_sync_codes",
+            "zynk_linked_directories", "zynk_file_manifest", "zynk_link_manifest",
+            "zynklink_codes", "zynklink_pairings",
+            "zchat_messages",
+            "conversation_sessions", "conversation_messages", "message_feedback",
+            "zynk_device_certificates",
+        ];
+        for table in &expected {
+            let exists: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?"
+            )
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(exists.0, 1, "missing table: {}", table);
+        }
+    }
+
+    #[tokio::test]
+    async fn memory_relationships_view_exists() {
+        let pool = test_pool().await;
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name='memory_relationships'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn can_insert_and_query_memory() {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO memories (content, namespace) VALUES (?, ?)"
+        )
+        .bind("Test memory content")
+        .bind("personal")
+        .execute(&pool)
+        .await
+        .expect("insert failed");
+
+        let (content,): (String,) = sqlx::query_as(
+            "SELECT content FROM memories WHERE namespace = ?"
+        )
+        .bind("personal")
+        .fetch_one(&pool)
+        .await
+        .expect("select failed");
+
+        assert_eq!(content, "Test memory content");
+    }
+
+    #[tokio::test]
+    async fn fts5_table_exists() {
+        let pool = test_pool().await;
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name='conversation_messages_fts'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
+    }
+}

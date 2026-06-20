@@ -1,0 +1,247 @@
+/* Memory Graph Modal */
+.graph-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;  /* Higher than MemoryManagerModal */
+  padding: 20px;
+  overflow: hidden;
+}
+
+.memory-graph-modal {
+  background: #282a36;
+  border-radius: 12px;
+  width: 95%;
+  max-width: 1800px;
+  height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+  border: 1px solid #44475a;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Header */
+.graph-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #44475a;
+}
+
+.graph-modal-header h2 {
+  margin: 0;
+  color: #bd93f9;
+  font-size: 1.5rem;
+}
+
+/* Controls */
+.graph-controls {
+  display: flex;
+  gap: 10px;
+  padding: 15px 20px;
+  border-bottom: 1px solid #44475a;
+  background: #1e1f29;
+  align-items: center;
+}
+
+.control-button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  background: #44475a;
+  color: #f8f8f2;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.2s;
+  font-size: 0.9rem;
+}
+
+.control-button:hover {
+  background: #6272a4;
+}
+
+.graph-legend {
+  display: flex;
+  gap: 15px;
+  margin-left: auto;
+  align-items: center;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #f8f8f2;
+}
+
+.legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+/* Graph Container */
+.graph-container {
+  flex: 1;
+  position: relative;
+  background: #1e1f29;
+  overflow: hidden;
+}
+
+.graph-loading,
+.graph-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #9aa5c4;
+  font-size: 1.1rem;
+}
+
+/* Node Details Panel */
+.node-details-panel {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  background: rgba(40, 42, 54, 0.95);
+  border: 1px solid #44475a;
+  border-radius: 8px;
+  padding: 15px;
+  max-width: 400px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+}
+
+.node-details-panel h3 {
+  margin: 0 0 12px 0;
+  color: #50fa7b;
+  font-size: 1.1rem;
+}
+
+.node-detail-row {
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+  color: #f8f8f2;
+}
+
+.node-detail-row strong {
+  color: #8be9fd;
+  margin-right: 8px;
+}
+
+.node-content {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #44475a;
+}
+
+.node-content strong {
+  color: #8be9fd;
+  font-size: 0.9rem;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.node-content p {
+  margin: 0;
+  color: #f8f8f2;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* Related Memories Section */
+.related-memories-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #44475a;
+}
+
+.related-memories-section strong {
+  color: #bd93f9;
+  font-size: 0.95rem;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.related-memories-list {
+  max-height: 200px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.related-memory-item {
+  padding: 8px;
+  margin: 4px 0;
+  background: #1e1f29;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+}
+
+.related-memory-item:hover {
+  background: #2a2b3a;
+  transform: translateX(2px);
+  border-left-color: #8be9fd;
+}
+
+.relation-type {
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 2px;
+}
+
+.related-memory-name {
+  color: #f8f8f2;
+  font-size: 0.9rem;
+  display: block;
+}
+
+.view-memory-button {
+  margin-top: 12px;
+  width: 100%;
+  padding: 8px;
+  border-radius: 6px;
+  border: none;
+  background: #8be9fd;
+  color: #282a36;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.view-memory-button:hover {
+  background: #a9f0ff;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .graph-legend {
+    display: none;
+  }
+
+  .node-details-panel {
+    max-width: 90%;
+    left: 5%;
+    bottom: 10px;
+  }
+}
+
+/* Force Graph Canvas Overrides */
+.memory-graph-modal canvas {
+  border-radius: 0 0 12px 12px;
+}

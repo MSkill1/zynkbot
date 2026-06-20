@@ -1,0 +1,257 @@
+.knowledge-base-panel {
+  background: #282a36;
+  border-radius: 8px;
+  padding: 20px;
+  margin: 20px 0;
+  border: 1px solid #44475a;
+}
+
+.panel-header {
+  margin-bottom: 20px;
+  border-bottom: 2px solid #6272a4;
+  padding-bottom: 10px;
+}
+
+.panel-header h3 {
+  color: #8be9fd;
+  margin: 0 0 5px 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.panel-subtitle {
+  color: #9aa5c4;
+  font-size: 13px;
+  margin: 0;
+}
+
+.panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+/* Setting Rows */
+.setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.setting-label {
+  color: #f8f8f2;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Toggle Switch */
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-checkbox {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: relative;
+  width: 48px;
+  height: 24px;
+  background: #44475a;
+  border-radius: 24px;
+  transition: background 0.3s;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 3px;
+  top: 3px;
+  background: #f8f8f2;
+  border-radius: 50%;
+  transition: transform 0.3s;
+}
+
+.toggle-checkbox:checked + .toggle-slider {
+  background: #50fa7b;
+}
+
+.toggle-checkbox:checked + .toggle-slider::before {
+  transform: translateX(24px);
+}
+
+.toggle-text {
+  color: #f8f8f2;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Directory Selector */
+.directory-selector {
+  display: flex;
+  gap: 10px;
+}
+
+.directory-input {
+  flex: 1;
+  background: #1e1f29;
+  border: 1px solid #44475a;
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #f8f8f2;
+  font-size: 13px;
+  font-family: 'Courier New', monospace;
+}
+
+.directory-input::placeholder {
+  color: #9aa5c4;
+}
+
+.browse-button {
+  background: #6272a4;
+  color: #f8f8f2;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.browse-button:hover:not(:disabled) {
+  background: #7a8ab8;
+}
+
+.browse-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Scan Button */
+.scan-button {
+  background: #8be9fd;
+  color: #282a36;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 20px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s;
+  align-self: flex-start;
+}
+
+.scan-button:hover:not(:disabled) {
+  background: #a0f0ff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(139, 233, 253, 0.3);
+}
+
+.scan-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.scan-button.scanning {
+  background: #ffb86c;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* Info Section */
+.info-section {
+  background: #1e1f29;
+  border: 1px solid #44475a;
+  border-radius: 6px;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.info-label {
+  color: #9aa5c4;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.info-value {
+  color: #f8f8f2;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Status Badge */
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-active {
+  background: rgba(80, 250, 123, 0.2);
+  color: #50fa7b;
+  border: 1px solid #50fa7b;
+}
+
+.status-inactive {
+  background: rgba(98, 114, 164, 0.2);
+  color: #9aa5c4;
+  border: 1px solid #6272a4;
+}
+
+/* Help Text */
+.help-text {
+  background: rgba(139, 233, 253, 0.1);
+  border-left: 3px solid #8be9fd;
+  padding: 12px;
+  border-radius: 4px;
+  margin-top: 5px;
+}
+
+.help-text p {
+  color: #f8f8f2;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 8px 0;
+}
+
+.help-text p:last-child {
+  margin-bottom: 0;
+}
+
+.help-examples {
+  color: #8be9fd;
+  font-size: 12px;
+}
+
+.help-examples strong {
+  color: #50fa7b;
+}

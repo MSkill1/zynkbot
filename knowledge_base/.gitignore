@@ -1,0 +1,6 @@
+# Ignore all user KB files (user_id directories and their contents)
+*/
+
+# But track this .gitignore and README
+!.gitignore
+!README.md

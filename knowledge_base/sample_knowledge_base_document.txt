@@ -1,0 +1,345 @@
+ZYNKBOT KNOWLEDGE BASE — SAMPLE DOCUMENT
+=========================================
+Title: Curious Machines, Lost Signals, and Forgotten Science
+Purpose: This file is included as a demonstration document for Zynkbot's Knowledge Base
+         and RAG (Retrieval-Augmented Generation) indexing system. Index this file, then
+         ask Zynkbot questions from the sections below. The answers are specific enough
+         that Zynkbot must retrieve them from this document rather than rely on general
+         training knowledge.
+
+Suggested test questions are listed at the end of this document.
+=========================================
+
+
+SECTION 1: THE ANTIKYTHERA MECHANISM — THE WORLD'S FIRST COMPUTER
+------------------------------------------------------------------
+
+In 1900, sponge divers off the Greek island of Antikythera discovered a Roman-era shipwreck
+at a depth of approximately 45 meters. Among the recovered artifacts was a corroded bronze
+lump roughly the size of a shoebox, which sat largely unexamined in the National Archaeological
+Museum in Athens for nearly two decades. When researchers finally cut it open, they found
+something that should not have existed: a fully functional analog computing device built
+sometime between 150 BCE and 100 BCE.
+
+The Antikythera Mechanism, as it came to be known, contains at least 37 interlocking bronze
+gear wheels. The largest gear, known as the main drive wheel, has 223 teeth and is linked
+directly to a hand-turned crown wheel on the right side of the device. Turning this crank
+would advance all subsidiary gears simultaneously, modeling the motions of the Sun, Moon,
+and five known planets across three separate dials on the front and back faces.
+
+The front dial displays the Egyptian civil calendar alongside the Greek zodiac. A golden
+sphere on the front face tracked the Moon's phase with remarkable accuracy by using a
+differential gear system — a mechanism not independently reinvented in Europe until the
+16th century CE. The Moon's orbit is elliptical, which causes it to move faster near
+perigee and slower near apogee. The Antikythera Mechanism accounts for this using a
+pin-and-slot epicyclic gear that introduces exactly the right amount of variation — an
+engineering solution of extraordinary elegance.
+
+The back face contains two large spiral dials. The upper spiral, divided into 235 cells
+arranged over five turns, tracks the Metonic cycle: the 19-year period (equaling 235 lunar
+months) after which lunar phases recur on the same calendar dates. Inscribed around this
+dial are the names of the Panhellenic athletic games in their four-year cycle: Isthmia,
+Olympia, Nemea, and Naa, along with the Pythia games at Delphi.
+
+The lower back spiral tracks the Saros cycle — the 18-year, 11-day, 8-hour period used to
+predict solar and lunar eclipses. It is divided into 223 cells, each representing one lunar
+month. A subsidiary dial in the lower-left corner tracks the Exeligmos cycle of 54 years
+(three Saros cycles), used to correct the Saros cycle's fractional day remainder.
+
+Modern analysis using high-resolution X-ray computed tomography (CT scanning), conducted
+by the Antikythera Mechanism Research Project in 2005 and further refined by the UCL
+Antikythera Research Team in 2021, revealed inscriptions hidden inside the gearwork. These
+inscriptions confirmed the device modeled not only the Moon but also Mercury, Venus, Mars,
+Jupiter, and Saturn — all five planets visible to the naked eye. The 2021 study proposed
+a front plate diameter of 24 centimeters bearing concentric rings for planetary motion.
+
+No other mechanism of comparable sophistication appears in the archaeological record for
+over a thousand years after the Antikythera Mechanism was built. The shipwreck that carried
+it is dated to approximately 70–60 BCE based on the amphora styles recovered alongside it.
+The mechanism itself, based on astronomical and inscriptional evidence, was likely built
+on the island of Rhodes, possibly in the tradition of the astronomer Hipparchus.
+
+
+SECTION 2: THE WOW! SIGNAL — HUMANITY'S STRONGEST CANDIDATE FOR EXTRATERRESTRIAL CONTACT
+------------------------------------------------------------------------------------------
+
+At 11:16 PM Eastern Standard Time on August 15, 1977, a radio telescope at the Big Ear
+Observatory at Ohio State University detected a narrowband radio signal lasting exactly
+72 seconds — the maximum duration detectable given the fixed position of the telescope
+and Earth's rotation. The signal's intensity was so far above background noise that
+astronomer Jerry Ehman, reviewing the computer printout six days later on August 18,
+circled it in red pen and wrote the single word "Wow!" in the margin. The name has
+stuck ever since.
+
+Big Ear was a fixed Kraus-type reflector telescope, 110 meters long and 21 meters high,
+that surveyed the sky by letting Earth's rotation carry the field of view past each
+fixed point. It could not be steered. This means the 72-second duration was not a
+signal cutoff — the signal simply moved out of the telescope's beam as Earth rotated.
+
+The signal arrived on a frequency of 1420.405752 MHz — the precise emission frequency
+of neutral hydrogen, the most abundant element in the universe. This frequency had been
+proposed by physicists Giuseppe Cocconi and Philip Morrison in a 1959 paper in Nature
+as the most logical choice for interstellar communication, since any technologically
+advanced civilization would be aware of it. The SETI (Search for Extraterrestrial
+Intelligence) community had been monitoring this frequency for years.
+
+The signal's characteristics were:
+- Frequency: 1420.4556 MHz (within the hydrogen line)
+- Bandwidth: less than 10 kHz (narrower than any known natural source)
+- Signal-to-noise ratio: 30 sigma (30 times the standard deviation of background noise)
+- Duration observed: 72 seconds
+- Right ascension: approximately 19h 22m 24s ± 5s (in the constellation Sagittarius)
+- Declination: approximately -26° 57' ± 20'
+
+The signal was never repeated. Big Ear monitored the same coordinates more than 50 times
+over the following years without detecting it again. The SETI Institute and other
+observatories have also searched the coordinates without success.
+
+In 2016, astronomer Antonio Paris proposed that two comets — 266P/Christensen and
+P/2008 Y2 (Gibbs) — were passing near the signal's origin coordinates in August 1977
+and could have produced a hydrogen cloud responsible for the signal. However, subsequent
+analysis by multiple researchers, including a 2020 study by Paris himself revising
+his methodology, found that cometary hydrogen clouds are typically far too diffuse to
+produce a signal of the Wow! signal's intensity. The cometary hypothesis remains
+controversial and is not accepted by the majority of SETI researchers.
+
+The Wow! signal was detected by the horn numbered 2 of the Big Ear telescope. Big Ear
+was demolished in 1998 to make way for a golf course expansion — a fact widely cited
+as one of the more unfortunate decisions in the history of science infrastructure.
+
+
+SECTION 3: THE VOYNICH MANUSCRIPT — 600 YEARS OF UNDECIPHERED TEXT
+--------------------------------------------------------------------
+
+The Voynich Manuscript is a hand-written illustrated codex carbon-dated to approximately
+1404–1438 CE. It is currently held at the Beinecke Rare Book and Manuscript Library at
+Yale University under catalog number MS 408. The manuscript is named after Wilfrid
+Voynich, a Polish book dealer who purchased it in 1912 from the Jesuit college at
+Villa Mondragone in Frascati, Italy.
+
+The manuscript consists of 240 pages (originally more, with several pages missing or
+cut out) written in an unknown script using an unknown language. It is illustrated with
+drawings of unidentified plants, astronomical diagrams, bathing women, and what appear
+to be pharmaceutical or alchemical recipes. The text flows left-to-right with no
+detectable punctuation. Statistical analysis shows it follows Zipf's law — the same
+word-frequency distribution found in natural human languages — which suggests it is
+not random gibberish.
+
+The manuscript is divided by scholars into six sections based on content:
+
+1. HERBAL (pages 1r–66v): Drawings of plants, most of which do not match any known
+   species, accompanied by text. 113 individual plant illustrations appear in this section.
+
+2. ASTRONOMICAL (pages 67r–73v): Circular diagrams resembling astronomical charts,
+   including what may be a zodiac wheel. The Sun, Moon, and stars are depicted.
+
+3. BIOLOGICAL (pages 75r–84v): Naked female figures in pools of green liquid connected
+   by pipe-like structures. The meaning is entirely unknown.
+
+4. COSMOLOGICAL (pages 85r–86v): Large fold-out pages showing elaborate circular maps
+   or cosmological diagrams, one of which may represent the Milky Way or a world map.
+
+5. PHARMACEUTICAL (pages 87r–102v): Drawings of roots, leaves, and containers resembling
+   apothecary jars, presumably describing remedies or preparations.
+
+6. RECIPES (pages 103r–116v): Dense text with small star-shaped decorations in the
+   margins, possibly a list of formulas or instructions.
+
+The script contains approximately 25–30 distinct characters. The most common word in
+the manuscript, appearing hundreds of times, is transcribed as "daiin" in the standard
+EVA (European Voynich Alphabet) transliteration system. Another common word is "chedy."
+Word repetition in the manuscript is unusually high — some words repeat two or three
+times consecutively, which is nearly nonexistent in natural languages.
+
+Notable failed decipherment attempts include:
+- In 1978, cryptographer William Friedman, who broke Japan's PURPLE cipher in WWII,
+  worked on the manuscript for decades and concluded it might be an artificial language
+  — a constructed tongue with a formal grammar — but never published a solution.
+- In 2017, artificial intelligence researcher Greg Kondrak used AI to analyze the text
+  and suggested the underlying language might be Hebrew written in a phonetic encoding,
+  but his proposed translation produced incoherent results.
+- In 2019, Nicholas Gibbs claimed the manuscript was a women's health manual written
+  in Latin abbreviations, but his proposal was quickly debunked by Latin scholars who
+  noted the abbreviation patterns did not match any known medieval system.
+
+In 2020, a team led by Gerard Cheshire at the University of Bristol claimed to have
+decoded the manuscript as a form of "proto-Romance" language, but the claim was
+rejected by linguists and Voynich scholars as methodologically flawed.
+
+The manuscript has been owned by Holy Roman Emperor Rudolf II (who reportedly paid
+600 gold ducats for it), by Bohemian alchemist Georg Baresch, by Jesuit scholar
+Athanasius Kircher, and by various Jesuit collections before Voynich acquired it.
+It was donated to Yale in 1969 by the estate of book dealer Hans P. Kraus.
+
+
+SECTION 4: THE ZAGREB MUMMY LINEN — THE WORLD'S LONGEST ETRUSCAN TEXT
+-----------------------------------------------------------------------
+
+In the 1840s, a Croatian official named Mihajlo Barić purchased an Egyptian mummy in
+Alexandria as a souvenir. After his death, the mummy was donated to the Croatian
+National Museum in Zagreb. In 1891, a museum official noticed that the linen wrappings
+used to bind the mummy were covered in red writing — writing that turned out to be
+Etruscan, not Egyptian.
+
+The Etruscan text on the Zagreb mummy linen (known as the Liber Linteus Zagrabiensis)
+is the longest known Etruscan text in existence, containing approximately 1,200 words
+across 12 columns of text. Etruscan, while not undeciphered (scholars can read the
+letters and understand many words), remains incompletely understood because so few
+long texts survive — most Etruscan writing consists of tomb inscriptions of fewer than
+ten words.
+
+The mummy herself (the body is that of a young woman, approximately 30–40 years old
+based on skeletal analysis) is not Etruscan. Analysis of the linen and the mummification
+method places her as Egyptian, most likely from the Ptolemaic period (roughly 300–30 BCE).
+The best hypothesis is that Etruscan linen book pages — likely a liturgical calendar
+describing religious rites and sacrificial schedules — were repurposed as mummy wrapping
+material, a common ancient practice for reusing old linen.
+
+The text is divided into sections that appear to describe rituals on specific dates, with
+repeated phrases including the Etruscan words "celi" (possibly meaning "earth" or a month
+name), "nethsrac," and "trin." The calendar appears to follow a monthly structure.
+Two Etruscan deities are named: Nethuns (the Etruscan equivalent of Neptune) and Uni
+(equivalent to Juno).
+
+The linen is currently preserved at the Archaeological Museum in Zagreb, where it has
+been since 1868. It remains the single most important document for understanding
+Etruscan religious practice.
+
+
+SECTION 5: LONGYEARBYEN AND THE SVALBARD GLOBAL SEED VAULT
+-----------------------------------------------------------
+
+In the Norwegian archipelago of Svalbard, approximately 1,300 kilometers from the North
+Pole, a tunnel bored 130 meters into the permafrost of a sandstone mountain contains
+the world's largest collection of plant genetic diversity. The Svalbard Global Seed Vault
+opened on February 26, 2008 and is designed to store backup copies of seeds from every
+seed bank on Earth.
+
+The vault is built at an elevation of 130 meters above sea level — chosen specifically
+to remain above water even if all polar ice melted simultaneously and sea levels rose
+by the maximum projected amount. The mountain's permafrost provides passive refrigeration;
+even without power, the temperature inside will not rise above -3.5°C for over 200 years.
+Active refrigeration maintains operational temperature at -18°C, the internationally
+recommended standard for long-term seed storage.
+
+As of 2024, the vault contains over 1.3 million seed samples representing more than
+6,000 plant species. A single "sample" consists of a sealed foil packet containing
+approximately 500 seeds on average. The total seed count is therefore roughly 650 million
+individual seeds. The vault has a maximum capacity of 4.5 million samples.
+
+The vault is owned by the Norwegian government and operated in partnership with the
+Crop Trust and the Nordic Genetic Resource Center (NordGen). It accepts deposits from
+any country, institution, or seed bank in the world. Every depositor retains full
+ownership of their seeds; the vault operates as a "black box" deposit system — the
+Norwegian government cannot access deposited seeds without the depositor's permission.
+
+The most significant withdrawal in the vault's history occurred in 2015, when the
+International Center for Agricultural Research in the Dry Areas (ICARDA) — whose
+primary gene bank was located in Aleppo, Syria — was forced to relocate due to the
+Syrian civil war. ICARDA withdrew a portion of their deposits, regenerated the seeds
+at new facilities in Morocco and Lebanon, and re-deposited updated samples. This was
+the first and, as of 2024, only withdrawal from the vault, and it demonstrated exactly
+the scenario the facility was designed for.
+
+The nearest settlement is the town of Longyearbyen, population approximately 2,400,
+which is the world's northernmost town of any significant size. Longyearbyen operates
+under Norwegian law but is open to citizens of any nation (no visa is required to
+enter Svalbard under the 1920 Svalbard Treaty). The town has a university center,
+a hospital, and — until 2023 — a coal mine that was the primary reason for the
+settlement's founding in 1906 by American entrepreneur John Munroe Longyear, after
+whom the town is named.
+
+
+SECTION 6: THE DYATLOV PASS INCIDENT — RESOLVED AFTER 65 YEARS
+---------------------------------------------------------------
+
+On the night of February 1–2, 1959, nine experienced Soviet hikers died under
+circumstances that puzzled investigators for over six decades. The group was led by
+Igor Dyatlov, a 23-year-old radio engineering student at the Ural Polytechnic Institute
+in Sverdlovsk (now Yekaterinburg), Russia. The team was attempting a Category III ski
+trek — the highest difficulty level in Soviet mountaineering — across the northern Ural
+mountains in winter conditions.
+
+The group's members were:
+- Igor Dyatlov (23), expedition leader
+- Zinaida Kolmogorova (22)
+- Rustem Slobodin (23)
+- Yuri Doroshenko (21)
+- Yuri Krivonischenko (23)
+- Alexander Kolevatov (24)
+- Nicolai Thibeaux-Brignolles (23)
+- Lyudmila Dubinina (21)
+- Alexander Zolotaryov (37), the oldest member and an experienced hiker who joined
+  the group late
+
+The group set out from Sverdlovsk on January 23, 1959, and was last seen alive at
+a settlement called Vizhai on January 27. Rescue teams reached their last camp on
+the eastern slope of Kholat Syakhl ("Dead Mountain" in the Mansi language) on
+February 26.
+
+What investigators found was deeply strange. The tent had been cut open from the inside.
+All nine hikers had fled into the -30°C night wearing only sleeping clothes. Five were
+found within 1.5 kilometers of the tent; the remaining four were found in May under
+4 meters of snow in a ravine. Of the four found in the ravine, three had severe internal
+injuries: Dubinina had a fractured sternum and bilateral fractured ribs; Zolotaryov had
+fractured ribs; Thibeaux-Brignolles had a massive skull fracture. The force required
+to cause these injuries was estimated by the medical examiner as equivalent to a car
+crash. Yet there were no external wounds — no bruising of the skin corresponding to
+the broken bones. Dubinina was also missing her tongue, eyes, and parts of her lips —
+though forensic investigators later attributed this to post-mortem decomposition in
+the flowing meltwater of the ravine.
+
+For decades, explanations ranged from secret Soviet military testing to infrasound-
+induced panic to a yeti attack. The Soviet investigation closed the case in May 1959,
+citing "a compelling natural force" as the cause of death.
+
+In 2021, a peer-reviewed paper published in Communications Earth & Environment by
+Johan Gaume (EPFL, Switzerland) and Alexander Puzrin (ETH Zurich) proposed a
+definitive physical explanation: a small, delayed slab avalanche. The key insight
+was that the terrain showed no traditional avalanche risk — the slope was only 23
+degrees (avalanches typically require 30+ degrees) and there was no fresh snowfall.
+
+Gaume and Puzrin used computational snowpack modeling — specifically the same simulation
+software used by Disney animators to model snow in the film Frozen, later adapted for
+scientific use — to show that a narrow slab of wind-deposited snow could accumulate
+on the lee side of a small ridge above the tent, remain stable for several hours after
+the group carved a tent platform into the slope (disturbing the snow's equilibrium),
+and then release in the night. A slab only 5 meters wide and 1 meter deep, sliding
+onto sleeping hikers in their tent, would produce precisely the crush injuries observed
+without leaving external marks. The survivors, injured and disoriented in the dark,
+cut their way out of the tent rather than attempting to unzip it — a rational decision
+under the circumstances — and attempted to reach treeline for shelter, dying of
+hypothermia before they could return to the tent or reach safety.
+
+
+=========================================
+SUGGESTED TEST QUESTIONS FOR ZYNKBOT KB DEMO
+=========================================
+
+After indexing this document, try asking Zynkbot the following questions to verify
+that Knowledge Base retrieval is working correctly:
+
+1. "How many gear wheels does the Antikythera Mechanism contain, and what is the
+   tooth count of its main drive wheel?"
+
+2. "What frequency was the Wow! Signal detected at, and what is the significance
+   of that frequency?"
+
+3. "What is the most common word in the Voynich Manuscript?"
+
+4. "Who was the first person to withdraw seeds from the Svalbard Seed Vault, and
+   why did they need to?"
+
+5. "What were the names of all nine hikers who died at Dyatlov Pass?"
+
+6. "What language is the Zagreb mummy linen written in, and how many words does
+   it contain?"
+
+7. "What was the signal-to-noise ratio of the Wow! Signal?"
+
+8. "In what year was the Antikythera Mechanism's shipwreck estimated to have sunk?"
+
+If Zynkbot answers these questions accurately, Knowledge Base indexing and
+RAG retrieval are functioning correctly. These are highly specific facts that
+the model is unlikely to answer correctly from training data alone.
+=========================================

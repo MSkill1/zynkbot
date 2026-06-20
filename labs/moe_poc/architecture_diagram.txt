@@ -1,0 +1,459 @@
+═══════════════════════════════════════════════════════════════════════════════
+                         ZYNKCLUSTER ARCHITECTURE DIAGRAM
+                     Distributed Mixture of Experts Inference
+═══════════════════════════════════════════════════════════════════════════════
+
+NOTE: Mixtral 8x7B (k=2) is used as the reference model throughout this
+diagram for concreteness. The architecture applies to any open MoE model —
+cluster size should match the model's k value:
+  Mixtral 8x7B/8x22B: k=2  |  DeepSeek-V2: k=6  |  Grok-1: k=2
+  DBRX: k=4                 |  OLMoE: k=8         |  DeepSeek-V3: k=8
+
+OVERVIEW: Parallel Expert Execution for Lower Latency
+─────────────────────────────────────────────────────────────────────────────
+
+Traditional Approach (Petals):          ZynkCluster Approach:
+Sequential Layer Distribution           Parallel Expert Distribution
+
+  Device A (Layers 0-10)                Router selects Expert 2 + 6
+       ↓ 50ms                                      ↓
+  Device B (Layers 11-20)              Device A        Device B
+       ↓ 50ms                           Expert 2        Expert 6
+  Device C (Layers 21-31)                 ↓ 45ms         ↓ 50ms
+       ↓ 50ms                                      ↓
+  Total: 150ms sequential              Combine (max: 50ms)
+
+  Problem: All devices process          Benefit: Only needed experts,
+  every token sequentially              parallel execution
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                            FULL SYSTEM ARCHITECTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         USER / ZYNKBOT APPLICATION                          │
+└────────────────────────────────────────┬────────────────────────────────────┘
+                                         │
+                                   Query: "Explain MoE"
+                                         │
+                                         ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         COORDINATOR (This Device)                           │
+│                                                                             │
+│  ┌────────────────────┐     ┌────────────────────┐                        │
+│  │   Tokenizer        │     │   Router Model     │  ← Lightweight (~100MB) │
+│  │   "Explain..." →   │     │   Selects experts  │    Runs on coordinator │
+│  │   [tokens]         │     │   per query        │                        │
+│  └────────────────────┘     └─────────┬──────────┘                        │
+│                                        │                                    │
+│                             Router Decision:                                │
+│                      "Use Expert 2 (Device A) + Expert 6 (Device B)"       │
+│                                        │                                    │
+│  ┌─────────────────────────────────────┴─────────────────────────────────┐ │
+│  │                     Parallel Execution Manager                        │ │
+│  │  • Creates thread pool                                                │ │
+│  │  • Sends requests to multiple devices simultaneously                  │ │
+│  │  • Waits for all to complete                                          │ │
+│  │  • Combines results                                                   │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+└─────────────┬───────────────────────────────┬───────────────────────────────┘
+              │                               │
+              │ HTTP POST                     │ HTTP POST
+              │ /expert/execute               │ /expert/execute
+              │ {layer: 0, expert: 2}         │ {layer: 0, expert: 6}
+              │                               │
+       ┌──────▼──────────────┐         ┌─────▼─────────────────┐
+       │   Device A          │         │   Device B            │
+       │   192.168.1.100     │         │   192.168.1.101       │
+       └─────────────────────┘         └───────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+                           DEVICE A: EXPERT NODE SERVER
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      Device A: Desktop RTX 3090 (24GB)                      │
+│                           example_node_server.py                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                      Flask HTTP API Server                           │  │
+│  │                       Port: 5001                                     │  │
+│  │                                                                      │  │
+│  │  Endpoints:                                                          │  │
+│  │  • POST /expert/execute   → Execute specific expert                 │  │
+│  │  • GET  /expert/list      → List hosted experts                     │  │
+│  │  • GET  /health           → Health check                            │  │
+│  └────────────────────────────────┬─────────────────────────────────────┘  │
+│                                   │                                         │
+│  ┌────────────────────────────────▼─────────────────────────────────────┐  │
+│  │                    ExpertNode Class                                  │  │
+│  │                                                                      │  │
+│  │  Configuration:                                                      │  │
+│  │  • device_id: "device_a_rtx3090"                                     │  │
+│  │  • hosted_experts: [0, 1, 2, 3]     ← First 4 experts              │  │
+│  │  • model: Mixtral 8x7B                                              │  │
+│  │  • device: cuda:0                                                   │  │
+│  └────────────────────────────────┬─────────────────────────────────────┘  │
+│                                   │                                         │
+│  ┌────────────────────────────────▼─────────────────────────────────────┐  │
+│  │              Mixtral 8x7B Model (Partial)                            │  │
+│  │                                                                      │  │
+│  │  Layer 0:                                                            │  │
+│  │    ├─ Expert 0  ✅ Loaded (~7B params)                              │  │
+│  │    ├─ Expert 1  ✅ Loaded                                           │  │
+│  │    ├─ Expert 2  ✅ Loaded                                           │  │
+│  │    ├─ Expert 3  ✅ Loaded                                           │  │
+│  │    ├─ Expert 4  ⚫ Not loaded (hosted on Device B)                 │  │
+│  │    ├─ Expert 5  ⚫ Not loaded                                       │  │
+│  │    ├─ Expert 6  ⚫ Not loaded                                       │  │
+│  │    └─ Expert 7  ⚫ Not loaded                                       │  │
+│  │                                                                      │  │
+│  │  Memory Usage: ~13GB VRAM (4 experts × ~3.25GB each)                │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                    ZynkSync Integration                              │  │
+│  │                                                                      │  │
+│  │  • Registers with zynk_devices table                                │  │
+│  │  • Updates: moe_capable=True, hosted_experts=[0,1,2,3]             │  │
+│  │  • Broadcasts availability to paired devices                        │  │
+│  │  • Responds to device discovery queries                             │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+                          DEVICE B: EXPERT NODE SERVER
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      Device B: RTX 3060 (12GB)                              │
+│                           example_node_server.py                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Same structure as Device A, but:                                          │
+│                                                                             │
+│  Configuration:                                                             │
+│  • device_id: "device_b_rtx3060"                                           │
+│  • hosted_experts: [4, 5, 6, 7]     ← Second 4 experts                    │
+│  • model: Mixtral 8x7B                                                     │
+│  • device: cuda:0                                                          │
+│                                                                             │
+│  Model Loading:                                                             │
+│  • Experts 4, 5, 6, 7 loaded                                               │
+│  • Experts 0, 1, 2, 3 not loaded (hosted on Device A)                     │
+│  • Memory Usage: ~13GB VRAM (4 experts × ~3.25GB each)                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+                          INFERENCE FLOW (DETAILED)
+═══════════════════════════════════════════════════════════════════════════════
+
+Step 1: User Query
+──────────────────
+User: "Explain quantum computing"
+  ↓
+Coordinator tokenizes: [1827, 15123, 19845, 17459]
+
+
+Step 2: Router Selection (Sparse Activation)
+─────────────────────────────────────────────
+Router Model analyzes input embeddings:
+  ↓
+Expert Scores:
+  Expert 0: 0.12  ⚫ Not selected
+  Expert 1: 0.08  ⚫ Not selected
+  Expert 2: 0.85  ✅ SELECTED (Weight: 0.85)
+  Expert 3: 0.15  ⚫ Not selected
+  Expert 4: 0.05  ⚫ Not selected
+  Expert 5: 0.03  ⚫ Not selected
+  Expert 6: 0.72  ✅ SELECTED (Weight: 0.72)
+  Expert 7: 0.10  ⚫ Not selected
+
+Result: Use Expert 2 + Expert 6 (sparse activation: 2/8 = 25%)
+
+
+Step 3: Device Mapping
+───────────────────────
+Coordinator checks cluster map:
+  Expert 2 → Device A (device_a_rtx3090)
+  Expert 6 → Device B (device_b_rtx3060)
+
+
+Step 4: Parallel Execution
+───────────────────────────
+┌──────────────────────────┐         ┌──────────────────────────┐
+│ Thread 1: Device A       │         │ Thread 2: Device B       │
+│                          │         │                          │
+│ POST /expert/execute     │         │ POST /expert/execute     │
+│ {                        │         │ {                        │
+│   layer: 0,              │         │   layer: 0,              │
+│   expert: 2,             │         │   expert: 6,             │
+│   hidden_states: [...]   │         │   hidden_states: [...]   │
+│ }                        │         │ }                        │
+│                          │         │                          │
+│ t=0ms: Request sent      │         │ t=0ms: Request sent      │
+│ t=45ms: Response received│         │ t=50ms: Response received│
+│                          │         │                          │
+└──────────────────────────┘         └──────────────────────────┘
+             │                                    │
+             └─────────┬──────────────────────────┘
+                       │
+              Wall-clock time: 50ms
+              (max of parallel operations,
+               not sum of sequential)
+
+
+Step 5: Combine Outputs
+────────────────────────
+Weighted sum:
+  combined = 0.85 × Expert2_output + 0.72 × Expert6_output
+  ↓
+Continue to next layer...
+
+
+Step 6: Complete Generation
+────────────────────────────
+Repeat steps 2-5 for all 32 layers, then:
+  • Apply final layer normalization
+  • Project to vocabulary space
+  • Sample next token
+  • Repeat for N tokens
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                      COMPARISON: PETALS VS ZYNKCLUSTER
+═══════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           PETALS ARCHITECTURE                               │
+│                        (Sequential Layer Processing)                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  User Query: "Explain quantum computing"                                   │
+│       ↓                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Coordinator                                                         │   │
+│  │ Tokenize + Embed                                                    │   │
+│  └────────────────────────────────┬────────────────────────────────────┘   │
+│                                   │                                         │
+│                                   ↓                                         │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Device A: Layers 0-10          (50ms + 10ms network)                │   │
+│  └────────────────────────────────┬────────────────────────────────────┘   │
+│                                   ↓                                         │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Device B: Layers 11-20         (50ms + 10ms network)                │   │
+│  └────────────────────────────────┬────────────────────────────────────┘   │
+│                                   ↓                                         │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Device C: Layers 21-31         (50ms + 10ms network)                │   │
+│  └────────────────────────────────┬────────────────────────────────────┘   │
+│                                   ↓                                         │
+│  Total Latency: 50+10 + 50+10 + 50+10 = 180ms                              │
+│                                                                             │
+│  Issues:                                                                    │
+│  ❌ All devices process every token sequentially                           │
+│  ❌ One slow device bottlenecks entire pipeline                            │
+│  ❌ High cumulative network latency (3× hops)                              │
+│  ❌ No parallelism possible                                                │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        ZYNKCLUSTER ARCHITECTURE                             │
+│                      (Parallel Expert Processing)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  User Query: "Explain quantum computing"                                   │
+│       ↓                                                                     │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │ Coordinator                                                         │   │
+│  │ Tokenize + Embed + Router Selection                                 │   │
+│  │ Router: "Use Expert 2 + Expert 6"                                   │   │
+│  └──────────────────┬──────────────────────┬────────────────────────────┘   │
+│                     │                      │                                │
+│                     ↓                      ↓                                │
+│     ┌───────────────────────┐  ┌───────────────────────┐                   │
+│     │ Device A: Expert 2    │  │ Device B: Expert 6    │                   │
+│     │ (45ms + 5ms network)  │  │ (50ms + 5ms network)  │                   │
+│     └───────────┬───────────┘  └───────────┬───────────┘                   │
+│                 │                           │                                │
+│                 └──────────┬────────────────┘                                │
+│                            ↓                                                 │
+│                   Combine Results                                            │
+│                                                                             │
+│  Total Latency: max(45+5, 50+5) = 55ms                                     │
+│                                                                             │
+│  Benefits:                                                                  │
+│  ✅ Parallel execution (3.3× faster than Petals for this example)          │
+│  ✅ Sparse activation (only 2/8 experts used = 25%)                        │
+│  ✅ Lower network latency (1× hop, not 3×)                                 │
+│  ✅ Only necessary devices consume power                                   │
+│  ✅ Graceful degradation if one device fails                               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+                         ZYNKSYNC INTEGRATION POINTS
+═══════════════════════════════════════════════════════════════════════════════
+
+ZynkCluster reuses existing ZynkSync infrastructure:
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          ZynkSync Device Registry                           │
+│                           (PostgreSQL Database)                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Table: zynk_devices                                                        │
+│  ────────────────────────────────────────────────────────────────────────  │
+│  device_id         | device_ip      | owner_user_id | status   | ...       │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│  device_a_rtx3090   | 192.168.1.100  | user_abc123   | online   | ...       │
+│  device_b_rtx3060        | 192.168.1.101  | user_abc123   | online   | ...       │
+│                                                                             │
+│  NEW COLUMNS FOR MOE:                                                       │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│  moe_capable       | hosted_experts      | gpu_memory_gb                   │
+│  ─────────────────────────────────────────────────────────────────────────  │
+│  TRUE              | [0, 1, 2, 3]        | 24                              │
+│  TRUE              | [4, 5, 6, 7]        | 12                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+          ↑                                                    ↑
+          │                                                    │
+    Device Registration                              Coordinator Discovery
+    (expert node startup)                            (query cluster state)
+
+
+Device Discovery Flow:
+──────────────────────
+
+1. Expert Node Server starts
+   ↓
+2. Queries local zynk_devices entry
+   ↓
+3. Updates: moe_capable=TRUE, hosted_experts=[...]
+   ↓
+4. Broadcasts availability via ZynkSync protocol
+   ↓
+5. Coordinator queries all paired devices
+   ↓
+6. Builds cluster map {device_id: {ip, experts, ...}}
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                              PERFORMANCE ANALYSIS
+═══════════════════════════════════════════════════════════════════════════════
+
+Theoretical Performance (2-Device Cluster, Gigabit Ethernet):
+
+Single Device (Baseline):
+──────────────────────────
+  Hardware: RTX 3090 (24GB)
+  Model: Mixtral 8x7B (47B params, 13B active)
+  Tokens/sec: 40
+  Latency (first token): 50ms
+
+2-Device ZynkCluster (Gigabit):
+────────────────────────────────
+  Device A: RTX 3090 (Experts 0-3)
+  Device B: RTX 3060 (Experts 4-7)
+
+  Tokens/sec: 30-35 (75-87% of single device)
+  Latency (first token): 75ms (+25ms overhead)
+  Max model size: 141B (Mixtral 8x22B)
+
+  Trade-off: 13-25% speed loss for 3× memory capacity
+
+Comparison with Petals (Same Hardware):
+────────────────────────────────────────
+  Petals (sequential):
+    Latency per token: ~150ms (sum of 3 devices)
+    Tokens/sec: 20-25
+
+  ZynkCluster (parallel):
+    Latency per token: ~75ms (max of 2 devices)
+    Tokens/sec: 30-35
+
+  ZynkCluster Advantage: 2× faster inference
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                           IMPLEMENTATION ROADMAP
+═══════════════════════════════════════════════════════════════════════════════
+
+Phase 1: Proof of Concept (Hardware Pending)
+─────────────────────────────────────────────
+  ☐ Acquire/borrow second GPU-enabled device
+  ☐ Implement basic 2-device cluster
+  ☐ Measure actual latency and throughput
+  ☐ Document performance characteristics
+
+Phase 2: Python Prototype
+──────────────────────────
+  ☐ Full Mixtral 8x7B distribution
+  ☐ ZynkSync integration
+  ☐ Fault tolerance and recovery
+  ☐ Performance optimization
+
+Phase 3: Rust Port
+───────────────────
+  ☐ Evaluate Candle vs llama.cpp
+  ☐ Expert extraction in Rust
+  ☐ Port coordinator logic
+  ☐ Integrate with Tauri backend
+
+Phase 4: Production Feature
+────────────────────────────
+  ☐ Mobile device participation
+  ☐ Dynamic load balancing
+  ☐ Cross-internet support (VPN)
+  ☐ UI for cluster management
+
+
+═══════════════════════════════════════════════════════════════════════════════
+                                    SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+ZynkCluster Key Points:
+──────────────────────
+
+1. Expert-Level Granularity
+   • Distributes individual experts, not entire layers
+   • Enables parallel execution impossible with layer-based approaches
+
+2. Sparse Activation
+   • Only 2-3 experts active per query (not all 8)
+   • Reduces compute load, power consumption, network traffic
+
+3. ZynkSync Integration
+   • Reuses existing device discovery infrastructure
+   • Natural extension of Zynkbot's architecture
+
+4. Performance Advantages
+   • 2-3× lower latency than sequential approaches
+   • Graceful degradation when devices fail
+   • Efficient resource utilization
+
+5. Current Status
+   • Design phase complete
+   • Illustrative code examples provided
+   • Awaiting hardware availability for testing
+
+Hardware Requirements:
+──────────────────────
+  • 2+ devices with NVIDIA/AMD GPU support
+  • ~13GB VRAM per node (4 experts × ~3.25GB)
+  • Gigabit network between devices
+  • Community collaboration welcome for testing
+
+Contact:
+────────
+ matt@containai.ai
+
+═══════════════════════════════════════════════════════════════════════════════
+                              END OF DIAGRAM
+═══════════════════════════════════════════════════════════════════════════════

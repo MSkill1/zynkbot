@@ -1,0 +1,192 @@
+/* Knowledge Base Selector Modal - Dracula Theme */
+
+.kb-selector-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.kb-selector-modal {
+  background: #282a36;
+  border-radius: 8px;
+  border: 1px solid #44475a;
+  width: 600px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.kb-selector-header {
+  padding: 20px;
+  border-bottom: 1px solid #44475a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.kb-selector-header h2 {
+  margin: 0;
+  color: #8be9fd;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.kb-close-button {
+  background: none;
+  border: none;
+  color: #f8f8f2;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.kb-close-button:hover {
+  background: #44475a;
+}
+
+.kb-selector-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px 20px;
+  min-height: 200px;
+}
+
+.kb-loading,
+.kb-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #9aa5c4;
+  text-align: center;
+}
+
+.kb-empty p {
+  margin: 5px 0;
+  color: #f8f8f2;
+}
+
+.kb-hint {
+  font-size: 13px;
+  color: #9aa5c4 !important;
+  margin-top: 10px !important;
+}
+
+.kb-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kb-file-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #1e1f29;
+  border: 1px solid #44475a;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.kb-file-item:hover {
+  background: #2a2d3a;
+  border-color: #9aa5c4;
+}
+
+.kb-file-item input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: #50fa7b;
+}
+
+.kb-file-name {
+  flex: 1;
+  color: #f8f8f2;
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-file-size {
+  color: #9aa5c4;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.kb-selector-footer {
+  padding: 15px 20px;
+  border-top: 1px solid #44475a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.kb-selected-count {
+  color: #8be9fd;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.kb-selector-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.kb-cancel-button,
+.kb-apply-button {
+  padding: 8px 20px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.kb-cancel-button {
+  background: #44475a;
+  color: #f8f8f2;
+}
+
+.kb-cancel-button:hover {
+  background: #565a6e;
+}
+
+.kb-apply-button {
+  background: #50fa7b;
+  color: #282a36;
+}
+
+.kb-apply-button:hover:not(:disabled) {
+  background: #5fff86;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(80, 250, 123, 0.3);
+}
+
+.kb-apply-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

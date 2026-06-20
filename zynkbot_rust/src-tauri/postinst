@@ -1,0 +1,122 @@
+#!/bin/bash
+# Post-install script for Zynkbot .deb package
+# This runs automatically after the .deb installs
+
+set -e
+
+echo "Configuring Zynkbot..."
+
+# Create Zynkbot directory structure
+echo "Creating Zynkbot directory in /opt..."
+mkdir -p /opt/zynkbot/models/system
+mkdir -p /opt/zynkbot/models/user
+
+# Copy the app binary to /opt/zynkbot
+if [ -f /usr/bin/app ]; then
+    cp /usr/bin/app /opt/zynkbot/app
+    chmod 755 /opt/zynkbot/app
+fi
+
+# Function to download from HuggingFace
+download_hf_model() {
+    local repo="$1"
+    local target_dir="$2"
+    shift 2
+    local files=("$@")
+
+    echo "  Downloading $repo..."
+    mkdir -p "$target_dir"
+
+    for file in "${files[@]}"; do
+        local url="https://huggingface.co/$repo/resolve/main/$file"
+        local target="$target_dir/$file"
+
+        if [ -f "$target" ]; then
+            echo "    ✓ $file already exists, skipping"
+        else
+            echo "    Downloading $file..."
+            wget -q --show-progress -O "$target" "$url" || {
+                echo "    ✗ Failed to download $file"
+                return 1
+            }
+            echo "    ✓ $file downloaded"
+        fi
+    done
+    echo "  ✓ $repo complete"
+}
+
+# Download system models
+echo "Downloading system models to /opt/zynkbot/models/system/..."
+echo ""
+
+download_hf_model \
+    "sentence-transformers/all-MiniLM-L6-v2" \
+    "/opt/zynkbot/models/system/all-MiniLM-L6-v2" \
+    "config.json" "tokenizer.json" "model.safetensors"
+
+download_hf_model \
+    "unitary/toxic-bert" \
+    "/opt/zynkbot/models/system/toxic-bert" \
+    "config.json" "vocab.txt" "model.safetensors"
+
+download_hf_model \
+    "dslim/bert-base-NER" \
+    "/opt/zynkbot/models/system/bert-base-NER" \
+    "config.json" "vocab.txt" "model.safetensors"
+
+echo ""
+echo "✓ System models downloaded successfully"
+echo ""
+
+# Create .env file in /opt/zynkbot
+cat > /opt/zynkbot/.env << 'EOF'
+# ZYNKBOT CONFIGURATION
+# Database: SQLite (embedded — no setup required, database created on first launch)
+
+ZYNK_MODEL_BACKEND=local
+
+# API Keys (optional — add via Settings UI after launching)
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+XAI_API_KEY=
+
+# Safety
+ZYNK_CONTAINMENT_MODE=guardian
+
+# ZynkSync
+ZYNKSYNC_AUTO_SYNC=true
+ZYNKSYNC_SYNC_INTERVAL=60
+EOF
+
+chmod 666 /opt/zynkbot/.env
+
+# Create wrapper script
+cat > /usr/bin/zynkbot << 'EOF'
+#!/bin/bash
+cd /opt/zynkbot
+exec ./app "$@"
+EOF
+
+chmod 755 /usr/bin/zynkbot
+chmod -R 755 /opt/zynkbot
+chmod 666 /opt/zynkbot/.env
+
+echo "Zynkbot installation complete!"
+echo ""
+echo "✓ System models installed (embeddings, safety, entity extraction)"
+echo "✓ SQLite database will be created automatically on first launch"
+echo ""
+echo "Installation location: /opt/zynkbot/"
+echo "  - Binary: /opt/zynkbot/app"
+echo "  - Models: /opt/zynkbot/models/"
+echo "  - Config: /opt/zynkbot/.env"
+echo ""
+echo "To launch Zynkbot, run: zynkbot (or find it in your application menu)"
+echo ""
+echo "The app will work immediately with the local Llama model."
+echo "You can optionally add API keys for Claude/GPT through the Settings UI."
+echo ""
+
+#DEBHELPER#
+
+exit 0

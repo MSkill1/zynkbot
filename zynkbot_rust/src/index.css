@@ -1,0 +1,26 @@
+/* Force GPU compositing on modal overlays to prevent WebKitGTK compositing artifacts */
+.modal-overlay,
+.zfb-overlay,
+.kb-manager-overlay,
+.kb-selector-overlay,
+.graph-modal-overlay,
+.onboarding-modal-overlay {
+  will-change: transform;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Pre-allocate scrollbar gutter so toggling overflow:hidden causes no layout
+     reflow and no scrollbar flash when modals open (WebKitGTK rendering issue) */
+  scrollbar-gutter: stable;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}

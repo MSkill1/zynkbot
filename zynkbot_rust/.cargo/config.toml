@@ -1,0 +1,19 @@
+# Cargo configuration for maximum CPU compatibility
+# This ensures the binary works on all x86-64 CPUs, not just modern ones with AVX2/AVX512
+
+[build]
+# Compile for generic x86-64 baseline (no AVX2, AVX512, or other advanced features)
+# This ensures compatibility with older CPUs from ~2003 onwards
+rustflags = ["-C", "target-cpu=x86-64"]
+
+[target.x86_64-pc-windows-msvc]
+# Windows-specific: Use baseline x86-64 instructions only
+rustflags = ["-C", "target-cpu=x86-64"]
+
+[target.x86_64-unknown-linux-gnu]
+# Linux-specific: Use baseline x86-64 instructions only
+rustflags = ["-C", "target-cpu=x86-64"]
+
+[target.x86_64-apple-darwin]
+# macOS-specific: Use baseline x86-64 instructions only
+rustflags = ["-C", "target-cpu=x86-64"]

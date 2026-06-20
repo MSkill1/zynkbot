@@ -1,0 +1,8 @@
+[env]
+# CUDA toolkit installed via apt lands in /usr/lib/x86_64-linux-gnu/ instead of
+# the standard /usr/local/cuda/ that llama-cpp-sys-2 and find_cuda_helper expect.
+# These two vars point the build scripts at the correct paths.
+CUDA_PATH = "/usr"
+CUDA_LIBRARY_PATH = "/usr/lib/x86_64-linux-gnu"
+# nvcc needs -fPIC to compile CUDA code for inclusion in a shared library (cdylib)
+CUDAFLAGS = "-Xcompiler -fPIC"
