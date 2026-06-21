@@ -9,6 +9,8 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
 
   const { memoryA, memoryB, sharedEntities } = conflict;
 
+  if (!memoryA || !memoryB) return null;
+
   const memoryADate = new Date(memoryA.created_at);
   const memoryBDate = new Date(memoryB.created_at);
   const isMemoryAOlder = memoryADate < memoryBDate;

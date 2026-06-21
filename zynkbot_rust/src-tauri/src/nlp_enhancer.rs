@@ -652,15 +652,22 @@ impl NLPEnhancer {
                 continue;
             }
 
+            // Skip tokens with interior periods — sentence boundary artifact (e.g. "Wendy.Also")
+            if clean_word.contains('.') {
+                continue;
+            }
+
             if stopwords.contains(&clean_word.to_lowercase().as_str()) {
                 continue;
             }
 
             if clean_word.chars().next().is_some_and(|c| c.is_uppercase()) {
-                // Skip if at start of sentence (including very first word)
+                // Skip if at start of sentence. Also checks if prev word *contains* a sentence-ending
+                // character anywhere — catches cases like "Wendy.Also," where the period is internal.
                 let at_sentence_start = i == 0 || {
                     let prev_word = words[i - 1];
                     prev_word.ends_with('.') || prev_word.ends_with('!') || prev_word.ends_with('?')
+                    || prev_word.chars().any(|c| c == '.' || c == '!' || c == '?')
                 };
                 if at_sentence_start {
                     continue;

@@ -2202,40 +2202,7 @@ async fn send_message_with_memory(
                 }
             };
 
-            // Check if contradictions were detected even if should_remember is false
-            // Require confidence >= 0.65 to avoid false positives from local models
-            let has_contradictions = llm_relationships.iter().any(|r| {
-                r.relationship_type == "contradicts" && r.confidence.unwrap_or(0.0) >= 0.65
-            });
-
             if !should_remember {
-                // BUT if contradictions were detected, notify user so they can resolve them
-                if has_contradictions {
-                    println!("[RUST BACKGROUND] ⚠️ Contradictions detected even though memory won't be stored");
-
-                    // Emit event for frontend contradiction modal
-                    let payload = serde_json::json!({
-                        "new_memory": {
-                            "content": bg_message.clone(),
-                            "title": llm_title.clone(),
-                        },
-                        "contradicting_memories": llm_relationships.iter()
-                            .filter(|r| r.relationship_type == "contradicts")
-                            .map(|r| serde_json::json!({
-                                "id": r.memory_id,
-                                "reason": r.reason.clone(),
-                                "confidence": r.confidence.unwrap_or(0.0),
-                            }))
-                            .collect::<Vec<_>>(),
-                    });
-
-                    if let Err(e) = bg_app.emit("contradiction-detected", payload) {
-                        println!("[RUST BACKGROUND] ⚠️ Failed to emit contradiction event: {}", e);
-                    } else {
-                        println!("[RUST BACKGROUND] 🔔 Contradiction event emitted - modal should appear");
-                    }
-                }
-
                 db_pool.close().await;
                 return;
             }

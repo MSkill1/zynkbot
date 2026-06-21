@@ -610,8 +610,6 @@ pub async fn search_kb_chunks(
                         || filename_ref.contains(&file_name_lower)
                         || file_name_no_ext.contains(filename_ref.as_str())
                         || filename_ref.contains(file_name_no_ext) {
-                        println!("[KB RAG] 🎯 Boosting '{}' by +0.50 (matched query reference: '{}')",
-                                file_name, filename_ref);
                         // Add 0.5 boost (50%) to ensure filename matches pass threshold
                         similarity_score += 0.5;
                         break;
