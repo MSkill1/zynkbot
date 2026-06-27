@@ -109,6 +109,12 @@ if not defined VS_CPP (
     if defined MSVC_VERSION (
         set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\!MSVC_VERSION!\bin\Hostx64\x64"
         echo [OK] CUDA compiler configured
+
+    REM Set CUDA_PATH for CMake CUDA detection
+    if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6" (
+        set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6"
+        set "CUDA_HOME=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6"
+        echo [OK] CUDA_PATH configured
     )
 )
 
