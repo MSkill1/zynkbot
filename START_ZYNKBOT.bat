@@ -99,6 +99,17 @@ if not defined VS_CPP (
     echo.
 ) else (
     echo [OK] Visual Studio Build Tools found
+
+    REM Set NVCC_CCBIN for CUDA compilation (nvcc needs to find cl.exe)
+    for /f "delims=" %%i in ('dir /b /ad "%VS_CPP%\VC\Tools\MSVC" 2^>nul ^| sort /r') do (
+        set "MSVC_VERSION=%%i"
+        goto :found_msvc
+    )
+    :found_msvc
+    if defined MSVC_VERSION (
+        set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\!MSVC_VERSION!\bin\Hostx64\x64"
+        echo [OK] CUDA compiler configured
+    )
 )
 
 REM ============================================================
