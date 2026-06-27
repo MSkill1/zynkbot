@@ -4,6 +4,11 @@ REM Tested on: Windows 10/11
 REM Usage: Run as Administrator (right-click -> Run as administrator)
 
 setlocal enabledelayedexpansion
+
+REM Add Rust to PATH if it exists (admin sessions do not inherit user PATH)
+if exist "%USERPROFILE%\.cargo\bin" (
+    set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+)
 title Zynkbot Installation
 color 0B
 
@@ -337,6 +342,11 @@ if %errorLevel% neq 0 (
 
     echo [OK] Rust installed successfully
     echo [OK] Cargo found at: %USERPROFILE%\.cargo\bin\cargo.exe
+
+    REM Add Rust to SYSTEM PATH permanently so admin sessions can find it
+    echo [INFO] Adding Rust to system PATH...
+    powershell -ExecutionPolicy Bypass -File "%~dp0add_rust_to_system_path.ps1"
+    echo [OK] Rust added to system PATH
 ) else (
     for /f "tokens=*" %%v in ('rustc --version') do set RUST_VERSION=%%v
     echo [OK] Rust already installed: !RUST_VERSION!

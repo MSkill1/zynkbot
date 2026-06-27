@@ -27,6 +27,19 @@ START_ZYNKBOT.bat
 
 ---
 
+> **⚠️ GPU Performance Note**
+>
+> **Local AI models run significantly slower without GPU acceleration.** If you have an NVIDIA GPU, installing CUDA will dramatically improve performance. The installer automatically detects your GPU and enables CUDA if the toolkit is installed.
+>
+> **To enable GPU acceleration:**
+> 1. Download and install CUDA Toolkit 12.6: https://developer.nvidia.com/cuda-12-6-0-download-archive
+> 2. Reboot your system
+> 3. Re-run `install.bat` — it will detect CUDA and rebuild with GPU support
+>
+> If you don't have an NVIDIA GPU or choose to skip CUDA installation, Zynkbot will work fine in CPU mode — API-based models (Claude, GPT-4, etc.) are unaffected. Only local models will run slower.
+
+---
+
 ## Table of Contents
 1. [What Gets Installed](#what-gets-installed)
 2. [Prerequisites](#prerequisites)
