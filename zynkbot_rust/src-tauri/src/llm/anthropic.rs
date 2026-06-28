@@ -35,8 +35,8 @@ struct AnthropicSSEEvent {
 
 #[derive(Debug, Deserialize)]
 struct AnthropicStreamDelta {
-    #[serde(rename = "type")]
-    delta_type: String,
+    #[serde(rename = "type", default)]
+    delta_type: Option<String>,
     #[serde(default)]
     text: Option<String>,
 }
@@ -230,7 +230,7 @@ where
             match event.event_type.as_str() {
                 "content_block_delta" => {
                     if let Some(delta) = event.delta {
-                        if delta.delta_type == "text_delta" {
+                        if delta.delta_type.as_deref() == Some("text_delta") {
                             if let Some(text) = delta.text {
                                 full_text.push_str(&text);
                                 on_token(text);
