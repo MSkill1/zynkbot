@@ -395,6 +395,23 @@ if %errorLevel% equ 0 (
         set "ZB_MODE=cuda"
         echo [OK] CUDA toolkit found - enabling GPU acceleration
         nvcc --version | findstr "release"
+
+        REM Copy CUDA MSBuild integration files for Visual Studio Build Tools
+        REM (Full VS IDE gets these automatically, Build Tools needs manual copy)
+        set "CUDA_INTEGRATION_SRC=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\extras\visual_studio_integration\MSBuildExtensions"
+        set "VS_BUILDTOOLS_DIR=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\BuildCustomizations"
+
+        if exist "!CUDA_INTEGRATION_SRC!" (
+            if exist "!VS_BUILDTOOLS_DIR!" (
+                if not exist "!VS_BUILDTOOLS_DIR!\CUDA 12.6.props" (
+                    echo [INFO] Installing CUDA MSBuild integration for Build Tools...
+                    copy /Y "!CUDA_INTEGRATION_SRC!\*" "!VS_BUILDTOOLS_DIR!\" >nul 2>&1
+                    if !errorLevel! equ 0 (
+                        echo [OK] CUDA integration installed for CMake compatibility
+                    )
+                )
+            )
+        )
     ) else (
         echo [WARNING] NVIDIA GPU found but CUDA toolkit ^(nvcc^) is not installed.
         echo           Building for CPU. Install the CUDA Toolkit and re-run install.bat
