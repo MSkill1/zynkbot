@@ -2083,8 +2083,9 @@ async fn send_message_with_memory(
             // We want the MOST similar memories, not the most recent ones
             similar_memories.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
 
-            // Limit to top 6 most similar for LLM — a tighter candidate set produces sharper choices
-            similar_memories.truncate(6);
+            // API models handle larger candidate sets well; local 7B models degrade with more context
+            let relationship_candidate_limit = if bg_is_api { 10 } else { 6 };
+            similar_memories.truncate(relationship_candidate_limit);
 
             if !similar_memories.is_empty() {
                 println!("[RUST BACKGROUND] Found {} similar memories (>35% similarity) for relationship classification", similar_memories.len());
