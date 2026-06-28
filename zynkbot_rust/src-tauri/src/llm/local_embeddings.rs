@@ -22,22 +22,12 @@ impl EmbeddingModel {
     fn load() -> Result<Self, LLMError> {
         println!("[Candle Embeddings] Loading all-MiniLM-L6-v2 model from models/system/...");
 
-        // Use GPU if available, fall back to CPU
-        let device = if candle_core::utils::cuda_is_available() {
-            match Device::new_cuda(0) {
-                Ok(d) => {
-                    println!("[Candle Embeddings] ✅ Using CUDA GPU for embeddings");
-                    d
-                }
-                Err(e) => {
-                    println!("[Candle Embeddings] ⚠️  CUDA available but failed to init ({}), falling back to CPU", e);
-                    Device::Cpu
-                }
-            }
-        } else {
-            println!("[Candle Embeddings] Using CPU for embeddings (no CUDA detected)");
-            Device::Cpu
-        };
+        // Always use CPU for embeddings (prevents CUDA context corruption)
+        // Embeddings run AFTER LLM response is sent to user (background processing)
+        // CPU speed is sufficient (~100-200ms) and safer than risking CUDA corruption
+        // Same Candle BERT tokenizer that crashed safety classifier on large inputs
+        let device = Device::Cpu;
+        println!("[Candle Embeddings] Using CPU for embeddings (reliable background processing)");
 
         // Get model directory path
         let model_dir = PathBuf::from("models/system/all-MiniLM-L6-v2");
