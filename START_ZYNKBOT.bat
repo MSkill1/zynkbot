@@ -115,6 +115,9 @@ if not defined VS_CPP (
         set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6"
         set "CUDA_HOME=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6"
         echo [OK] CUDA_PATH configured
+        set "CMAKE_CUDA_COMPILER=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin\nvcc.exe"
+        set "CMAKE_GENERATOR_TOOLSET=cuda=12.6"
+        echo [OK] CMake CUDA configuration complete
     )
 )
 
