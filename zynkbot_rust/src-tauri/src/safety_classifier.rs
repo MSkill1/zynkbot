@@ -93,22 +93,11 @@ impl SafetyClassifier {
     fn load() -> Result<Self, String> {
         println!("[Candle Safety] Loading TinyBERT safety classifier from models/system/...");
 
-        // Use GPU if available, fall back to CPU
-        let device = if candle_core::utils::cuda_is_available() {
-            match Device::new_cuda(0) {
-                Ok(d) => {
-                    println!("[Candle Safety] ✅ Using CUDA GPU for safety classifier");
-                    d
-                }
-                Err(e) => {
-                    println!("[Candle Safety] ⚠️  CUDA available but failed to init ({}), falling back to CPU", e);
-                    Device::Cpu
-                }
-            }
-        } else {
-            println!("[Candle Safety] Using CPU for safety classifier (no CUDA detected)");
-            Device::Cpu
-        };
+        // Always use CPU for safety classifier (prevents CUDA context corruption on large inputs)
+        // GPU provides no meaningful speedup (safety checks complete in <50ms on CPU)
+        // but can corrupt CUDA state when hitting memory limits, breaking main LLM inference
+        let device = Device::Cpu;
+        println!("[Candle Safety] Using CPU for safety classifier (reliable, <50ms per check)");
 
         // Get model directory path
         let model_dir = PathBuf::from("models/system/toxic-bert");
