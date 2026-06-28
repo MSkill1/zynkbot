@@ -128,7 +128,7 @@ The installer will:
 
 7. **GPU / CUDA detection** (automatic)
    - NVIDIA GPU detected + CUDA toolkit installed → GPU acceleration enabled automatically
-   - NVIDIA GPU detected but no CUDA toolkit → installer prints distro-specific install instructions; Zynkbot builds in CPU mode until you install the toolkit and re-run `install.sh`
+   - NVIDIA GPU detected but no CUDA toolkit → installer prints distro-specific install instructions; Zynkbot builds in CPU mode. To enable GPU acceleration, install the CUDA toolkit, then fully uninstall Zynkbot (including the Rust toolchain) and reinstall from scratch.
    - No NVIDIA GPU → builds in CPU mode
 
 ### Step 4: Installation Complete!
@@ -232,7 +232,10 @@ Get keys from:
 
 **GPU Acceleration (NVIDIA CUDA):**
 
-The installer automatically detects your GPU and enables CUDA if the toolkit is present — no manual configuration needed. If you have an NVIDIA GPU but the installer built in CPU mode, install the CUDA toolkit and re-run `install.sh`:
+The installer automatically detects your GPU and enables CUDA if the toolkit is present — no manual configuration needed. **CUDA must be installed before running `install.sh`.** If you installed Zynkbot without CUDA and want GPU acceleration, you must:
+
+1. Run `./uninstall.sh` and choose **yes** to removing the Rust toolchain (required — the binary was compiled without CUDA support)
+2. Install the CUDA toolkit for your distro:
 
 ```bash
 # Ubuntu/Debian
@@ -247,6 +250,8 @@ sudo pacman -S cuda
 # Or download from NVIDIA directly:
 # https://developer.nvidia.com/cuda-downloads
 ```
+
+3. Clone the repo fresh and run `./install.sh` again — the installer will detect CUDA and build with GPU support.
 
 ---
 
