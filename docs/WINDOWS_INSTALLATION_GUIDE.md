@@ -42,7 +42,7 @@ START_ZYNKBOT.bat
 > 1. Run `uninstall.bat` from the zynkbot directory (removes Zynkbot and Rust)
 > 2. Download and install CUDA Toolkit 12.6: https://developer.nvidia.com/cuda-12-6-0-download-archive
 > 3. Reboot your system
-> 4. Run `install.bat` again — it will rebuild everything with GPU support
+> 4. Run `uninstall.bat` and intall again — it will rebuild everything with GPU support
 >
 > **Why full reinstall?** Rust compiles different binary code for CPU vs GPU mode. Simply re-running install.bat after adding CUDA causes build cache conflicts. The uninstall script cleanly removes everything so the installer can rebuild properly with CUDA.
 >
