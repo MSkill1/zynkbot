@@ -216,7 +216,7 @@ For most users, **Q4_K_M** is a good place to start
 - Workstation: 13B-32B models
 
 ### 2. GPU Acceleration
-If you have an NVIDIA GPU, Zynkbot will automatically use it for faster inference.
+If you have an NVIDIA GPU, Zynkbot will automatically use it for faster inference if CUDA is installed
 
 ### 3. Lower Quantization for Speed
 If a model is too slow, try a lower quantization (Q3 or Q2) of the same model.
