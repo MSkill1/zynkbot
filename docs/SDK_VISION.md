@@ -123,13 +123,6 @@ for result in results {
 - Cross-device synchronization
 - Local network discovery (mDNS)
 - Pairing with 6-digit codes
-- Selective sync (namespace-based)
-
-**Use cases:**
-- Multi-device note-taking apps
-- Family calendar applications
-- Collaborative tools
-- Personal data sync (no cloud)
 
 **API Example:**
 ```rust
