@@ -2013,6 +2013,7 @@ async fn send_message_with_memory(
         let bg_containment_mode = containment_mode.clone();
         let bg_app = app.clone();
         let bg_is_api = is_api;
+        let bg_is_explicit_remember = is_explicit_remember;
         // Pre-loaded model session for Call 2 (local models only — None for API backends).
         let bg_local_session = local_session_rx;
 
@@ -2201,6 +2202,20 @@ async fn send_message_with_memory(
                         }
                     }
                 }
+            };
+
+            // Explicit "Remember:" command overrides LLM decision — user is the authority
+            let (should_remember, llm_title) = if bg_is_explicit_remember && !should_remember {
+                println!("[RUST BACKGROUND] ✅ Explicit 'Remember:' command — overriding LLM decision to store");
+                let fallback_title = factual_content.chars().take(60).collect::<String>();
+                let fallback_title = if factual_content.len() > 60 {
+                    format!("{}…", fallback_title)
+                } else {
+                    fallback_title
+                };
+                (true, Some(fallback_title))
+            } else {
+                (should_remember, llm_title)
             };
 
             if !should_remember {
