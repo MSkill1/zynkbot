@@ -466,7 +466,7 @@ If you're interested in being a companion tester, open an issue on GitHub or ema
 
 ## Support Development
 
-Zynkbot is developed and maintained by one person. If it's useful to you, [sponsoring development](https://github.com/sponsors/MSkill1) helps keep it going.
+Zynkbot is developed and maintained by one person. If it's useful to you, [sponsoring development](https://ko-fi.com/mskill1) helps keep it going.
 
 ---
 
