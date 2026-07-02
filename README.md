@@ -310,7 +310,7 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 
 **API Models (Optional):**
 
-You can connect any of these cloud providers. Your memory database stays local — only the conversation prompt is sent. Additional API LLMs coming soon.
+You can connect to any of these cloud providers. Your memory database stays local — only the conversation prompt is sent. Additional API LLMs coming soon.
 
 - **OpenAI** (GPT-4o, GPT-4o-mini) — [Get API key](https://platform.openai.com/api-keys)
 - **Anthropic** (Claude Sonnet, Claude Haiku) — [Get API key](https://platform.claude.com/)
@@ -364,7 +364,7 @@ If you have an NVIDIA GPU, the installation script automatically enables CUDA so
 
 **If the installer built CPU-only and you want GPU acceleration:**
 
-Install the CUDA toolkit, then re-run `install.sh` (Linux) or `install.bat` (Windows):
+Install the CUDA toolkit, then uinstall and re-install `install.sh` (Linux) or `install.bat` (Windows):
 
 | Platform | Command |
 |----------|---------|
