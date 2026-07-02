@@ -364,7 +364,7 @@ If you have an NVIDIA GPU, the installation script automatically enables CUDA so
 
 **If the installer built CPU-only and you want GPU acceleration:**
 
-Install the CUDA toolkit, then uinstall and re-install `install.sh` (Linux) or `install.bat` (Windows):
+Install the CUDA toolkit, then uninstall and re-install `install.sh` (Linux) or `install.bat` (Windows):
 
 | Platform | Command |
 |----------|---------|
