@@ -640,14 +640,21 @@ pub async fn revoke_zynklink_pairing(
     .flatten()
     .and_then(|r| r.0);
 
-    // DELETE chat messages between these devices
+    // DELETE chat messages between these devices.
+    // zchat_messages stores device IDs as UUID blobs, not text strings.
+    let uuid1 = uuid::Uuid::parse_str(&device1_id)
+        .map_err(|e| format!("Invalid device1 UUID: {}", e))?;
+    let uuid2 = uuid::Uuid::parse_str(&device2_id)
+        .map_err(|e| format!("Invalid device2 UUID: {}", e))?;
     let deleted_messages = sqlx::query(
         "DELETE FROM zchat_messages
          WHERE (from_device_id = ? AND to_device_id = ?)
             OR (from_device_id = ? AND to_device_id = ?)"
     )
-    .bind(&device1_id)
-    .bind(&device2_id)
+    .bind(uuid1)
+    .bind(uuid2)
+    .bind(uuid2)
+    .bind(uuid1)
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to delete chat messages: {}", e))?;
