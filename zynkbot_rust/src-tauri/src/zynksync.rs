@@ -587,39 +587,86 @@ impl ZynkSyncService {
     pub async fn remove_device(&self, device_id: &str) -> Result<(), String> {
         println!("[ZynkSync] Removing device: {}", device_id);
 
-        // Remove from database
-        let result = sqlx::query(
-            "DELETE FROM zynk_devices WHERE device_id = ?"
-        )
-        .bind(device_id)
-        .execute(&self.db_pool)
-        .await
-        .map_err(|e| format!("Failed to remove device from database: {}", e))?;
+        // zchat_messages stores device IDs as UUID blobs, not text strings.
+        let device_uuid = uuid::Uuid::parse_str(device_id)
+            .map_err(|e| format!("Invalid device ID: {}", e))?;
+
+        let mut tx = self.db_pool.begin().await
+            .map_err(|e| format!("Failed to start removal transaction: {}", e))?;
+
+        // Delete in child-first order. We don't rely on CASCADE because SQLite requires
+        // PRAGMA foreign_keys=ON per-connection and the pool may hand out connections
+        // that haven't had it set. Explicit deletes are defense-in-depth regardless.
+
+        // zynk_file_manifest — child of zynk_linked_directories
+        sqlx::query("DELETE FROM zynk_file_manifest WHERE shared_directory_id IN (SELECT id FROM zynk_linked_directories WHERE device_id = ?)")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete file manifests: {}", e))?;
+
+        // zynk_link_manifest — child of zynk_linked_directories
+        sqlx::query("DELETE FROM zynk_link_manifest WHERE linked_directory_id IN (SELECT id FROM zynk_linked_directories WHERE device_id = ?)")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete link manifests: {}", e))?;
+
+        // zynk_linked_directories
+        sqlx::query("DELETE FROM zynk_linked_directories WHERE device_id = ?")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete linked directories: {}", e))?;
+
+        // zynk_device_pairings
+        sqlx::query("DELETE FROM zynk_device_pairings WHERE device_a_id = ? OR device_b_id = ?")
+            .bind(device_id).bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete device pairings: {}", e))?;
+
+        // zynk_device_certificates — no FK to zynk_devices, CASCADE would never reach it
+        sqlx::query("DELETE FROM zynk_device_certificates WHERE device_id = ?")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete device certificates: {}", e))?;
+
+        // zynk_sync_state — no FK to zynk_devices, CASCADE would never reach it
+        sqlx::query("DELETE FROM zynk_sync_state WHERE source_device_id = ? OR target_device_id = ?")
+            .bind(device_id).bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete sync state: {}", e))?;
+
+        // zynklink_codes
+        sqlx::query("DELETE FROM zynklink_codes WHERE creator_device_id = ? OR accepted_by_device_id = ?")
+            .bind(device_id).bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete ZynkLink codes: {}", e))?;
+
+        // zynklink_pairings
+        sqlx::query("DELETE FROM zynklink_pairings WHERE device1_id = ? OR device2_id = ?")
+            .bind(device_id).bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete ZynkLink pairings: {}", e))?;
+
+        // user_sync_codes — no FK to zynk_devices, CASCADE would never reach it
+        sqlx::query("DELETE FROM user_sync_codes WHERE device_id = ?")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete user sync codes: {}", e))?;
+
+        // zchat_messages — UUID blob columns
+        sqlx::query("DELETE FROM zchat_messages WHERE from_device_id = ? OR to_device_id = ?")
+            .bind(device_uuid).bind(device_uuid).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete chat history: {}", e))?;
+
+        // zynk_devices — last, after all dependents
+        let result = sqlx::query("DELETE FROM zynk_devices WHERE device_id = ?")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to remove device from database: {}", e))?;
 
         if result.rows_affected() == 0 {
-            println!("[ZynkSync] Device not found in database: {}", device_id);
             return Err("Device not found".to_string());
         }
 
-        // Clear all chat history with this device (zchat_messages stores UUIDs as binary blobs)
-        let device_uuid = uuid::Uuid::parse_str(device_id)
-            .map_err(|e| format!("Invalid device ID: {}", e))?;
-        sqlx::query(
-            "DELETE FROM zchat_messages WHERE from_device_id = ? OR to_device_id = ?"
-        )
-        .bind(device_uuid)
-        .bind(device_uuid)
-        .execute(&self.db_pool)
-        .await
-        .map_err(|e| format!("Failed to clear chat history: {}", e))?;
+        tx.commit().await
+            .map_err(|e| format!("Failed to commit device removal: {}", e))?;
 
-        // Remove from peers map
+        // Remove from in-memory peers map
         {
             let mut peers_map = self.peers.write().await;
             peers_map.remove(device_id);
         }
 
-        println!("[ZynkSync] ✓ Successfully removed device: {} (deleted from database, peers map, and chat history)", device_id);
+        println!("[ZynkSync] ✓ Removed device {} and all related data", device_id);
         Ok(())
     }
 
