@@ -3147,10 +3147,15 @@ async fn check_sync_authorized(
     pool: &sqlx::SqlitePool,
     device_id: &str,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    // Check zynk_devices (not zynk_device_pairings) because the pairing row is
+    // created by the first sync itself — using it as the gate causes a
+    // chicken-and-egg rejection of every first sync from a newly added device.
+    // zynk_devices.is_paired=1 is set during the pairing handshake and cleared
+    // (via DELETE) by remove_device(), so it's the correct liveness indicator.
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM zynk_device_pairings WHERE device_a_id = ? OR device_b_id = ?"
+        "SELECT COUNT(*) FROM zynk_devices WHERE device_id = ? AND is_paired = 1"
     )
-    .bind(device_id).bind(device_id)
+    .bind(device_id)
     .fetch_one(pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
