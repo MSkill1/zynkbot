@@ -5663,9 +5663,13 @@ async fn verify_sync_code_info(code: String) -> Result<sync_codes::SyncCodeInfo,
 async fn sync_with_code(code: String, device_ip: String) -> Result<serde_json::Value, String> {
     println!("[SyncCode] Device B: Verifying code {} with remote device {}", code, device_ip);
 
-    // Step 1: Verify code on REMOTE device (Device A) via HTTP
-    let client = reqwest::Client::new();
-    let verify_url = format!("http://{}:57963/api/identity/verify-sync-code", device_ip);
+    // Step 1: Verify code on REMOTE device (Device A) via HTTPS (TOFU — cert not yet pinned).
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build sync client: {}", e))?;
+    let verify_url = format!("https://{}:57963/api/identity/verify-sync-code", device_ip);
 
     let response = client
         .post(&verify_url)
@@ -5700,7 +5704,7 @@ async fn sync_with_code(code: String, device_ip: String) -> Result<serde_json::V
     println!("[SyncCode] Device B: Linked to user {}...", &identity.user_id[..8]);
 
     // Step 3: Notify remote device to consume code and establish pairing
-    let consume_url = format!("http://{}:57963/api/identity/consume-sync-code", device_ip);
+    let consume_url = format!("https://{}:57963/api/identity/consume-sync-code", device_ip);
     let _consume_response = client
         .post(&consume_url)
         .json(&serde_json::json!({
@@ -5792,9 +5796,14 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
     let user_id = user_identity::get_user_id()?;
     let device_id = user_identity::get_device_id()?;
 
-    // Step 1: Verify code on REMOTE device (Device A) via HTTP
-    let client = reqwest::Client::new();
-    let verify_url = format!("http://{}:57963/api/zynklink/verify-code", device_ip);
+    // Step 1: Verify code on REMOTE device (Device A) via HTTPS.
+    // Peer cert is not yet pinned — TOFU accepted; the code exchange provides authentication.
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build link client: {}", e))?;
+    let verify_url = format!("https://{}:57963/api/zynklink/verify-code", device_ip);
 
     println!("[ZynkLink] Device B: Verifying code with remote device...");
 
@@ -5827,7 +5836,7 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
     println!("[ZynkLink] Device B: Code verified! Remote user_id: {}...", &verify_data.user_id[..8]);
 
     // Step 2: Notify remote device to accept the pairing and create local pairing
-    let accept_url = format!("http://{}:57963/api/zynklink/accept-code", device_ip);
+    let accept_url = format!("https://{}:57963/api/zynklink/accept-code", device_ip);
 
     // Get our local IP to send to the remote device
     let local_ip = {
@@ -6106,14 +6115,15 @@ async fn list_remote_directories() -> Result<serde_json::Value, String> {
 
     let mut all_directories = Vec::new();
     let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    // Fetch directories from each remote device via HTTP
+    // Fetch directories from each remote device via HTTPS
     for (remote_device_id, _remote_user_id, device_ip_opt) in paired_devices {
         if let Some(device_ip) = device_ip_opt {
-            let url = format!("http://{}:57963/api/zynklink/directories", device_ip);
+            let url = format!("https://{}:57963/api/zynklink/directories", device_ip);
 
             match client
                 .post(&url)
@@ -6208,11 +6218,12 @@ async fn list_shared_files(share_id: i32, device_id: String) -> Result<serde_jso
         println!("[ZynkLink] Fetching files for remote share {} from device {}... at {}", share_id, &device_id[..8], device_ip);
 
         let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-        let url = format!("http://{}:57963/api/zynklink/files", device_ip);
+        let url = format!("https://{}:57963/api/zynklink/files", device_ip);
 
         match client
             .post(&url)
@@ -6350,8 +6361,11 @@ async fn download_to_knowledge_base(
         let device_ip = device_ip_opt.ok_or("No IP address available for remote device")?;
         println!("[KB Download] Downloading from {}", device_ip);
 
-        let client = reqwest::Client::new();
-        let url = format!("http://{}:57963/api/zynklink/download", device_ip);
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| format!("Failed to build download client: {}", e))?;
+        let url = format!("https://{}:57963/api/zynklink/download", device_ip);
 
         let response = client
             .post(&url)
@@ -6521,8 +6535,11 @@ async fn download_to_custom_location(
 
         let device_ip = device_ip_opt.ok_or("No IP address available for remote device")?;
 
-        let client = reqwest::Client::new();
-        let url = format!("http://{}:57963/api/zynklink/download", device_ip);
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| format!("Failed to build download client: {}", e))?;
+        let url = format!("https://{}:57963/api/zynklink/download", device_ip);
 
         let response = client
             .post(&url)
