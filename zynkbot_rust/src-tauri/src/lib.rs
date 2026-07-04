@@ -5281,11 +5281,19 @@ async fn unpair_device(peer_id: String) -> Result<(), String> {
 /// Returns peer device info including the host's user_id for identity sync
 #[tauri::command]
 async fn add_zynksync_device(host_ip: String, pairing_code: String) -> Result<PeerDevice, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.add_device(&host_ip, &pairing_code).await,
-        None => Err("ZynkSync not started".to_string()),
+    let service = {
+        let global_service = ZYNKSYNC_SERVICE.lock().await;
+        match global_service.as_ref() {
+            Some(s) => std::sync::Arc::clone(s),
+            None => return Err("ZynkSync not started".to_string()),
+        }
+    };
+    let peer = service.add_device(&host_ip, &pairing_code).await?;
+    // Rebuild HTTP client so the newly-pinned peer cert takes effect immediately.
+    if let Err(e) = service.rebuild_http_client().await {
+        eprintln!("[ZynkSync] Warning: failed to rebuild HTTP client after pairing: {}", e);
     }
+    Ok(peer)
 }
 
 /// Remove a manually added device
