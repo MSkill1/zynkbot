@@ -111,7 +111,7 @@ pub async fn verify_sync_code(
     // Mark as used
     sqlx::query(
         "UPDATE user_sync_codes
-         SET used = TRUE, used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         SET used = TRUE, used_at = datetime('now')
          WHERE code = ?"
     )
     .bind(code)

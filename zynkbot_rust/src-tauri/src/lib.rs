@@ -2388,7 +2388,7 @@ async fn send_message_with_memory(
                         .collect();
 
                     for mem_id in memory_ids {
-                        let _ = sqlx::query("UPDATE memories SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+                        let _ = sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ?")
                             .bind(mem_id)
                             .execute(&db_pool)
                             .await;
@@ -4026,7 +4026,7 @@ async fn resolve_conflict(
                 println!("[Rust] ✅ Created elaboration links to memories {} and {}", actual_new_memory_id, existing_memory_id);
 
                 // Update both memories' timestamps to trigger sync
-                sqlx::query("UPDATE memories SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? OR id = ?")
+                sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ? OR id = ?")
                     .bind(actual_new_memory_id)
                     .bind(existing_memory_id)
                     .execute(&pool)
@@ -4051,7 +4051,7 @@ async fn resolve_conflict(
                 println!("[Rust] ✅ Created elaborates link between memories {} and {}", actual_new_memory_id, existing_memory_id);
 
                 // Update both memories' timestamps to trigger sync
-                sqlx::query("UPDATE memories SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? OR id = ?")
+                sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ? OR id = ?")
                     .bind(actual_new_memory_id)
                     .bind(existing_memory_id)
                     .execute(&pool)
@@ -5764,9 +5764,9 @@ async fn generate_zynklink_code() -> Result<serde_json::Value, String> {
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(&device_id)
     .bind(&device_name)
@@ -5908,9 +5908,9 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET device_ip = ?, owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(&device_id)
     .bind(&device_name)
@@ -5925,9 +5925,9 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
     println!("[ZynkLink] Device B: Ensuring remote device is registered with IP {}...", creator_device_ip);
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET device_ip = ?, owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(&verify_data.device_id)
     .bind(&format!("Remote Device {}", &verify_data.device_id[..8]))
@@ -5951,7 +5951,7 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
     sqlx::query(
         "INSERT INTO zynklink_pairings (user1_id, user2_id, device1_id, device2_id, is_active)
          VALUES (?, ?, ?, ?, 1)
-         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = 1, linked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = 1, linked_at = datetime('now')"
     )
     .bind(&user1_id)
     .bind(&user2_id)
@@ -6032,9 +6032,9 @@ async fn share_directory(local_path: String, share_name: String, is_readable: bo
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(&device_id)
     .bind(&device_name)
@@ -6138,7 +6138,7 @@ async fn list_remote_directories() -> Result<serde_json::Value, String> {
                     if response.status().is_success() {
                         // Update last_seen_at on successful connection
                         let _ = sqlx::query(
-                            "UPDATE zynk_devices SET last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE device_id = ?"
+                            "UPDATE zynk_devices SET last_seen_at = datetime('now') WHERE device_id = ?"
                         )
                         .bind(&remote_device_id)
                         .execute(&pool)

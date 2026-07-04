@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS memories (
     content           TEXT NOT NULL,
     source_type       TEXT,
     session_id        TEXT,
-    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     parent_scroll_id  INTEGER,
     chunk_index       INTEGER,
     user_id           TEXT,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS memories (
     event_type        TEXT,
     event_date        TEXT,
     entities_detected TEXT NOT NULL DEFAULT '[]',
-    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
     original_text     TEXT
 );
 
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS memory_links (
     target_memory_id  INTEGER REFERENCES memories(id) ON DELETE CASCADE,
     relation_type     TEXT NOT NULL,
     confidence        REAL NOT NULL DEFAULT 0.5,
-    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     notes             TEXT,
     created_by        TEXT NOT NULL DEFAULT 'system',
     CONSTRAINT memory_links_no_self       CHECK (source_memory_id <> target_memory_id),
@@ -109,7 +109,7 @@ CREATE TABLE IF NOT EXISTS kb_documents (
     file_name      TEXT NOT NULL,
     file_size      INTEGER NOT NULL,
     last_modified  TEXT NOT NULL,
-    indexed_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    indexed_at     TEXT NOT NULL DEFAULT (datetime('now')),
     chunk_count    INTEGER NOT NULL DEFAULT 0,
     status         TEXT NOT NULL DEFAULT 'indexing',
     error_message  TEXT,
@@ -149,8 +149,8 @@ CREATE TABLE IF NOT EXISTS zynk_devices (
     pairing_code             TEXT,
     pairing_code_expires_at  TEXT,
     is_paired                INTEGER NOT NULL DEFAULT 0,
-    last_seen_at             TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    created_at               TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_seen_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
     owner_user_id            TEXT,
     port                     INTEGER NOT NULL DEFAULT 57963
 );
@@ -164,7 +164,7 @@ CREATE TABLE IF NOT EXISTS zynk_device_pairings (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     device_a_id      TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
     device_b_id      TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    paired_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    paired_at        TEXT NOT NULL DEFAULT (datetime('now')),
     last_sync_a_to_b TEXT,
     last_sync_b_to_a TEXT,
     is_active        INTEGER NOT NULL DEFAULT 1,
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS zynk_sync_state (
     source_device_id  TEXT NOT NULL,
     target_device_id  TEXT NOT NULL,
     memory_id         INTEGER NOT NULL,
-    synced_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    synced_at         TEXT NOT NULL DEFAULT (datetime('now')),
     memory_updated_at TEXT,
     UNIQUE(source_device_id, target_device_id, memory_id)
 );
@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS user_sync_codes (
     code       TEXT NOT NULL UNIQUE,
     user_id    TEXT NOT NULL,
     device_id  TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at TEXT NOT NULL,
     used       INTEGER NOT NULL DEFAULT 0,
     used_at    TEXT
@@ -215,8 +215,8 @@ CREATE TABLE IF NOT EXISTS zynk_linked_directories (
     description  TEXT,
     is_readable  INTEGER NOT NULL DEFAULT 1,
     is_writable  INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(device_id, local_path)
 );
 
@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS zynk_file_manifest (
     file_hash            TEXT,
     mime_type            TEXT,
     last_modified        TEXT,
-    indexed_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    indexed_at           TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(shared_directory_id, relative_path)
 );
 
@@ -243,7 +243,7 @@ CREATE TABLE IF NOT EXISTS zynk_link_manifest (
     file_hash            TEXT,
     mime_type            TEXT,
     last_modified        TEXT,
-    indexed_at           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    indexed_at           TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(linked_directory_id, relative_path)
 );
 
@@ -255,7 +255,7 @@ CREATE TABLE IF NOT EXISTS zynklink_codes (
     code                  TEXT NOT NULL UNIQUE,
     creator_user_id       TEXT NOT NULL,
     creator_device_id     TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     expires_at            TEXT,
     accepted_by_user_id   TEXT,
     accepted_by_device_id TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
@@ -275,7 +275,7 @@ CREATE TABLE IF NOT EXISTS zynklink_pairings (
     user2_id    TEXT NOT NULL,
     device1_id  TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
     device2_id  TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    linked_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    linked_at   TEXT NOT NULL DEFAULT (datetime('now')),
     is_active   INTEGER NOT NULL DEFAULT 1,
     UNIQUE(user1_id, user2_id)
 );
@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS zchat_messages (
     from_device_id  TEXT NOT NULL,
     to_device_id    TEXT NOT NULL,
     message_text    TEXT NOT NULL,
-    sent_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    sent_at         TEXT NOT NULL DEFAULT (datetime('now')),
     delivered_at    TEXT,
     read_at         TEXT,
     user_id         TEXT NOT NULL,
@@ -313,8 +313,8 @@ CREATE TABLE IF NOT EXISTS conversation_sessions (
     session_id       TEXT NOT NULL UNIQUE,
     user_id          TEXT NOT NULL,
     title            TEXT,
-    started_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    last_active      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    started_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    last_active      TEXT NOT NULL DEFAULT (datetime('now')),
     message_count    INTEGER NOT NULL DEFAULT 0,
     model_backend    TEXT,
     containment_mode TEXT
@@ -328,7 +328,7 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     user_id          TEXT NOT NULL,
     role             TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
     content          TEXT NOT NULL,
-    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
     model_backend    TEXT,
     containment_mode TEXT,
     entry_hash       TEXT,
@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS message_feedback (
     session_id       TEXT NOT NULL REFERENCES conversation_sessions(session_id) ON DELETE CASCADE,
     user_id          TEXT NOT NULL,
     rating           INTEGER NOT NULL CHECK (rating IN (-1, 1)),
-    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
     model_backend    TEXT,
     containment_mode TEXT,
     UNIQUE (message_id, user_id)
@@ -369,6 +369,6 @@ CREATE INDEX IF NOT EXISTS idx_message_feedback_rating  ON message_feedback(rati
 CREATE TABLE IF NOT EXISTS zynk_device_certificates (
     device_id       TEXT PRIMARY KEY,
     certificate_pem TEXT NOT NULL,
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

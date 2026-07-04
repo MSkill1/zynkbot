@@ -2771,7 +2771,7 @@ async fn handle_heartbeat(
         .ok_or("Missing device_id")?;
 
     sqlx::query(
-        "UPDATE zynk_devices SET last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE device_id = ?"
+        "UPDATE zynk_devices SET last_seen_at = datetime('now') WHERE device_id = ?"
     )
     .bind(device_id)
     .execute(&service.db_pool)
@@ -2897,7 +2897,7 @@ async fn handle_consume_sync_code(
 
     // Mark the code as used so it cannot be reused
     sqlx::query(
-        "UPDATE user_sync_codes SET used = 1, used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+        "UPDATE user_sync_codes SET used = 1, used_at = datetime('now')
          WHERE code = ? AND used = 0"
     )
     .bind(code)
@@ -2909,9 +2909,9 @@ async fn handle_consume_sync_code(
     let client_ip = addr.ip().to_string();
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, last_seen_at, created_at)
-         VALUES (?, 'Remote Device', ?, 57963, '', 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, 'Remote Device', ?, 57963, '', 1, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, is_paired = 1, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET device_ip = ?, is_paired = 1, last_seen_at = datetime('now')"
     )
     .bind(remote_device_id)
     .bind(&client_ip)
@@ -3094,9 +3094,9 @@ async fn handle_zynklink_accept_code(
     println!("[ZynkLink] Device A: Ensuring acceptor's device is registered...");
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET device_ip = ?, owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(acceptor_device_id)
     .bind(&format!("Remote Device {}", &acceptor_device_id[..8]))
@@ -3161,7 +3161,7 @@ async fn handle_zynklink_accept_code(
 
         println!("[ZynkLink] Device A: Storing our own IP {} in database", creator_ip);
         sqlx::query(
-            "UPDATE zynk_devices SET device_ip = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE device_id = ?"
+            "UPDATE zynk_devices SET device_ip = ?, last_seen_at = datetime('now') WHERE device_id = ?"
         )
         .bind(creator_ip)
         .bind(&creator_device_id)

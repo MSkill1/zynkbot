@@ -120,13 +120,13 @@ pub async fn share_directory(
     // Insert into database or update if already exists
     let result = sqlx::query_as::<_, (i32,)>(
         "INSERT INTO zynk_linked_directories (device_id, local_path, share_name, is_readable, is_writable, created_at)
-         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
          ON CONFLICT (device_id, local_path)
          DO UPDATE SET
              share_name = EXCLUDED.share_name,
              is_readable = EXCLUDED.is_readable,
              is_writable = EXCLUDED.is_writable,
-             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             updated_at = datetime('now')
          RETURNING id"
     )
     .bind(device_id)
@@ -335,11 +335,11 @@ async fn scan_directory_recursive(
             // existing (shared_directory_id, relative_path) UNIQUE constraint.
             sqlx::query(
                 "INSERT INTO zynk_file_manifest (shared_directory_id, relative_path, file_size, last_modified, indexed_at)
-                 VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                 VALUES (?, ?, ?, ?, datetime('now'))
                  ON CONFLICT(shared_directory_id, relative_path) DO UPDATE SET
                      file_size = excluded.file_size,
                      last_modified = excluded.last_modified,
-                     indexed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+                     indexed_at = datetime('now')"
             )
             .bind(share_id)
             .bind(&relative_path)
@@ -514,7 +514,7 @@ pub async fn accept_zynklink_code(
     // Mark code as accepted
     sqlx::query(
         "UPDATE zynklink_codes
-         SET accepted_by_user_id = ?, accepted_by_device_id = ?, accepted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), is_active = false
+         SET accepted_by_user_id = ?, accepted_by_device_id = ?, accepted_at = datetime('now'), is_active = false
          WHERE code = ?"
     )
     .bind(acceptor_user_id)
@@ -535,7 +535,7 @@ pub async fn accept_zynklink_code(
     sqlx::query(
         "INSERT INTO zynklink_pairings (user1_id, user2_id, device1_id, device2_id, is_active)
          VALUES (?, ?, ?, ?, true)
-         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = true, linked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = true, linked_at = datetime('now')"
     )
     .bind(&user1_id)
     .bind(&user2_id)
@@ -823,7 +823,7 @@ pub async fn deliver_zchat_to_peer(
         Ok(resp) => {
             // Update last_seen_at on successful connection
             let _ = sqlx::query(
-                "UPDATE zynk_devices SET last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE device_id = ?"
+                "UPDATE zynk_devices SET last_seen_at = datetime('now') WHERE device_id = ?"
             )
             .bind(to_device_id)
             .execute(pool)
