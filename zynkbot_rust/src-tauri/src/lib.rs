@@ -616,6 +616,7 @@ Return the JSON now:"#,
         }
         Err(e) => {
             println!("[Memory Decision] Failed to parse LLM response: {}", e);
+            #[cfg(debug_assertions)]
             println!("[Memory Decision] Response was: {}", response);
             // Fallback to no memory on parse error
             Ok((false, None))
@@ -1059,7 +1060,9 @@ Return the JSON now:"#,
         }
         Err(e) => {
             println!("[Memory Decision] ❌ Failed to parse JSON response: {}", e);
+            #[cfg(debug_assertions)]
             println!("[Memory Decision] Attempted to parse: {}", json_str);
+            #[cfg(debug_assertions)]
             println!("[Memory Decision] Full response was: {}", response);
 
             // Fallback: try simple decision without relationships
