@@ -4543,7 +4543,6 @@ async fn zchat_mark_all_read_from_device(from_device_id: String) -> Result<usize
 #[tauri::command]
 async fn zchat_clear_history(with_device_id: String) -> Result<(), String> {
     let pool = get_db_pool().await?;
-    // Device IDs are stored as binary UUID blobs — must bind as Uuid, not &str
     let device_uuid = uuid::Uuid::parse_str(&with_device_id)
         .map_err(|e| format!("Invalid device ID: {}", e))?;
     sqlx::query(
