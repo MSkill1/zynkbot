@@ -120,13 +120,13 @@ pub async fn share_directory(
     // Insert into database or update if already exists
     let result = sqlx::query_as::<_, (i32,)>(
         "INSERT INTO zynk_linked_directories (device_id, local_path, share_name, is_readable, is_writable, created_at)
-         VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, ?, ?, datetime('now'))
          ON CONFLICT (device_id, local_path)
          DO UPDATE SET
              share_name = EXCLUDED.share_name,
              is_readable = EXCLUDED.is_readable,
              is_writable = EXCLUDED.is_writable,
-             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             updated_at = datetime('now')
          RETURNING id"
     )
     .bind(device_id)
@@ -335,11 +335,11 @@ async fn scan_directory_recursive(
             // existing (shared_directory_id, relative_path) UNIQUE constraint.
             sqlx::query(
                 "INSERT INTO zynk_file_manifest (shared_directory_id, relative_path, file_size, last_modified, indexed_at)
-                 VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                 VALUES (?, ?, ?, ?, datetime('now'))
                  ON CONFLICT(shared_directory_id, relative_path) DO UPDATE SET
                      file_size = excluded.file_size,
                      last_modified = excluded.last_modified,
-                     indexed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+                     indexed_at = datetime('now')"
             )
             .bind(share_id)
             .bind(&relative_path)
@@ -486,7 +486,7 @@ pub async fn accept_zynklink_code(
     let code_record = sqlx::query_as::<_, (String, String, String, bool, Option<String>)>(
         "SELECT creator_user_id, creator_device_id, code, is_active, accepted_by_user_id
          FROM zynklink_codes
-         WHERE code = ? AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+         WHERE code = ? AND (expires_at IS NULL OR expires_at > datetime('now'))"
     )
     .bind(code)
     .fetch_optional(pool)
@@ -514,7 +514,7 @@ pub async fn accept_zynklink_code(
     // Mark code as accepted
     sqlx::query(
         "UPDATE zynklink_codes
-         SET accepted_by_user_id = ?, accepted_by_device_id = ?, accepted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), is_active = false
+         SET accepted_by_user_id = ?, accepted_by_device_id = ?, accepted_at = datetime('now'), is_active = false
          WHERE code = ?"
     )
     .bind(acceptor_user_id)
@@ -535,7 +535,7 @@ pub async fn accept_zynklink_code(
     sqlx::query(
         "INSERT INTO zynklink_pairings (user1_id, user2_id, device1_id, device2_id, is_active)
          VALUES (?, ?, ?, ?, true)
-         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = true, linked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = true, linked_at = datetime('now')"
     )
     .bind(&user1_id)
     .bind(&user2_id)
@@ -630,7 +630,7 @@ pub async fn revoke_zynklink_pairing(
         device1_id.clone()
     };
 
-    let _device_ip_opt = sqlx::query_as::<_, (Option<String>,)>(
+    let other_device_ip = sqlx::query_as::<_, (Option<String>,)>(
         "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
     )
     .bind(&other_device_id)
@@ -640,14 +640,21 @@ pub async fn revoke_zynklink_pairing(
     .flatten()
     .and_then(|r| r.0);
 
-    // DELETE chat messages between these devices
+    // DELETE chat messages between these devices.
+    // zchat_messages stores device IDs as UUID blobs, not text strings.
+    let uuid1 = uuid::Uuid::parse_str(&device1_id)
+        .map_err(|e| format!("Invalid device1 UUID: {}", e))?;
+    let uuid2 = uuid::Uuid::parse_str(&device2_id)
+        .map_err(|e| format!("Invalid device2 UUID: {}", e))?;
     let deleted_messages = sqlx::query(
         "DELETE FROM zchat_messages
          WHERE (from_device_id = ? AND to_device_id = ?)
             OR (from_device_id = ? AND to_device_id = ?)"
     )
-    .bind(&device1_id)
-    .bind(&device2_id)
+    .bind(uuid1)
+    .bind(uuid2)
+    .bind(uuid2)
+    .bind(uuid1)
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to delete chat messages: {}", e))?;
@@ -684,9 +691,60 @@ pub async fn revoke_zynklink_pairing(
 
     println!("[ZynkLink] ✓ Unlinked from user {}", &linked_user_id[..8]);
 
+    // Remove the remote device record if it's now fully orphaned — best-effort, non-fatal
+    match sqlx::query(
+        "DELETE FROM zynk_devices
+         WHERE device_id = ?
+           AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device_a_id = device_id OR device_b_id = device_id)
+           AND NOT EXISTS (SELECT 1 FROM zynklink_pairings WHERE is_active = 1 AND (device1_id = device_id OR device2_id = device_id))"
+    )
+    .bind(&other_device_id)
+    .execute(pool)
+    .await {
+        Ok(r) if r.rows_affected() > 0 => println!("[ZynkLink] Cleaned up orphaned device record {}", &other_device_id[..8]),
+        Err(e) => println!("[ZynkLink] Note: orphaned device cleanup failed (non-fatal): {}", e),
+        _ => {}
+    }
+
+    // Sweep expired / already-used ZynkLink codes — best-effort
+    match sqlx::query(
+        "DELETE FROM zynklink_codes
+         WHERE is_active = 0
+            OR (expires_at IS NOT NULL AND expires_at < datetime('now'))"
+    )
+    .execute(pool)
+    .await {
+        Ok(r) if r.rows_affected() > 0 => println!("[ZynkLink] Swept {} expired/used ZynkLink code(s)", r.rows_affected()),
+        Err(e) => println!("[ZynkLink] Note: code sweep failed (non-fatal): {}", e),
+        _ => {}
+    }
+
+    // Best-effort push: tell the remote device to remove its pairing record too.
+    // Fire-and-forget — if the remote is offline the auth check on their server
+    // will block any further file/chat access anyway.
+    if let Some(ip) = other_device_ip {
+        let notify_url = format!("https://{}:57963/api/zynklink/notify-unpaired", ip);
+        let payload = serde_json::json!({ "unlinked_user_id": user_id });
+        tokio::spawn(async move {
+            match reqwest::Client::builder()
+                .danger_accept_invalid_certs(true)
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+            {
+                Ok(client) => {
+                    match client.post(&notify_url).json(&payload).send().await {
+                        Ok(_) => println!("[ZynkLink] ✓ Unlink notification sent to remote device"),
+                        Err(e) => println!("[ZynkLink] Note: could not notify remote device of unlink (offline?): {}", e),
+                    }
+                }
+                Err(e) => println!("[ZynkLink] Note: could not build notify client: {}", e),
+            }
+        });
+    }
+
     Ok(serde_json::json!({
         "success": true,
-        "message": "Unlinked successfully. Please also unlink on the other device to complete disconnection."
+        "message": "Unlinked successfully."
     }))
 }
 
@@ -748,13 +806,14 @@ pub async fn deliver_zchat_to_peer(
     println!("[ZynkLink] Delivering {} message(s) to device {}... at {}",
         messages.len(), &to_device_id[..8], device_ip);
 
-    // Send messages via HTTP
+    // Send messages via HTTPS (peer cert not pinned here — TOFU accepted for ZynkLink chat)
     let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let url = format!("http://{}:57963/api/zynklink/deliver-chat", device_ip);
+    let url = format!("https://{}:57963/api/zynklink/deliver-chat", device_ip);
 
     let response = match client
         .post(&url)
@@ -764,7 +823,7 @@ pub async fn deliver_zchat_to_peer(
         Ok(resp) => {
             // Update last_seen_at on successful connection
             let _ = sqlx::query(
-                "UPDATE zynk_devices SET last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE device_id = ?"
+                "UPDATE zynk_devices SET last_seen_at = datetime('now') WHERE device_id = ?"
             )
             .bind(to_device_id)
             .execute(pool)

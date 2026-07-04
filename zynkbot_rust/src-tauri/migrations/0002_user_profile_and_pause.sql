@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS app_settings (
     key        TEXT PRIMARY KEY,
     value      TEXT,
-    updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- Pause flag for ZynkLink pairings (local-only, does not sync to other device)

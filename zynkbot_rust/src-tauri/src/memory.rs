@@ -651,7 +651,7 @@ pub async fn create_memory_link(
     .await?;
 
     sqlx::query(
-        "UPDATE memories SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+        "UPDATE memories SET updated_at = datetime('now') WHERE id = ?",
     )
     .bind(source_memory_id)
     .execute(pool)

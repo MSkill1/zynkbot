@@ -340,7 +340,7 @@ pub async fn index_document(
     }
 
     // Mark document as indexed
-    sqlx::query("UPDATE kb_documents SET status = 'indexed', indexed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+    sqlx::query("UPDATE kb_documents SET status = 'indexed', indexed_at = datetime('now') WHERE id = ?")
         .bind(doc_id)
         .execute(&mut *tx)
         .await
@@ -455,7 +455,7 @@ pub async fn index_text_as_document(
     }
 
     // Mark document as successfully indexed
-    sqlx::query("UPDATE kb_documents SET status = 'indexed', indexed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+    sqlx::query("UPDATE kb_documents SET status = 'indexed', indexed_at = datetime('now') WHERE id = ?")
         .bind(doc_id)
         .execute(&mut *tx)
         .await

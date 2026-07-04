@@ -71,7 +71,7 @@ pub async fn log_exchange(
              (session_id, user_id, title, model_backend, containment_mode)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (session_id) DO UPDATE SET
-             last_active   = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+             last_active   = datetime('now'),
              message_count = conversation_sessions.message_count + 2,
              model_backend = EXCLUDED.model_backend",
     )

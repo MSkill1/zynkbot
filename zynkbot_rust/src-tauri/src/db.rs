@@ -25,18 +25,22 @@ pub async fn create_pool() -> Result<SqlitePool, sqlx::Error> {
     let url = get_db_url();
     println!("[Rust DB] Opening SQLite database: {}", url);
 
+    // SQLite PRAGMAs that are per-connection must be set via after_connect so every
+    // connection checked out of the pool gets them. Setting them only on the pool
+    // object (as was done before) applies only to one connection; other connections
+    // in the pool silently inherit SQLite defaults (foreign_keys=OFF, etc.).
     let pool = SqlitePoolOptions::new()
         .max_connections(20)
         .acquire_timeout(std::time::Duration::from_secs(5))
+        .after_connect(|conn, _meta| Box::pin(async move {
+            sqlx::query("PRAGMA journal_mode=WAL").execute(&mut *conn).await?;
+            sqlx::query("PRAGMA foreign_keys=ON").execute(&mut *conn).await?;
+            sqlx::query("PRAGMA synchronous=NORMAL").execute(&mut *conn).await?;
+            sqlx::query("PRAGMA busy_timeout=15000").execute(&mut *conn).await?;
+            Ok(())
+        }))
         .connect(&url)
         .await?;
-
-    sqlx::query("PRAGMA journal_mode=WAL").execute(&pool).await?;
-    sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await?;
-    sqlx::query("PRAGMA synchronous=NORMAL").execute(&pool).await?;
-    // Wait up to 15s for a contended write lock before failing. Defensive: callers
-    // should not hold transactions across slow non-DB work (see kb_rag.rs).
-    sqlx::query("PRAGMA busy_timeout=15000").execute(&pool).await?;
 
     // Run migrations — idempotent, sqlx tracks applied versions in _sqlx_migrations
     sqlx::migrate!("./migrations")

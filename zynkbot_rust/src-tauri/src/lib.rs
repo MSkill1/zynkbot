@@ -21,6 +21,7 @@ mod knowledge_base;  // External reference document system
 mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod conversation_history;  // Persistent conversation log with full-text search
 mod db;  // Database connection pool
+mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
 
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -2387,7 +2388,7 @@ async fn send_message_with_memory(
                         .collect();
 
                     for mem_id in memory_ids {
-                        let _ = sqlx::query("UPDATE memories SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?")
+                        let _ = sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ?")
                             .bind(mem_id)
                             .execute(&db_pool)
                             .await;
@@ -4025,7 +4026,7 @@ async fn resolve_conflict(
                 println!("[Rust] ✅ Created elaboration links to memories {} and {}", actual_new_memory_id, existing_memory_id);
 
                 // Update both memories' timestamps to trigger sync
-                sqlx::query("UPDATE memories SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? OR id = ?")
+                sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ? OR id = ?")
                     .bind(actual_new_memory_id)
                     .bind(existing_memory_id)
                     .execute(&pool)
@@ -4050,7 +4051,7 @@ async fn resolve_conflict(
                 println!("[Rust] ✅ Created elaborates link between memories {} and {}", actual_new_memory_id, existing_memory_id);
 
                 // Update both memories' timestamps to trigger sync
-                sqlx::query("UPDATE memories SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? OR id = ?")
+                sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ? OR id = ?")
                     .bind(actual_new_memory_id)
                     .bind(existing_memory_id)
                     .execute(&pool)
@@ -4970,6 +4971,16 @@ async fn auto_start_http_server() -> Result<(), String> {
 
     println!("[HTTP Server] Device: {} ({})", device_name, device_id);
 
+    // Load or generate this device's TLS certificate for encrypted LAN communication
+    let data_dir = crate::db::get_app_data_dir();
+    let (cert_pem, key_pem, cert_der) = match crate::tls::load_or_generate_cert(&data_dir) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("[HTTP Server] ❌ TLS certificate error: {}", e);
+            return Err(format!("Failed to initialize TLS: {}", e));
+        }
+    };
+
     // Create ZynkSync service (but don't start auto-sync yet)
     // Use 60 second interval to match UI expectations
     let service = Arc::new(ZynkSyncService::new(
@@ -4977,6 +4988,9 @@ async fn auto_start_http_server() -> Result<(), String> {
         device_name,
         db_pool,
         Some(60), // 60 second sync interval
+        cert_pem,
+        key_pem,
+        cert_der,
     ));
 
     // Start HTTP server on port 57963
@@ -5006,6 +5020,9 @@ async fn auto_start_http_server() -> Result<(), String> {
         // Load devices from database
         if let Err(e) = service.load_devices().await {
             println!("[ZynkSync] ⚠️ Failed to load devices: {}", e);
+        }
+        if let Err(e) = service.rebuild_http_client().await {
+            println!("[ZynkSync] ⚠️ Failed to rebuild HTTP client with peer certs: {}", e);
         }
 
         // Generate pairing code
@@ -5077,6 +5094,9 @@ async fn start_zynksync(_sync_interval_secs: Option<u64>) -> Result<String, Stri
     // Load manually added devices from database
     if let Err(e) = service.load_devices().await {
         println!("[ZynkSync] ⚠️ Failed to load devices: {}", e);
+    }
+    if let Err(e) = service.rebuild_http_client().await {
+        println!("[ZynkSync] ⚠️ Failed to rebuild HTTP client with peer certs: {}", e);
     }
 
     // Generate pairing code for this device
@@ -5261,11 +5281,19 @@ async fn unpair_device(peer_id: String) -> Result<(), String> {
 /// Returns peer device info including the host's user_id for identity sync
 #[tauri::command]
 async fn add_zynksync_device(host_ip: String, pairing_code: String) -> Result<PeerDevice, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.add_device(&host_ip, &pairing_code).await,
-        None => Err("ZynkSync not started".to_string()),
+    let service = {
+        let global_service = ZYNKSYNC_SERVICE.lock().await;
+        match global_service.as_ref() {
+            Some(s) => std::sync::Arc::clone(s),
+            None => return Err("ZynkSync not started".to_string()),
+        }
+    };
+    let peer = service.add_device(&host_ip, &pairing_code).await?;
+    // Rebuild HTTP client so the newly-pinned peer cert takes effect immediately.
+    if let Err(e) = service.rebuild_http_client().await {
+        eprintln!("[ZynkSync] Warning: failed to rebuild HTTP client after pairing: {}", e);
     }
+    Ok(peer)
 }
 
 /// Remove a manually added device
@@ -5635,9 +5663,13 @@ async fn verify_sync_code_info(code: String) -> Result<sync_codes::SyncCodeInfo,
 async fn sync_with_code(code: String, device_ip: String) -> Result<serde_json::Value, String> {
     println!("[SyncCode] Device B: Verifying code {} with remote device {}", code, device_ip);
 
-    // Step 1: Verify code on REMOTE device (Device A) via HTTP
-    let client = reqwest::Client::new();
-    let verify_url = format!("http://{}:57963/api/identity/verify-sync-code", device_ip);
+    // Step 1: Verify code on REMOTE device (Device A) via HTTPS (TOFU — cert not yet pinned).
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build sync client: {}", e))?;
+    let verify_url = format!("https://{}:57963/api/identity/verify-sync-code", device_ip);
 
     let response = client
         .post(&verify_url)
@@ -5672,7 +5704,7 @@ async fn sync_with_code(code: String, device_ip: String) -> Result<serde_json::V
     println!("[SyncCode] Device B: Linked to user {}...", &identity.user_id[..8]);
 
     // Step 3: Notify remote device to consume code and establish pairing
-    let consume_url = format!("http://{}:57963/api/identity/consume-sync-code", device_ip);
+    let consume_url = format!("https://{}:57963/api/identity/consume-sync-code", device_ip);
     let _consume_response = client
         .post(&consume_url)
         .json(&serde_json::json!({
@@ -5732,9 +5764,9 @@ async fn generate_zynklink_code() -> Result<serde_json::Value, String> {
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(&device_id)
     .bind(&device_name)
@@ -5764,9 +5796,14 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
     let user_id = user_identity::get_user_id()?;
     let device_id = user_identity::get_device_id()?;
 
-    // Step 1: Verify code on REMOTE device (Device A) via HTTP
-    let client = reqwest::Client::new();
-    let verify_url = format!("http://{}:57963/api/zynklink/verify-code", device_ip);
+    // Step 1: Verify code on REMOTE device (Device A) via HTTPS.
+    // Peer cert is not yet pinned — TOFU accepted; the code exchange provides authentication.
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("Failed to build link client: {}", e))?;
+    let verify_url = format!("https://{}:57963/api/zynklink/verify-code", device_ip);
 
     println!("[ZynkLink] Device B: Verifying code with remote device...");
 
@@ -5799,7 +5836,7 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
     println!("[ZynkLink] Device B: Code verified! Remote user_id: {}...", &verify_data.user_id[..8]);
 
     // Step 2: Notify remote device to accept the pairing and create local pairing
-    let accept_url = format!("http://{}:57963/api/zynklink/accept-code", device_ip);
+    let accept_url = format!("https://{}:57963/api/zynklink/accept-code", device_ip);
 
     // Get our local IP to send to the remote device
     let local_ip = {
@@ -5871,9 +5908,9 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET device_ip = ?, owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(&device_id)
     .bind(&device_name)
@@ -5888,9 +5925,9 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
     println!("[ZynkLink] Device B: Ensuring remote device is registered with IP {}...", creator_device_ip);
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET device_ip = ?, owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(&verify_data.device_id)
     .bind(&format!("Remote Device {}", &verify_data.device_id[..8]))
@@ -5914,7 +5951,7 @@ async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device_ip:
     sqlx::query(
         "INSERT INTO zynklink_pairings (user1_id, user2_id, device1_id, device2_id, is_active)
          VALUES (?, ?, ?, ?, 1)
-         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = 1, linked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = 1, linked_at = datetime('now')"
     )
     .bind(&user1_id)
     .bind(&user2_id)
@@ -5995,9 +6032,9 @@ async fn share_directory(local_path: String, share_name: String, is_readable: bo
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, true, 57963, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         VALUES (?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET owner_user_id = ?, last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         SET owner_user_id = ?, last_seen_at = datetime('now')"
     )
     .bind(&device_id)
     .bind(&device_name)
@@ -6078,19 +6115,21 @@ async fn list_remote_directories() -> Result<serde_json::Value, String> {
 
     let mut all_directories = Vec::new();
     let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    // Fetch directories from each remote device via HTTP
+    // Fetch directories from each remote device via HTTPS
     for (remote_device_id, _remote_user_id, device_ip_opt) in paired_devices {
         if let Some(device_ip) = device_ip_opt {
-            let url = format!("http://{}:57963/api/zynklink/directories", device_ip);
+            let url = format!("https://{}:57963/api/zynklink/directories", device_ip);
 
             match client
                 .post(&url)
                 .json(&serde_json::json!({
-                    "device_id": remote_device_id
+                    "device_id": remote_device_id,
+                    "requester_user_id": user_id
                 }))
                 .send()
                 .await
@@ -6099,7 +6138,7 @@ async fn list_remote_directories() -> Result<serde_json::Value, String> {
                     if response.status().is_success() {
                         // Update last_seen_at on successful connection
                         let _ = sqlx::query(
-                            "UPDATE zynk_devices SET last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE device_id = ?"
+                            "UPDATE zynk_devices SET last_seen_at = datetime('now') WHERE device_id = ?"
                         )
                         .bind(&remote_device_id)
                         .execute(&pool)
@@ -6152,6 +6191,7 @@ async fn scan_shared_directory(share_id: i32, max_files: Option<usize>) -> Resul
 #[tauri::command]
 async fn list_shared_files(share_id: i32, device_id: String) -> Result<serde_json::Value, String> {
     let local_device_id = user_identity::get_device_id()?;
+    let local_user_id = user_identity::get_user_id()?;
 
     let db_url = crate::db::get_db_url();
     let pool = sqlx::SqlitePool::connect(&db_url)
@@ -6180,16 +6220,18 @@ async fn list_shared_files(share_id: i32, device_id: String) -> Result<serde_jso
         println!("[ZynkLink] Fetching files for remote share {} from device {}... at {}", share_id, &device_id[..8], device_ip);
 
         let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-        let url = format!("http://{}:57963/api/zynklink/files", device_ip);
+        let url = format!("https://{}:57963/api/zynklink/files", device_ip);
 
         match client
             .post(&url)
             .json(&serde_json::json!({
-                "share_id": share_id
+                "share_id": share_id,
+                "requester_user_id": local_user_id
             }))
             .send()
             .await
@@ -6265,6 +6307,7 @@ async fn download_to_knowledge_base(
         share_id, relative_path, &device_id[..8]);
 
     let local_device_id = user_identity::get_device_id()?;
+    let local_user_id = user_identity::get_user_id()?;
     println!("[KB Download] Local device: {}...", &local_device_id[..8]);
 
     // Get user's knowledge base folder path (cross-platform)
@@ -6322,14 +6365,18 @@ async fn download_to_knowledge_base(
         let device_ip = device_ip_opt.ok_or("No IP address available for remote device")?;
         println!("[KB Download] Downloading from {}", device_ip);
 
-        let client = reqwest::Client::new();
-        let url = format!("http://{}:57963/api/zynklink/download", device_ip);
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| format!("Failed to build download client: {}", e))?;
+        let url = format!("https://{}:57963/api/zynklink/download", device_ip);
 
         let response = client
             .post(&url)
             .json(&serde_json::json!({
                 "share_id": share_id,
-                "relative_path": relative_path
+                "relative_path": relative_path,
+                "requester_user_id": local_user_id
             }))
             .send()
             .await
@@ -6459,6 +6506,7 @@ async fn download_to_custom_location(
     use tokio::io::AsyncWriteExt;
 
     let local_device_id = user_identity::get_device_id()?;
+    let local_user_id = user_identity::get_user_id()?;
 
     // Check if this is a local or remote share
     if device_id == local_device_id {
@@ -6493,14 +6541,18 @@ async fn download_to_custom_location(
 
         let device_ip = device_ip_opt.ok_or("No IP address available for remote device")?;
 
-        let client = reqwest::Client::new();
-        let url = format!("http://{}:57963/api/zynklink/download", device_ip);
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| format!("Failed to build download client: {}", e))?;
+        let url = format!("https://{}:57963/api/zynklink/download", device_ip);
 
         let response = client
             .post(&url)
             .json(&serde_json::json!({
                 "share_id": share_id,
-                "relative_path": relative_path
+                "relative_path": relative_path,
+                "requester_user_id": local_user_id
             }))
             .send()
             .await

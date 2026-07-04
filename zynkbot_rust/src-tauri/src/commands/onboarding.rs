@@ -167,7 +167,7 @@ pub async fn complete_onboarding(
                 for candidate in candidates.iter().take(3) {
                     let link_result = sqlx::query(
                         "INSERT INTO memory_links (from_memory_id, to_memory_id, relationship_type, strength, created_at)
-                         VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+                         VALUES (?, ?, ?, ?, datetime('now'))
                          ON CONFLICT (from_memory_id, to_memory_id) DO NOTHING"
                     )
                     .bind(memory.id)
