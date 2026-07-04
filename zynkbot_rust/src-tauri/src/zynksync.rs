@@ -3323,6 +3323,35 @@ async fn handle_zynklink_notify_unpaired(
     println!("[ZynkLink] Remote unlink: removed {} pairing record(s) for user {}",
         result.rows_affected(), &unlinked_user_id[..8.min(unlinked_user_id.len())]);
 
+    // Clean up orphaned device records (no remaining sync or link pairings)
+    let local_device_id = crate::user_identity::get_device_id().unwrap_or_default();
+    let deleted_devices = sqlx::query(
+        "DELETE FROM zynk_devices
+         WHERE device_id != ?
+           AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device1_id = zynk_devices.device_id OR device2_id = zynk_devices.device_id)
+           AND NOT EXISTS (SELECT 1 FROM zynklink_pairings WHERE is_active = 1 AND (device1_id = zynk_devices.device_id OR device2_id = zynk_devices.device_id))"
+    )
+    .bind(&local_device_id)
+    .execute(&service.db_pool)
+    .await
+    .map_err(|e| format!("Failed to clean up orphaned devices: {}", e))?;
+    if deleted_devices.rows_affected() > 0 {
+        println!("[ZynkLink] Cleaned up {} orphaned device record(s)", deleted_devices.rows_affected());
+    }
+
+    // Sweep expired / already-used ZynkLink codes
+    let deleted_codes = sqlx::query(
+        "DELETE FROM zynklink_codes
+         WHERE is_active = 0
+            OR (expires_at IS NOT NULL AND expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+    )
+    .execute(&service.db_pool)
+    .await
+    .map_err(|e| format!("Failed to sweep expired codes: {}", e))?;
+    if deleted_codes.rows_affected() > 0 {
+        println!("[ZynkLink] Swept {} expired/used ZynkLink code(s)", deleted_codes.rows_affected());
+    }
+
     if let Ok(guard) = crate::APP_HANDLE.lock() {
         if let Some(app) = guard.as_ref() {
             let _ = app.emit("zynklink-pairing-updated", serde_json::json!({

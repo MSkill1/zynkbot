@@ -691,6 +691,34 @@ pub async fn revoke_zynklink_pairing(
 
     println!("[ZynkLink] ✓ Unlinked from user {}", &linked_user_id[..8]);
 
+    // Remove the remote device record if it's now fully orphaned (no sync or link pairings left)
+    let deleted_device = sqlx::query(
+        "DELETE FROM zynk_devices
+         WHERE device_id = ?
+           AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device1_id = device_id OR device2_id = device_id)
+           AND NOT EXISTS (SELECT 1 FROM zynklink_pairings WHERE is_active = 1 AND (device1_id = device_id OR device2_id = device_id))"
+    )
+    .bind(&other_device_id)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to clean up orphaned device: {}", e))?;
+    if deleted_device.rows_affected() > 0 {
+        println!("[ZynkLink] Cleaned up orphaned device record {}", &other_device_id[..8]);
+    }
+
+    // Sweep expired / already-used ZynkLink codes
+    let deleted_codes = sqlx::query(
+        "DELETE FROM zynklink_codes
+         WHERE is_active = 0
+            OR (expires_at IS NOT NULL AND expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to sweep expired codes: {}", e))?;
+    if deleted_codes.rows_affected() > 0 {
+        println!("[ZynkLink] Swept {} expired/used ZynkLink code(s)", deleted_codes.rows_affected());
+    }
+
     // Best-effort push: tell the remote device to remove its pairing record too.
     // Fire-and-forget — if the remote is offline the auth check on their server
     // will block any further file/chat access anyway.
