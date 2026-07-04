@@ -236,6 +236,9 @@ impl ZynkSyncService {
 
         let cert_count = rows.len();
         let mut builder = reqwest::ClientBuilder::new()
+            // Peers connect by LAN IP but certs are issued for "localhost".
+            // Skip hostname matching; still verify the cert against the pinned root.
+            .danger_accept_invalid_hostnames(true)
             .timeout(std::time::Duration::from_secs(30));
 
         for row in rows {
