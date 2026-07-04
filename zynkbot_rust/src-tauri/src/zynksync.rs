@@ -3318,6 +3318,18 @@ async fn handle_zynklink_notify_unpaired(
     let local_user_id = crate::user_identity::get_user_id()
         .map_err(|e| format!("Failed to get local user ID: {}", e))?;
 
+    // Fetch device IDs before deleting the pairing so we can sweep zchat messages
+    let device_ids = sqlx::query_as::<_, (String, String)>(
+        "SELECT device1_id, device2_id FROM zynklink_pairings
+         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
+    )
+    .bind(&local_user_id).bind(unlinked_user_id)
+    .bind(unlinked_user_id).bind(&local_user_id)
+    .fetch_optional(&service.db_pool)
+    .await
+    .ok()
+    .flatten();
+
     let result = sqlx::query(
         "DELETE FROM zynklink_pairings
          WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
@@ -3331,12 +3343,30 @@ async fn handle_zynklink_notify_unpaired(
     println!("[ZynkLink] Remote unlink: removed {} pairing record(s) for user {}",
         result.rows_affected(), &unlinked_user_id[..8.min(unlinked_user_id.len())]);
 
+    // Delete zchat messages between the two devices — best-effort
+    if let Some((d1, d2)) = device_ids {
+        if let (Ok(uuid1), Ok(uuid2)) = (uuid::Uuid::parse_str(&d1), uuid::Uuid::parse_str(&d2)) {
+            match sqlx::query(
+                "DELETE FROM zchat_messages
+                 WHERE (from_device_id = ? AND to_device_id = ?)
+                    OR (from_device_id = ? AND to_device_id = ?)"
+            )
+            .bind(uuid1).bind(uuid2).bind(uuid2).bind(uuid1)
+            .execute(&service.db_pool)
+            .await {
+                Ok(r) if r.rows_affected() > 0 => println!("[ZynkLink] Deleted {} zchat message(s) on remote unlink", r.rows_affected()),
+                Err(e) => println!("[ZynkLink] Note: zchat cleanup failed (non-fatal): {}", e),
+                _ => {}
+            }
+        }
+    }
+
     // Clean up orphaned device records — best-effort, must not block the UI event below
     let local_device_id = crate::user_identity::get_device_id().unwrap_or_default();
     match sqlx::query(
         "DELETE FROM zynk_devices
          WHERE device_id != ?
-           AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device1_id = zynk_devices.device_id OR device2_id = zynk_devices.device_id)
+           AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device_a_id = zynk_devices.device_id OR device_b_id = zynk_devices.device_id)
            AND NOT EXISTS (SELECT 1 FROM zynklink_pairings WHERE is_active = 1 AND (device1_id = zynk_devices.device_id OR device2_id = zynk_devices.device_id))"
     )
     .bind(&local_device_id)

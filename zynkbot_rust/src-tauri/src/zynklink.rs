@@ -695,7 +695,7 @@ pub async fn revoke_zynklink_pairing(
     match sqlx::query(
         "DELETE FROM zynk_devices
          WHERE device_id = ?
-           AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device1_id = device_id OR device2_id = device_id)
+           AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device_a_id = device_id OR device_b_id = device_id)
            AND NOT EXISTS (SELECT 1 FROM zynklink_pairings WHERE is_active = 1 AND (device1_id = device_id OR device2_id = device_id))"
     )
     .bind(&other_device_id)
