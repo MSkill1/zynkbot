@@ -3148,35 +3148,41 @@ async fn check_zynklink_authorized(pool: &sqlx::SqlitePool, requester_user_id: &
 async fn handle_zynklink_directories(
     State(service): State<Arc<ZynkSyncService>>,
     Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let requester_user_id = request.get("requester_user_id")
         .and_then(|v| v.as_str())
-        .ok_or("Missing requester_user_id")?;
-    check_zynklink_authorized(&service.db_pool, requester_user_id).await?;
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing requester_user_id"}))))?;
+
+    check_zynklink_authorized(&service.db_pool, requester_user_id).await
+        .map_err(|e| (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": e}))))?;
 
     let local_device_id = crate::user_identity::get_device_id()
-        .map_err(|e| format!("Failed to get local device ID: {}", e))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
     let response = crate::zynklink::list_my_shared_directories(
         &service.db_pool,
         &local_device_id
-    ).await?;
+    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
-    Ok(Json(serde_json::to_value(response).map_err(|e| format!("Serialization error: {}", e))?))
+    serde_json::to_value(response)
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))
 }
 
 /// List files in a shared directory
 async fn handle_zynklink_files(
     State(service): State<Arc<ZynkSyncService>>,
     Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let requester_user_id = request.get("requester_user_id")
         .and_then(|v| v.as_str())
-        .ok_or("Missing requester_user_id")?;
-    check_zynklink_authorized(&service.db_pool, requester_user_id).await?;
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing requester_user_id"}))))?;
+
+    check_zynklink_authorized(&service.db_pool, requester_user_id).await
+        .map_err(|e| (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": e}))))?;
 
     let share_id = request.get("share_id")
         .and_then(|s| s.as_i64())
-        .ok_or("Missing share_id parameter")? as i32;
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing share_id parameter"}))))? as i32;
 
     println!("[ZynkLink] File list request for share_id: {}", share_id);
 
@@ -3193,30 +3199,34 @@ async fn handle_zynklink_files(
     let response = crate::zynklink::list_files(
         &service.db_pool,
         share_id
-    ).await?;
+    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
-    Ok(Json(serde_json::to_value(response).map_err(|e| format!("Serialization error: {}", e))?))
+    serde_json::to_value(response)
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))
 }
 
 /// Download a file from a shared directory
 async fn handle_zynklink_download(
     State(service): State<Arc<ZynkSyncService>>,
     Json(request): Json<serde_json::Value>,
-) -> Result<axum::response::Response, String> {
+) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
     use tokio::io::AsyncReadExt;
 
     let requester_user_id = request.get("requester_user_id")
         .and_then(|v| v.as_str())
-        .ok_or("Missing requester_user_id")?;
-    check_zynklink_authorized(&service.db_pool, requester_user_id).await?;
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing requester_user_id"}))))?;
+
+    check_zynklink_authorized(&service.db_pool, requester_user_id).await
+        .map_err(|e| (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": e}))))?;
 
     let share_id = request.get("share_id")
         .and_then(|s| s.as_i64())
-        .ok_or("Missing share_id parameter")? as i32;
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing share_id parameter"}))))? as i32;
 
     let relative_path = request.get("relative_path")
         .and_then(|p| p.as_str())
-        .ok_or("Missing relative_path parameter")?;
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing relative_path parameter"}))))?;
 
     println!("[ZynkLink] Download request for share_id: {}, path: {}", share_id, relative_path);
 
@@ -3224,7 +3234,7 @@ async fn handle_zynklink_download(
         &service.db_pool,
         share_id,
         relative_path
-    ).await?;
+    ).await.map_err(|e| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))))?;
 
     // Open the file and read metadata for the Content-Length header. Previously this
     // function read the entire file into a single Vec<u8> via tokio::fs::read(), which
@@ -3232,9 +3242,9 @@ async fn handle_zynklink_download(
     // 4GB on the sender. Now we stream 64KB chunks via futures::stream::unfold so
     // memory stays bounded regardless of file size.
     let file = tokio::fs::File::open(&file_path).await
-        .map_err(|e| format!("Failed to open file: {}", e))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to open file: {}", e)}))))?;
     let file_size = file.metadata().await
-        .map_err(|e| format!("Failed to read file metadata: {}", e))?
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to read file metadata: {}", e)}))))?
         .len();
 
     let filename = file_path
@@ -3257,14 +3267,12 @@ async fn handle_zynklink_download(
         }
     });
 
-    let response = axum::response::Response::builder()
+    axum::response::Response::builder()
         .header("Content-Type", "application/octet-stream")
         .header("Content-Length", file_size.to_string())
         .header("Content-Disposition", format!("attachment; filename=\"{}\"", filename))
         .body(axum::body::Body::from_stream(stream))
-        .map_err(|e| format!("Failed to build response: {}", e))?;
-
-    Ok(response)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))
 }
 
 /// Receive and store chat messages from a ZynkLink-paired device
@@ -3323,9 +3331,9 @@ async fn handle_zynklink_notify_unpaired(
     println!("[ZynkLink] Remote unlink: removed {} pairing record(s) for user {}",
         result.rows_affected(), &unlinked_user_id[..8.min(unlinked_user_id.len())]);
 
-    // Clean up orphaned device records (no remaining sync or link pairings)
+    // Clean up orphaned device records — best-effort, must not block the UI event below
     let local_device_id = crate::user_identity::get_device_id().unwrap_or_default();
-    let deleted_devices = sqlx::query(
+    match sqlx::query(
         "DELETE FROM zynk_devices
          WHERE device_id != ?
            AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device1_id = zynk_devices.device_id OR device2_id = zynk_devices.device_id)
@@ -3333,23 +3341,23 @@ async fn handle_zynklink_notify_unpaired(
     )
     .bind(&local_device_id)
     .execute(&service.db_pool)
-    .await
-    .map_err(|e| format!("Failed to clean up orphaned devices: {}", e))?;
-    if deleted_devices.rows_affected() > 0 {
-        println!("[ZynkLink] Cleaned up {} orphaned device record(s)", deleted_devices.rows_affected());
+    .await {
+        Ok(r) if r.rows_affected() > 0 => println!("[ZynkLink] Cleaned up {} orphaned device record(s)", r.rows_affected()),
+        Err(e) => println!("[ZynkLink] Note: orphaned device cleanup failed (non-fatal): {}", e),
+        _ => {}
     }
 
-    // Sweep expired / already-used ZynkLink codes
-    let deleted_codes = sqlx::query(
+    // Sweep expired / already-used ZynkLink codes — best-effort
+    match sqlx::query(
         "DELETE FROM zynklink_codes
          WHERE is_active = 0
             OR (expires_at IS NOT NULL AND expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
     )
     .execute(&service.db_pool)
-    .await
-    .map_err(|e| format!("Failed to sweep expired codes: {}", e))?;
-    if deleted_codes.rows_affected() > 0 {
-        println!("[ZynkLink] Swept {} expired/used ZynkLink code(s)", deleted_codes.rows_affected());
+    .await {
+        Ok(r) if r.rows_affected() > 0 => println!("[ZynkLink] Swept {} expired/used ZynkLink code(s)", r.rows_affected()),
+        Err(e) => println!("[ZynkLink] Note: code sweep failed (non-fatal): {}", e),
+        _ => {}
     }
 
     if let Ok(guard) = crate::APP_HANDLE.lock() {
