@@ -81,8 +81,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ## Debug Logging
 
 ### KI-006 — Verbose debug output in development builds
-**Status:** Open  
-**Description:** Several `println!` statements remain in `lib.rs` and `conversation_engine.rs` that dump full prompts and raw LLM output to the terminal. These are intentional for development but should be gated behind a debug feature flag before the 1.0 release.
+**Status:** Fixed  
+**Description:** Several `println!` statements in `lib.rs` and `zynksync.rs` dumped full LLM responses and raw HTTP payloads to the terminal. Gated behind `#[cfg(debug_assertions)]` — silent in release builds, visible in `cargo tauri dev`.
 
 ---
 

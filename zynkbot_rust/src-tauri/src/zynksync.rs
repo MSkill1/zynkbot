@@ -448,6 +448,7 @@ impl ZynkSyncService {
         if !status.is_success() {
             // Try to read error response body for debugging
             let error_body = response.text().await.unwrap_or_else(|_| "Could not read error body".to_string());
+            #[cfg(debug_assertions)]
             println!("[ZynkSync] Error response body: {}", error_body);
             return Err(format!("Pairing failed (status {}): {}", status, error_body));
         }
@@ -456,12 +457,14 @@ impl ZynkSyncService {
         let response_text = response.text().await
             .map_err(|e| format!("Could not read response body: {}", e))?;
 
+        #[cfg(debug_assertions)]
         println!("[ZynkSync] Received response body ({} bytes): {}", response_text.len(), response_text);
 
         // Try to parse it as JSON
         let device_info: serde_json::Value = serde_json::from_str(&response_text)
             .map_err(|e| format!("Invalid JSON response from device: {} | Response was: {}", e, response_text))?;
 
+        #[cfg(debug_assertions)]
         println!("[ZynkSync] Successfully parsed response JSON: {}", serde_json::to_string_pretty(&device_info).unwrap_or_default());
 
         // Check for security warning in response
@@ -474,6 +477,7 @@ impl ZynkSyncService {
                 .unwrap_or("medium");
 
             println!("[ZynkSync] ⚠️ PAIRING WARNING ({}): {}", severity, warning_msg);
+            #[cfg(debug_assertions)]
             println!("[ZynkSync] Full warning: {}", serde_json::to_string_pretty(&warning).unwrap_or_default());
 
             // Emit Tauri event for frontend to display
@@ -2740,6 +2744,7 @@ async fn handle_verify_pairing(
             }
 
             // Log the exact response we're about to send for debugging
+            #[cfg(debug_assertions)]
             println!("[ZynkSync] Sending response to client: {}", serde_json::to_string_pretty(&response).unwrap_or_else(|_| "Failed to serialize".to_string()));
 
             // Validate that the response is proper JSON before sending
