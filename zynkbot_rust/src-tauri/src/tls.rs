@@ -59,6 +59,9 @@ fn generate_and_save(data_dir: &Path) -> Result<(String, String, Vec<u8>), Strin
 pub fn build_server_config(cert_pem: &str, key_pem: &str) -> Result<rustls::ServerConfig, String> {
     use rustls_pemfile::{certs, private_key};
     use std::io::BufReader;
+    // rustls 0.23 requires an explicit provider when multiple backends (aws-lc-rs, ring)
+    // are both compiled in. Install ring (pure Rust, PIC-safe) as the process default.
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let cert_chain: Vec<rustls::pki_types::CertificateDer<'static>> = {
         let mut reader = BufReader::new(cert_pem.as_bytes());

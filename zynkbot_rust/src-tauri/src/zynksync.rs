@@ -236,7 +236,6 @@ impl ZynkSyncService {
 
         let cert_count = rows.len();
         let mut builder = reqwest::ClientBuilder::new()
-            .use_rustls_tls()
             .timeout(std::time::Duration::from_secs(30));
 
         for row in rows {
@@ -419,7 +418,6 @@ impl ZynkSyncService {
         // Use a TOFU client for the initial pairing request — the peer cert is not yet pinned.
         // The pairing code provides the authentication; the cert is pinned after this exchange.
         let tofu_client = reqwest::ClientBuilder::new()
-            .use_rustls_tls()
             .danger_accept_invalid_certs(true)
             .timeout(Duration::from_secs(5))
             .build()

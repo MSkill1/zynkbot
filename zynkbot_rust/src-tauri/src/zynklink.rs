@@ -750,7 +750,6 @@ pub async fn deliver_zchat_to_peer(
 
     // Send messages via HTTPS (peer cert not pinned here — TOFU accepted for ZynkLink chat)
     let client = reqwest::Client::builder()
-        .use_rustls_tls()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(10))
         .build()
