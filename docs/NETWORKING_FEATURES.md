@@ -280,7 +280,7 @@ All networking features share common infrastructure:
 
 ### Current (v0.9 Production)
 
-- ⚠️ **Plain HTTP** over local WiFi (not encrypted in transit)
+- ✅ **TLS 1.3 encryption** for all sync traffic (self-signed certs, automatic trust on pairing)
 - ⚠️ **Pairing codes** expire after 10 minutes
 - ⚠️ **Local network only** - not exposed to internet
 - ✅ **Path validation** prevents directory traversal
@@ -299,7 +299,6 @@ All networking features share common infrastructure:
 ### Future Enhancements
 
 See [ROADMAP.md](ROADMAP.md) for planned security features:
-- TLS 1.3 encryption for all sync traffic
 - Device authentication with cryptographic keys
 - Audit logs for all network operations
 - Optional end-to-end encryption

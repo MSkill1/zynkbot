@@ -10,6 +10,13 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 - Conversation history sync across paired devices via ZynkSync
 
+### Security
+- LAN traffic between ZynkSync and ZynkLink devices is now encrypted with TLS 1.3 (self-signed certificates generated on first run, automatically trusted on pairing)
+- Sync endpoints now reject requests from devices that have been unsynced, preventing re-insertion after removal
+- Unsync now propagates automatically to the peer device via push notification
+- Fixed: unlink and unsync now fully clean up both sides, including chat history and orphaned device records
+- Fixed: auth errors from sync handlers now return proper HTTP 4xx status codes instead of 200 OK
+
 ---
 
 ## [1.0.0] — Initial Public Release

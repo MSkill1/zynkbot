@@ -23,7 +23,7 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - **Image attachment support** — attach JPEG, PNG, and WebP images to messages when using a vision-capable API backend (Anthropic, OpenAI, xAI); option hidden automatically for local models that don't support vision
 - **PDF support in Knowledge Base** — index PDF files alongside plain text; extract and chunk text content for RAG search the same way .txt files are handled today
 - **Word document (.docx) support in Knowledge Base** — index .docx files the same way PDFs are handled; extract text content for RAG search
-- End-to-end encryption for ZynkLink, ZynkSync, and ZChat (LAN traffic)
+- ~~End-to-end encryption for ZynkLink, ZynkSync, and ZChat (LAN traffic)~~ ✅
 - Semantic conflict detection during sync (see labs/zynksync_improvements/)
 - Performance optimization (memory usage, startup time)
 - Cross-platform testing (Windows, Linux, macOS)
@@ -173,8 +173,7 @@ Early groundwork for the developer platform. Full SDK public release is v3.0; v1
 - **Selective Device Sync** — Choose which paired devices receive which namespaces
 
 ### Security
-- **TLS 1.3 Encryption** — Encrypt all ZynkSync/ZynkLink/ZChat traffic
-  - Generate self-signed certs on first run; automatic cert trust between paired devices
+- ~~**TLS 1.3 Encryption** — Encrypt all ZynkSync/ZynkLink/ZChat traffic~~ ✅
 - **Device Authentication** — ED25519 keypairs per device, sign sync requests, prevent MITM
 - **Audit Logging** — Comprehensive exportable logs for all network operations (who synced what, when)
 

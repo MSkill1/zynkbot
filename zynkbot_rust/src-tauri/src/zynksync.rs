@@ -594,20 +594,10 @@ impl ZynkSyncService {
         Ok(peer)
     }
 
-    /// Remove a device
-    pub async fn remove_device(&self, device_id: &str) -> Result<(), String> {
+    /// Remove a device from the database and in-memory map only — no peer notification.
+    /// Called directly by `handle_notify_unsynced` to avoid a round-trip loop.
+    async fn remove_device_db_only(&self, device_id: &str) -> Result<(), String> {
         println!("[ZynkSync] Removing device: {}", device_id);
-
-        // Grab peer IP before the transaction deletes the zynk_devices row
-        let peer_ip = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
-        )
-        .bind(device_id)
-        .fetch_optional(&self.db_pool)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|r| r.0);
 
         // zchat_messages stores device IDs as UUID blobs, not text strings.
         let device_uuid = uuid::Uuid::parse_str(device_id)
@@ -689,6 +679,23 @@ impl ZynkSyncService {
         }
 
         println!("[ZynkSync] ✓ Removed device {} and all related data", device_id);
+        Ok(())
+    }
+
+    /// Remove a device and notify the peer to do the same (fire-and-forget).
+    pub async fn remove_device(&self, device_id: &str) -> Result<(), String> {
+        // Grab peer IP before the transaction deletes the zynk_devices row
+        let peer_ip = sqlx::query_as::<_, (Option<String>,)>(
+            "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
+        )
+        .bind(device_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.0);
+
+        self.remove_device_db_only(device_id).await?;
 
         // Best-effort: tell the peer to remove us from its list too.
         // Fire-and-forget — if they're offline the auth check blocks re-insertion anyway.
@@ -2807,8 +2814,9 @@ async fn handle_notify_unsynced(
 
     println!("[ZynkSync] Peer {} initiated unsync — removing from local list", &removed_device_id[..removed_device_id.len().min(8)]);
 
-    // Best-effort — device may already be gone or never fully paired
-    match service.remove_device(removed_device_id).await {
+    // Best-effort — device may already be gone or never fully paired.
+    // Call db_only to avoid firing a return notification (round-trip loop).
+    match service.remove_device_db_only(removed_device_id).await {
         Ok(_) => println!("[ZynkSync] ✓ Removed peer device on their request"),
         Err(e) => println!("[ZynkSync] Note: remove_device on notify-unsynced failed (non-fatal): {}", e),
     }
