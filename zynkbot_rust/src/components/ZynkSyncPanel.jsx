@@ -81,7 +81,9 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
       });
 
       const result = results.find(r => r.peer_device_id === peer.device_id) || results[0];
-      if (result) {
+      if (result && !result.success) {
+        setMessage(`✗ Sync failed: ${result.error || 'Unknown error'}`);
+      } else if (result) {
         setMessage(`✓ Synced with ${peer.device_name}: sent ${result.memories_sent}, received ${result.memories_received}`);
       } else {
         setMessage(`✓ Sync complete`);

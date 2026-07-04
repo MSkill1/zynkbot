@@ -2435,11 +2435,6 @@ async fn handle_receive_sync(
     State(service): State<Arc<ZynkSyncService>>,
     Json(memories): Json<Vec<SyncMemory>>,
 ) -> Result<Json<serde_json::Value>, String> {
-    // Check if auto-sync is enabled before accepting sync
-    if !service.is_auto_sync_enabled().await {
-        return Err("Auto-sync is disabled on this device".to_string());
-    }
-
     println!("[ZynkSync] Received {} memories from peer", memories.len());
 
     let stored_count = service.receive_from_peer(memories).await?;
@@ -2809,11 +2804,6 @@ async fn handle_get_inventory(
     State(service): State<Arc<ZynkSyncService>>,
     Json(request): Json<InventoryRequest>,
 ) -> Result<Json<MemoryInventory>, String> {
-    // Check if auto-sync is enabled before responding to inventory requests
-    if !service.is_auto_sync_enabled().await {
-        return Err("Auto-sync is disabled on this device".to_string());
-    }
-
     // Inventory request logging omitted — covered by per-sync summary
 
     let inventory = service.get_local_inventory(&request.user_id).await?;
@@ -2826,11 +2816,6 @@ async fn handle_delete_memories(
     State(service): State<Arc<ZynkSyncService>>,
     Json(ids): Json<Vec<i32>>,
 ) -> Result<Json<serde_json::Value>, String> {
-    // Check if auto-sync is enabled before accepting deletion requests
-    if !service.is_auto_sync_enabled().await {
-        return Err("Auto-sync is disabled on this device".to_string());
-    }
-
     println!("[ZynkSync] Delete request for {} memories", ids.len());
 
     let deleted_count = service.delete_memories_by_ids(&ids).await?;
@@ -2846,11 +2831,6 @@ async fn handle_fetch_memories(
     State(service): State<Arc<ZynkSyncService>>,
     Json(ids): Json<Vec<i32>>,
 ) -> Result<Json<Vec<SyncMemory>>, String> {
-    // Check if auto-sync is enabled before responding to fetch requests
-    if !service.is_auto_sync_enabled().await {
-        return Err("Auto-sync is disabled on this device".to_string());
-    }
-
     println!("[ZynkSync] Fetch request for {} memories", ids.len());
 
     let memories = service.get_memories_by_ids(&ids).await?;
@@ -2864,11 +2844,6 @@ async fn handle_delete_by_hash(
     State(service): State<Arc<ZynkSyncService>>,
     Json(request): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, String> {
-    // Check if auto-sync is enabled before accepting deletion requests
-    if !service.is_auto_sync_enabled().await {
-        return Err("Auto-sync is disabled on this device".to_string());
-    }
-
     let content_hash = request.get("content_hash")
         .and_then(|v| v.as_str())
         .ok_or("Missing content_hash parameter")?;
@@ -3228,10 +3203,6 @@ async fn handle_receive_conversations(
     State(service): State<Arc<ZynkSyncService>>,
     Json(payload): Json<ConversationSyncPayload>,
 ) -> Result<Json<serde_json::Value>, String> {
-    if !service.is_auto_sync_enabled().await {
-        return Err("Auto-sync is disabled on this device".to_string());
-    }
-
     // Incoming conversation count omitted — covered by receive_conversations_from_peer summary
 
     let (sessions_stored, messages_stored) = service.receive_conversations_from_peer(payload).await?;
