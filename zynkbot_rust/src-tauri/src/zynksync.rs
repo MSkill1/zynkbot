@@ -2601,7 +2601,7 @@ async fn handle_verify_pairing(
         "SELECT device_id, device_name, pairing_code_expires_at
          FROM zynk_devices
          WHERE pairing_code = ?
-           AND pairing_code_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+           AND pairing_code_expires_at > datetime('now')
            AND device_id = ?"  // Make sure it's OUR pairing code
     )
     .bind(pairing_code)
@@ -2861,7 +2861,7 @@ async fn handle_verify_sync_code(
 
     // Query database to verify the sync code
     let result = sqlx::query_as::<_, (String, String)>(
-        "SELECT user_id, device_id FROM user_sync_codes WHERE code = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+        "SELECT user_id, device_id FROM user_sync_codes WHERE code = ? AND expires_at > datetime('now')"
     )
     .bind(code)
     .fetch_optional(&service.db_pool)
@@ -3045,7 +3045,7 @@ async fn handle_zynklink_verify_code(
     // Query database to verify the ZynkLink code
     let result = sqlx::query_as::<_, (String, String)>(
         "SELECT creator_user_id, creator_device_id FROM zynklink_codes
-         WHERE code = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now') AND is_active = 1"
+         WHERE code = ? AND expires_at > datetime('now') AND is_active = 1"
     )
     .bind(code)
     .fetch_optional(&service.db_pool)
@@ -3496,7 +3496,7 @@ async fn handle_zynklink_notify_unpaired(
     match sqlx::query(
         "DELETE FROM zynklink_codes
          WHERE is_active = 0
-            OR (expires_at IS NOT NULL AND expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+            OR (expires_at IS NOT NULL AND expires_at < datetime('now'))"
     )
     .execute(&service.db_pool)
     .await {

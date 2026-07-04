@@ -177,7 +177,7 @@ pub async fn get_code_info(
 /// Replaces the PostgreSQL `cleanup_expired_sync_codes()` stored function that does not
 /// exist in SQLite. Plain DELETE — same semantics, just inlined.
 pub async fn cleanup_expired_codes(pool: &SqlitePool) -> Result<(), String> {
-    sqlx::query("DELETE FROM user_sync_codes WHERE expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now')")
+    sqlx::query("DELETE FROM user_sync_codes WHERE expires_at < datetime('now')")
         .execute(pool)
         .await
         .map_err(|e| format!("Failed to cleanup expired codes: {}", e))?;
@@ -193,7 +193,7 @@ pub async fn get_active_codes_count(pool: &SqlitePool) -> Result<i64, String> {
     let row = sqlx::query(
         "SELECT COUNT(*) as count
          FROM user_sync_codes
-         WHERE NOT used AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+         WHERE NOT used AND expires_at > datetime('now')"
     )
     .fetch_one(pool)
     .await

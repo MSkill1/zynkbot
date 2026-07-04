@@ -486,7 +486,7 @@ pub async fn accept_zynklink_code(
     let code_record = sqlx::query_as::<_, (String, String, String, bool, Option<String>)>(
         "SELECT creator_user_id, creator_device_id, code, is_active, accepted_by_user_id
          FROM zynklink_codes
-         WHERE code = ? AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+         WHERE code = ? AND (expires_at IS NULL OR expires_at > datetime('now'))"
     )
     .bind(code)
     .fetch_optional(pool)
@@ -710,7 +710,7 @@ pub async fn revoke_zynklink_pairing(
     match sqlx::query(
         "DELETE FROM zynklink_codes
          WHERE is_active = 0
-            OR (expires_at IS NOT NULL AND expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+            OR (expires_at IS NOT NULL AND expires_at < datetime('now'))"
     )
     .execute(pool)
     .await {
