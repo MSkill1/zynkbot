@@ -235,11 +235,19 @@ impl ZynkSyncService {
         .map_err(|e| format!("Failed to load peer certs: {}", e))?;
 
         let cert_count = rows.len();
+        // Tag every outgoing request with our device ID so the remote can
+        // reject it if we've been removed from their peer list.
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        if let Ok(val) = reqwest::header::HeaderValue::from_str(&self.device_id) {
+            default_headers.insert("x-device-id", val);
+        }
+
         let mut builder = reqwest::ClientBuilder::new()
             // Peers connect by LAN IP but certs are issued for "localhost".
             // Skip hostname matching; still verify the cert against the pinned root.
             .danger_accept_invalid_hostnames(true)
-            .timeout(std::time::Duration::from_secs(30));
+            .timeout(std::time::Duration::from_secs(30))
+            .default_headers(default_headers);
 
         for row in rows {
             let cert_der: Option<Vec<u8>> = row.try_get("tls_cert_der").ok().flatten();
@@ -2483,16 +2491,19 @@ impl ZynkSyncService {
 /// Axum handler for receiving sync memories from a peer
 async fn handle_receive_sync(
     State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
     Json(memories): Json<Vec<SyncMemory>>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
+
     println!("[ZynkSync] Received {} memories from peer", memories.len());
+    let stored_count = service.receive_from_peer(memories).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
-    let stored_count = service.receive_from_peer(memories).await?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "stored": stored_count
-    })))
+    Ok(Json(serde_json::json!({ "success": true, "stored": stored_count })))
 }
 
 /// Axum handler for getting device info (used when adding devices manually)
@@ -2852,39 +2863,51 @@ async fn handle_consume_sync_code(
 /// Axum handler for getting memory inventory (for "active device wins" sync)
 async fn handle_get_inventory(
     State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<InventoryRequest>,
-) -> Result<Json<MemoryInventory>, String> {
-    // Inventory request logging omitted — covered by per-sync summary
+) -> Result<Json<MemoryInventory>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
 
-    let inventory = service.get_local_inventory(&request.user_id).await?;
-
+    let inventory = service.get_local_inventory(&request.user_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
     Ok(Json(inventory))
 }
 
 /// Axum handler for deleting memories by ID (used when remote is active and doesn't have them)
 async fn handle_delete_memories(
     State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
     Json(ids): Json<Vec<i32>>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
+
     println!("[ZynkSync] Delete request for {} memories", ids.len());
+    let deleted_count = service.delete_memories_by_ids(&ids).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
-    let deleted_count = service.delete_memories_by_ids(&ids).await?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "deleted": deleted_count
-    })))
+    Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
 }
 
 /// Axum handler for fetching specific memories by ID (used when remote needs to pull our memories)
 async fn handle_fetch_memories(
     State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
     Json(ids): Json<Vec<i32>>,
-) -> Result<Json<Vec<SyncMemory>>, String> {
+) -> Result<Json<Vec<SyncMemory>>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
+
     println!("[ZynkSync] Fetch request for {} memories", ids.len());
-
-    let memories = service.get_memories_by_ids(&ids).await?;
-
+    let memories = service.get_memories_by_ids(&ids).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
     Ok(Json(memories))
 }
 
@@ -2892,15 +2915,20 @@ async fn handle_fetch_memories(
 /// Used for real-time deletion propagation when user manually deletes a memory
 async fn handle_delete_by_hash(
     State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, String> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
+
     let content_hash = request.get("content_hash")
         .and_then(|v| v.as_str())
-        .ok_or("Missing content_hash parameter")?;
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing content_hash parameter"}))))?;
 
     println!("[ZynkSync] Delete-by-hash request for hash: {}", content_hash);
 
-    // Find the memory ID by content hash (compute SHA256 in Rust since SQLite has no sha256())
     let memory_id: Option<i32> = {
         use sha2::{Digest, Sha256};
         let rows: Vec<(i32, String)> = sqlx::query_as::<_, (i32, String)>(
@@ -2908,7 +2936,7 @@ async fn handle_delete_by_hash(
         )
         .fetch_all(&service.db_pool)
         .await
-        .map_err(|e| format!("Failed to lookup memories: {}", e))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to lookup memories: {}", e)}))))?;
         rows.into_iter()
             .find(|(_, c)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
             .map(|(id, _)| id)
@@ -2917,28 +2945,18 @@ async fn handle_delete_by_hash(
     match memory_id {
         Some(id) => {
             println!("[ZynkSync] Found memory ID {} for hash {}", id, content_hash);
-
-            // Delete the memory
             let result = sqlx::query("DELETE FROM memories WHERE id = ?")
                 .bind(id)
                 .execute(&service.db_pool)
                 .await
-                .map_err(|e| format!("Failed to delete memory: {}", e))?;
-
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to delete memory: {}", e)}))))?;
             let deleted_count = result.rows_affected();
             println!("[ZynkSync] Deleted {} memory(s)", deleted_count);
-
-            Ok(Json(serde_json::json!({
-                "success": true,
-                "deleted": deleted_count
-            })))
+            Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
         }
         None => {
             println!("[ZynkSync] No memory found with hash {}", content_hash);
-            Ok(Json(serde_json::json!({
-                "success": true,
-                "deleted": 0
-            })))
+            Ok(Json(serde_json::json!({ "success": true, "deleted": 0 })))
         }
     }
 }
@@ -3123,6 +3141,27 @@ async fn handle_zynklink_accept_code(
     Ok(Json(result))
 }
 
+/// Check that the requesting device_id has an active entry in zynk_device_pairings.
+/// Used to reject sync requests from devices that have been removed on this side.
+async fn check_sync_authorized(
+    pool: &sqlx::SqlitePool,
+    device_id: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM zynk_device_pairings WHERE device_a_id = ? OR device_b_id = ?"
+    )
+    .bind(device_id).bind(device_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+
+    if count == 0 {
+        println!("[ZynkSync] Rejected sync from unpaired device {}", &device_id[..device_id.len().min(8)]);
+        return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Device not paired"}))));
+    }
+    Ok(())
+}
+
 /// List shared directories from a device
 /// Check that requester_user_id has an active ZynkLink pairing with this device's user.
 async fn check_zynklink_authorized(pool: &sqlx::SqlitePool, requester_user_id: &str) -> Result<(), String> {
@@ -3292,11 +3331,16 @@ async fn handle_zynklink_deliver_chat(
 /// Receive conversation sessions and messages from a peer device
 async fn handle_receive_conversations(
     State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
     Json(payload): Json<ConversationSyncPayload>,
-) -> Result<Json<serde_json::Value>, String> {
-    // Incoming conversation count omitted — covered by receive_conversations_from_peer summary
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
 
-    let (sessions_stored, messages_stored) = service.receive_conversations_from_peer(payload).await?;
+    let (sessions_stored, messages_stored) = service.receive_conversations_from_peer(payload).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
     Ok(Json(serde_json::json!({
         "success": true,
