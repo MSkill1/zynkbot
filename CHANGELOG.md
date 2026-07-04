@@ -12,6 +12,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ### Security
 - LAN traffic between ZynkSync and ZynkLink devices is now encrypted with TLS 1.3 (self-signed certificates generated on first run, automatically trusted on pairing)
+- **Breaking change for existing paired devices**: both devices must be updated to this version simultaneously. A device on the old plain-HTTP build cannot communicate with one on the new TLS build. After updating both devices, re-establish the pairing normally — no data is lost.
 - Sync endpoints now reject requests from devices that have been unsynced, preventing re-insertion after removal
 - Unsync now propagates automatically to the peer device via push notification
 - Fixed: unlink and unsync now fully clean up both sides, including chat history and orphaned device records
