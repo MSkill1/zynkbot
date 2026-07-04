@@ -285,6 +285,7 @@ All networking features share common infrastructure:
 - ⚠️ **Local network only** - not exposed to internet
 - ✅ **Path validation** prevents directory traversal
 - ✅ **Pairing required** for all network features
+- ℹ️ **One trust relationship per device pair** — unsyncing a device also removes its ZynkLink pairing. Re-link after re-syncing if needed. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) (KI-009).
 
 **Safe for:**
 - Home networks

@@ -66,6 +66,18 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+## Networking
+
+### KI-009 — Unsyncing a device also removes the ZynkLink pairing
+**Status:** Open / by design  
+**Affected:** Users who have both ZynkSync and ZynkLink active between the same two devices  
+**Description:** ZynkSync and ZynkLink share a single device trust record. Unsyncing removes that record entirely, which also clears the ZynkLink pairing. If you were sharing a folder between the two devices, you will need to re-establish the ZynkLink pairing after re-syncing.  
+**Why:** One trust relationship per device pair — revoking it revokes everything. This is simpler and more secure than maintaining separate trust states for each feature.  
+**Workaround:** After re-syncing, re-open ZynkLink and re-add the shared directory. The sync pairing and link pairing are independent operations, so re-linking takes only a few seconds.  
+**Fix target:** No fix planned for v1.x. A split trust model (separate sync and link relationships) could be added in a future release if there is user demand.
+
+---
+
 ## Debug Logging
 
 ### KI-006 — Verbose debug output in development builds
