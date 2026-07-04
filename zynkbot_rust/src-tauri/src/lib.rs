@@ -6128,7 +6128,8 @@ async fn list_remote_directories() -> Result<serde_json::Value, String> {
             match client
                 .post(&url)
                 .json(&serde_json::json!({
-                    "device_id": remote_device_id
+                    "device_id": remote_device_id,
+                    "requester_user_id": user_id
                 }))
                 .send()
                 .await
@@ -6190,6 +6191,7 @@ async fn scan_shared_directory(share_id: i32, max_files: Option<usize>) -> Resul
 #[tauri::command]
 async fn list_shared_files(share_id: i32, device_id: String) -> Result<serde_json::Value, String> {
     let local_device_id = user_identity::get_device_id()?;
+    let local_user_id = user_identity::get_user_id()?;
 
     let db_url = crate::db::get_db_url();
     let pool = sqlx::SqlitePool::connect(&db_url)
@@ -6228,7 +6230,8 @@ async fn list_shared_files(share_id: i32, device_id: String) -> Result<serde_jso
         match client
             .post(&url)
             .json(&serde_json::json!({
-                "share_id": share_id
+                "share_id": share_id,
+                "requester_user_id": local_user_id
             }))
             .send()
             .await
@@ -6304,6 +6307,7 @@ async fn download_to_knowledge_base(
         share_id, relative_path, &device_id[..8]);
 
     let local_device_id = user_identity::get_device_id()?;
+    let local_user_id = user_identity::get_user_id()?;
     println!("[KB Download] Local device: {}...", &local_device_id[..8]);
 
     // Get user's knowledge base folder path (cross-platform)
@@ -6371,7 +6375,8 @@ async fn download_to_knowledge_base(
             .post(&url)
             .json(&serde_json::json!({
                 "share_id": share_id,
-                "relative_path": relative_path
+                "relative_path": relative_path,
+                "requester_user_id": local_user_id
             }))
             .send()
             .await
@@ -6501,6 +6506,7 @@ async fn download_to_custom_location(
     use tokio::io::AsyncWriteExt;
 
     let local_device_id = user_identity::get_device_id()?;
+    let local_user_id = user_identity::get_user_id()?;
 
     // Check if this is a local or remote share
     if device_id == local_device_id {
@@ -6545,7 +6551,8 @@ async fn download_to_custom_location(
             .post(&url)
             .json(&serde_json::json!({
                 "share_id": share_id,
-                "relative_path": relative_path
+                "relative_path": relative_path,
+                "requester_user_id": local_user_id
             }))
             .send()
             .await

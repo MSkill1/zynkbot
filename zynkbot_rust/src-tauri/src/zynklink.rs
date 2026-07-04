@@ -630,7 +630,7 @@ pub async fn revoke_zynklink_pairing(
         device1_id.clone()
     };
 
-    let _device_ip_opt = sqlx::query_as::<_, (Option<String>,)>(
+    let other_device_ip = sqlx::query_as::<_, (Option<String>,)>(
         "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
     )
     .bind(&other_device_id)
@@ -691,9 +691,32 @@ pub async fn revoke_zynklink_pairing(
 
     println!("[ZynkLink] ✓ Unlinked from user {}", &linked_user_id[..8]);
 
+    // Best-effort push: tell the remote device to remove its pairing record too.
+    // Fire-and-forget — if the remote is offline the auth check on their server
+    // will block any further file/chat access anyway.
+    if let Some(ip) = other_device_ip {
+        let notify_url = format!("https://{}:57963/api/zynklink/notify-unpaired", ip);
+        let payload = serde_json::json!({ "unlinked_user_id": user_id });
+        tokio::spawn(async move {
+            match reqwest::Client::builder()
+                .danger_accept_invalid_certs(true)
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+            {
+                Ok(client) => {
+                    match client.post(&notify_url).json(&payload).send().await {
+                        Ok(_) => println!("[ZynkLink] ✓ Unlink notification sent to remote device"),
+                        Err(e) => println!("[ZynkLink] Note: could not notify remote device of unlink (offline?): {}", e),
+                    }
+                }
+                Err(e) => println!("[ZynkLink] Note: could not build notify client: {}", e),
+            }
+        });
+    }
+
     Ok(serde_json::json!({
         "success": true,
-        "message": "Unlinked successfully. Please also unlink on the other device to complete disconnection."
+        "message": "Unlinked successfully."
     }))
 }
 

@@ -3124,15 +3124,38 @@ async fn handle_zynklink_accept_code(
 }
 
 /// List shared directories from a device
+/// Check that requester_user_id has an active ZynkLink pairing with this device's user.
+async fn check_zynklink_authorized(pool: &sqlx::SqlitePool, requester_user_id: &str) -> Result<(), String> {
+    let local_user_id = crate::user_identity::get_user_id()
+        .map_err(|e| format!("Failed to get local user ID: {}", e))?;
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM zynklink_pairings
+         WHERE is_active = 1
+         AND ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
+    )
+    .bind(&local_user_id).bind(requester_user_id)
+    .bind(requester_user_id).bind(&local_user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("Failed to check ZynkLink authorization: {}", e))?;
+    if count == 0 {
+        Err("Not authorized: no active ZynkLink pairing with this user".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 async fn handle_zynklink_directories(
     State(service): State<Arc<ZynkSyncService>>,
-    Json(_request): Json<serde_json::Value>,
+    Json(request): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, String> {
-    // Get OUR (local) device ID - the one that's sharing directories
+    let requester_user_id = request.get("requester_user_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing requester_user_id")?;
+    check_zynklink_authorized(&service.db_pool, requester_user_id).await?;
+
     let local_device_id = crate::user_identity::get_device_id()
         .map_err(|e| format!("Failed to get local device ID: {}", e))?;
-
-    // List directories shared by THIS device (not the requesting device)
     let response = crate::zynklink::list_my_shared_directories(
         &service.db_pool,
         &local_device_id
@@ -3146,6 +3169,11 @@ async fn handle_zynklink_files(
     State(service): State<Arc<ZynkSyncService>>,
     Json(request): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, String> {
+    let requester_user_id = request.get("requester_user_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing requester_user_id")?;
+    check_zynklink_authorized(&service.db_pool, requester_user_id).await?;
+
     let share_id = request.get("share_id")
         .and_then(|s| s.as_i64())
         .ok_or("Missing share_id parameter")? as i32;
@@ -3176,6 +3204,11 @@ async fn handle_zynklink_download(
     Json(request): Json<serde_json::Value>,
 ) -> Result<axum::response::Response, String> {
     use tokio::io::AsyncReadExt;
+
+    let requester_user_id = request.get("requester_user_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing requester_user_id")?;
+    check_zynklink_authorized(&service.db_pool, requester_user_id).await?;
 
     let share_id = request.get("share_id")
         .and_then(|s| s.as_i64())
@@ -3264,17 +3297,40 @@ async fn handle_receive_conversations(
     })))
 }
 
-/// Handle notification that a device has unpaired
-/// Since both devices share the same database, the pairing is already deleted
-/// This just acknowledges the notification - the UI will refresh on next interval (30s)
+/// Handle notification that a remote device has unlinked.
+/// Removes the local pairing record and emits a UI refresh event.
 async fn handle_zynklink_notify_unpaired(
-    State(_service): State<Arc<ZynkSyncService>>,
-    Json(_payload): Json<serde_json::Value>,
+    State(service): State<Arc<ZynkSyncService>>,
+    Json(payload): Json<serde_json::Value>,
 ) -> Result<axum::Json<serde_json::Value>, String> {
-    println!("[ZynkLink] Received unpair notification - UI will refresh automatically");
+    let unlinked_user_id = payload.get("unlinked_user_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing unlinked_user_id")?;
 
-    Ok(axum::Json(serde_json::json!({
-        "success": true,
-        "message": "Unpair notification received"
-    })))
+    let local_user_id = crate::user_identity::get_user_id()
+        .map_err(|e| format!("Failed to get local user ID: {}", e))?;
+
+    let result = sqlx::query(
+        "DELETE FROM zynklink_pairings
+         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
+    )
+    .bind(&local_user_id).bind(unlinked_user_id)
+    .bind(unlinked_user_id).bind(&local_user_id)
+    .execute(&service.db_pool)
+    .await
+    .map_err(|e| format!("Failed to remove pairing: {}", e))?;
+
+    println!("[ZynkLink] Remote unlink: removed {} pairing record(s) for user {}",
+        result.rows_affected(), &unlinked_user_id[..8.min(unlinked_user_id.len())]);
+
+    if let Ok(guard) = crate::APP_HANDLE.lock() {
+        if let Some(app) = guard.as_ref() {
+            let _ = app.emit("zynklink-pairing-updated", serde_json::json!({
+                "unlinked": true,
+                "remote_user_id": unlinked_user_id
+            }));
+        }
+    }
+
+    Ok(axum::Json(serde_json::json!({ "success": true })))
 }
