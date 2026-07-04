@@ -305,6 +305,19 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
     };
   }, []);
 
+  // Listen for remote-initiated unsync and refresh the peer list immediately
+  useEffect(() => {
+    let unlisten;
+    const setup = async () => {
+      unlisten = await listen('zynksync-device-removed', () => {
+        fetchPeers();
+        setMessage('✓ A device unsynced remotely — peer list updated.');
+      });
+    };
+    setup();
+    return () => { if (typeof unlisten === 'function') unlisten(); };
+  }, [fetchPeers]);
+
   // Auto-refresh peers every 30 seconds when service is running
   useEffect(() => {
     if (syncStatus === 'running' && autoRefresh) {

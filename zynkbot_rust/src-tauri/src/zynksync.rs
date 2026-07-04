@@ -598,6 +598,17 @@ impl ZynkSyncService {
     pub async fn remove_device(&self, device_id: &str) -> Result<(), String> {
         println!("[ZynkSync] Removing device: {}", device_id);
 
+        // Grab peer IP before the transaction deletes the zynk_devices row
+        let peer_ip = sqlx::query_as::<_, (Option<String>,)>(
+            "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
+        )
+        .bind(device_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|r| r.0);
+
         // zchat_messages stores device IDs as UUID blobs, not text strings.
         let device_uuid = uuid::Uuid::parse_str(device_id)
             .map_err(|e| format!("Invalid device ID: {}", e))?;
@@ -678,6 +689,22 @@ impl ZynkSyncService {
         }
 
         println!("[ZynkSync] ✓ Removed device {} and all related data", device_id);
+
+        // Best-effort: tell the peer to remove us from its list too.
+        // Fire-and-forget — if they're offline the auth check blocks re-insertion anyway.
+        if let Some(ip) = peer_ip {
+            let local_device_id = self.device_id.clone();
+            let http_client = self.http_client.read().await.clone();
+            tokio::spawn(async move {
+                let url = format!("https://{}:57963/api/zynksync/notify-unsynced", ip);
+                let payload = serde_json::json!({ "removed_device_id": local_device_id });
+                match http_client.post(&url).json(&payload).send().await {
+                    Ok(_) => println!("[ZynkSync] ✓ Notified peer of unsync"),
+                    Err(e) => println!("[ZynkSync] Note: could not notify peer of unsync (offline?): {}", e),
+                }
+            });
+        }
+
         Ok(())
     }
 
@@ -2403,6 +2430,7 @@ impl ZynkSyncService {
             .route("/api/zynklink/download", post(handle_zynklink_download))
             .route("/api/zynklink/deliver-chat", post(handle_zynklink_deliver_chat))
             .route("/api/zynklink/notify-unpaired", post(handle_zynklink_notify_unpaired))
+            .route("/api/zynksync/notify-unsynced", post(handle_notify_unsynced))
             .route("/api/zynksync/conversations/receive", post(handle_receive_conversations))
             .route("/api/presence/heartbeat", post(handle_heartbeat))
             .route("/api/presence/goodbye", post(handle_goodbye))
@@ -2764,6 +2792,36 @@ async fn handle_goodbye(
     .map_err(|e| format!("Failed to set offline: {}", e))?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Axum handler for unsync push notification.
+/// Called by the peer that initiated the unsync; removes them from our device list
+/// and emits a UI event so the frontend refreshes without the user having to act.
+async fn handle_notify_unsynced(
+    State(service): State<Arc<ZynkSyncService>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, String> {
+    let removed_device_id = payload.get("removed_device_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing removed_device_id")?;
+
+    println!("[ZynkSync] Peer {} initiated unsync — removing from local list", &removed_device_id[..removed_device_id.len().min(8)]);
+
+    // Best-effort — device may already be gone or never fully paired
+    match service.remove_device(removed_device_id).await {
+        Ok(_) => println!("[ZynkSync] ✓ Removed peer device on their request"),
+        Err(e) => println!("[ZynkSync] Note: remove_device on notify-unsynced failed (non-fatal): {}", e),
+    }
+
+    if let Ok(guard) = crate::APP_HANDLE.lock() {
+        if let Some(app) = guard.as_ref() {
+            let _ = app.emit("zynksync-device-removed", serde_json::json!({
+                "device_id": removed_device_id
+            }));
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "success": true })))
 }
 
 /// Axum handler for receiving chat messages from a peer device
