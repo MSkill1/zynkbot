@@ -748,13 +748,15 @@ pub async fn deliver_zchat_to_peer(
     println!("[ZynkLink] Delivering {} message(s) to device {}... at {}",
         messages.len(), &to_device_id[..8], device_ip);
 
-    // Send messages via HTTP
+    // Send messages via HTTPS (peer cert not pinned here — TOFU accepted for ZynkLink chat)
     let client = reqwest::Client::builder()
+        .use_rustls_tls()
+        .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let url = format!("http://{}:57963/api/zynklink/deliver-chat", device_ip);
+    let url = format!("https://{}:57963/api/zynklink/deliver-chat", device_ip);
 
     let response = match client
         .post(&url)

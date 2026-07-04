@@ -28,7 +28,7 @@ tauri-plugin-dialog = "2.6"
 tauri-plugin-shell = "2"
 
 # HTTP client for Flask backend communication, OpenAI API, and model downloads
-reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
+reqwest = { version = "0.12", features = ["json", "blocking", "stream", "rustls-tls"] }
 futures = "0.3"  # Stream processing for SSE token streaming
 
 # Environment variable loading
@@ -83,6 +83,12 @@ uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8"
 axum = "0.7"  # HTTP server for receiving sync requests
 tower = "0.4"  # Middleware for axum
+tokio-rustls = "0.26"  # TLS for ZynkSync/ZynkLink/ZChat
+rustls-pemfile = "2"   # Parse PEM cert/key for rustls
+rcgen = "0.13"         # Self-signed TLS certificate generation
+base64 = "0.22"        # Cert DER encoding for pairing exchange
+hyper = { version = "1", features = ["http1", "server"] }  # Per-connection serving for HTTPS
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }  # TokioIo/TokioExecutor
 
 # ZynkLink - File watching and P2P sync (temporarily disabled due to build issues on Linux)
 # notify = "7.0"

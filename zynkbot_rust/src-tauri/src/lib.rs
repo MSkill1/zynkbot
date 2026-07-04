@@ -21,6 +21,7 @@ mod knowledge_base;  // External reference document system
 mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod conversation_history;  // Persistent conversation log with full-text search
 mod db;  // Database connection pool
+mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
 
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
@@ -4970,6 +4971,16 @@ async fn auto_start_http_server() -> Result<(), String> {
 
     println!("[HTTP Server] Device: {} ({})", device_name, device_id);
 
+    // Load or generate this device's TLS certificate for encrypted LAN communication
+    let data_dir = crate::db::get_app_data_dir();
+    let (cert_pem, key_pem, cert_der) = match crate::tls::load_or_generate_cert(&data_dir) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("[HTTP Server] ❌ TLS certificate error: {}", e);
+            return Err(format!("Failed to initialize TLS: {}", e));
+        }
+    };
+
     // Create ZynkSync service (but don't start auto-sync yet)
     // Use 60 second interval to match UI expectations
     let service = Arc::new(ZynkSyncService::new(
@@ -4977,6 +4988,9 @@ async fn auto_start_http_server() -> Result<(), String> {
         device_name,
         db_pool,
         Some(60), // 60 second sync interval
+        cert_pem,
+        key_pem,
+        cert_der,
     ));
 
     // Start HTTP server on port 57963
@@ -5006,6 +5020,9 @@ async fn auto_start_http_server() -> Result<(), String> {
         // Load devices from database
         if let Err(e) = service.load_devices().await {
             println!("[ZynkSync] ⚠️ Failed to load devices: {}", e);
+        }
+        if let Err(e) = service.rebuild_http_client().await {
+            println!("[ZynkSync] ⚠️ Failed to rebuild HTTP client with peer certs: {}", e);
         }
 
         // Generate pairing code
@@ -5077,6 +5094,9 @@ async fn start_zynksync(_sync_interval_secs: Option<u64>) -> Result<String, Stri
     // Load manually added devices from database
     if let Err(e) = service.load_devices().await {
         println!("[ZynkSync] ⚠️ Failed to load devices: {}", e);
+    }
+    if let Err(e) = service.rebuild_http_client().await {
+        println!("[ZynkSync] ⚠️ Failed to rebuild HTTP client with peer certs: {}", e);
     }
 
     // Generate pairing code for this device

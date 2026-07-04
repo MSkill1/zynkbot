@@ -15,6 +15,11 @@ use tokio::time::{Duration, interval};
 use sqlx::{SqlitePool, Row};
 use chrono::{DateTime, Utc};
 use reqwest::Client as HttpClient;
+use tokio_rustls::TlsAcceptor;
+use tokio::net::TcpListener;
+use hyper_util::rt::{TokioIo, TokioExecutor};
+use hyper_util::server::conn::auto::Builder as HyperConnBuilder;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use axum::{
     routing::post,
     Router,
@@ -156,8 +161,8 @@ pub struct ZynkSyncService {
     /// SQLite connection pool
     db_pool: SqlitePool,
 
-    /// HTTP client for peer communication
-    http_client: HttpClient,
+    /// HTTP client for peer communication (rebuilt after each new pairing to add pinned certs)
+    http_client: Arc<RwLock<HttpClient>>,
 
     /// Peer devices (thread-safe)
     peers: Arc<RwLock<HashMap<String, PeerDevice>>>,
@@ -179,6 +184,15 @@ pub struct ZynkSyncService {
 
     /// Current pairing code for this device
     pairing_code: Arc<RwLock<Option<String>>>,
+
+    /// This device's TLS certificate PEM (for HTTPS server)
+    cert_pem: String,
+
+    /// This device's TLS private key PEM (for HTTPS server)
+    key_pem: String,
+
+    /// This device's TLS certificate DER (sent to peers during pairing)
+    cert_der: Vec<u8>,
 }
 
 impl ZynkSyncService {
@@ -188,20 +202,59 @@ impl ZynkSyncService {
         device_name: String,
         db_pool: SqlitePool,
         sync_interval_secs: Option<u64>,
+        cert_pem: String,
+        key_pem: String,
+        cert_der: Vec<u8>,
     ) -> Self {
         Self {
             device_id,
             device_name,
             db_pool,
-            http_client: HttpClient::new(),
+            http_client: Arc::new(RwLock::new(HttpClient::new())),
             peers: Arc::new(RwLock::new(HashMap::new())),
             last_sync: Arc::new(RwLock::new(HashMap::new())),
             auto_sync_enabled: Arc::new(RwLock::new(false)),
-            sync_interval_secs: sync_interval_secs.unwrap_or(300), // Default: 5 minutes
+            sync_interval_secs: sync_interval_secs.unwrap_or(300),
             server_port: Arc::new(RwLock::new(None)),
             shutdown_tx: Arc::new(RwLock::new(None)),
             pairing_code: Arc::new(RwLock::new(None)),
+            cert_pem,
+            key_pem,
+            cert_der,
         }
+    }
+
+    /// Rebuild the shared HTTP client to trust all currently stored peer certificates.
+    /// Called at startup (after load_devices) and after each new pairing.
+    pub async fn rebuild_http_client(&self) -> Result<(), String> {
+        let rows = sqlx::query(
+            "SELECT tls_cert_der FROM zynk_devices WHERE tls_cert_der IS NOT NULL AND is_paired = 1"
+        )
+        .fetch_all(&self.db_pool)
+        .await
+        .map_err(|e| format!("Failed to load peer certs: {}", e))?;
+
+        let cert_count = rows.len();
+        let mut builder = reqwest::ClientBuilder::new()
+            .use_rustls_tls()
+            .timeout(std::time::Duration::from_secs(30));
+
+        for row in rows {
+            let cert_der: Option<Vec<u8>> = row.try_get("tls_cert_der").ok().flatten();
+            if let Some(der) = cert_der {
+                match reqwest::Certificate::from_der(&der) {
+                    Ok(cert) => { builder = builder.add_root_certificate(cert); }
+                    Err(e)   => { println!("[TLS] Warning: invalid peer cert in DB: {}", e); }
+                }
+            }
+        }
+
+        let client = builder.build()
+            .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+        *self.http_client.write().await = client;
+        println!("[TLS] HTTP client rebuilt with {} trusted peer certificates", cert_count);
+        Ok(())
     }
 
     /// Return a clone of the shared DB pool for use by Tauri commands that need DB access
@@ -291,7 +344,7 @@ impl ZynkSyncService {
                 device_name,
                 host: host.clone(),
                 port: port as u16,
-                url: format!("http://{}:{}", host, port),
+                url: format!("https://{}:{}", host, port),
                 last_seen,
                 paired: true,
                 pairing_code: None,
@@ -317,7 +370,7 @@ impl ZynkSyncService {
         let port: u16 = 57963;  // Fixed port for ZynkSync
 
         // Try to contact the device and verify pairing code
-        let url = format!("http://{}:{}", host, port);
+        let url = format!("https://{}:{}", host, port);
         let verify_endpoint = format!("{}/api/zynksync/verify-pairing", url);
 
         // Get client's user_id for validation
@@ -354,7 +407,8 @@ impl ZynkSyncService {
             "pairing_code": pairing_code,
             "client_device_id": self.device_id,
             "client_device_name": self.device_name,
-            "client_memory_count": client_memory_count
+            "client_memory_count": client_memory_count,
+            "client_cert_der": BASE64.encode(&self.cert_der),
         });
 
         // Include client_user_id if available
@@ -362,10 +416,18 @@ impl ZynkSyncService {
             request_body["client_user_id"] = serde_json::json!(uid);
         }
 
-        let response = self.http_client
+        // Use a TOFU client for the initial pairing request — the peer cert is not yet pinned.
+        // The pairing code provides the authentication; the cert is pinned after this exchange.
+        let tofu_client = reqwest::ClientBuilder::new()
+            .use_rustls_tls()
+            .danger_accept_invalid_certs(true)
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|e| format!("Failed to build pairing client: {}", e))?;
+
+        let response = tofu_client
             .post(&verify_endpoint)
             .json(&request_body)
-            .timeout(Duration::from_secs(5))
             .send()
             .await
             .map_err(|e| format!("Could not connect to device: {}", e))?;
@@ -454,13 +516,25 @@ impl ZynkSyncService {
             }
         }
 
+        // Extract the host's TLS cert DER from the pairing response (base64 encoded)
+        let peer_cert_der: Option<Vec<u8>> = device_info
+            .get("cert_der")
+            .and_then(|v| v.as_str())
+            .and_then(|b64| BASE64.decode(b64).ok());
+
+        if peer_cert_der.is_some() {
+            println!("[TLS] Received and storing peer TLS certificate for pinning");
+        } else {
+            println!("[TLS] Warning: peer did not provide TLS certificate — connection will use TOFU");
+        }
+
         // Store in database
         // IMPORTANT: Store the HOST's user_id (not the client's) for proper identity tracking
         sqlx::query(
-            "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, owner_user_id, last_seen_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, owner_user_id, tls_cert_der, last_seen_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (device_id) DO UPDATE
-             SET device_name = ?, device_ip = ?, port = ?, is_paired = ?, owner_user_id = ?, last_seen_at = ?"
+             SET device_name = ?, device_ip = ?, port = ?, is_paired = ?, owner_user_id = ?, tls_cert_der = ?, last_seen_at = ?"
         )
         .bind(&device_id)
         .bind(&device_name)
@@ -468,12 +542,26 @@ impl ZynkSyncService {
         .bind(port as i32)
         .bind("")  // device_platform - not critical for manual addition
         .bind(true)  // is_paired - manually added devices are considered paired
-        .bind(host_user_id.as_deref())  // Store the HOST's user_id, not the client's
+        .bind(host_user_id.as_deref())
+        .bind(peer_cert_der.as_deref())
         .bind(Utc::now())
+        .bind(Utc::now())
+        // ON CONFLICT UPDATE values
+        .bind(&device_name)
+        .bind(&host)
+        .bind(port as i32)
+        .bind(true)
+        .bind(host_user_id.as_deref())
+        .bind(peer_cert_der.as_deref())
         .bind(Utc::now())
         .execute(&self.db_pool)
         .await
         .map_err(|e| format!("Failed to save device: {}", e))?;
+
+        // Rebuild the shared HTTP client to trust this peer's certificate going forward
+        if let Err(e) = self.rebuild_http_client().await {
+            println!("[TLS] Warning: could not rebuild HTTP client after pairing: {}", e);
+        }
 
         // Add to peers map
         let peer = PeerDevice {
@@ -920,7 +1008,8 @@ impl ZynkSyncService {
 
         // Send memories to peer
         let endpoint = format!("{}/api/zynksync/receive", peer.url);
-        let response = self.http_client
+        let client = self.http_client.read().await.clone();
+        let response = client
             .post(&endpoint)
             .json(&memories)
             .timeout(Duration::from_secs(30))
@@ -993,8 +1082,9 @@ impl ZynkSyncService {
             .collect();
 
         // Send messages to peer
-        let endpoint = format!("http://{}:57963/api/zchat/deliver", device_ip);
-        let response = self.http_client
+        let endpoint = format!("https://{}:57963/api/zchat/deliver", device_ip);
+        let client = self.http_client.read().await.clone();
+        let response = client
             .post(&endpoint)
             .json(&messages)
             .timeout(Duration::from_secs(10))
@@ -1464,7 +1554,8 @@ impl ZynkSyncService {
         // Verbose push detail omitted — summary printed by caller
 
         let endpoint = format!("{}/api/zynksync/conversations/receive", peer.url);
-        let response = self.http_client
+        let client = self.http_client.read().await.clone();
+        let response = client
             .post(&endpoint)
             .json(&payload)
             .timeout(Duration::from_secs(60))
@@ -1512,7 +1603,8 @@ impl ZynkSyncService {
             user_id: user_id.to_string(),
         };
 
-        let response = self.http_client
+        let client = self.http_client.read().await.clone();
+        let response = client
             .post(&endpoint)
             .json(&request)
             .timeout(Duration::from_secs(30))
@@ -1608,7 +1700,8 @@ impl ZynkSyncService {
                 let memories_to_send = self.get_memories_by_ids(&to_send).await?;
 
                 let endpoint = format!("{}/api/zynksync/receive", peer.url);
-                let response = self.http_client
+                let client = self.http_client.read().await.clone();
+                let response = client
                     .post(&endpoint)
                     .json(&memories_to_send)
                     .timeout(Duration::from_secs(30))
@@ -1644,7 +1737,8 @@ impl ZynkSyncService {
                     if !ids_to_delete.is_empty() {
                         println!("[ZynkSync] Requesting remote to delete {} memories", ids_to_delete.len());
                         let endpoint = format!("{}/api/zynksync/delete", peer.url);
-                        let response = self.http_client
+                        let client = self.http_client.read().await.clone();
+                        let response = client
                             .post(&endpoint)
                             .json(&ids_to_delete)
                             .timeout(Duration::from_secs(30))
@@ -1684,7 +1778,8 @@ impl ZynkSyncService {
             if !to_receive.is_empty() {
                 println!("[ZynkSync] Requesting {} missing memories from remote", to_receive.len());
                 let endpoint = format!("{}/api/zynksync/fetch", peer.url);
-                let response = self.http_client
+                let client = self.http_client.read().await.clone();
+                let response = client
                     .post(&endpoint)
                     .json(&to_receive)
                     .timeout(Duration::from_secs(30))
@@ -1941,7 +2036,8 @@ impl ZynkSyncService {
                 "content_hash": content_hash
             });
 
-            match self.http_client
+            let client = self.http_client.read().await.clone();
+            match client
                 .post(&endpoint)
                 .json(&payload)
                 .timeout(Duration::from_secs(10))
@@ -2022,9 +2118,10 @@ impl ZynkSyncService {
 
             for peer in peers {
                 if !peer.paired { continue; }
-                let url = format!("http://{}:{}/api/presence/heartbeat", peer.host, peer.port);
+                let url = format!("https://{}:{}/api/presence/heartbeat", peer.host, peer.port);
                 let body = serde_json::json!({ "device_id": device_id });
-                let _ = self.http_client
+                let client = self.http_client.read().await.clone();
+                let _ = client
                     .post(&url)
                     .json(&body)
                     .timeout(Duration::from_secs(5))
@@ -2044,9 +2141,10 @@ impl ZynkSyncService {
 
         for peer in peers {
             if !peer.paired { continue; }
-            let url = format!("http://{}:{}/api/presence/goodbye", peer.host, peer.port);
+            let url = format!("https://{}:{}/api/presence/goodbye", peer.host, peer.port);
             let body = serde_json::json!({ "device_id": device_id });
-            let _ = self.http_client
+            let client = self.http_client.read().await.clone();
+            let _ = client
                 .post(&url)
                 .json(&body)
                 .timeout(Duration::from_secs(3))
@@ -2149,7 +2247,8 @@ impl ZynkSyncService {
             user_id: user_id.to_string(),
         };
 
-        let response = self.http_client
+        let client = self.http_client.read().await.clone();
+        let response = client
             .post(&endpoint)
             .json(&request)
             .timeout(Duration::from_secs(30))
@@ -2253,16 +2352,16 @@ impl ZynkSyncService {
             .route("/api/presence/goodbye", post(handle_goodbye))
             .with_state(Arc::clone(&self));
 
-        // Bind to fixed port 57963 for device-to-device communication
-        // This allows sync codes to work without mDNS discovery
-        let addr = SocketAddr::from(([0, 0, 0, 0], 57963));
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .map_err(|e| format!("Failed to bind HTTP server: {}", e))?;
+        // Build TLS config from this device's certificate
+        let server_config = crate::tls::build_server_config(&self.cert_pem, &self.key_pem)
+            .map_err(|e| format!("Failed to build TLS config: {}", e))?;
+        let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
-        let bound_addr = listener.local_addr()
-            .map_err(|e| format!("Failed to get local address: {}", e))?;
-        let port = bound_addr.port();
+        // Bind TCP listener on fixed port 57963
+        let port: u16 = 57963;
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        let tcp_listener = TcpListener::bind(addr).await
+            .map_err(|e| format!("Failed to bind port {}: {}", port, e))?;
 
         // Store the port
         {
@@ -2270,32 +2369,63 @@ impl ZynkSyncService {
             *server_port = Some(port);
         }
 
-        println!("[ZynkSync] HTTP server listening on port {}", port);
+        println!("[ZynkSync] HTTPS server listening on port {}", port);
 
         // Create shutdown channel
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-        // Store shutdown sender
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         {
             let mut tx = self.shutdown_tx.write().await;
             *tx = Some(shutdown_tx);
         }
 
-        // Spawn server in background with graceful shutdown
-        // Use into_make_service_with_connect_info to provide remote address to handlers
+        // Accept loop: accept TCP → TLS handshake → serve per-connection via hyper
+        // ConnectInfo<SocketAddr> is injected manually into each request extension so
+        // handlers can read the client IP without needing axum::serve's built-in mechanism.
         tokio::spawn(async move {
-            let graceful = axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<SocketAddr>()
-            )
-                .with_graceful_shutdown(async move {
-                    shutdown_rx.await.ok();
-                    println!("[ZynkSync] HTTP server shutting down gracefully");
-                });
-
-            if let Err(e) = graceful.await {
-                eprintln!("[ZynkSync] HTTP server error: {}", e);
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => {
+                        println!("[ZynkSync] HTTPS server shutting down");
+                        break;
+                    }
+                    result = tcp_listener.accept() => {
+                        let (tcp_stream, peer_addr) = match result {
+                            Ok(pair) => pair,
+                            Err(e) => { eprintln!("[ZynkSync] TCP accept error: {}", e); break; }
+                        };
+                        let acceptor = tls_acceptor.clone();
+                        let router = app.clone();
+                        tokio::spawn(async move {
+                            let tls_stream = match acceptor.accept(tcp_stream).await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    eprintln!("[ZynkSync] TLS handshake failed from {}: {}", peer_addr, e);
+                                    return;
+                                }
+                            };
+                            let io = TokioIo::new(tls_stream);
+                            let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                                let mut router = router.clone();
+                                async move {
+                                    let (parts, body) = req.into_parts();
+                                    let body = axum::body::Body::new(body);
+                                    let mut req = hyper::Request::from_parts(parts, body);
+                                    req.extensions_mut().insert(ConnectInfo(peer_addr));
+                                    use tower::Service;
+                                    router.call(req).await
+                                }
+                            });
+                            if let Err(e) = HyperConnBuilder::new(TokioExecutor::new())
+                                .serve_connection(io, svc)
+                                .await
+                            {
+                                println!("[ZynkSync] Connection from {} closed: {}", peer_addr, e);
+                            }
+                        });
+                    }
+                }
             }
+            println!("[ZynkSync] HTTPS server stopped");
         });
 
         Ok(port)
@@ -2358,6 +2488,12 @@ async fn handle_verify_pairing(
     let client_user_id = request.get("client_user_id")
         .and_then(|v| v.as_str());
 
+    // Extract client's TLS cert DER (base64 encoded) for certificate pinning
+    let client_cert_der: Option<Vec<u8>> = request
+        .get("client_cert_der")
+        .and_then(|v| v.as_str())
+        .and_then(|b64| BASE64.decode(b64).ok());
+
     // Get the REAL client IP from the TCP connection (not from request body!)
     let client_ip = addr.ip().to_string();
 
@@ -2397,39 +2533,42 @@ async fn handle_verify_pairing(
                 device_name: client_device_name.to_string(),
                 host: client_ip.to_string(),
                 port,
-                url: format!("http://{}:{}", client_ip, port),
+                url: format!("https://{}:{}", client_ip, port),
                 last_seen: Utc::now(),
                 paired: true,
                 pairing_code: None,
                 user_id: None,  // Not relevant - this is the HOST adding the CLIENT
             };
 
-            // Add to database. Uses `excluded.*` in the ON CONFLICT UPDATE clause so
-            // we don't have to re-bind every value a second time — same pattern as the
-            // ZynkLink manifest upsert. Previously the UPDATE clause had 5 unbound
-            // `?` placeholders that defaulted to NULL, which made re-pairing an
-            // existing device fail with NOT NULL constraint failed: zynk_devices.device_name.
+            // Store client device with its TLS cert for future pinned connections
             sqlx::query(
-                "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, last_seen_at, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, tls_cert_der, last_seen_at, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (device_id) DO UPDATE
                  SET device_name = excluded.device_name,
                      device_ip = excluded.device_ip,
                      port = excluded.port,
                      is_paired = excluded.is_paired,
+                     tls_cert_der = excluded.tls_cert_der,
                      last_seen_at = excluded.last_seen_at"
             )
             .bind(client_device_id)
             .bind(client_device_name)
-            .bind(client_ip)
+            .bind(&client_ip)
             .bind(port as i32)
             .bind("")  // device_platform
             .bind(true)  // is_paired
+            .bind(client_cert_der.as_deref())
             .bind(Utc::now())
             .bind(Utc::now())
             .execute(&service.db_pool)
             .await
             .map_err(|e| format!("Failed to save client device: {}", e))?;
+
+            // Rebuild HTTP client to trust this client's cert for future requests
+            if let Err(e) = service.rebuild_http_client().await {
+                println!("[TLS] Warning: could not rebuild HTTP client after bidirectional pairing: {}", e);
+            }
 
             // Add to peers map
             {
@@ -2495,10 +2634,11 @@ async fn handle_verify_pairing(
                 println!("[ZynkSync] ⚠ Warning: Host user_id not available - security validation skipped");
             }
 
-            // Return this host's device info including user_id for identity sync
+            // Return this host's device info including TLS cert and user_id for identity sync
             let mut response = serde_json::json!({
                 "device_id": service.device_id,
-                "device_name": service.device_name
+                "device_name": service.device_name,
+                "cert_der": BASE64.encode(&service.cert_der),
             });
 
             if let Some(uid) = host_user_id {
