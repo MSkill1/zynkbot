@@ -185,6 +185,9 @@ pub struct ZynkSyncService {
     /// Current pairing code for this device
     pairing_code: Arc<RwLock<Option<String>>>,
 
+    /// Failed pairing attempts per client IP — invalidate code after 5 misses
+    failed_pairing_attempts: Arc<RwLock<HashMap<String, u32>>>,
+
     /// This device's TLS certificate PEM (for HTTPS server)
     cert_pem: String,
 
@@ -218,6 +221,7 @@ impl ZynkSyncService {
             server_port: Arc::new(RwLock::new(None)),
             shutdown_tx: Arc::new(RwLock::new(None)),
             pairing_code: Arc::new(RwLock::new(None)),
+            failed_pairing_attempts: Arc::new(RwLock::new(HashMap::new())),
             cert_pem,
             key_pem,
             cert_der,
@@ -2590,13 +2594,30 @@ async fn handle_verify_pairing(
     // Get the REAL client IP from the TCP connection (not from request body!)
     let client_ip = addr.ip().to_string();
 
-    println!("[ZynkSync] Verifying pairing code {} for client: {} ({}) from IP: {}",
-        pairing_code, client_device_name, client_device_id, client_ip);
+    println!("[ZynkSync] Verifying pairing code [REDACTED] for client: {} ({}) from IP: {}",
+        client_device_name, client_device_id, client_ip);
 
     if let Some(client_uid) = client_user_id {
         println!("[ZynkSync] Client provided user_id: {}", client_uid);
     } else {
         println!("[ZynkSync] ⚠ Warning: Client did not provide user_id (security validation disabled)");
+    }
+
+    // Rate limit: invalidate the pairing code after 5 failed attempts from the same IP.
+    // Collapses attacker odds from "a million tries in ten minutes" to "5 tries, ever."
+    {
+        let attempts = service.failed_pairing_attempts.read().await;
+        if attempts.get(&client_ip).copied().unwrap_or(0) >= 5 {
+            drop(attempts);
+            sqlx::query(
+                "UPDATE zynk_devices SET pairing_code = NULL, pairing_code_expires_at = NULL WHERE device_id = ?"
+            )
+            .bind(&service.device_id)
+            .execute(&service.db_pool)
+            .await.ok();
+            println!("[ZynkSync] ⛔ Pairing code invalidated after 5 failed attempts from {}", client_ip);
+            return Err("Too many failed attempts — pairing code invalidated. Generate a new code.".to_string());
+        }
     }
 
     // Query database to verify the pairing code
@@ -2616,6 +2637,8 @@ async fn handle_verify_pairing(
 
     match result {
         Some(_record) => {
+            // Success — clear the failed attempt counter for this IP
+            service.failed_pairing_attempts.write().await.remove(&client_ip);
             println!("[ZynkSync] ✓ Pairing code verified! Auto-adding client: {} ({})",
                 client_device_name, client_device_id);
 
@@ -2761,6 +2784,11 @@ async fn handle_verify_pairing(
             Ok(Json(response))
         }
         None => {
+            // Wrong code — increment failed attempt counter for this IP
+            let mut attempts = service.failed_pairing_attempts.write().await;
+            let count = attempts.entry(client_ip.clone()).or_insert(0);
+            *count += 1;
+            println!("[ZynkSync] ✗ Invalid pairing code from {} ({}/5 attempts)", client_ip, count);
             Err("Invalid or expired pairing code".to_string())
         }
     }
