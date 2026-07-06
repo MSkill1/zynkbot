@@ -3620,13 +3620,6 @@ pub async fn store_pending_memory(
 // WEB SEARCH COMMANDS
 // ============================================================================
 
-/// Search DuckDuckGo for information
-#[tauri::command]
-async fn search_web(query: String, max_results: Option<usize>) -> Result<web_search::SearchResponse, String> {
-    println!("[WebSearch] Searching for: {}", query);
-    let max = max_results.unwrap_or(5);
-    web_search::search_duckduckgo(&query, max).await
-}
 
 // Helper function to get database pool (placeholder - will be improved)
 async fn get_db_pool() -> Result<sqlx::SqlitePool, String> {
@@ -5520,22 +5513,6 @@ async fn download_to_custom_location(
     Ok(destination_path)
 }
 
-/// Execute web search with DuckDuckGo and fetch page content
-#[tauri::command]
-async fn execute_web_search(query: String, max_results: usize, fetch_top_n: usize) -> Result<serde_json::Value, String> {
-    println!("[WebSearch] Executing search for: {}", query);
-
-    // Use the web_search module to search and fetch content
-    let search_response = web_search::search_with_content(&query, max_results, fetch_top_n).await?;
-
-    // Convert to JSON
-    let json_response = serde_json::to_value(&search_response)
-        .map_err(|e| format!("Failed to serialize search results: {}", e))?;
-
-    println!("[WebSearch] Search complete - found {} results", search_response.num_results);
-
-    Ok(json_response)
-}
 
 /// Returns true if the message appears to be asking about time-sensitive information
 /// that a local model cannot reliably answer from training data alone.
@@ -5803,8 +5780,8 @@ pub fn run() {
             // Snap-in commands
             index_snapin_notes,
             // Web search
-            search_web,
-            execute_web_search,
+            commands::web_search::search_web,
+            commands::web_search::execute_web_search,
             // Conversation History
             commands::conversation::list_conversation_sessions,
             commands::conversation::get_conversation_messages,
