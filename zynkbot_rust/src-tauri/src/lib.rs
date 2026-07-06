@@ -3203,7 +3203,7 @@ async fn load_einstein_demo_legacy(user_id: String) -> Result<serde_json::Value,
 
     if sync_was_running {
         println!("[Einstein] 🛑 Pausing sync during demo load (will resume after)...");
-        let _ = stop_zynksync().await; // Stop sync temporarily
+        let _ = commands::zynksync::stop_zynksync().await; // Stop sync temporarily
     } else {
         println!("[Einstein] ℹ️ Sync not running, skipping pause");
     }
@@ -3536,7 +3536,7 @@ async fn load_einstein_demo_legacy(user_id: String) -> Result<serde_json::Value,
     // RESUME SYNC AFTER EINSTEIN LOAD (if it was running before)
     if sync_was_running {
         println!("[Einstein] ✅ Resuming sync now that Einstein load is complete...");
-        let _ = start_zynksync(None).await; // Restart sync with default 60s interval
+        let _ = commands::zynksync::start_zynksync(None).await; // Restart sync with default 60s interval
         println!("[Einstein] 🔄 Sync will now propagate Einstein memories in the background");
     } else {
         println!("[Einstein] ℹ️ Sync was not running before, not restarting");
@@ -3790,83 +3790,8 @@ async fn auto_start_http_server() -> Result<(), String> {
     Ok(())
 }
 
-/// Start ZynkSync auto-sync loop (HTTP server already running from app launch)
-/// Note: sync_interval is configured at app launch (60 seconds default)
-#[tauri::command]
-async fn start_zynksync(_sync_interval_secs: Option<u64>) -> Result<String, String> {
-    println!("[ZynkSync] Starting auto-sync loop...");
-
-    // Get the HTTP server service (should already be running from app launch)
-    let service = {
-        let global_service = ZYNKSYNC_SERVICE.lock().await;
-        match global_service.as_ref() {
-            Some(svc) => {
-                // Check if auto-sync already running
-                if svc.is_auto_sync_enabled().await {
-                    println!("[ZynkSync] ⚠️ Auto-sync already running");
-                    return Err("ZynkSync auto-sync is already running. Stop it first.".to_string());
-                }
-                Arc::clone(svc)
-            }
-            None => {
-                println!("[ZynkSync] ❌ HTTP server not running");
-                return Err("HTTP server not started. Please restart the app.".to_string());
-            }
-        }
-    };
-
-    // Load manually added devices from database
-    if let Err(e) = service.load_devices().await {
-        println!("[ZynkSync] ⚠️ Failed to load devices: {}", e);
-    }
-    if let Err(e) = service.rebuild_http_client().await {
-        println!("[ZynkSync] ⚠️ Failed to rebuild HTTP client with peer certs: {}", e);
-    }
-
-    // Generate pairing code for this device
-    println!("[ZynkSync] Generating pairing code...");
-    match service.generate_pairing_code().await {
-        Ok(code) => {
-            println!("[ZynkSync] ✅ Pairing code: {} (expires in 10 minutes)", code);
-        }
-        Err(e) => {
-            println!("[ZynkSync] ⚠️ Failed to generate pairing code: {}", e);
-        }
-    }
-
-    // Start auto-sync loop in background
-    let service_clone = Arc::clone(&service);
-    tokio::spawn(async move {
-        service_clone.start_auto_sync().await;
-    });
-
-    // Start message delivery loop in background
-    let service_clone = Arc::clone(&service);
-    tokio::spawn(async move {
-        service_clone.start_message_delivery_loop().await;
-    });
-
-    // Start heartbeat loop in background
-    let service_clone = Arc::clone(&service);
-    tokio::spawn(async move {
-        service_clone.start_heartbeat_loop().await;
-    });
-
-    println!("[ZynkSync] ✅ Auto-sync started successfully");
-
-    // Save sync state to file (so we remember on restart)
-    if let Err(e) = save_sync_state(true).await {
-        eprintln!("[ZynkSync] ⚠️ Failed to save sync state: {}", e);
-    }
-
-    // Return device ID for display
-    let device_id = user_identity::get_device_id()
-        .map_err(|e| format!("Failed to get device ID: {}", e))?;
-    Ok(device_id)
-}
-
 /// Save sync state to file
-async fn save_sync_state(enabled: bool) -> Result<(), String> {
+pub async fn save_sync_state(enabled: bool) -> Result<(), String> {
     let state_dir = dirs::data_dir()
         .ok_or("Failed to get data directory".to_string())?
         .join("zynkbot");
@@ -3903,376 +3828,6 @@ async fn load_sync_state() -> bool {
         Err(_) => false,
     }
 }
-
-/// Stop ZynkSync auto-sync loop (HTTP server keeps running for ZynkLink)
-#[tauri::command]
-async fn stop_zynksync() -> Result<(), String> {
-    println!("[ZynkSync] Stopping auto-sync...");
-
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    if let Some(service) = global_service.as_ref() {
-        // Check if auto-sync is actually running
-        if !service.is_auto_sync_enabled().await {
-            println!("[ZynkSync] ⚠️ Auto-sync not running");
-            return Err("ZynkSync auto-sync is not running".to_string());
-        }
-
-        service.stop_auto_sync().await;
-        println!("[ZynkSync] ✅ Auto-sync stopped (HTTP server still running for ZynkLink)");
-
-        // Save sync state to file (so we remember on restart)
-        if let Err(e) = save_sync_state(false).await {
-            eprintln!("[ZynkSync] ⚠️ Failed to save sync state: {}", e);
-        }
-
-        Ok(())
-    } else {
-        Err("HTTP server not started. Please restart the app.".to_string())
-    }
-}
-
-/// Check if ZynkSync auto-sync is running
-#[tauri::command]
-async fn get_zynksync_status() -> Result<bool, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => Ok(service.is_auto_sync_enabled().await),
-        None => Ok(false), // HTTP server not started yet
-    }
-}
-
-/// Get list of discovered peer devices
-#[tauri::command]
-async fn get_zynksync_peers() -> Result<Vec<PeerDevice>, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => Ok(service.get_peers().await),
-        None => Ok(Vec::new()),
-    }
-}
-
-/// Manually trigger sync to a specific peer
-#[tauri::command]
-async fn sync_to_peer(peer_id: String, user_id: Option<String>) -> Result<SyncResult, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.sync_to_peer(&peer_id, user_id.as_deref()).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Receive memories from a peer device (called by Flask endpoint)
-#[tauri::command]
-async fn receive_sync_memories(memories: Vec<zynksync::SyncMemory>) -> Result<usize, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.receive_from_peer(memories).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Request pairing with a peer (generates 6-digit code)
-#[tauri::command]
-async fn request_device_pairing(peer_id: String) -> Result<String, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.request_pairing(&peer_id).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Verify pairing code and authorize peer
-#[tauri::command]
-async fn verify_pairing_code(peer_id: String, code: String) -> Result<(), String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.verify_pairing_code(&peer_id, &code).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Unpair from a device
-#[tauri::command]
-async fn unpair_device(peer_id: String) -> Result<(), String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.unpair_device(&peer_id).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Add a device manually by IP address and pairing code
-/// Returns peer device info including the host's user_id for identity sync
-#[tauri::command]
-async fn add_zynksync_device(host_ip: String, pairing_code: String) -> Result<PeerDevice, String> {
-    let service = {
-        let global_service = ZYNKSYNC_SERVICE.lock().await;
-        match global_service.as_ref() {
-            Some(s) => std::sync::Arc::clone(s),
-            None => return Err("ZynkSync not started".to_string()),
-        }
-    };
-    let peer = service.add_device(&host_ip, &pairing_code).await?;
-    // Rebuild HTTP client so the newly-pinned peer cert takes effect immediately.
-    if let Err(e) = service.rebuild_http_client().await {
-        eprintln!("[ZynkSync] Warning: failed to rebuild HTTP client after pairing: {}", e);
-    }
-    Ok(peer)
-}
-
-/// Remove a manually added device
-#[tauri::command]
-async fn remove_zynksync_device(device_id: String) -> Result<(), String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.remove_device(&device_id).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Get this device's pairing code for sharing
-#[tauri::command]
-async fn get_zynksync_pairing_code() -> Result<String, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.get_pairing_code().await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Check sync status with all peers and emit event if user action needed
-/// Returns info about whether local device is more recent than peers
-#[tauri::command]
-async fn check_sync_status_with_peers(app: tauri::AppHandle, user_id: String) -> Result<serde_json::Value, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    let service = match global_service.as_ref() {
-        Some(svc) => svc,
-        None => return Err("ZynkSync not started".to_string()),
-    };
-
-    let peers = service.get_peers().await;
-    let paired_peers: Vec<_> = peers.iter().filter(|p| p.paired).collect();
-
-    if paired_peers.is_empty() {
-        return Ok(serde_json::json!({
-            "needs_prompt": false,
-            "reason": "no_peers"
-        }));
-    }
-
-    // Get local inventory
-    let local_inventory = service.get_local_inventory_public(&user_id).await?;
-
-    // Check each peer
-    let mut local_is_more_recent = false;
-    let mut peers_with_different_counts = Vec::new();
-
-    for peer in paired_peers {
-        // Get remote inventory
-        match service.get_remote_inventory_public(&peer.url, &user_id).await {
-            Ok(remote_inventory) => {
-                // Compare timestamps
-                let is_more_recent = match (&local_inventory.latest_activity, &remote_inventory.latest_activity) {
-                    (Some(local_time), Some(remote_time)) => local_time > remote_time,
-                    (Some(_), None) => true,
-                    _ => false,
-                };
-
-                if is_more_recent && local_inventory.memory_count != remote_inventory.memory_count {
-                    local_is_more_recent = true;
-                    peers_with_different_counts.push(serde_json::json!({
-                        "device_id": peer.device_id,
-                        "device_name": peer.device_name,
-                        "local_count": local_inventory.memory_count,
-                        "remote_count": remote_inventory.memory_count,
-                        "local_time": local_inventory.latest_activity,
-                        "remote_time": remote_inventory.latest_activity,
-                    }));
-                }
-            }
-            Err(e) => {
-                println!("[ZynkSync] Warning: Could not get inventory from {}: {}", peer.device_name, e);
-            }
-        }
-    }
-
-    if local_is_more_recent && !peers_with_different_counts.is_empty() {
-        // Emit event to frontend
-        let _ = app.emit("sync_prompt_needed", serde_json::json!({
-            "local_memory_count": local_inventory.memory_count,
-            "peers": peers_with_different_counts,
-        }));
-
-        Ok(serde_json::json!({
-            "needs_prompt": true,
-            "local_memory_count": local_inventory.memory_count,
-            "peers": peers_with_different_counts,
-        }))
-    } else {
-        Ok(serde_json::json!({
-            "needs_prompt": false,
-            "reason": "no_difference"
-        }))
-    }
-}
-
-/// Force all paired peers to sync to this device's state (including deletions)
-/// This is called when user confirms they want to update other devices
-#[tauri::command]
-async fn broadcast_sync_to_all_peers(user_id: String) -> Result<Vec<SyncResult>, String> {
-    let global_service = ZYNKSYNC_SERVICE.lock().await;
-    let service = match global_service.as_ref() {
-        Some(svc) => Arc::clone(svc),
-        None => return Err("ZynkSync not started".to_string()),
-    };
-
-    drop(global_service); // Release lock before async operations
-
-    let peers = service.get_peers().await;
-    let paired_peers: Vec<_> = peers.into_iter().filter(|p| p.paired).collect();
-
-    if paired_peers.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    println!("[ZynkSync] Broadcasting sync to {} paired devices", paired_peers.len());
-
-    let mut results = Vec::new();
-    for peer in paired_peers {
-        match service.sync_bidirectional(&peer.device_id, &user_id).await {
-            Ok(result) => {
-                println!("[ZynkSync] ✓ Synced with {}: sent={}, received={}",
-                    peer.device_name, result.memories_sent, result.memories_received);
-                results.push(result);
-            }
-            Err(e) => {
-                println!("[ZynkSync] ✗ Failed to sync with {}: {}", peer.device_name, e);
-                results.push(SyncResult {
-                    peer_device_id: peer.device_id,
-                    peer_device_name: peer.device_name,
-                    memories_sent: 0,
-                    memories_received: 0,
-                    conflicts_resolved: 0,
-                    success: false,
-                    error: Some(e),
-                });
-            }
-        }
-    }
-
-    Ok(results)
-}
-
-/// Get the local IP address of this device
-#[tauri::command]
-async fn get_local_ip() -> Result<String, String> {
-    use std::net::UdpSocket;
-
-    // Connect to a public DNS server to determine local IP
-    // This doesn't actually send data, just determines routing
-    match UdpSocket::bind("0.0.0.0:0") {
-        Ok(socket) => {
-            match socket.connect("8.8.8.8:80") {
-                Ok(_) => {
-                    match socket.local_addr() {
-                        Ok(addr) => Ok(addr.ip().to_string()),
-                        Err(e) => Err(format!("Failed to get local address: {}", e))
-                    }
-                }
-                Err(e) => Err(format!("Failed to connect: {}", e))
-            }
-        }
-        Err(e) => Err(format!("Failed to bind socket: {}", e))
-    }
-}
-
-/// Clear all memories for a specific user (for demo/testing purposes)
-///
-/// Parameters:
-/// - user_id: The user ID whose memories to clear
-/// - propagate: Whether to propagate deletions to paired devices (default: true)
-///              Set to false during identity adoption to prevent deleting memories on other devices
-#[tauri::command]
-async fn clear_all_memories(user_id: String, propagate: Option<bool>) -> Result<serde_json::Value, String> {
-    let should_propagate = propagate.unwrap_or(true);
-
-    println!("[Memory] Clearing all memories for user: {} (propagate: {})", user_id, should_propagate);
-
-    let db_url = crate::db::get_db_url();
-
-    let pool = sqlx::SqlitePool::connect(&db_url)
-        .await
-        .map_err(|e| format!("Database connection failed: {}", e))?;
-
-    // Get content hashes BEFORE deletion (only if we'll propagate)
-    let content_hashes = if should_propagate {
-        let contents: Vec<String> = sqlx::query_scalar::<_, String>(
-            "SELECT content FROM memories WHERE user_id = ?"
-        )
-        .bind(&user_id)
-        .fetch_all(&pool)
-        .await
-        .map_err(|e| format!("Failed to get memory contents: {}", e))?;
-        use sha2::{Digest, Sha256};
-        contents.iter().map(|c| format!("{:x}", Sha256::digest(c.as_bytes()))).collect()
-    } else {
-        Vec::new()
-    };
-
-    if should_propagate && !content_hashes.is_empty() {
-        println!("[Memory] Found {} memories to delete and propagate", content_hashes.len());
-    } else if !should_propagate {
-        println!("[Memory] Deletion propagation disabled (identity adoption cleanup)");
-    }
-
-    // Delete from local database
-    let result = sqlx::query("DELETE FROM memories WHERE user_id = ?")
-        .bind(&user_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| format!("Failed to clear memories: {}", e))?;
-
-    let deleted_count = result.rows_affected();
-    println!("[Memory] Deleted {} memories from local database", deleted_count);
-
-    // Propagate deletions to paired devices via ZynkSync (only if enabled)
-    if should_propagate && !content_hashes.is_empty() {
-        println!("[Memory] Propagating {} deletions to paired devices...", content_hashes.len());
-
-        let service = {
-            let global_service = ZYNKSYNC_SERVICE.lock().await;
-            global_service.as_ref().cloned()
-        };
-
-        if let Some(service) = service {
-            let mut propagated = 0;
-            for hash in content_hashes {
-                match service.propagate_deletion_by_hash(hash).await {
-                    Ok(count) => propagated += count,
-                    Err(e) => eprintln!("[Memory] Failed to propagate deletion: {}", e),
-                }
-            }
-            println!("[Memory] ✓ Propagated deletions to {} device(s)", propagated);
-        } else {
-            println!("[Memory] ⚠️ ZynkSync not initialized - deletions not propagated");
-        }
-    }
-
-    // Clear the user profile (name, age) so a demo persona (e.g. Einstein) doesn't
-    // persist across sessions after the user resets their memory.
-    let profile_path = crate::db::get_user_profile_path();
-    if profile_path.exists() {
-        std::fs::remove_file(&profile_path).ok();
-        println!("[Memory] Deleted user_profile.json");
-    }
-
-    Ok(serde_json::json!({
-        "success": true,
-        "deleted_count": deleted_count
-    }))
-}
-
-
 
 // =============================================================================
 // ZynkLink Commands - File Sharing with Code-Based Pairing
@@ -5403,24 +4958,24 @@ pub fn run() {
             commands::zchat::zchat_mark_all_read_from_device,
             commands::zchat::zchat_clear_history,
             commands::zchat::zchat_get_undelivered_messages,
-            // NEW: ZynkSync commands (Phase 9)
-            start_zynksync,
-            stop_zynksync,
-            get_zynksync_status,
-            get_zynksync_peers,
-            sync_to_peer,
-            receive_sync_memories,
-            request_device_pairing,
-            verify_pairing_code,
-            unpair_device,
-            add_zynksync_device,
-            remove_zynksync_device,
-            get_zynksync_pairing_code,
-            check_sync_status_with_peers,
-            broadcast_sync_to_all_peers,
-            get_local_ip,
+            // ZynkSync commands
+            commands::zynksync::start_zynksync,
+            commands::zynksync::stop_zynksync,
+            commands::zynksync::get_zynksync_status,
+            commands::zynksync::get_zynksync_peers,
+            commands::zynksync::sync_to_peer,
+            commands::zynksync::receive_sync_memories,
+            commands::zynksync::request_device_pairing,
+            commands::zynksync::verify_pairing_code,
+            commands::zynksync::unpair_device,
+            commands::zynksync::add_zynksync_device,
+            commands::zynksync::remove_zynksync_device,
+            commands::zynksync::get_zynksync_pairing_code,
+            commands::zynksync::check_sync_status_with_peers,
+            commands::zynksync::broadcast_sync_to_all_peers,
+            commands::zynksync::get_local_ip,
             // Memory management
-            clear_all_memories,
+            commands::zynksync::clear_all_memories,
             commands::conversation::clear_conversation_history,
             commands::utils::read_text_file,
             // User identity
