@@ -480,10 +480,18 @@ pub async fn send_message_with_memory(
         let model_name = "gpt-4o-mini";
 
         println!("[⏱️ PERF] Calling OpenAI API ({}) with streaming...", model_name);
-        let messages = vec![crate::llm::Message {
+        let mut messages = Vec::new();
+        if containment_mode.to_lowercase() == "child" {
+            messages.push(crate::llm::Message {
+                role: "system".to_string(),
+                content: crate::containment::CHILD_MODE_SYSTEM_PROMPT.to_string(),
+            });
+            println!("[RUST] 🧒 Child mode - injecting child safety system prompt");
+        }
+        messages.push(crate::llm::Message {
             role: "user".to_string(),
             content: full_prompt,
-        }];
+        });
 
         let app_handle = app.clone();
         let response = crate::llm::openai::send_message_streaming(
