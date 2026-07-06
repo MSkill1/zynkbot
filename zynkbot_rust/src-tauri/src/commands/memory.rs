@@ -737,3 +737,495 @@ pub async fn cleanup_expired_memories() -> Result<serde_json::Value, String> {
         "message": format!("Deleted {} expired ephemeral memories", deleted_count)
     }))
 }
+
+/// Pre-check memory for duplicates using hybrid search + pure cosine similarity
+#[tauri::command]
+pub async fn pre_check_memory(
+    content: String,
+    user_id: String,
+    exclude_memory_id: i32,
+) -> Result<serde_json::Value, String> {
+    println!("[Rust] 🔍 Smart duplicate check - extracting keywords from input...");
+
+    let content_for_keywords = content.clone();
+    let query_entities = tokio::task::spawn_blocking(move || {
+        use crate::nlp_enhancer::NLPEnhancer;
+        let enhancer = NLPEnhancer::new();
+        enhancer.extract_keywords(&content_for_keywords)
+    })
+    .await
+    .map_err(|e| format!("Failed to extract keywords: {}", e))?;
+
+    println!("[Rust] Extracted {} keywords for duplicate check: {:?}", query_entities.len(), query_entities);
+
+    let content_clone = content.clone();
+    let query_embedding = tokio::task::spawn_blocking(move || {
+        crate::llm::local_embeddings::generate_local_embedding(&content_clone)
+    })
+    .await
+    .map_err(|e| format!("Failed to run embedding task: {}", e))?
+    .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+
+    let _query_entities_clone = query_entities.clone();
+    let query_embedding_clone = query_embedding.clone();
+
+    let similar_memories = memory::hybrid_search(
+        &pool,
+        query_embedding,
+        query_entities,
+        Some(&user_id),
+        None,
+        None,
+        10,
+    )
+    .await
+    .map_err(|e| format!("Failed to search for similar memories: {}", e))?;
+
+    let candidates: Vec<crate::memory::Memory> = similar_memories
+        .into_iter()
+        .filter(|m| m.similarity.unwrap_or(0.0) > 0.35 && m.id != exclude_memory_id)
+        .collect();
+
+    println!("[Rust] Found {} candidates (>35%) for duplicate check", candidates.len());
+
+    if candidates.is_empty() {
+        return Ok(serde_json::json!({
+            "has_duplicate": false,
+            "has_contradiction": false,
+            "count": 0
+        }));
+    }
+
+    println!("[Rust] 🔍 Checking for duplicates using pure cosine similarity...");
+    for candidate in &candidates {
+        let candidate_embedding_query = sqlx::query_as::<_, (Vec<u8>,)>(
+            "SELECT embedding FROM memories WHERE id = ?"
+        )
+        .bind(candidate.id)
+        .fetch_one(&pool)
+        .await;
+
+        if let Ok((candidate_blob,)) = candidate_embedding_query {
+            let candidate_embedding_vec = crate::blob_to_f32(&candidate_blob);
+
+            let pure_similarity = crate::llm::local_embeddings::cosine_similarity(
+                &query_embedding_clone,
+                &candidate_embedding_vec
+            );
+
+            let hybrid_score = candidate.similarity.unwrap_or(0.0);
+            println!("[Rust]   Memory {} - Pure cosine: {:.3}, Hybrid score: {:.3}",
+                     candidate.id, pure_similarity, hybrid_score);
+
+            if hybrid_score > 0.98 || pure_similarity > 0.93 {
+                println!("[Rust] 🔄 DUPLICATE DETECTED: Memory {} - Hybrid: {:.1}%, Pure cosine: {:.1}%",
+                         candidate.id, hybrid_score * 100.0, pure_similarity * 100.0);
+                return Ok(serde_json::json!({
+                    "has_duplicate": true,
+                    "duplicate_memory_id": candidate.id,
+                    "duplicate_content": candidate.content,
+                    "duplicate_title": candidate.title,
+                    "similarity": pure_similarity,
+                    "message": "This memory appears to be a duplicate of an existing memory."
+                }));
+            }
+        }
+    }
+
+    println!("[Rust] ✅ No duplicates detected - trusting LLM for contradiction detection");
+    Ok(serde_json::json!({
+        "has_duplicate": false,
+        "has_contradiction": false,
+        "message": "No duplicates detected. LLM will handle contradiction detection."
+    }))
+}
+
+/// Resolve conflict between memories — user chooses which to keep or merge
+#[tauri::command]
+pub async fn resolve_conflict(
+    _new_content: String,
+    existing_memory_id: i32,
+    resolution: String,
+    user_id: String,
+    explanation: Option<String>,
+    new_memory_id: Option<i32>,
+) -> Result<serde_json::Value, String> {
+    println!("[Rust] resolve_conflict called - resolution: {}, explanation: {:?}", resolution, explanation);
+
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+
+    match resolution.as_str() {
+        "memoryA" => {
+            println!("[Rust] Resolution: Keep OLD memory #{}, delete new", existing_memory_id);
+
+            if let Some(new_id) = new_memory_id {
+                println!("[Rust] Deleting already-stored new memory #{}", new_id);
+
+                let result = sqlx::query("DELETE FROM memories WHERE id = ?")
+                    .bind(new_id)
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| format!("Failed to delete new memory: {}", e))?;
+
+                println!("[Rust] ✅ Deleted {} row(s) - new memory discarded", result.rows_affected());
+            } else {
+                println!("[Rust] ✅ No new memory was stored (conflict detected before storage)");
+            }
+        }
+        "memoryB" => {
+            println!("[Rust] Resolution: Keep NEW memory, delete OLD #{}", existing_memory_id);
+
+            let result = sqlx::query("DELETE FROM memories WHERE id = ?")
+                .bind(existing_memory_id)
+                .execute(&pool)
+                .await
+                .map_err(|e| format!("Failed to delete existing memory: {}", e))?;
+
+            println!("[Rust] ✅ Deleted {} row(s) - old memory discarded", result.rows_affected());
+            println!("[Rust] ⚠️ Deletion will sync on next auto-sync cycle (immediate propagation not yet implemented in resolve_conflict)");
+        }
+        "both" => {
+            println!("[Rust] Resolution: Keep BOTH memories with explanation");
+
+            let actual_new_memory_id = new_memory_id
+                .ok_or_else(|| "New memory ID required for 'both' resolution".to_string())?;
+
+            println!("[Rust] Using already-stored new memory with ID: {}", actual_new_memory_id);
+
+            if let Some(explanation_text) = explanation {
+                let explanation_id = memory::insert_memory(
+                    &pool,
+                    Some("Explanation of conflicting memories"),
+                    &explanation_text,
+                    Some("user"),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(&user_id),
+                    "default",
+                    true,
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(|e| format!("Failed to store explanation: {}", e))?;
+
+                println!("[Rust] Stored explanation memory with ID: {}", explanation_id);
+
+                memory::create_memory_link(
+                    &pool,
+                    explanation_id,
+                    actual_new_memory_id,
+                    "elaborates",
+                    0.95,
+                    Some("Explanation elaborates on relationship between conflicting memories"),
+                    "user"
+                )
+                .await
+                .map_err(|e| format!("Failed to create explanation->new link: {}", e))?;
+
+                memory::create_memory_link(
+                    &pool,
+                    explanation_id,
+                    existing_memory_id,
+                    "elaborates",
+                    0.95,
+                    Some("Explanation elaborates on relationship between conflicting memories"),
+                    "user"
+                )
+                .await
+                .map_err(|e| format!("Failed to create explanation->existing link: {}", e))?;
+
+                println!("[Rust] ✅ Created elaboration links to memories {} and {}", actual_new_memory_id, existing_memory_id);
+
+                sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ? OR id = ?")
+                    .bind(actual_new_memory_id)
+                    .bind(existing_memory_id)
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| format!("Failed to update timestamps: {}", e))?;
+
+                println!("[Rust] ✅ Updated timestamps to trigger relationship sync");
+            } else {
+                memory::create_memory_link(
+                    &pool,
+                    actual_new_memory_id,
+                    existing_memory_id,
+                    "elaborates",
+                    0.85,
+                    Some("User confirmed both memories are correct and related"),
+                    "user"
+                )
+                .await
+                .map_err(|e| format!("Failed to create elaborates link: {}", e))?;
+
+                println!("[Rust] ✅ Created elaborates link between memories {} and {}", actual_new_memory_id, existing_memory_id);
+
+                sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ? OR id = ?")
+                    .bind(actual_new_memory_id)
+                    .bind(existing_memory_id)
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| format!("Failed to update timestamps: {}", e))?;
+
+                println!("[Rust] ✅ Updated timestamps to trigger relationship sync");
+            }
+        }
+        _ => {
+            pool.close().await;
+            return Err(format!("Unknown resolution strategy: {}", resolution));
+        }
+    }
+
+    pool.close().await;
+
+    Ok(serde_json::json!({
+        "success": true,
+        "resolution": resolution,
+        "message": format!("Conflict resolved with strategy: {}", resolution)
+    }))
+}
+
+/// NEW: Resolve memory conflict (v2) - For refactored flow where memory isn't stored yet
+#[tauri::command]
+pub async fn resolve_memory_conflict_v2(
+    pending_memory_json: String,
+    conflicting_memory_id: i32,
+    decision: String,
+    explanation: Option<String>,
+    relationships_json: String,
+    user_id: String,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    println!("[Rust] resolve_memory_conflict_v2 called - decision: {}, explanation: {:?}", decision, explanation);
+
+    let pending: crate::PendingMemory = serde_json::from_str(&pending_memory_json)
+        .map_err(|e| format!("Failed to parse pending memory: {}", e))?;
+
+    let relationships: Vec<crate::RelationshipClassification> = serde_json::from_str(&relationships_json)
+        .map_err(|e| format!("Failed to parse relationships: {}", e))?;
+
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+
+    match decision.as_str() {
+        "keep_old" => {
+            println!("[Rust] Resolution: Keep OLD memory #{}, discard new", conflicting_memory_id);
+            Ok(serde_json::json!({
+                "success": true,
+                "action": "kept_old",
+                "message": "Kept existing memory, new statement discarded"
+            }))
+        }
+
+        "keep_new" => {
+            println!("[Rust] Resolution: Keep NEW memory, delete OLD #{}", conflicting_memory_id);
+
+            sqlx::query("DELETE FROM memories WHERE id = ?")
+                .bind(conflicting_memory_id)
+                .execute(&pool)
+                .await
+                .map_err(|e| format!("Failed to delete old memory: {}", e))?;
+
+            println!("[Rust] ✅ Deleted old memory #{}", conflicting_memory_id);
+
+            let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
+
+            for rel in relationships.iter().filter(|r| r.memory_id != conflicting_memory_id && r.relationship_type != "none") {
+                let _ = memory::create_memory_link(
+                    &pool,
+                    new_memory_id,
+                    rel.memory_id,
+                    &rel.relationship_type,
+                    rel.confidence.unwrap_or(0.75),
+                    Some(&rel.reason),
+                    "llm",
+                ).await;
+            }
+
+            println!("[Rust] ✅ Stored new memory #{} and created relationships", new_memory_id);
+
+            Ok(serde_json::json!({
+                "success": true,
+                "action": "kept_new",
+                "new_memory_id": new_memory_id,
+                "message": "Old memory deleted, new memory stored"
+            }))
+        }
+
+        "not_a_contradiction" => {
+            println!("[Rust] Resolution: Not a contradiction — storing new memory, no contradiction link");
+
+            let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
+
+            for rel in relationships.iter().filter(|r| r.relationship_type != "contradicts" && r.relationship_type != "none") {
+                let _ = memory::create_memory_link(
+                    &pool,
+                    new_memory_id,
+                    rel.memory_id,
+                    &rel.relationship_type,
+                    rel.confidence.unwrap_or(0.75),
+                    Some(&rel.reason),
+                    "llm",
+                ).await;
+            }
+
+            println!("[Rust] ✅ Stored new memory #{} without contradiction link", new_memory_id);
+
+            Ok(serde_json::json!({
+                "success": true,
+                "action": "not_a_contradiction",
+                "new_memory_id": new_memory_id,
+                "message": "Both memories kept, contradiction edge removed"
+            }))
+        }
+
+        "keep_both" => {
+            println!("[Rust] Resolution: Accept contradiction — keeping both memories");
+
+            let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
+
+            memory::create_memory_link(
+                &pool,
+                new_memory_id,
+                conflicting_memory_id,
+                "contradicts",
+                0.95,
+                Some("user_acknowledged"),
+                "user",
+            ).await
+            .map_err(|e| format!("Failed to create contradiction link: {}", e))?;
+
+            println!("[Rust] ✅ Created contradicts relationship: {} <-> {}", new_memory_id, conflicting_memory_id);
+
+            for rel in relationships.iter().filter(|r| r.relationship_type != "contradicts" && r.relationship_type != "none") {
+                let _ = memory::create_memory_link(
+                    &pool,
+                    new_memory_id,
+                    rel.memory_id,
+                    &rel.relationship_type,
+                    rel.confidence.unwrap_or(0.75),
+                    Some(&rel.reason),
+                    "llm",
+                ).await;
+            }
+
+            Ok(serde_json::json!({
+                "success": true,
+                "action": "kept_both",
+                "new_memory_id": new_memory_id,
+                "message": "Both memories stored with contradiction relationship"
+            }))
+        }
+
+        "both_with_explanation" => {
+            println!("[Rust] Resolution: Resolve with explanation");
+
+            let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
+
+            memory::create_memory_link(
+                &pool,
+                new_memory_id,
+                conflicting_memory_id,
+                "contradicts",
+                0.95,
+                Some("resolved:explained"),
+                "user",
+            ).await
+            .map_err(|e| format!("Failed to create contradiction link: {}", e))?;
+
+            println!("[Rust] ✅ Created contradicts relationship: {} <-> {}", new_memory_id, conflicting_memory_id);
+
+            if let Some(expl) = explanation {
+                if !expl.trim().is_empty() {
+                    let expl_clone = expl.clone();
+                    let expl_embedding = tokio::task::spawn_blocking(move || {
+                        crate::llm::local_embeddings::generate_local_embedding(&expl_clone)
+                    }).await
+                    .map_err(|e| format!("Failed to generate embedding: {}", e))?
+                    .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+
+                    let combined_entities = {
+                        let mut seen_words = std::collections::HashSet::new();
+                        let mut merged: Vec<serde_json::Value> = Vec::new();
+                        for mem_id in [new_memory_id, conflicting_memory_id] {
+                            if let Ok(Some(mem)) = memory::get_memory(&pool, mem_id).await {
+                                if let Some(serde_json::Value::Array(ents)) = mem.entities_detected {
+                                    for ent in ents {
+                                        let word = ent.get("word")
+                                            .and_then(|w| w.as_str())
+                                            .unwrap_or("")
+                                            .to_lowercase();
+                                        if !word.is_empty() && seen_words.insert(word) {
+                                            merged.push(ent);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some(serde_json::Value::Array(merged))
+                    };
+
+                    println!("[Rust] Attempting to store explanation memory: '{}'", expl);
+                    let explanation_result = memory::insert_memory(
+                        &pool,
+                        Some("Resolution of contradictory memories"),
+                        &expl,
+                        Some("user_explanation"),
+                        Some(&session_id),
+                        Some(expl_embedding),
+                        None, None,
+                        Some(&user_id),
+                        "personal",
+                        true, false,
+                        combined_entities, None, None,
+                        Some(&expl),
+                    ).await;
+                    let explanation_id = match explanation_result {
+                        Ok(id) => id,
+                        Err(e) => {
+                            println!("[Rust] ❌ Failed to store explanation memory: {}", e);
+                            return Err(format!("Failed to store explanation: {}", e));
+                        }
+                    };
+
+                    let _ = memory::create_memory_link(&pool, explanation_id, new_memory_id, "resolves", 0.95, Some("Resolves contradiction"), "user").await;
+                    let _ = memory::create_memory_link(&pool, explanation_id, conflicting_memory_id, "resolves", 0.95, Some("Resolves contradiction"), "user").await;
+
+                    println!("[Rust] ✅ Stored resolution memory #{} with resolves edges", explanation_id);
+                }
+            }
+
+            for rel in relationships.iter().filter(|r| r.relationship_type != "contradicts" && r.relationship_type != "none") {
+                let _ = memory::create_memory_link(
+                    &pool,
+                    new_memory_id,
+                    rel.memory_id,
+                    &rel.relationship_type,
+                    rel.confidence.unwrap_or(0.75),
+                    Some(&rel.reason),
+                    "llm",
+                ).await;
+            }
+
+            Ok(serde_json::json!({
+                "success": true,
+                "action": "resolved_with_explanation",
+                "new_memory_id": new_memory_id,
+                "message": "Both memories stored, contradiction resolved with explanation"
+            }))
+        }
+
+        _ => Err(format!("Invalid decision: '{}'. Must be one of: keep_old, keep_new, not_a_contradiction, keep_both, both_with_explanation", decision))
+    }
+}
