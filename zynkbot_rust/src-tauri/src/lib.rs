@@ -5367,83 +5367,6 @@ async fn clear_all_memories(user_id: String, propagate: Option<bool>) -> Result<
     }))
 }
 
-/// Get current user and device identity
-#[tauri::command]
-async fn get_user_identity() -> Result<user_identity::UserIdentity, String> {
-    user_identity::get_identity()
-}
-
-/// Migrate all memories from old user_id to new user_id
-/// Used during identity adoption to preserve memories instead of deleting them
-#[tauri::command]
-async fn migrate_user_memories(old_user_id: String, new_user_id: String) -> Result<i64, String> {
-    println!("[Memory] Migrating memories from {} to {}", old_user_id, new_user_id);
-
-    let db_url = crate::db::get_db_url();
-
-    let pool = sqlx::SqlitePool::connect(&db_url)
-        .await
-        .map_err(|e| format!("Database connection failed: {}", e))?;
-
-    // Update user_id for all memories
-    let result = sqlx::query("UPDATE memories SET user_id = ? WHERE user_id = ?")
-        .bind(&new_user_id)
-        .bind(&old_user_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| format!("Failed to migrate memories: {}", e))?;
-
-    let migrated_count = result.rows_affected() as i64;
-    println!("[Memory] ✓ Migrated {} memories to new user_id", migrated_count);
-
-    Ok(migrated_count)
-}
-
-/// Clear all conversation history for a user (sessions + messages via CASCADE)
-#[tauri::command]
-async fn clear_conversation_history(user_id: String) -> Result<serde_json::Value, String> {
-    let db_url = crate::db::get_db_url();
-    let pool = sqlx::SqlitePool::connect(&db_url)
-        .await
-        .map_err(|e| format!("Database connection failed: {}", e))?;
-
-    let result = sqlx::query("DELETE FROM conversation_sessions WHERE user_id = ?")
-        .bind(&user_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| format!("Failed to clear conversation history: {}", e))?;
-
-    let deleted = result.rows_affected();
-    println!("[ConvHistory] Cleared {} sessions for user {}", deleted, &user_id[..8.min(user_id.len())]);
-
-    Ok(serde_json::json!({ "deleted_count": deleted }))
-}
-
-/// Read a text file from disk and return its contents as a string.
-/// Used by the file-attachment feature in the chat UI.
-#[tauri::command]
-async fn read_text_file(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read file '{}': {}", path, e))
-}
-
-/// Set user_id manually (for device linking via sync code)
-#[tauri::command]
-async fn set_user_identity(user_id: String) -> Result<(), String> {
-    user_identity::set_user_id(&user_id)
-}
-
-/// Reset user identity - creates completely new user_id and device_id
-#[tauri::command]
-async fn reset_user_identity() -> Result<user_identity::UserIdentity, String> {
-    // Call reset_all to create new IDs
-    let (new_user_id, new_device_id) = user_identity::reset_all_identity()?;
-
-    println!("[Identity] Reset complete - New user_id: {}, New device_id: {}", new_user_id, new_device_id);
-
-    // Return the new identity
-    user_identity::get_identity()
-}
 
 /// Generate a 6-digit one-time sync code (expires in 5 minutes)
 #[tauri::command]
@@ -6709,13 +6632,13 @@ pub fn run() {
             get_local_ip,
             // Memory management
             clear_all_memories,
-            clear_conversation_history,
-            read_text_file,
+            commands::conversation::clear_conversation_history,
+            commands::utils::read_text_file,
             // User identity
-            get_user_identity,
-            set_user_identity,
-            reset_user_identity,
-            migrate_user_memories,
+            commands::user_identity::get_user_identity,
+            commands::user_identity::set_user_identity,
+            commands::user_identity::reset_user_identity,
+            commands::user_identity::migrate_user_memories,
             // Sync codes
             generate_sync_code,
             verify_sync_code_info,

@@ -118,3 +118,21 @@ pub async fn build_conversation_prompt(
 
     Ok(prompt)
 }
+
+#[tauri::command]
+pub async fn clear_conversation_history(user_id: String) -> Result<serde_json::Value, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Database connection failed: {}", e))?;
+
+    let result = sqlx::query("DELETE FROM conversation_sessions WHERE user_id = ?")
+        .bind(&user_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to clear conversation history: {}", e))?;
+
+    let deleted = result.rows_affected();
+    println!("[ConvHistory] Cleared {} sessions for user {}", deleted, &user_id[..8.min(user_id.len())]);
+
+    Ok(serde_json::json!({ "deleted_count": deleted }))
+}

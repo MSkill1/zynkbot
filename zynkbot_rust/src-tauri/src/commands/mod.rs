@@ -4,4 +4,6 @@ pub mod models;
 pub mod nlp;
 pub mod onboarding;
 pub mod safety;
+pub mod user_identity;
+pub mod utils;
 pub mod zchat;
