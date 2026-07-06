@@ -10,4 +10,5 @@ pub mod user_identity;
 pub mod utils;
 pub mod web_search;
 pub mod zchat;
+pub mod zynklink;
 pub mod zynksync;
