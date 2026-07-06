@@ -24,7 +24,6 @@ mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
 
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 // use chrono::Utc;  // Unused - commented out
 
 /// Normalize common voice-transcription misspellings of the brand name.
@@ -1758,12 +1757,6 @@ pub async fn store_pending_memory(
 // ============================================================================
 
 
-// Helper function to get database pool (placeholder - will be improved)
-async fn get_db_pool() -> Result<sqlx::SqlitePool, String> {
-    sqlx::SqlitePool::connect(&crate::db::get_db_url())
-        .await
-        .map_err(|e| format!("Database connection failed: {}", e))
-}
 
 // get_memory_contradictions → commands/memory.rs
 // get_namespaces → commands/memory.rs
@@ -1775,7 +1768,7 @@ async fn get_db_pool() -> Result<sqlx::SqlitePool, String> {
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use zynksync::{ZynkSyncService, PeerDevice, SyncResult};
+use zynksync::ZynkSyncService;
 
 // Global ZynkSync service instance
 pub(crate) static ZYNKSYNC_SERVICE: once_cell::sync::Lazy<Arc<Mutex<Option<Arc<ZynkSyncService>>>>> =
