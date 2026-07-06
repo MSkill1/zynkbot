@@ -1,4 +1,5 @@
 pub mod conversation;
+pub mod knowledge_base;
 pub mod memory;
 pub mod models;
 pub mod nlp;
