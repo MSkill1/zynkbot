@@ -304,6 +304,7 @@ pub async fn broadcast_sync_to_all_peers(user_id: String) -> Result<Vec<SyncResu
                     peer_device_name: peer.device_name,
                     memories_sent: 0,
                     memories_received: 0,
+                    conversations_sent: 0,
                     conflicts_resolved: 0,
                     success: false,
                     error: Some(e),
