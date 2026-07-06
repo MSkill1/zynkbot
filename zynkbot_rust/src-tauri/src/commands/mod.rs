@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod conversation;
 pub mod knowledge_base;
 pub mod memory;
