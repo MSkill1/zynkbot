@@ -18,6 +18,14 @@ pub struct Message {
     pub content: String,
 }
 
+/// Image attachment for vision-capable models
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageAttachment {
+    pub base64: String,
+    pub mime_type: String,
+}
+
 /// Common response format from LLMs
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(dead_code)]

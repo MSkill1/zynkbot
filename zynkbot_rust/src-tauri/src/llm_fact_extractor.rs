@@ -231,7 +231,7 @@ Now extract facts from the conversation above. Return ONLY the JSON array, no ot
 
         match xai::send_message(
             &api_key,
-            "grok-3",
+            "grok-4.3",
             messages,
             Some(2000), // max_tokens
             Some(0.3), // temperature - low for consistent extraction

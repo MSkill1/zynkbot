@@ -689,7 +689,7 @@ async fn call_xai_for_memory_decision(prompt: &str) -> Result<String, String> {
 
     match xai::send_message(
         &api_key,
-        "grok-3",
+        "grok-4.3",
         messages,
         Some(4096),  // Match main conversation limit
         Some(0.3),
@@ -2182,6 +2182,7 @@ pub fn run() {
             commands::zynksync::clear_all_memories,
             commands::conversation::clear_conversation_history,
             commands::utils::read_text_file,
+            commands::utils::read_file_base64,
             // User identity
             commands::user_identity::get_user_identity,
             commands::user_identity::set_user_identity,

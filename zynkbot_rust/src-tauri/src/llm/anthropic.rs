@@ -267,3 +267,124 @@ where
     })
 }
 
+/// Send a vision request (text + image) to Claude with streaming.
+/// Builds the multipart content array required by Anthropic's vision API.
+pub async fn send_vision_streaming<F>(
+    api_key: &str,
+    model: &str,
+    text: &str,
+    image: &super::ImageAttachment,
+    system_prompt: Option<String>,
+    max_tokens: Option<u32>,
+    on_token: F,
+) -> Result<LLMResponse, LLMError>
+where
+    F: Fn(String),
+{
+    let client = reqwest::Client::new();
+
+    let content = serde_json::json!([
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.mime_type,
+                "data": image.base64
+            }
+        },
+        {
+            "type": "text",
+            "text": text
+        }
+    ]);
+
+    let mut body = serde_json::json!({
+        "model": model,
+        "max_tokens": max_tokens.unwrap_or(4096),
+        "stream": true,
+        "messages": [{"role": "user", "content": content}]
+    });
+
+    if let Some(sys) = system_prompt {
+        body["system"] = serde_json::json!(sys);
+    }
+
+    println!("[Rust Anthropic] Starting vision streaming request to Claude: {}", model);
+
+    let response = client
+        .post(ANTHROPIC_API_URL)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(LLMError::APIError(format!("Status {}: {}", status, error_text)));
+    }
+
+    let mut byte_stream = response.bytes_stream();
+    let mut line_buffer = String::new();
+    let mut full_text = String::new();
+    let mut input_tokens: u32 = 0;
+    let mut output_tokens: u32 = 0;
+
+    while let Some(chunk_result) = byte_stream.next().await {
+        let bytes = chunk_result.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+        let text = String::from_utf8_lossy(&bytes);
+        line_buffer.push_str(&text);
+
+        while let Some(newline_pos) = line_buffer.find('\n') {
+            let line = line_buffer[..newline_pos].trim().to_string();
+            line_buffer = line_buffer[newline_pos + 1..].to_string();
+
+            if !line.starts_with("data: ") { continue; }
+            let data = &line[6..];
+            if data == "[DONE]" { break; }
+
+            let event: AnthropicSSEEvent = match serde_json::from_str(data) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            match event.event_type.as_str() {
+                "content_block_delta" => {
+                    if let Some(delta) = event.delta {
+                        if delta.delta_type.as_deref() == Some("text_delta") {
+                            if let Some(text) = delta.text {
+                                full_text.push_str(&text);
+                                on_token(text);
+                            }
+                        }
+                    }
+                }
+                "message_start" => {
+                    if let Some(usage) = event.usage {
+                        input_tokens = usage.input_tokens.unwrap_or(0);
+                    }
+                }
+                "message_delta" => {
+                    if let Some(usage) = event.usage {
+                        if let Some(tokens) = usage.output_tokens {
+                            output_tokens = tokens;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    println!("[Rust Anthropic] ✅ Vision streaming complete ({} tokens)", output_tokens);
+
+    Ok(LLMResponse {
+        content: full_text,
+        model: model.to_string(),
+        usage: Some(Usage { input_tokens, output_tokens }),
+    })
+}
+

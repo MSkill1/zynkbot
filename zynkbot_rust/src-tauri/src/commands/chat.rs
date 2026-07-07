@@ -15,9 +15,10 @@ pub async fn send_message_with_memory(
     containment_mode: String,
     conversation_history: Option<Vec<ConversationTurn>>,
     skip_containment: Option<bool>,
-    skip_memory_storage: Option<bool>,  // NEW: Skip storing this message as a memory (for web search synthesis)
-    _kb_enabled: Option<bool>,  // NEW: Enable Knowledge Base RAG search
-    user_query: Option<String>,  // Clean question without attached file content — used for safety/memory/search
+    skip_memory_storage: Option<bool>,
+    _kb_enabled: Option<bool>,
+    user_query: Option<String>,
+    image_data: Option<crate::llm::ImageAttachment>,
 ) -> Result<ReplyResponse, String> {
     use crate::conversation_engine::ConversationEngine;
 
@@ -450,93 +451,128 @@ pub async fn send_message_with_memory(
         } else if forced_backend.contains("opus") {
             "claude-opus-4-7"
         } else {
-            "claude-sonnet-4-6" // Default: Sonnet 4.6 (best balance of speed and capability)
+            "claude-sonnet-4-6"
         };
 
-        println!("[⏱️ PERF] Calling Anthropic API ({}) with streaming...", model_name);
-        let messages = vec![crate::llm::Message {
-            role: "user".to_string(),
-            content: full_prompt,
-        }];
-
         let app_handle = app.clone();
-        let response = crate::llm::anthropic::send_message_streaming(
-            &api_key,
-            model_name,
-            messages,
-            None, // system prompt is in the message
-            Some(4096),
-            None,
-            move |token| { app_handle.emit("stream-token", token).ok(); },
-        ).await.map_err(|e| e.to_string())?;
 
-        response.content
+        if let Some(ref img) = image_data {
+            println!("[⏱️ PERF] Calling Anthropic API ({}) with vision streaming...", model_name);
+            let response = crate::llm::anthropic::send_vision_streaming(
+                &api_key,
+                model_name,
+                &full_prompt,
+                img,
+                None,
+                Some(4096),
+                move |token| { app_handle.emit("stream-token", token).ok(); },
+            ).await.map_err(|e| e.to_string())?;
+            response.content
+        } else {
+            println!("[⏱️ PERF] Calling Anthropic API ({}) with streaming...", model_name);
+            let messages = vec![crate::llm::Message {
+                role: "user".to_string(),
+                content: full_prompt,
+            }];
+            let response = crate::llm::anthropic::send_message_streaming(
+                &api_key,
+                model_name,
+                messages,
+                None,
+                Some(4096),
+                None,
+                move |token| { app_handle.emit("stream-token", token).ok(); },
+            ).await.map_err(|e| e.to_string())?;
+            response.content
+        }
 
     } else if forced_backend.to_lowercase().contains("openai") || forced_backend.to_lowercase().contains("gpt") {
         // Use OpenAI with streaming (including Child mode)
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| "OPENAI_API_KEY not set".to_string())?;
 
-        let model_name = "gpt-4o-mini";
-
-        println!("[⏱️ PERF] Calling OpenAI API ({}) with streaming...", model_name);
-        let mut messages = Vec::new();
-        if containment_mode.to_lowercase() == "child" {
-            messages.push(crate::llm::Message {
-                role: "system".to_string(),
-                content: crate::containment::CHILD_MODE_SYSTEM_PROMPT.to_string(),
-            });
-            println!("[RUST] 🧒 Child mode - injecting child safety system prompt");
-        }
-        messages.push(crate::llm::Message {
-            role: "user".to_string(),
-            content: full_prompt,
-        });
+        let model_name = if image_data.is_some() { "gpt-4o" } else { "gpt-4o-mini" };
 
         let app_handle = app.clone();
-        let response = crate::llm::openai::send_message_streaming(
-            &api_key,
-            model_name,
-            messages,
-            Some(4096),
-            None,
-            "https://api.openai.com/v1/chat/completions",
-            move |token| { app_handle.emit("stream-token", token).ok(); },
-        ).await.map_err(|e| e.to_string())?;
 
-        response.content
+        if let Some(ref img) = image_data {
+            println!("[⏱️ PERF] Calling OpenAI API ({}) with vision streaming...", model_name);
+            let response = crate::llm::openai::send_vision_streaming(
+                &api_key,
+                model_name,
+                &full_prompt,
+                img,
+                "https://api.openai.com/v1/chat/completions",
+                move |token| { app_handle.emit("stream-token", token).ok(); },
+            ).await.map_err(|e| e.to_string())?;
+            response.content
+        } else {
+            println!("[⏱️ PERF] Calling OpenAI API ({}) with streaming...", model_name);
+            let mut messages = Vec::new();
+            if containment_mode.to_lowercase() == "child" {
+                messages.push(crate::llm::Message {
+                    role: "system".to_string(),
+                    content: crate::containment::CHILD_MODE_SYSTEM_PROMPT.to_string(),
+                });
+                println!("[RUST] 🧒 Child mode - injecting child safety system prompt");
+            }
+            messages.push(crate::llm::Message {
+                role: "user".to_string(),
+                content: full_prompt,
+            });
+            let response = crate::llm::openai::send_message_streaming(
+                &api_key,
+                model_name,
+                messages,
+                Some(4096),
+                None,
+                "https://api.openai.com/v1/chat/completions",
+                move |token| { app_handle.emit("stream-token", token).ok(); },
+            ).await.map_err(|e| e.to_string())?;
+            response.content
+        }
 
     } else if forced_backend.to_lowercase().contains("xai") || forced_backend.to_lowercase().contains("grok") {
         // Use xAI (Grok) with streaming - OpenAI-compatible format
         let api_key = std::env::var("XAI_API_KEY")
             .map_err(|_| "XAI_API_KEY not set. Get your API key from https://console.x.ai/".to_string())?;
 
-        let model_name = if forced_backend.contains("vision") {
-            "grok-2-vision-1212"
-        } else {
-            "grok-3"
-        };
-
-        println!("[⏱️ PERF] Calling xAI API ({}) with streaming...", model_name);
-        let messages = vec![crate::llm::Message {
-            role: "user".to_string(),
-            content: full_prompt,
-        }];
-
         let app_handle = app.clone();
-        let response = crate::llm::openai::send_message_streaming(
-            &api_key,
-            model_name,
-            messages,
-            Some(4096),
-            None,
-            "https://api.x.ai/v1/chat/completions",
-            move |token| { app_handle.emit("stream-token", token).ok(); },
-        ).await.map_err(|e| e.to_string())?;
 
-        response.content
+        if let Some(ref img) = image_data {
+            println!("[⏱️ PERF] Calling xAI API (grok-4.3) with vision streaming...");
+            let response = crate::llm::openai::send_vision_streaming(
+                &api_key,
+                "grok-4.3",
+                &full_prompt,
+                img,
+                "https://api.x.ai/v1/chat/completions",
+                move |token| { app_handle.emit("stream-token", token).ok(); },
+            ).await.map_err(|e| e.to_string())?;
+            response.content
+        } else {
+            let model_name = "grok-4.3";
+            println!("[⏱️ PERF] Calling xAI API ({}) with streaming...", model_name);
+            let messages = vec![crate::llm::Message {
+                role: "user".to_string(),
+                content: full_prompt,
+            }];
+            let response = crate::llm::openai::send_message_streaming(
+                &api_key,
+                model_name,
+                messages,
+                Some(4096),
+                None,
+                "https://api.x.ai/v1/chat/completions",
+                move |token| { app_handle.emit("stream-token", token).ok(); },
+            ).await.map_err(|e| e.to_string())?;
+            response.content
+        }
 
     } else if forced_backend.to_lowercase().contains("local") || forced_backend.ends_with(".gguf") {
+        if image_data.is_some() {
+            return Err("Image attachments are not supported with local models. Please switch to a cloud model (Claude, GPT-4o, or Grok) to use vision.".to_string());
+        }
         // Use local GGUF model
 
         // Determine model path
@@ -1355,6 +1391,7 @@ pub async fn run_ensemble(
     containment_mode: String,
     kb_enabled: Option<bool>,
     user_query: Option<String>,
+    image_data: Option<crate::llm::ImageAttachment>,
 ) -> Result<serde_json::Value, String> {
     println!("[Ensemble] Running multi-model ensemble with {} models", models.len());
     println!("[Ensemble] Containment mode: {}", containment_mode);
@@ -1370,7 +1407,7 @@ pub async fn run_ensemble(
     // Canonical API model names — update here to change across all ensemble phases
     const ANTHROPIC_MODEL: &str = "claude-sonnet-4-6";
     const OPENAI_MODEL: &str = "gpt-4o";
-    const XAI_MODEL: &str = "grok-3";
+    const XAI_MODEL: &str = "grok-4.3";
 
     // Determine coordinator model upfront: Anthropic > xAI > OpenAI > first local model
     let coordinator_model = models.iter()
@@ -1619,46 +1656,48 @@ pub async fn run_ensemble(
             let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
             if api_key.is_empty() {
                 Err("ANTHROPIC_API_KEY not set".to_string())
+            } else if let Some(ref img) = image_data {
+                crate::llm::anthropic::send_vision_streaming(
+                    &api_key, ANTHROPIC_MODEL, &full_question, img, None, Some(4096), |_| {}
+                ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {
-                let messages = vec![crate::llm::Message {
-                    role: "user".to_string(),
-                    content: full_question.clone(),
-                }];
+                let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
                 crate::llm::anthropic::send_message(&api_key, ANTHROPIC_MODEL, messages, None, Some(4096), None)
-                    .await
-                    .map(|r| r.content)
-                    .map_err(|e| e.to_string())
+                    .await.map(|r| r.content).map_err(|e| e.to_string())
             }
         } else if model_backend.to_lowercase().contains("openai") || model_backend.to_lowercase().contains("gpt") {
             let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
             if api_key.is_empty() {
                 Err("OPENAI_API_KEY not set".to_string())
+            } else if let Some(ref img) = image_data {
+                crate::llm::openai::send_vision_streaming(
+                    &api_key, "gpt-4o", &full_question, img,
+                    "https://api.openai.com/v1/chat/completions", |_| {}
+                ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {
-                let messages = vec![crate::llm::Message {
-                    role: "user".to_string(),
-                    content: full_question.clone(),
-                }];
+                let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
                 crate::llm::openai::send_message(&api_key, OPENAI_MODEL, messages, Some(4096), None)
-                    .await
-                    .map(|r| r.content)
-                    .map_err(|e| e.to_string())
+                    .await.map(|r| r.content).map_err(|e| e.to_string())
             }
         } else if model_backend.to_lowercase().contains("xai") || model_backend.to_lowercase().contains("grok") {
             let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
             if api_key.is_empty() {
                 Err("XAI_API_KEY not set".to_string())
+            } else if let Some(ref img) = image_data {
+                crate::llm::openai::send_vision_streaming(
+                    &api_key, "grok-4.3", &full_question, img,
+                    "https://api.x.ai/v1/chat/completions", |_| {}
+                ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {
-                let messages = vec![crate::llm::Message {
-                    role: "user".to_string(),
-                    content: full_question.clone(),
-                }];
+                let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
                 crate::llm::xai::send_message(&api_key, XAI_MODEL, messages, Some(4096), None)
-                    .await
-                    .map(|r| r.content)
-                    .map_err(|e| e.to_string())
+                    .await.map(|r| r.content).map_err(|e| e.to_string())
             }
         } else {
             // Local model - use llama.cpp
+            if image_data.is_some() {
+                return Err("Image attachments are not supported with local models.".to_string());
+            }
             if !std::path::Path::new(model_backend).exists() {
                 Err(format!("Local model file not found: {}", model_backend))
             } else {

@@ -239,6 +239,103 @@ where
     })
 }
 
+/// Send a vision request (text + image) via OpenAI-compatible API with streaming.
+/// Used for both OpenAI (GPT-4o) and xAI (Grok Vision).
+pub async fn send_vision_streaming<F>(
+    api_key: &str,
+    model: &str,
+    text: &str,
+    image: &super::ImageAttachment,
+    api_url: &str,
+    on_token: F,
+) -> Result<LLMResponse, LLMError>
+where
+    F: Fn(String),
+{
+    let client = reqwest::Client::new();
+
+    let body = serde_json::json!({
+        "model": model,
+        "stream": true,
+        "max_tokens": 4096,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": format!("data:{};base64,{}", image.mime_type, image.base64)
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": text
+                }
+            ]
+        }]
+    });
+
+    println!("[Rust OpenAI] Starting vision streaming request to: {}", model);
+
+    let response = client
+        .post(api_url)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        return Err(LLMError::APIError(format!("Status {}: {}", status, error_text)));
+    }
+
+    let mut byte_stream = response.bytes_stream();
+    let mut line_buffer = String::new();
+    let mut full_text = String::new();
+    let mut output_tokens: u32 = 0;
+
+    'outer: while let Some(chunk_result) = byte_stream.next().await {
+        let bytes = chunk_result.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+        let text = String::from_utf8_lossy(&bytes);
+        line_buffer.push_str(&text);
+
+        while let Some(newline_pos) = line_buffer.find('\n') {
+            let line = line_buffer[..newline_pos].trim().to_string();
+            line_buffer = line_buffer[newline_pos + 1..].to_string();
+
+            if !line.starts_with("data: ") { continue; }
+            let data = &line[6..];
+            if data == "[DONE]" { break 'outer; }
+
+            let chunk: OpenAIStreamChunk = match serde_json::from_str(data) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            for choice in chunk.choices {
+                if let Some(token) = choice.delta.content {
+                    full_text.push_str(&token);
+                    on_token(token);
+                }
+                if choice.finish_reason.as_deref() == Some("stop") {
+                    output_tokens = full_text.split_whitespace().count() as u32;
+                }
+            }
+        }
+    }
+
+    println!("[Rust OpenAI] ✅ Vision streaming complete");
+
+    Ok(LLMResponse {
+        content: full_text,
+        model: model.to_string(),
+        usage: Some(Usage { input_tokens: 0, output_tokens }),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

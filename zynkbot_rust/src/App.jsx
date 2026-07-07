@@ -420,19 +420,28 @@ export default function App() {
     setCurrentConflict(null);
   };
 
+  const IMAGE_EXTENSIONS = ['jpg','jpeg','png','gif','webp','bmp'];
+  const MIME_TYPES = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp', bmp:'image/bmp' };
+
   const handleAttachFile = async () => {
     const path = await openFileDialog({
       multiple: false,
-      filters: [{
-        name: 'Text Files',
-        extensions: ['txt','md','rs','js','jsx','ts','tsx','py','json','toml','yaml','yml','sh','css','html','c','cpp','h','go','java','rb','php','swift','kt']
-      }]
+      filters: [
+        { name: 'Files', extensions: [...IMAGE_EXTENSIONS, 'txt','md','rs','js','jsx','ts','tsx','py','json','toml','yaml','yml','sh','css','html','c','cpp','h','go','java','rb','php','swift','kt'] }
+      ]
     });
     if (!path) return;
     try {
-      const content = await invoke('read_text_file', { path });
       const name = path.split('/').pop();
-      setAttachedFile({ name, content, size: content.length });
+      const ext = name.split('.').pop().toLowerCase();
+      if (IMAGE_EXTENSIONS.includes(ext)) {
+        const base64 = await invoke('read_file_base64', { path });
+        const mimeType = MIME_TYPES[ext] || 'image/jpeg';
+        setAttachedFile({ name, base64, mimeType, size: base64.length, isImage: true });
+      } else {
+        const content = await invoke('read_text_file', { path });
+        setAttachedFile({ name, content, size: content.length, isImage: false });
+      }
     } catch (e) {
       alert(`Could not read file: ${e}`);
     }
@@ -458,9 +467,15 @@ export default function App() {
     // conversation history see intent — not the file dump.
     let messageToSend = message;
     let userQuery = undefined;
+    let imageData = undefined;
     if (attachedFile) {
-      messageToSend = `[Attached file: ${attachedFile.name}]\n\`\`\`\n${attachedFile.content}\n\`\`\`\n\nUser question: ${message}`;
-      userQuery = message;
+      if (attachedFile.isImage) {
+        imageData = { base64: attachedFile.base64, mimeType: attachedFile.mimeType };
+        userQuery = message;
+      } else {
+        messageToSend = `[Attached file: ${attachedFile.name}]\n\`\`\`\n${attachedFile.content}\n\`\`\`\n\nUser question: ${message}`;
+        userQuery = message;
+      }
       setAttachedFile(null);
     }
 
@@ -526,7 +541,8 @@ export default function App() {
         backend: modelType,
         containmentMode,
         conversationHistory,
-        kbEnabled
+        kbEnabled,
+        imageData
       });
 
       unlisten(); // Stop listening for tokens — stream is complete
@@ -1288,17 +1304,23 @@ export default function App() {
                 marginTop: '8px',
                 padding: '6px 10px',
                 background: '#21222c',
-                border: `1px solid ${attachedFile.size > 50000 ? '#ffb86c' : '#50fa7b'}`,
+                border: `1px solid ${attachedFile.isImage ? '#bd93f9' : attachedFile.size > 50000 ? '#ffb86c' : '#50fa7b'}`,
                 borderRadius: '6px',
                 fontSize: '0.8rem',
                 color: '#f8f8f2',
               }}>
-                <span>📎</span>
+                {attachedFile.isImage ? (
+                  <img
+                    src={`data:${attachedFile.mimeType};base64,${attachedFile.base64}`}
+                    alt="preview"
+                    style={{ width: '32px', height: '32px', objectFit: 'cover', borderRadius: '4px' }}
+                  />
+                ) : <span>📎</span>}
                 <span style={{ fontWeight: 600 }}>{attachedFile.name}</span>
-                <span style={{ color: '#9aa5c4' }}>
-                  ({attachedFile.size > 1024 ? `${(attachedFile.size / 1024).toFixed(1)} KB` : `${attachedFile.size} B`})
-                </span>
-                {attachedFile.size > 50000 && (
+                {attachedFile.isImage && (
+                  <span style={{ color: '#bd93f9', fontSize: '0.75rem' }}>🖼️ Image — vision model required</span>
+                )}
+                {!attachedFile.isImage && attachedFile.size > 50000 && (
                   <span style={{ color: '#ffb86c', fontSize: '0.75rem' }}>⚠️ Large file — uses significant context</span>
                 )}
                 <button
@@ -1379,7 +1401,7 @@ export default function App() {
                   <button
                     onClick={handleAttachFile}
                     disabled={isLoading}
-                    title={attachedFile ? `Attached: ${attachedFile.name}` : "Attach a text file"}
+                    title={attachedFile ? `Attached: ${attachedFile.name}` : "Attach a file or image"}
                     style={{
                       height: '28px',
                       padding: '0 10px',
