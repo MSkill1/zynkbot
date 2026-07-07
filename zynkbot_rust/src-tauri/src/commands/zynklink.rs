@@ -250,16 +250,65 @@ pub async fn list_zynklink_pairings() -> Result<serde_json::Value, String> {
     zynklink::list_zynklink_pairings(&pool, &user_id, &device_id).await
 }
 
-/// Revoke a ZynkLink pairing
+/// Unlink from a device — FULL teardown of BOTH file-sharing (ZynkLink) AND
+/// conversation sync (ZynkSync), including the pinned TLS cert, on BOTH devices.
+///
+/// Link and sync share a single trust relationship (the peer's pinned cert in
+/// `zynk_devices.tls_cert_der`), so an "unlink" must tear everything down and force
+/// a full re-pair. This previously removed only the ZynkLink file-sharing pairing,
+/// leaving the sync pairing + pinned cert intact — so devices kept syncing after an
+/// unlink and fell into a 401 loop whenever only one side tore down. We now delegate
+/// to `remove_device()`, which deletes the peer's cert + all pairing rows locally and
+/// fires `notify-unsynced` so the peer performs the same full removal.
 #[tauri::command]
-pub async fn revoke_zynklink_pairing(linked_user_id: String) -> Result<serde_json::Value, String> {
+pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_user_id: String) -> Result<serde_json::Value, String> {
     let user_id = crate::user_identity::get_user_id()?;
+    let local_device_id = crate::user_identity::get_device_id()?;
 
-    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
-        .await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    // Grab the running sync service — it owns the peer-notification path and the
+    // cert-pinned HTTP client. Unlink is a UI action, so the service is expected up.
+    let service = {
+        let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+        match guard.as_ref() {
+            Some(s) => std::sync::Arc::clone(s),
+            None => return Err("Sync service not running — cannot unlink cleanly".to_string()),
+        }
+    };
+    let pool = service.get_db_pool();
 
-    zynklink::revoke_zynklink_pairing(&pool, &user_id, &linked_user_id).await
+    // Resolve the peer device_id from the pairing before we tear it down.
+    let peer = sqlx::query_as::<_, (String, String)>(
+        "SELECT device1_id, device2_id FROM zynklink_pairings
+         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
+    )
+    .bind(&user_id).bind(&linked_user_id)
+    .bind(&linked_user_id).bind(&user_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| format!("Failed to look up pairing: {}", e))?;
+
+    let peer_device_id = match peer {
+        Some((d1, d2)) => if d1 == local_device_id { d2 } else { d1 },
+        None => return Err("No active pairing found with this user".to_string()),
+    };
+
+    // Full teardown locally + notify the peer to do the same (fire-and-forget).
+    service.remove_device(&peer_device_id).await?;
+
+    // A trusted peer is gone — rebuild the cert-pinned HTTP client so it stops
+    // trusting the now-removed device.
+    if let Err(e) = service.rebuild_http_client().await {
+        eprintln!("[ZynkLink] Warning: failed to rebuild HTTP client after unlink: {}", e);
+    }
+
+    // Refresh both panels instantly (they also poll, but this avoids the lag).
+    let _ = app.emit("zynklink-pairing-updated", serde_json::json!({ "unlinked": true }));
+    let _ = app.emit("zynksync-device-removed", serde_json::json!({ "device_id": peer_device_id }));
+
+    Ok(serde_json::json!({
+        "success": true,
+        "message": "Unlinked and unsynced. Both devices must re-pair to reconnect."
+    }))
 }
 
 /// Pause or resume a ZynkLink pairing (session-only; clears on restart)

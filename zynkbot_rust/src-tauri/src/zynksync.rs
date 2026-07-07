@@ -2869,6 +2869,10 @@ async fn handle_notify_unsynced(
             let _ = app.emit("zynksync-device-removed", serde_json::json!({
                 "device_id": removed_device_id
             }));
+            // Unlink is now a unified teardown, so the ZynkLink panel must refresh too.
+            let _ = app.emit("zynklink-pairing-updated", serde_json::json!({
+                "unlinked": true
+            }));
         }
     }
 
