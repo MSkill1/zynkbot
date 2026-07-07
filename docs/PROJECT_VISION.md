@@ -1,12 +1,12 @@
 # ContainAI: Ethical AI Infrastructure
 
-**Flagship Product: Zynkbot** – An Intelligence Multiplier
+**Flagship Product: Zynkbot** – Reflective Intelligence Infrastructure
 
 ---
 
 Zynkbot isn't just a virtual assistant. It's a tool designed to help people improve the way they think, act, and reflect — by supporting a process we refer to as **recursion**.
 
-In computing, recursion is a method where a system refers back to earlier steps to solve a problem more effectively. But recursion isn't just a programming concept — it's also how human beings grow.
+In computing, recursion is a method where a system refers back to earlier steps to solve a problem more effectively. But recursion isn't just a programming concept — reflection naturally forms recursive feedback loops that influence future decisions.
 
 We reflect on our past actions. We evaluate our choices, revisit past conversations, and think about how our behavior aligns with our goals. This looping process — memory, reflection, adjustment — is how people change.
 
