@@ -20,7 +20,6 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - **Weak local models may store questions as memories** — The memory gating decision (`should_remember`) is entirely LLM-driven. Strong models (Anthropic Claude, dolphin 8B) correctly return `should_remember=false` for pure questions. Weaker models sometimes return `should_remember=true` for queries like "What's my name?", storing the question itself as a memory. Potential fix: add a lightweight pre-filter that detects obvious pure-question messages before the LLM call, avoiding model-quality dependency for this case.
 
 ### Core Improvements
-- **Image attachment support** — attach JPEG, PNG, and WebP images to messages when using a vision-capable API backend (Anthropic, OpenAI, xAI); option hidden automatically for local models that don't support vision
 - **PDF support in Knowledge Base** — index PDF files alongside plain text; extract and chunk text content for RAG search the same way .txt files are handled today
 - **Word document (.docx) support in Knowledge Base** — index .docx files the same way PDFs are handled; extract text content for RAG search
 - ~~End-to-end encryption for ZynkLink, ZynkSync, and ZChat (LAN traffic)~~ ✅

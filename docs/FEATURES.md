@@ -324,6 +324,21 @@ See [ENSEMBLE_MODE.md](ENSEMBLE_MODE.md) for full documentation.
 
 ---
 
+### 📎 Image Attachments (Vision)
+
+Attach images to any message when using a vision-capable cloud model.
+
+**Supported formats:** JPG, JPEG, PNG, GIF, WebP, BMP
+
+**Supported models:** Anthropic Claude, OpenAI GPT-4o, xAI Grok. Local GGUF models do not support vision.
+
+**How to use:**
+1. Click the 📎 attach button in the chat input
+2. Select an image file
+3. A thumbnail preview appears — type your question and send
+
+---
+
 ## Advanced Features
 
 ### Hybrid Memory Search
