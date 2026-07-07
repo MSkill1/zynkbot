@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { open } from "@tauri-apps/plugin-shell";
 import "../styles/ChatMessage.css";
 
 export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId }) {
@@ -191,9 +192,12 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
                       {idx + 1}. {result.title}
                     </div>
                     <div style={{ fontSize: '0.85rem', color: '#8be9fd', marginBottom: '5px', wordBreak: 'break-all' }}>
-                      <a href={result.url} target="_blank" rel="noopener noreferrer" style={{ color: '#8be9fd', textDecoration: 'none' }}>
+                      <span
+                        onClick={() => open(result.url)}
+                        style={{ color: '#8be9fd', textDecoration: 'underline', cursor: 'pointer' }}
+                      >
                         {result.url}
-                      </a>
+                      </span>
                     </div>
                     {result.snippet && (
                       <div style={{ fontSize: '0.85rem', color: '#9aa5c4', fontStyle: 'italic' }}>
