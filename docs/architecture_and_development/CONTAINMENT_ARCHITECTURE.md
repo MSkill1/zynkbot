@@ -527,7 +527,8 @@ See [ROADMAP.md](../ROADMAP.md) for full timeline.
 - [Digital Resilience](../DIGITAL_RESILIENCE.md) - Offline-first architecture benefits
 
 **Source Code:**
-- `src-tauri/src/lib.rs` - Conversation flow with containment (lines 1035-2150)
+- `src-tauri/src/commands/chat.rs` - Conversation flow with containment integration
+- `src-tauri/src/commands/safety.rs` - Safety command handlers
 - `src-tauri/src/containment.rs` - Containment mode enforcement
 - `src-tauri/src/safety_classifier.rs` - TinyBERT toxic detection
 - `src-tauri/src/memory.rs` - Hybrid search and storage

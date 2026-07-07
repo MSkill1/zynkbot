@@ -87,7 +87,16 @@ Zynkbot is a Tauri desktop application with a React frontend and a Rust backend.
 
 ```
 src-tauri/src/
-├── lib.rs                  # All Tauri commands; main application logic
+├── lib.rs                  # App initialization, global state, shared types, and internal helpers
+├── commands/               # Tauri command handlers — 15 domain modules
+│   ├── chat.rs             # send_message_with_memory, run_ensemble
+│   ├── memory.rs           # Memory conflict resolution
+│   ├── knowledge_base.rs   # KB indexing, search, file ops
+│   ├── zynksync.rs         # Device sync commands
+│   ├── zynklink.rs         # File sharing commands
+│   ├── zchat.rs            # Device messaging commands
+│   ├── safety.rs           # Containment/safety checks
+│   └── ...                 # onboarding, nlp, models, conversation, web_search, sync_codes, user_identity, utils
 ├── main.rs                 # Tauri app entry point
 ├── db.rs                   # Database connection pool
 ├── memory.rs               # Memory CRUD and hybrid search
@@ -100,7 +109,7 @@ src-tauri/src/
 ├── question_extractor.rs   # Extracts questions from conversation for context
 ├── containment.rs          # Safety enforcement (all containment modes)
 ├── safety_classifier.rs    # TinyBERT toxicity classifier
-├── relationship_detector.rs # DEPRECATED — replaced by LLM classifier in lib.rs
+├── relationship_detector.rs # DEPRECATED — replaced by LLM classifier in commands/chat.rs
 ├── user_identity.rs        # User ID and device identity management
 ├── sync_codes.rs           # ZynkSync pairing code generation/validation
 ├── zynksync.rs             # Memory sync protocol

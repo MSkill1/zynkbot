@@ -40,7 +40,7 @@ Zynkbot's memory system processes user conversations through an 8-stage pipeline
 
 ### 1.1 User Input Received
 
-**File:** `src-tauri/src/lib.rs`
+**File:** `src-tauri/src/commands/chat.rs`
 
 **Entry Point:** Tauri command `send_message_with_memory`
 
@@ -566,7 +566,7 @@ if containment_mode == "hipaa" {
 
 ## 5. Relationship Generation
 
-**File:** `src-tauri/src/lib.rs`
+**File:** `src-tauri/src/commands/chat.rs`
 
 **Timing:** Fire-and-forget async background task (doesn't block user response)
 

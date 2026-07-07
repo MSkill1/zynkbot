@@ -157,7 +157,7 @@ Rust 1.77.2+ (Edition 2021)
 
 ### 1. Conversation Engine
 
-**Location**: `src-tauri/src/lib.rs::send_message_with_memory()`
+**Location**: `src-tauri/src/commands/chat.rs::send_message_with_memory()`
 
 **Responsibilities**:
 1. Orchestrate conversation flow
@@ -398,7 +398,7 @@ pub async fn hybrid_search(
 
 ### 3. Ensemble Mode (Multi-Model Consensus)
 
-**Location**: `src-tauri/src/lib.rs::run_ensemble()`
+**Location**: `src-tauri/src/commands/chat.rs::run_ensemble()`
 
 **Purpose**: Run multiple AI models simultaneously and synthesize their responses
 

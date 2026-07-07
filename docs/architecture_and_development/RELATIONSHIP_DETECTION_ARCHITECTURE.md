@@ -101,7 +101,7 @@ Contradiction detected?
 
 ### 2. Local LLM Fallback
 
-**File:** `src-tauri/src/lib.rs` (inline in memory pipeline)
+**File:** `src-tauri/src/commands/chat.rs` (inline in memory pipeline)
 **Trigger:** When primary LLM returns no relationships (`llm_relationships.is_empty()`)
 
 **Why?**

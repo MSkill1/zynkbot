@@ -78,7 +78,7 @@ Where to find things in the Rust backend:
 
 | What you want to change | File |
 |---|---|
-| Chat, memory pipeline, conversation flow | `src-tauri/src/lib.rs` |
+| Chat, memory pipeline, conversation flow | `src-tauri/src/commands/chat.rs` |
 | Memory CRUD, links, graph, contradictions | `src-tauri/src/commands/memory.rs` |
 | Onboarding flow, Einstein demo | `src-tauri/src/commands/onboarding.rs` |
 | Conversation history, session feedback | `src-tauri/src/commands/conversation.rs` |

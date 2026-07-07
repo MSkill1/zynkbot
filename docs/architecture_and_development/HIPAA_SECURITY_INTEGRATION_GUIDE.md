@@ -175,19 +175,19 @@ These blocks are designed for non-clinical or self-service contexts — they cat
 **4. Memory System Disabled in HIPAA Mode**
 - Personal memory extraction pipeline does not run in HIPAA mode — extraction is skipped before any write is attempted
 - Any memories that do persist (e.g. created via another code path) carry an 8-hour expiration as a defense-in-depth fallback
-- Source: `src-tauri/src/lib.rs`
+- Source: `src-tauri/src/commands/chat.rs`
 
 **5. Conversation History Disabled in HIPAA Mode**
 - Raw conversation logging is skipped entirely in HIPAA mode — no records are written to `conversation_sessions` or `conversation_messages`
 - The History button is grayed out with tooltip explanation when HIPAA mode is active
 - Raw conversation text is more sensitive than extracted facts; disabling both is the correct default
-- Source: `src-tauri/src/lib.rs`, `src-tauri/src/conversation_history.rs`
+- Source: `src-tauri/src/commands/chat.rs`, `src-tauri/src/conversation_history.rs`
 
 **6. Medical Disclaimer Auto-Addition**
 - Automatically appended to any health-related response
 - Triggered when the response contains: symptom, treatment, medication, diagnosis, disease, condition, health, medical, doctor, patient, therapy
 - Disclaimer text appended: *"⚕️ AI-generated. Not a substitute for clinical judgment or current clinical guidelines."*
-- Source: `src-tauri/src/lib.rs`
+- Source: `src-tauri/src/commands/chat.rs`
 
 ---
 
