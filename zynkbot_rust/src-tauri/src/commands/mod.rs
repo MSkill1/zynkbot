@@ -1,6 +1,15 @@
+pub mod chat;
 pub mod conversation;
+pub mod knowledge_base;
 pub mod memory;
 pub mod models;
 pub mod nlp;
 pub mod onboarding;
 pub mod safety;
+pub mod sync_codes;
+pub mod user_identity;
+pub mod utils;
+pub mod web_search;
+pub mod zchat;
+pub mod zynklink;
+pub mod zynksync;

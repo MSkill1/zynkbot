@@ -95,6 +95,7 @@ pub struct SyncResult {
     pub peer_device_name: String,
     pub memories_sent: usize,
     pub memories_received: usize,
+    pub conversations_sent: usize,
     pub conflicts_resolved: usize,
     pub success: bool,
     pub error: Option<String>,
@@ -1098,6 +1099,7 @@ impl ZynkSyncService {
                 peer_device_name: peer.device_name,
                 memories_sent: 0,
                 memories_received: 0,
+                conversations_sent: 0,
                 conflicts_resolved: 0,
                 success: true,
                 error: None,
@@ -1134,6 +1136,7 @@ impl ZynkSyncService {
             peer_device_name: peer.device_name,
             memories_sent: memories.len(),
             memories_received: 0,
+            conversations_sent: 0,
             conflicts_resolved: 0,
             success: true,
             error: None,
@@ -1737,6 +1740,7 @@ impl ZynkSyncService {
                     peer_device_name: peer.device_name,
                     memories_sent: 0,
                     memories_received: 0,
+                    conversations_sent: 0,
                     conflicts_resolved: 0,
                     success: true,
                     error: None,
@@ -1766,6 +1770,7 @@ impl ZynkSyncService {
                         peer_device_name: peer.device_name,
                         memories_sent: 0,
                         memories_received: 0,
+                        conversations_sent: 0,
                         conflicts_resolved: 0,
                         success: true,
                         error: None,
@@ -1928,9 +1933,13 @@ impl ZynkSyncService {
 
         // Sync conversation history — both devices always push their new conversations.
         // Union merge (not active/passive): each device pushes what it has, peer deduplicates.
-        if let Err(e) = self.push_conversations_to_peer(&peer, user_id).await {
-            eprintln!("[ZynkSync] Conversation sync failed (non-fatal): {}", e);
-        }
+        let conversations_sent = match self.push_conversations_to_peer(&peer, user_id).await {
+            Ok((_sessions, messages)) => messages,
+            Err(e) => {
+                eprintln!("[ZynkSync] Conversation sync failed (non-fatal): {}", e);
+                0
+            }
+        };
 
         // Update sync timestamp so future syncs are not considered "first sync"
         self.update_sync_timestamp(&peer.device_id, local_is_active).await?;
@@ -1944,6 +1953,7 @@ impl ZynkSyncService {
             peer_device_name: peer.device_name,
             memories_sent,
             memories_received,
+            conversations_sent,
             conflicts_resolved: 0,
             success: true,
             error: None,
@@ -2858,6 +2868,10 @@ async fn handle_notify_unsynced(
         if let Some(app) = guard.as_ref() {
             let _ = app.emit("zynksync-device-removed", serde_json::json!({
                 "device_id": removed_device_id
+            }));
+            // Unlink is now a unified teardown, so the ZynkLink panel must refresh too.
+            let _ = app.emit("zynklink-pairing-updated", serde_json::json!({
+                "unlinked": true
             }));
         }
     }

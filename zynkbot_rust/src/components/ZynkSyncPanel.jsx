@@ -84,7 +84,17 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
       if (result && !result.success) {
         setMessage(`✗ Sync failed: ${result.error || 'Unknown error'}`);
       } else if (result) {
-        setMessage(`✓ Synced with ${peer.device_name}: sent ${result.memories_sent}, received ${result.memories_received}`);
+        const memSent = result.memories_sent || 0;
+        const memReceived = result.memories_received || 0;
+        const convSent = result.conversations_sent || 0;
+        if (memSent === 0 && memReceived === 0 && convSent === 0) {
+          setMessage(`✓ Already in sync with ${peer.device_name}`);
+        } else {
+          const parts = [];
+          if (memSent > 0 || memReceived > 0) parts.push(`sent ${memSent}, received ${memReceived} memories`);
+          if (convSent > 0) parts.push(`sent ${convSent} conversation messages`);
+          setMessage(`✓ Synced with ${peer.device_name}: ${parts.join('; ')}`);
+        }
       } else {
         setMessage(`✓ Sync complete`);
       }
