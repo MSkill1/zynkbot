@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import { open as openUrl } from '@tauri-apps/plugin-shell';
 import VoiceButton from './VoiceButton';
 
 export default function EnsembleModal({
@@ -645,19 +646,18 @@ export default function EnsembleModal({
                         marginBottom: '10px',
                         border: '1px solid #44475a'
                       }}>
-                        <a
-                          href={searchResult.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <span
+                          onClick={() => openUrl(searchResult.url)}
                           style={{
                             color: '#8be9fd',
-                            textDecoration: 'none',
+                            textDecoration: 'underline',
+                            cursor: 'pointer',
                             fontWeight: 'bold',
                             fontSize: '0.95rem'
                           }}
                         >
                           {searchResult.title}
-                        </a>
+                        </span>
                         <p style={{
                           color: '#9aa5c4',
                           fontSize: '0.8rem',

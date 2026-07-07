@@ -183,7 +183,6 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
     if let Ok(key) = std::env::var("XAI_API_KEY") {
         keys.insert("XAI_API_KEY".to_string(), serde_json::json!(key));
     }
-
     Ok(serde_json::json!(keys))
 }
 
@@ -253,11 +252,24 @@ pub async fn set_api_key(key: String, value: String) -> Result<(), String> {
 /// Remove an API key from the .env file
 #[tauri::command]
 pub async fn remove_api_key(key: String) -> Result<(), String> {
-    let env_path = std::env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?
-        .parent()
-        .ok_or("Failed to get parent directory")?
-        .join(".env");
+    let current = std::env::current_dir()
+        .map_err(|e| format!("Failed to get current directory: {}", e))?;
+
+    let mut possible_paths = vec![
+        current.join(".env"),
+        current.join("src-tauri").join(".env"),
+    ];
+
+    if let Some(parent) = current.parent() {
+        if let Some(grandparent) = parent.parent() {
+            possible_paths.push(grandparent.join("zynkbot_rust/src-tauri/.env"));
+        }
+    }
+
+    let env_path = possible_paths
+        .into_iter()
+        .find(|p| p.exists())
+        .ok_or_else(|| format!("Could not find .env file. Current dir: {:?}", current))?;
 
     let content = std::fs::read_to_string(&env_path)
         .unwrap_or_else(|e| {
@@ -274,10 +286,10 @@ pub async fn remove_api_key(key: String) -> Result<(), String> {
         .collect();
 
     std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file: {}", e))?;
+        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
 
     std::env::remove_var(&key);
 
-    println!("[API Keys] Removed {} from .env", key);
+    println!("[API Keys] ✅ Removed {} from .env at {:?}", key, env_path);
     Ok(())
 }
