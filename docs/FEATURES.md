@@ -19,7 +19,7 @@ Zynkbot uses a local SQLite database for persistent, semantic memory that learns
 **Memory Types:**
 - **User Memories**: Your personal conversations and preferences
 - **Foundational Memories**: System-level knowledge about Zynkbot (searched only when your query mentions "Zynkbot")
-- **Knowledge Base**: Documents you import (text files, markdown, JSON, code) for RAG retrieval — stored separately from personal memories. PDF support coming soon.
+- **Knowledge Base**: Documents you import (text files, markdown, JSON, code, PDF) for RAG retrieval — stored separately from personal memories.
 
 **Features:**
 - ✅ Remembers context across sessions
@@ -181,12 +181,12 @@ Upload documents and search them semantically during conversations.
 - Text files (.txt, .md)
 - JSON files (.json)
 - Code files (any language)
-- PDF documents *(upcoming)*
+- PDF documents
 
 **How it works:**
 1. Index files via Settings → Knowledge Base
-2. Documents chunked and embedded as vectors
-3. Click the 📚 **KB button** in the message input window to search your documents
+2. Documents chunked and embedded as vectors using hybrid search (semantic + keyword)
+3. Click the 📚 **KB button** in the message input window to search your documents for one message; click again to lock it on across all messages (📚 **KB LOCK**); click once more to turn off
 4. Relevant chunks retrieved and included in conversation context
 
 **Features:**

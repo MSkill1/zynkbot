@@ -69,6 +69,9 @@ ndarray = "0.16"
 # Regex for PHI detection (HIPAA mode)
 regex = "1.10"
 
+# PDF text extraction for Knowledge Base
+pdf-extract = "0.7"
+
 # Web search (HTML parsing)
 scraper = "0.20"
 urlencoding = "2.1"

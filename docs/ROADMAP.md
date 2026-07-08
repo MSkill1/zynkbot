@@ -13,14 +13,12 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ### Technical Debt
 
-- **UUID type audit** — SQLx stores `uuid::Uuid` values as 16-byte binary blobs in SQLite. Any SQL WHERE clause that binds a plain `&str` instead of a parsed `Uuid` will silently match zero rows. This has already caused bugs in `mark_read`, `mark_delivered`, and `zchat_clear_history`. A sweep of all SQL queries filtering on `device_id`, `user_id`, `from_device_id`, `to_device_id`, and similar UUID columns is needed to catch any remaining instances before they surface as user-facing bugs.
-
 ### Known Limitations
 
 - **Weak local models may store questions as memories** — The memory gating decision (`should_remember`) is entirely LLM-driven. Strong models (Anthropic Claude, dolphin 8B) correctly return `should_remember=false` for pure questions. Weaker models sometimes return `should_remember=true` for queries like "What's my name?", storing the question itself as a memory. Potential fix: add a lightweight pre-filter that detects obvious pure-question messages before the LLM call, avoiding model-quality dependency for this case.
 
 ### Core Improvements
-- **PDF support in Knowledge Base** — index PDF files alongside plain text; extract and chunk text content for RAG search the same way .txt files are handled today
+- ~~**PDF support in Knowledge Base**~~ ✅
 - **Word document (.docx) support in Knowledge Base** — index .docx files the same way PDFs are handled; extract text content for RAG search
 - ~~End-to-end encryption for ZynkLink, ZynkSync, and ZChat (LAN traffic)~~ ✅
 - Semantic conflict detection during sync (see labs/zynksync_improvements/)
@@ -30,7 +28,6 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - Model Management UI — download/delete .gguf models from UI with progress indicators
 - Auto-update notification — detect when a new version is available and prompt the user to update (git pull + restart)
 - Multiple contradiction resolution — when a new memory contradicts more than one existing memory, only the first conflict is surfaced to the user; subsequent conflicting memories are silently skipped. Show a resolution modal for each conflict in sequence
-- Web search result links open in system browser — currently the links in the "View search sources" panel are not clickable in the Tauri webview; wire up `tauri-plugin-shell` `open()` so clicking a result URL launches the user's default browser
 - **Rotating startup tips** — Replace the single static "Remember:" tip with a rotating pool of tips that surface less-discovered features (Ensemble mode, KB search, ZynkLink, containment modes, etc.); one tip selected randomly on each launch
 - **Knowledge Base indexing progress indicator** — Large document indexing currently gives no feedback while running; add a progress bar or per-chunk status so it doesn't look frozen
 - **Startup date reminder surfacing** — At launch, check for memories with dates falling within the next 7 days and surface them in the greeting ("By the way, your niece's birthday party is this Sunday"). The memory system already extracts dates; this adds a query against stored event dates at startup. No OS integration required — passive, in-app only.

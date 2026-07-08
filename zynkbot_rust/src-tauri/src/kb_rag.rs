@@ -209,10 +209,21 @@ pub async fn index_document(
 ) -> Result<i32, String> {
     println!("[KB RAG] Starting indexing: {}", file_path);
 
-    // Read file
+    // Read file — PDFs require text extraction; all others are plain text
     println!("[KB RAG] Reading file...");
-    let content = fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let content = if file_path.to_lowercase().ends_with(".pdf") {
+        let bytes = fs::read(file_path)
+            .map_err(|e| format!("Failed to read PDF file: {}", e))?;
+        let text = pdf_extract::extract_text_from_mem(&bytes)
+            .map_err(|e| format!("Failed to extract PDF text: {}", e))?;
+        if text.trim().is_empty() {
+            return Err("PDF contains no extractable text. It may be a scanned image — OCR is not currently supported.".to_string());
+        }
+        text
+    } else {
+        fs::read_to_string(file_path)
+            .map_err(|e| format!("Failed to read file: {}", e))?
+    };
     println!("[KB RAG] File read successfully, length: {} bytes", content.len());
 
     // Get file metadata
@@ -506,8 +517,87 @@ pub async fn remove_document_index(
 }
 
 // ============================================================================
-// SEMANTIC SEARCH
+// SEMANTIC SEARCH + FTS5 HYBRID
 // ============================================================================
+
+/// FTS5 keyword search over kb_chunks content.
+/// Returns chunks matching any significant query term, scored at a base 0.25.
+/// Used as a fallback/complement to semantic search — catches paraphrased queries
+/// where cosine similarity is low (e.g. "other names" vs "also known as").
+async fn search_kb_fts5(
+    pool: &SqlitePool,
+    user_id: &str,
+    query: &str,
+    include_system_docs: bool,
+    limit: usize,
+) -> Vec<KBSearchResult> {
+    const STOP_WORDS: &[&str] = &[
+        "the", "a", "an", "is", "it", "in", "of", "and", "or", "to",
+        "for", "on", "at", "by", "with", "as", "be", "was", "are",
+        "were", "has", "have", "had", "what", "when", "where", "who",
+        "how", "why", "can", "does", "did", "do", "not", "its",
+    ];
+
+    // Quote each significant term for FTS5 literal matching, join with OR
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .filter_map(|w| {
+            let clean: String = w.chars().filter(|c| c.is_alphanumeric()).collect();
+            if clean.len() >= 3 && !STOP_WORDS.contains(&clean.to_lowercase().as_str()) {
+                Some(format!("\"{}\"", clean.to_lowercase()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if terms.is_empty() {
+        return Vec::new();
+    }
+
+    let fts_query = terms.join(" OR ");
+
+    let user_filter = if include_system_docs {
+        "(d.user_id = ? OR d.user_id = '_system')"
+    } else {
+        "d.user_id = ?"
+    };
+
+    let sql = format!(
+        "SELECT c.id as chunk_id, c.document_id, c.chunk_index, c.content,
+                d.file_name, d.file_path
+         FROM kb_chunks_fts
+         JOIN kb_chunks c ON kb_chunks_fts.rowid = c.id
+         JOIN kb_documents d ON c.document_id = d.id
+         WHERE kb_chunks_fts MATCH ?
+           AND {} AND d.status = 'indexed'
+           AND d.file_path NOT LIKE 'snap_ins/%'
+         LIMIT ?",
+        user_filter
+    );
+
+    match sqlx::query(&sql)
+        .bind(&fts_query)
+        .bind(user_id)
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(rows) => rows.into_iter().map(|r| KBSearchResult {
+            chunk_id: r.try_get("chunk_id").unwrap_or(0),
+            document_id: r.try_get("document_id").unwrap_or(0),
+            file_name: r.try_get("file_name").unwrap_or_default(),
+            file_path: r.try_get("file_path").unwrap_or_default(),
+            chunk_index: r.try_get("chunk_index").unwrap_or(0),
+            content: r.try_get("content").unwrap_or_default(),
+            similarity_score: 0.25,
+        }).collect(),
+        Err(e) => {
+            println!("[KB RAG] FTS5 search failed (non-fatal): {}", e);
+            Vec::new()
+        }
+    }
+}
 
 /// Search knowledge base chunks using semantic similarity
 /// Returns top K most relevant chunks with their source document info
@@ -629,11 +719,36 @@ pub async fn search_kb_chunks(
         })
         .collect();
 
+    // FTS5 keyword search — catches paraphrased queries that semantic search misses
+    let fts_results = search_kb_fts5(pool, user_id, query, include_system_docs, top_k).await;
+
+    if !fts_results.is_empty() {
+        println!("[KB RAG] FTS5 found {} keyword matches", fts_results.len());
+
+        // Chunks found by both: boost their semantic score slightly
+        let fts_ids: std::collections::HashSet<i32> = fts_results.iter().map(|r| r.chunk_id).collect();
+        for result in &mut search_results {
+            if fts_ids.contains(&result.chunk_id) {
+                result.similarity_score = (result.similarity_score + 0.1).min(1.0);
+            }
+        }
+
+        // Chunks found only by FTS5: add them so they can compete
+        let semantic_ids: std::collections::HashSet<i32> = search_results.iter().map(|r| r.chunk_id).collect();
+        for fts_result in fts_results {
+            if !semantic_ids.contains(&fts_result.chunk_id) {
+                search_results.push(fts_result);
+            }
+        }
+    }
+
     // Re-sort after boosting, then limit to top_k
     search_results.sort_by(|a, b| b.similarity_score.partial_cmp(&a.similarity_score).unwrap_or(std::cmp::Ordering::Equal));
     search_results.truncate(top_k);
 
-    println!("[KB RAG] Found {} relevant chunks", search_results.len());
+    println!("[KB RAG] Found {} relevant chunks (best: {:.1}%)",
+        search_results.len(),
+        search_results.first().map(|r| r.similarity_score * 100.0).unwrap_or(0.0));
 
     Ok(search_results)
 }

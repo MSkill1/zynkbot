@@ -36,6 +36,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "txt", "md", "json", "csv", "log",
     "rs", "js", "jsx", "ts", "tsx", "py", "java", "cpp", "c", "h",
     "html", "css", "xml", "yaml", "yml", "toml",
+    "pdf",
 ];
 
 /// Check if file extension is supported
