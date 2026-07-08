@@ -42,9 +42,9 @@ walkdir = "2"
 
 # Candle - Pure Rust ML framework with BERT NER token classification
 # Using PR #3212 commit with BertForTokenClassification support
-candle-core = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773", features = ["cuda"] }
-candle-nn = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773", features = ["cuda"] }
-candle-transformers = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773", features = ["cuda"] }
+candle-core = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773" }
+candle-nn = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773" }
+candle-transformers = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773" }
 
 # Model loading from Hugging Face
 hf-hub = "0.4"
@@ -105,4 +105,4 @@ hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }  # TokioIo
 # tempfile = "3.8"     # Temporary audio files
 
 # Local LLM inference (GGUF models) - Used by local_models.rs for Llama 3, Mistral, etc
-llama-cpp-2 = { version = "0.1", features = ["cuda"] }
+llama-cpp-2 = "0.1"
