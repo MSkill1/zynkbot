@@ -10,7 +10,7 @@ Jake is a licensed HVAC technician working in rural Pennsylvania. Most days, he'
 
 He's not looking for a personal companion chatbot. He wants a quiet assistant that can keep track of things he forgets, surface useful information on the fly, and stay out of the way when he doesn't need it.
 
-> **Note:** This case study describes the planned mobile version of Zynkbot (Android/iOS via Tauri Mobile or similar, expected 2026-2027). The desktop version (Windows, Linux) is production-ready now (v0.9) with all core features: offline operation, Knowledge Base RAG, ZynkLink device sync, and local storage.
+> **Note:** This case study describes the planned mobile version of Zynkbot (Android/iOS via Tauri Mobile or similar, expected 2026-2027). The desktop version (Windows, Linux) is feature-complete at v0.9 with all core features: offline operation, Knowledge Base RAG, ZynkLink device sync, and local storage.
 
 ---
 

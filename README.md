@@ -1,24 +1,26 @@
 # Zynkbot
 
-**Privacy-first AI companion with persistent memory and cross-device sync**
+**A local-first AI that maps how your thinking evolves**
 
 *By [ContainAI](https://containai.ai) – Building ethical AI infrastructure*
 
-Zynkbot is a local-first AI companion built for people who want an assistant that actually gets to know them — without surveillance. Most AI assistants require an account, email verification, and periodic login codes — then store your conversations on company servers, use them to train future models, and give you no visibility into what the AI remembers about you. It's like talking into a black box. Zynkbot works differently: no account, no login, no verification codes. You just run the app. Everything it learns about you stays in your own database.
+Most tools that remember things for you either store facts (notes, journals) or store conversations (AI assistants). Zynkbot does something different: it builds a structured, relational memory of not just *what* you've thought and decided, but *how* your understanding changed over time — which beliefs shifted, which ideas connected, where new information contradicted the old. It's closer in spirit to Obsidian or Roam than to a chatbot, but where those hold static notes, Zynkbot maintains a living memory graph that tracks the evolution of your own thinking.
 
-Think of Zynkbot less like a chatbot and more like the computer on the Starship Enterprise — always available, deeply knowledgeable, and completely trustworthy. It's not a substitute for human connection. However, hopefully, using it over time will allow your Zynkbot to genuinely get to know you and allow you to get to know yourself better.
+There's no account to create. No email verification, no periodic login codes, no password resets — you install it and run it, the way software used to work. That's possible because there's no company in the middle: every memory Zynkbot builds lives in a database on your own device, and nothing leaves it unless you choose.
 
-The memory system is the core of Zynkbot. Every conversation is processed into structured memories — facts, preferences, context — stored locally and retrieved semantically. Over time, interaction builds an understanding of who you are and what you care about. That accumulated understanding *is* your Zynkbot — the relationship you've built with it. The underlying AI model is just the face: you can swap it for a different local model, upgrade to a more powerful one, or switch between cloud providers without losing anything. Zynkbot is model-agnostic by design. You can see exactly what it remembers, edit any memory, or delete it entirely. Nothing is hidden.
+Zynkbot wasn't built to be anti-surveillance software by ideology. But when mainstream AI assistants store your conversations on corporate servers, train future models on what you tell them, and show you nothing of what they've kept — a record of your thinking, held by someone else, working for someone else — then keeping your own memory on your own machine stops being a niche privacy preference. It's become ordinary self-defense, for ordinary people.
 
-Zynkbot also includes a networking layer that runs entirely on your local network. ZynkSync keeps your memory database consistent across your own devices. ZynkLink enables direct file transfers between paired Zynkbot users. ZChat provides device-to-device messaging without a cloud relay. These features make Zynkbot useful across a household, a team, or a distributed workflow. Download a colleague's project directly into your Zynkbot's knowledge base and it is instantly familiar with everything it needs — without any of it touching a third-party server.
+The memory system is the core. Every conversation is processed into structured memories — facts, preferences, context, and the relationships between them — stored locally and retrieved semantically. Over time, that accumulated structure *is* your Zynkbot: the understanding you've built together. The underlying AI model is just the face — swap it for a different local model or switch cloud providers without losing anything. In this sense it's less like a chatbot and more like the computer aboard the Starship Enterprise: not because it talks to you, but because it never forgets what you've told it. It will come to know you well, and it's genuinely useful to talk to — but it isn't a replacement for the people in your life, and it isn't trying to be. It's a tool for understanding yourself, not a substitute for your relationships with other people.
 
-Zynkbot is designed as a platform, not just a companion. The snap-in architecture allows behavior to be customized for specific industries and use cases — the same local-first privacy infrastructure can serve healthcare, legal, research, or personal use. Multiple AI backends are supported: run a completely offline local model for full privacy, or connect to cloud APIs (OpenAI, Anthropic, xAI) when you want more capability. The model you choose is a preference, not a commitment — your memory database stays on your device regardless.
+Zynkbot also runs a networking layer entirely on your local network. ZynkSync keeps your memory database consistent across your own devices. ZynkLink enables direct file transfers between paired users. ZChat provides device-to-device messaging with no cloud relay. Download a colleague's project directly into your knowledge base and Zynkbot is instantly familiar with it — without any of it touching a third-party server.
+
+And because the entire stack is offline-first — no cloud dependency, no subscription, no internet required — the same infrastructure that protects one person's memory also works where connectivity can't be assumed: field work, disaster response, resource-limited regions. A snap-in architecture customizes the platform for specific domains — healthcare, legal, research, enterprise — on the same local-first foundation. **[→ Digital resilience documentation](docs/DIGITAL_RESILIENCE.md)**
 
 **[→ See how these features work in practice](docs/case_studies/)**
 
 <img src="assets/main.png" alt="Zynkbot main interface" width="800">
 
-**Current Status**: Production-ready Rust/Tauri desktop application (Windows, Linux). Mobile (Android, iOS) support planned via Tauri Mobile.
+**Current Status**: Feature-complete v0.9 (Rust/Tauri desktop, Windows and Linux; open beta — see below). Mobile (Android, iOS) support planned via Tauri Mobile.
 
 ---
 
@@ -541,7 +543,7 @@ Copyright (c) 2024-2026 Matthew Skillman / ContainAI
 
 ---
 
-**Status**: Production-ready cross-platform desktop application (April 2026)
+**Status**: Feature-complete v0.9, open beta (July 2026)
 **Platform**: Windows 10+, Linux (Ubuntu 22.04+, Arch, Fedora)
 **Mobile**: Android and iOS support planned via Tauri Mobile
 **Organization**: [ContainAI](https://containai.ai) – Ethical AI infrastructure
