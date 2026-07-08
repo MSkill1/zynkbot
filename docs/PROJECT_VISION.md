@@ -1,46 +1,27 @@
 # ContainAI: Ethical AI Infrastructure
 
-**Flagship Product: Zynkbot** – Reflective Intelligence Infrastructure
+**Flagship Product: Zynkbot** – Your epistemic history — a structured record of how your thinking evolves
 
 ---
 
-Zynkbot isn't just a virtual assistant. It's a tool designed to help people improve the way they think, act, and reflect — by supporting a process we refer to as **recursion**.
+Zynkbot is a local-first tool for structured, personal memory. The closest points of reference aren't chat assistants like ChatGPT — they're the tools people already use to think over time: Obsidian, Roam, Logseq, journals, personal CRMs. Like those, Zynkbot is a place to store and revisit what matters to you. Unlike those, it doesn't just hold notes — it maintains a relational memory graph that records not only facts, but how those facts connected to each other at a specific point in time: what you believed, what you doubted, how an idea that began in one context became something different later.
 
-In computing, recursion is a method where a system refers back to earlier steps to solve a problem more effectively. But recursion isn't just a programming concept — reflection naturally forms recursive feedback loops that influence future decisions.
+That distinction is the whole point. Journals are linear. Notes are unstructured. Search history is behavioral, not reflective. Zynkbot's memory is relational, persistent, and local — a structure for not just what you recorded, but how you understood it as you recorded it. And because it runs entirely on your own device, that record is yours alone: no servers, no profiling, no training on your life.
 
-We reflect on our past actions. We evaluate our choices, revisit past conversations, and think about how our behavior aligns with our goals. This looping process — memory, reflection, adjustment — is how people change.
+**Why this matters: recursion.**
 
-Zynkbot is built to support and strengthen that loop.
+In computing, recursion is a method where a system refers back to earlier steps to solve a problem more effectively. People do something similar. We reflect on past actions, revisit old conversations, and adjust as our understanding changes — reflection naturally forms feedback loops that shape future decisions. This looping process — memory, reflection, adjustment — is how people grow.
 
-In most digital systems today, recursion is disrupted. Corporate algorithms redirect attention, capture behavioral data, and optimize for engagement — not growth. The same technologies that can track patterns and nudge behavior are used to manipulate people, not help them understand themselves.
+Most digital systems disrupt that loop. Corporate algorithms redirect attention, capture behavioral data, and optimize for engagement rather than growth. Zynkbot inverts that model: it gives you the same capabilities — pattern tracking, reflection, adaptive interaction — but places them entirely under your control. The same tools used to manipulate people for profit become tools for deliberate self-understanding.
 
-**Zynkbot inverts that model.**
-
-It gives the user access to those same capabilities — pattern tracking, behavior reflection, adaptive interaction — but places them under the user's control. The same tools used to manipulate people for profit can become tools for conscious, structured self-improvement.
-
-Zynkbot helps you:
-
-- Remember key decisions, conversations, and milestones
-- Notice recurring behaviors or emotional shifts
-- Track how your actions align with your stated values
-- Reinforce progress and adjust direction — intentionally
-
-And it does this **locally**, without surveillance, profiling, or remote data harvesting. All memory and pattern recognition stays on the device, encrypted and user-controlled.
-
-Human recursion can be positive or negative. People can fall into loops of anxiety, distraction, or self-sabotage. But those loops can be redirected. With the right structure — and the ability to reflect on your own behavior over time — those same loops can lead to insight, growth, and lasting change.
-
-Zynkbot helps people reclaim their own cognitive feedback loops — turning automated distraction into deliberate clarity.
-
-This isn't artificial intelligence in the traditional sense.
-It's structured reflection — built to mirror the way real growth happens.
-Not artificial.
-**Aligned. And recursive.**
+This isn't artificial intelligence in the usual sense. It's structured reflection — built to mirror the way real growth happens.
+Not artificial. Aligned. And recursive.
 
 ---
 
 ## Current State: Desktop Application (v0.9)
 
-**Production-ready features:**
+**Feature-complete (v0.9, hardening):**
 - ✅ Persistent semantic memory (local SQLite, in-process vector search)
 - ✅ Persistent conversation history (searchable, date-grouped, resume support, disabled in HIPAA mode)
 - ✅ Hybrid search (entity extraction + semantic similarity)
@@ -52,8 +33,8 @@ Not artificial.
 - ✅ Transparent, editable memory
 
 **Platform support:**
-- ✅ Windows 10/11 (tested, production-ready)
-- ✅ Linux (Ubuntu, Arch, Fedora - tested, production-ready)
+- ✅ Windows 10/11 (tested, v0.9)
+- ✅ Linux (Ubuntu, Arch, Fedora - tested, v0.9)
 - 🔄 macOS (untested, should work)
 - 📱 Android/iOS (planned via Tauri Mobile)
 
@@ -63,62 +44,12 @@ Not artificial.
 
 ---
 
-## Future Vision: Ethical AI Development Platform
+## What Comes Next
 
-Zynkbot is the flagship product of a larger vision: **ContainAI** — an ethical development environment for artificial intelligence.
+Zynkbot is the foundation of a larger ecosystem. The two planned expansions are documented separately:
 
-### The Three Pillars
-
-### 1️⃣ Zynkbot (Flagship Application)
-
-**Mobile Application** (Phase 1 - 2026-2027)
-- Android and iOS via Tauri Mobile
-- All desktop features on mobile devices
-- Cross-device sync between desktop and mobile
-- On-device ML inference
-- Premium features (Parenting Mode, Professional Snap-ins)
-
-**Revenue Model:**
-- Free tier: Core features, local models
-- Premium tier: Advanced safety modes, professional Snap-ins
-- Family tier: Multi-user households, parental controls
-
-### 2️⃣ Zynkbot SDK (Developer Platform)
-
-**Open SDK for Privacy-First AI** (Phase 2 - 2027)
-- Extract modular components from Zynkbot:
-  - Containment layer (consent-based safety)
-  - Memory system (hybrid semantic + entity search)
-  - ZynkSync protocol (cross-device synchronization)
-  - HIPAA framework (PHI detection + ephemeral memory)
-  - Snap-in architecture (domain-specific workspaces)
-  - additional modules and ongoing tool development at ContainAI.ai as they become available 
-
-**Licensing:**
-- Free for non-commercial use
-- Paid commercial licensing for businesses
-- Revenue supports open source development
-
-**Use cases:**
-- Healthcare apps (HIPAA-aware architecture)
-- Educational tools (child-safe AI tutors)
-- Enterprise AI assistants (privacy-first, auditable)
-- Research platforms (transparent AI systems)
-
-### 3️⃣ ContainAI Foundation (Non-Profit)
-
-**Signal Model for AI** (Phase 3 - 2027-2028)
-- Nonprofit foundation supporting privacy-first AI
-- Maintains Zynkbot open source project
-- Funds SDK development and security audits
-- Advocates for ethical AI standards
-- Provides grants to aligned projects
-
-**Revenue sources:**
-- Zynkbot premium features
-- SDK commercial licensing
-- Donations and grants
-- Corporate sponsorships (privacy-aligned companies)
+- **[Zynkbot SDK](SDK_VISION.md)** — modular components (memory system, containment layer, ZynkSync, HIPAA framework) available as a privacy-first developer platform. Planned for 2027.
+- **[ContainAI Foundation](FOUNDATION_VISION.md)** — non-profit providing long-term governance, independent security audits, and grants to aligned developers. Planned for 2028.
 
 ---
 
@@ -183,7 +114,6 @@ Zynkbot is the flagship product of a larger vision: **ContainAI** — an ethical
 - ✅ Full control over all data
 
 **The vision:**
-- Not just a product — a movement
 - Prove that ethical AI is commercially viable
 - Create tools that empower, not exploit
 - Build a developer ecosystem around privacy
@@ -213,7 +143,6 @@ Zynkbot is the flagship product of a larger vision: **ContainAI** — an ethical
 - Self-sustaining revenue model
 
 **Long-term:**
-- Zynkbot becomes the "Signal of AI assistants"
 - SDK standard for privacy-first AI development
 - Ecosystem of aligned projects and companies
 - Demonstrable alternative to surveillance capitalism
@@ -242,9 +171,9 @@ Zynkbot is the flagship product of a larger vision: **ContainAI** — an ethical
 
 ---
 
-## Join the Movement
+## Get Involved
 
-Zynkbot is more than software — it's a statement that **AI should serve users, not exploit them**.
+Zynkbot is a statement that **AI should serve users, not exploit them**.
 
 **For users:** Take control of your AI interactions. Your data, your device, your choice.
 
@@ -284,13 +213,7 @@ Zynkbot is more than software — it's a statement that **AI should serve users,
 
 ---
 
-*A thought about the far future*
+*Looking ahead*
 
-If someone uses Zynkbot consistently — for years — something unprecedented may become possible.
-
-The memory graph doesn't just record facts. It records how facts connected to each other at a specific point in time: what you believed, what you doubted, how an idea that began in one context became something different years later. That structure means future retrieval isn't searching a log — it's navigating a map of a mind across time.
-
-No prior personal tool has made this possible at scale. Journals are linear. Notes are unstructured. Search history is behavioral, not reflective. Zynkbot's architecture — local, relational, and persistent — is the first structure that could, over a long enough time horizon, allow a person to reconstruct not just what happened in their life, but how they understood it as it happened.
-
-Whether that potential is realized depends on consistent use and data longevity that no one can yet verify. But if it holds, the implications extend well beyond productivity or self-improvement — into how people understand themselves across time, and into what it means to have a continuous inner life in an age of accelerating change.
+If someone uses Zynkbot consistently — for years — something further may become possible. Because the memory graph preserves how understanding evolved, not just what was recorded, a long enough history could let a person reconstruct not merely what happened in their life, but how they understood it as it happened. Whether that potential is realized depends on consistent use and data longevity that no one can yet verify. But if it holds, the implications reach beyond productivity — into how people understand themselves across time.
 

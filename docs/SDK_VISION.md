@@ -9,7 +9,7 @@
 
 The Zynkbot SDK extracts modular, reusable components from Zynkbot and makes them available as a developer platform. Instead of building AI privacy features from scratch, developers can use battle-tested, production-ready modules.
 
-**Vision:** Become the "Signal of AI development" — a privacy-first standard for building ethical AI applications.
+**Vision:** Establish a privacy-first standard for ethical AI development — the infrastructure layer that makes responsible AI the default choice for developers.
 
 ---
 

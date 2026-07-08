@@ -7,7 +7,7 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ---
 
-## v1.0 - Desktop Stable Release (Q2 2026)
+## v1.0 - Desktop Stable Release (Q3 2026)
 
 **Focus:** Polish, stability, documentation
 
@@ -464,7 +464,7 @@ Hash chain integrity layer on top of the v1.0 conversation history tables. The b
 
 ## Long-Term Vision (2028–2030)
 
-**Zynkbot as the "Signal" of AI Assistants**
+**Privacy-first AI at scale**
 - Demonstrable alternative to surveillance capitalism at scale
 - Privacy-first AI becomes a mainstream expectation, not a niche
 
