@@ -1971,6 +1971,11 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
+            // Ensure model directories exist in user data dir (for installed binary)
+            let models_dir = crate::db::get_app_data_dir();
+            std::fs::create_dir_all(models_dir.join("models/system")).ok();
+            std::fs::create_dir_all(models_dir.join("models/user")).ok();
+
             // Load .env — check user data dir first (installed binary), then dev paths
             let data_dir_env = crate::db::get_app_data_dir().join(".env");
             if data_dir_env.exists() {

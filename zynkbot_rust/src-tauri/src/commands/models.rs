@@ -50,28 +50,7 @@ pub async fn get_models() -> Result<Vec<ModelInfo>, String> {
         });
     }
 
-    let models_base = if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            if exe_dir.to_string_lossy().contains("target") {
-                exe_dir.parent()
-                    .and_then(|p| p.parent())
-                    .unwrap_or(exe_dir)
-                    .join("models")
-            } else {
-                exe_dir.join("models")
-            }
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join("models")
-        }
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("models")
-    };
-
-    let user_models_dir = models_base.join("user");
+    let user_models_dir = crate::db::get_models_dir().join("user");
 
     println!("[RUST] Scanning for user models in: {}", user_models_dir.display());
 
@@ -114,28 +93,7 @@ pub async fn get_models() -> Result<Vec<ModelInfo>, String> {
 /// Open the local models/user/ folder in the system file manager
 #[tauri::command]
 pub async fn open_models_folder() -> Result<(), String> {
-    let models_base = if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            if exe_dir.to_string_lossy().contains("target") {
-                exe_dir.parent()
-                    .and_then(|p| p.parent())
-                    .unwrap_or(exe_dir)
-                    .join("models")
-            } else {
-                exe_dir.join("models")
-            }
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join("models")
-        }
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("models")
-    };
-
-    let user_models_dir = models_base.join("user");
+    let user_models_dir = crate::db::get_models_dir().join("user");
 
     if !user_models_dir.exists() {
         std::fs::create_dir_all(&user_models_dir)

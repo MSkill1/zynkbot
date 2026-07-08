@@ -9,6 +9,28 @@ pub fn get_app_data_dir() -> PathBuf {
     data_dir
 }
 
+pub fn get_models_dir() -> PathBuf {
+    let data_models = get_app_data_dir().join("models");
+    if data_models.exists() {
+        return data_models;
+    }
+    // Dev mode fallback: models live in src-tauri/models/ relative to the exe in target/
+    if let Ok(exe) = std::env::current_exe() {
+        if exe.to_string_lossy().contains("target") {
+            if let Some(exe_dir) = exe.parent() {
+                let dev_models = exe_dir.parent()
+                    .and_then(|p| p.parent())
+                    .unwrap_or(exe_dir)
+                    .join("models");
+                if dev_models.exists() {
+                    return dev_models;
+                }
+            }
+        }
+    }
+    data_models
+}
+
 pub fn get_db_path() -> PathBuf {
     get_app_data_dir().join("zynkbot.db")
 }

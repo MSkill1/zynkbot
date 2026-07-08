@@ -6,7 +6,6 @@ use candle_core::{Device, IndexOp, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config, DTYPE};
 use std::sync::Mutex;
-use std::path::PathBuf;
 use once_cell::sync::Lazy;
 use tokenizers::Tokenizer;
 
@@ -100,7 +99,7 @@ impl SafetyClassifier {
         println!("[Candle Safety] Using CPU for safety classifier (reliable, <50ms per check)");
 
         // Get model directory path
-        let model_dir = crate::db::get_app_data_dir().join("models/system/toxic-bert");
+        let model_dir = crate::db::get_models_dir().join("system/toxic-bert");
 
         if !model_dir.exists() {
             return Err(format!(
