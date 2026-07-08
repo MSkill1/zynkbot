@@ -57,28 +57,15 @@ pub async fn open_kb_folder_in_explorer(user_id: String) -> Result<(), String> {
 /// Open an external file in the default system editor
 #[tauri::command]
 pub async fn open_external_file(path: String) -> Result<(), String> {
-    let project_root = if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        std::path::PathBuf::from(manifest_dir)
-            .parent()
-            .and_then(|p| p.parent())
-            .ok_or_else(|| "Failed to navigate from CARGO_MANIFEST_DIR".to_string())?
-            .to_path_buf()
+    let candidate = std::path::PathBuf::from(&path);
+    let full_path = if candidate.is_absolute() {
+        candidate
     } else {
-        let exe_path = std::env::current_exe()
-            .map_err(|e| format!("Failed to get executable path: {}", e))?;
-        exe_path
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-            .ok_or_else(|| "Failed to determine project root from executable".to_string())?
-            .to_path_buf()
+        crate::db::get_app_data_dir().join(&path)
     };
 
-    let full_path = project_root.join(&path);
-
     if !full_path.exists() {
-        return Err(format!("File not found: {}\nProject root: {}\nRelative path: {}",
-            full_path.display(), project_root.display(), path));
+        return Err(format!("File not found: {}", full_path.display()));
     }
 
     let path_str = full_path.to_string_lossy().to_string();
@@ -110,28 +97,15 @@ pub async fn open_external_file(path: String) -> Result<(), String> {
 /// Open an external folder in the system file explorer
 #[tauri::command]
 pub async fn open_external_folder(path: String) -> Result<(), String> {
-    let project_root = if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        std::path::PathBuf::from(manifest_dir)
-            .parent()
-            .and_then(|p| p.parent())
-            .ok_or_else(|| "Failed to navigate from CARGO_MANIFEST_DIR".to_string())?
-            .to_path_buf()
+    let candidate = std::path::PathBuf::from(&path);
+    let full_path = if candidate.is_absolute() {
+        candidate
     } else {
-        let exe_path = std::env::current_exe()
-            .map_err(|e| format!("Failed to get executable path: {}", e))?;
-        exe_path
-            .parent()
-            .and_then(|p| p.parent())
-            .and_then(|p| p.parent())
-            .ok_or_else(|| "Failed to determine project root from executable".to_string())?
-            .to_path_buf()
+        crate::db::get_app_data_dir().join(&path)
     };
 
-    let full_path = project_root.join(&path);
-
     if !full_path.exists() {
-        return Err(format!("Folder not found: {}\nProject root: {}\nRelative path: {}",
-            full_path.display(), project_root.display(), path));
+        return Err(format!("Folder not found: {}", full_path.display()));
     }
 
     let path_str = full_path.to_string_lossy().to_string();
