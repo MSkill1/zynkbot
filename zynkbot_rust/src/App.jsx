@@ -160,6 +160,7 @@ export default function App() {
   const [showKBManager, setShowKBManager] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [searchKBEnabled, setSearchKBEnabled] = useState(false);
+  const [kbLocked, setKbLocked] = useState(false);
   const [attachedFile, setAttachedFile] = useState(null); // { name, content, size }
   // Collapsible section states - all start collapsed
   const [showGettingStarted, setShowGettingStarted] = useState(false);
@@ -458,8 +459,10 @@ export default function App() {
     const kbEnabled = searchKBEnabled;
     if (kbEnabled) {
       console.log('[KB RAG] Knowledge Base search enabled for this message');
-      // Reset the toggle after sending
-      setSearchKBEnabled(false);
+      // Only reset if not locked — locked keeps KB on across messages
+      if (!kbLocked) {
+        setSearchKBEnabled(false);
+      }
     }
 
     // Inject attached file content into the message sent to the backend.
@@ -1367,19 +1370,43 @@ export default function App() {
 
                 {/* Bottom-left button row — flex container so buttons always stay adjacent */}
                 <div style={{ position: 'absolute', bottom: '8px', left: '8px', display: 'flex', gap: '4px', zIndex: 10 }}>
-                  {/* KB Search Button */}
+                  {/* KB Search Button — three states: off / on-next / locked */}
                   <button
-                    onClick={() => setSearchKBEnabled(!searchKBEnabled)}
+                    onClick={() => {
+                      if (kbLocked) {
+                        // Locked → off: release lock and disable
+                        setKbLocked(false);
+                        setSearchKBEnabled(false);
+                      } else if (searchKBEnabled) {
+                        // On-next → locked: keep enabled and lock it
+                        setKbLocked(true);
+                      } else {
+                        // Off → on-next
+                        setSearchKBEnabled(true);
+                      }
+                    }}
                     disabled={isLoading}
-                    title={searchKBEnabled ? "Knowledge Base search enabled for next message" : "Click to search Knowledge Base"}
+                    title={
+                      kbLocked
+                        ? "KB locked on — click to turn off"
+                        : searchKBEnabled
+                          ? "KB on for next message — click to lock on"
+                          : "Click to search Knowledge Base"
+                    }
                     style={{
                       height: '28px',
                       padding: '0 10px',
-                      background: searchKBEnabled
-                        ? 'linear-gradient(135deg, #8be9fd 0%, #50fa7b 100%)'
-                        : 'linear-gradient(135deg, #6272a4 0%, #44475a 100%)',
-                      color: searchKBEnabled ? '#282a36' : '#f8f8f2',
-                      border: searchKBEnabled ? '2px solid #50fa7b' : 'none',
+                      background: kbLocked
+                        ? 'linear-gradient(135deg, #ffb86c 0%, #ff79c6 100%)'
+                        : searchKBEnabled
+                          ? 'linear-gradient(135deg, #8be9fd 0%, #50fa7b 100%)'
+                          : 'linear-gradient(135deg, #6272a4 0%, #44475a 100%)',
+                      color: (kbLocked || searchKBEnabled) ? '#282a36' : '#f8f8f2',
+                      border: kbLocked
+                        ? '2px solid #ffb86c'
+                        : searchKBEnabled
+                          ? '2px solid #50fa7b'
+                          : 'none',
                       borderRadius: '6px',
                       cursor: isLoading ? 'not-allowed' : 'pointer',
                       fontWeight: 'bold',
@@ -1389,12 +1416,16 @@ export default function App() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '4px',
-                      boxShadow: searchKBEnabled ? '0 0 8px rgba(139, 233, 253, 0.5)' : '0 2px 4px rgba(0,0,0,0.2)',
+                      boxShadow: kbLocked
+                        ? '0 0 8px rgba(255, 184, 108, 0.6)'
+                        : searchKBEnabled
+                          ? '0 0 8px rgba(139, 233, 253, 0.5)'
+                          : '0 2px 4px rgba(0,0,0,0.2)',
                     }}
                     onMouseOver={(e) => !isLoading && (e.currentTarget.style.transform = 'translateY(-1px)')}
                     onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
                   >
-                    {searchKBEnabled ? '📚 KB ON' : '📚 KB'}
+                    {kbLocked ? '📚 KB LOCK' : searchKBEnabled ? '📚 KB ON' : '📚 KB'}
                   </button>
 
                   {/* Attach File Button */}
