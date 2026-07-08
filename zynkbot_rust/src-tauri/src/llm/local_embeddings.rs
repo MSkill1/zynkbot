@@ -30,7 +30,7 @@ impl EmbeddingModel {
         println!("[Candle Embeddings] Using CPU for embeddings (reliable background processing)");
 
         // Get model directory path
-        let model_dir = PathBuf::from("models/system/all-MiniLM-L6-v2");
+        let model_dir = crate::db::get_app_data_dir().join("models/system/all-MiniLM-L6-v2");
 
         if !model_dir.exists() {
             return Err(LLMError::RequestFailed(

@@ -189,31 +189,7 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
 /// Set an API key in the .env file and current session
 #[tauri::command]
 pub async fn set_api_key(key: String, value: String) -> Result<(), String> {
-    let current = std::env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?;
-
-    println!("[API Keys] Current directory: {:?}", current);
-
-    let mut possible_paths = vec![
-        current.join(".env"),
-        current.join("src-tauri").join(".env"),
-    ];
-
-    if let Some(parent) = current.parent() {
-        if let Some(grandparent) = parent.parent() {
-            possible_paths.push(grandparent.join("zynkbot_rust/src-tauri/.env"));
-        }
-    }
-
-    let env_path = possible_paths
-        .into_iter()
-        .find(|p| {
-            let exists = p.exists();
-            let parent_exists = p.parent().map(|parent| parent.exists()).unwrap_or(false);
-            println!("[API Keys] Checking path: {:?} (exists: {}, parent_exists: {})", p, exists, parent_exists);
-            exists || parent_exists
-        })
-        .ok_or_else(|| format!("Could not find .env file location. Current dir: {:?}", current))?;
+    let env_path = crate::db::get_app_data_dir().join(".env");
 
     println!("[API Keys] Selected .env path: {:?}", env_path);
     println!("[API Keys] Saving {} (value length: {} chars)", key, value.len());
@@ -252,24 +228,7 @@ pub async fn set_api_key(key: String, value: String) -> Result<(), String> {
 /// Remove an API key from the .env file
 #[tauri::command]
 pub async fn remove_api_key(key: String) -> Result<(), String> {
-    let current = std::env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?;
-
-    let mut possible_paths = vec![
-        current.join(".env"),
-        current.join("src-tauri").join(".env"),
-    ];
-
-    if let Some(parent) = current.parent() {
-        if let Some(grandparent) = parent.parent() {
-            possible_paths.push(grandparent.join("zynkbot_rust/src-tauri/.env"));
-        }
-    }
-
-    let env_path = possible_paths
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| format!("Could not find .env file. Current dir: {:?}", current))?;
+    let env_path = crate::db::get_app_data_dir().join(".env");
 
     let content = std::fs::read_to_string(&env_path)
         .unwrap_or_else(|e| {

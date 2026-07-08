@@ -100,7 +100,7 @@ impl SafetyClassifier {
         println!("[Candle Safety] Using CPU for safety classifier (reliable, <50ms per check)");
 
         // Get model directory path
-        let model_dir = PathBuf::from("models/system/toxic-bert");
+        let model_dir = crate::db::get_app_data_dir().join("models/system/toxic-bert");
 
         if !model_dir.exists() {
             return Err(format!(

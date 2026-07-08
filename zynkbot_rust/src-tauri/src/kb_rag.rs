@@ -64,35 +64,13 @@ pub struct KBSearchResult {
 /// This ensures KB files stay within the project directory and can be
 /// backed up/moved with the project.
 pub fn get_kb_folder_path(user_id: &str) -> Result<PathBuf, String> {
-    // Get project root (2 levels up from src-tauri working directory)
-    let project_root = std::env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?
-        .parent()  // Go from src-tauri to zynkbot_rust
-        .and_then(|p| p.parent())  // Go from zynkbot_rust to project root
-        .ok_or("Cannot determine project root")?
-        .to_path_buf();
-
-    let kb_folder = project_root
+    let kb_folder = crate::db::get_app_data_dir()
         .join("knowledge_base")
         .join(user_id);
 
-    // Create folder if it doesn't exist
     if !kb_folder.exists() {
         fs::create_dir_all(&kb_folder)
             .map_err(|e| format!("Failed to create KB folder: {}", e))?;
-
-        // On first use, copy the sample document so devs have something to index immediately
-        let sample_src = project_root
-            .join("knowledge_base")
-            .join("sample_knowledge_base_document.txt");
-        if sample_src.exists() {
-            let sample_dst = kb_folder.join("sample_knowledge_base_document.txt");
-            if let Err(e) = fs::copy(&sample_src, &sample_dst) {
-                println!("[KB] Warning: could not copy sample document: {}", e);
-            } else {
-                println!("[KB] Copied sample document to new KB folder");
-            }
-        }
     }
 
     Ok(kb_folder)

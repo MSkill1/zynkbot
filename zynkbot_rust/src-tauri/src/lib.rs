@@ -1971,25 +1971,27 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            // Load .env file from project root (cross-platform)
-            // Try multiple paths to handle different execution contexts
-            let env_paths = [
-                "../../.env",           // From target/debug/
-                "../../../.env",        // Alternative path
-                ".env",                 // Current directory
-                "../../../../../../.env" // From deep nested paths
-            ];
-
-            for path in &env_paths {
-                if std::path::Path::new(path).exists() {
-                    println!("[Dotenv] Loading .env from: {}", path);
-                    dotenv::from_path(path).ok();
-                    break;
+            // Load .env — check user data dir first (installed binary), then dev paths
+            let data_dir_env = crate::db::get_app_data_dir().join(".env");
+            if data_dir_env.exists() {
+                println!("[Dotenv] Loading .env from: {}", data_dir_env.display());
+                dotenv::from_path(&data_dir_env).ok();
+            } else {
+                // Dev mode fallbacks
+                let env_paths = [
+                    "../../.env",
+                    "../../../.env",
+                    ".env",
+                    "../../../../../../.env",
+                ];
+                for path in &env_paths {
+                    if std::path::Path::new(path).exists() {
+                        println!("[Dotenv] Loading .env from: {}", path);
+                        dotenv::from_path(path).ok();
+                        break;
+                    }
                 }
-            }
-
-            // Fallback: Search upwards from current directory
-            {  // Load dotenv for API keys
+                // Last resort: search upward
                 let mut current_dir = std::env::current_dir().unwrap_or_default();
                 for _ in 0..5 {
                     let env_file = current_dir.join(".env");
@@ -1998,9 +2000,7 @@ pub fn run() {
                         dotenv::from_path(env_file).ok();
                         break;
                     }
-                    if !current_dir.pop() {
-                        break;
-                    }
+                    if !current_dir.pop() { break; }
                 }
             }
 

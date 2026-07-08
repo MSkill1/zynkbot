@@ -86,7 +86,7 @@ impl CandleBertNER {
         let device = Device::Cpu;
 
         // Get model directory path
-        let model_dir = PathBuf::from("models/system/bert-base-NER");
+        let model_dir = crate::db::get_app_data_dir().join("models/system/bert-base-NER");
 
         if !model_dir.exists() {
             return Err(format!(
