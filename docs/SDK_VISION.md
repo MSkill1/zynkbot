@@ -7,7 +7,7 @@
 
 ## Overview
 
-The Zynkbot SDK extracts modular, reusable components from Zynkbot and makes them available as a developer platform. Instead of building AI privacy features from scratch, developers can use battle-tested, production-ready modules.
+The Zynkbot SDK extracts modular, reusable components from Zynkbot and makes them available as a developer platform. Instead of building AI privacy features from scratch, developers can use battle-tested, well-proven modules.
 
 **Vision:** Establish a privacy-first standard for ethical AI development — the infrastructure layer that makes responsible AI the default choice for developers.
 
@@ -25,7 +25,7 @@ Building privacy-first AI is hard:
 
 ### The Solution
 Zynkbot SDK provides:
-- ✅ Production-ready privacy components
+- ✅ Battle-tested privacy components
 - ✅ Pure Rust implementation (fast, safe, portable)
 - ✅ AGPL open source (prevents exploitation)
 - ✅ Commercial licensing available
