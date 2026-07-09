@@ -56,7 +56,7 @@ function fileIcon(filename) {
   return '📄';
 }
 
-const KB_TYPES = new Set(['pdf', 'txt', 'md', 'docx', 'doc', 'rtf', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'htm']);
+const KB_TYPES = new Set(['pdf', 'txt', 'md', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'htm', 'toml', 'rs', 'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'css', 'log']);
 const isKBCompatible = (filename) => KB_TYPES.has(filename.split('.').pop().toLowerCase());
 
 function formatBytes(bytes) {

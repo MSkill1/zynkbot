@@ -736,11 +736,23 @@ pub async fn download_to_knowledge_base(
 
     println!("[KB Download] Indexing file into knowledge base...");
 
-    let file_content = tokio::fs::read_to_string(&destination_path)
-        .await
-        .map_err(|e| format!("Failed to read file for indexing: {}", e))?;
+    let lower = filename.to_lowercase();
+    let index_result = if lower.ends_with(".pdf") {
+        let bytes = tokio::fs::read(&destination_path)
+            .await
+            .map_err(|e| format!("Failed to read PDF: {}", e))?;
+        match pdf_extract::extract_text_from_mem(&bytes) {
+            Ok(text) => kb_rag::index_text_as_document(&pool, &user_id, &filename, &text).await,
+            Err(e) => Err(format!("Failed to extract PDF text: {}", e)),
+        }
+    } else {
+        let file_content = tokio::fs::read_to_string(&destination_path)
+            .await
+            .map_err(|e| format!("Failed to read file for indexing: {}", e))?;
+        kb_rag::index_text_as_document(&pool, &user_id, &filename, &file_content).await
+    };
 
-    match kb_rag::index_text_as_document(&pool, &user_id, &filename, &file_content).await {
+    match index_result {
         Ok(doc_id) => {
             println!("[KB Download] ✓ File indexed successfully (doc_id: {})", doc_id);
         }
