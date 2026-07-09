@@ -11,7 +11,11 @@ pub fn get_app_data_dir() -> PathBuf {
 
 pub fn get_models_dir() -> PathBuf {
     let data_models = get_app_data_dir().join("models");
-    if data_models.exists() {
+    // Only use data dir if it actually contains model files, not just the empty directory
+    let has_models = data_models.join("system/all-MiniLM-L6-v2/model.safetensors").exists()
+        || data_models.join("system/bert-base-NER/model.safetensors").exists()
+        || data_models.join("system/toxic-bert/model.safetensors").exists();
+    if has_models {
         return data_models;
     }
     // Dev mode fallback: models live in src-tauri/models/ relative to the exe in target/

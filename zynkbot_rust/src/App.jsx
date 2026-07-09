@@ -24,6 +24,7 @@ import VoiceButton from "./components/VoiceButton";
 import ZChatModal from "./components/ZChatModal";
 import ZynkClusterModal from "./components/ZynkClusterModal";
 import OnboardingModal from "./components/OnboardingModal";
+import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
 import SessionInfoModal from "./components/SessionInfoModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
@@ -202,6 +203,14 @@ export default function App() {
 
   // Check for access token in URL
   const [hasAccess] = useState(true); // Disabled for local development
+  const [needsSetup, setNeedsSetup] = useState(null); // null = checking, true/false = result
+
+  // Check if first-run setup is needed
+  useEffect(() => {
+    invoke('check_needs_setup')
+      .then(needs => setNeedsSetup(needs))
+      .catch(() => setNeedsSetup(false));
+  }, []);
 
   // Fetch persistent user identity from backend on mount
   useEffect(() => {
@@ -745,6 +754,11 @@ export default function App() {
   // Show access gate if user doesn't have access
   if (!hasAccess) {
     return <AccessGate />;
+  }
+
+  // Show setup wizard on first run
+  if (needsSetup === true) {
+    return <SetupWizard onComplete={() => setNeedsSetup(false)} />;
   }
 
   // Wait for user identity to load before rendering

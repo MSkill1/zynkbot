@@ -2237,6 +2237,10 @@ pub fn run() {
             commands::conversation::delete_conversation_session,
             // Feedback / training data collection
             commands::conversation::store_message_feedback,
+            // Setup wizard
+            commands::setup_wizard::check_needs_setup,
+            commands::setup_wizard::download_system_models,
+            commands::setup_wizard::download_user_model,
         ])
         .on_window_event(|_window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

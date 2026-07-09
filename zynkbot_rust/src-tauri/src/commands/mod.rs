@@ -1,4 +1,5 @@
 pub mod chat;
+pub mod setup_wizard;
 pub mod conversation;
 pub mod knowledge_base;
 pub mod memory;
