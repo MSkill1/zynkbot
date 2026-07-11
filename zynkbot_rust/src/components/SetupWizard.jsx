@@ -193,7 +193,9 @@ export default function SetupWizard({ onComplete }) {
         <p style={S.body}>
           Local models run entirely on your device with no internet needed.
           Select any you want to download now — each is ~5GB.
-          You can skip this and add models later from Settings.
+          You can skip this and use an API key instead — add yours after setup
+          via the <strong style={{ color: '#ccc' }}>⚙ Settings</strong> button in the bottom-left corner.
+          Local models can also be added from Settings at any time.
         </p>
 
         {USER_MODELS.map(m => (

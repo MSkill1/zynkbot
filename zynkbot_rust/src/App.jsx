@@ -186,7 +186,7 @@ export default function App() {
   const anyModalOpen = showAbout || showDemoGuide || showWhyZynkbot || showAPIKeys ||
     showUserIdentity || showEnsemble || showConflictResolution || showZynkCluster ||
     showSessionInfo || showConversationHistory || showKBManager || showOnboarding ||
-    showGettingStarted || showSnapInModal;
+    showSnapInModal;
   useLayoutEffect(() => {
     if (anyModalOpen) {
       document.body.style.overflow = 'hidden';

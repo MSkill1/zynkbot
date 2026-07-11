@@ -954,12 +954,12 @@ pub async fn send_message_with_memory(
 
     let is_explicit_remember = query.trim().to_lowercase().starts_with("remember:");
 
-    // Explicit "Remember:" commands: if the LLM didn't extract a fact, pull the content directly.
-    if is_explicit_remember && extracted_facts.is_empty() {
+    // Explicit "Remember:" commands always store verbatim — override any LLM MEMORY_EXTRACT.
+    if is_explicit_remember {
         let remember_content = query.trim()["remember:".len()..].trim().to_string();
         if !remember_content.is_empty() {
-            println!("[RUST] 📌 Explicit Remember: command — using content as extracted fact");
-            extracted_facts.push(remember_content);
+            println!("[RUST] 📌 Explicit Remember: command — storing verbatim content");
+            extracted_facts = vec![remember_content];
         }
     }
 
