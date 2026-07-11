@@ -175,8 +175,19 @@ if not exist "zynkbot_rust\src-tauri\target\debug\app.exe" (
     timeout /t 5 /nobreak >nul
 )
 
+REM Detect CUDA and set features flag
+set "FEATURES_FLAG="
+where nvcc >nul 2>&1
+if !errorLevel! equ 0 (
+    where nvidia-smi >nul 2>&1
+    if !errorLevel! equ 0 (
+        set "FEATURES_FLAG=--features cuda"
+        echo [OK] CUDA detected - building with GPU acceleration
+    )
+)
+
 cd zynkbot_rust
-call npm run tauri:dev
+call npm run tauri -- dev !FEATURES_FLAG!
 
 REM ============================================================
 REM Cleanup on Exit

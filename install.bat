@@ -379,21 +379,13 @@ echo Step 4: Detecting GPU Hardware
 echo =========================================
 echo.
 
-REM Cargo.toml is committed with a CPU-only baseline. install.bat layers CUDA on
-REM top only when an NVIDIA GPU + CUDA toolkit are present (mirrors install.sh).
-REM skip-worktree keeps these local edits out of git so a GPU machine never
-REM commits CUDA features back for everyone (that is the regression we fixed).
-git update-index --skip-worktree zynkbot_rust\src-tauri\Cargo.toml 2>nul
-
-set "ZB_MODE=cpu"
 where nvidia-smi >nul 2>&1
 if %errorLevel% equ 0 (
     echo [INFO] NVIDIA GPU detected:
     nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
     where nvcc >nul 2>&1
     if !errorLevel! equ 0 (
-        set "ZB_MODE=cuda"
-        echo [OK] CUDA toolkit found - enabling GPU acceleration
+        echo [OK] CUDA toolkit found - GPU acceleration will be enabled by START_ZYNKBOT.bat
         nvcc --version | findstr "release"
 
         REM Copy CUDA MSBuild integration files for Visual Studio Build Tools
@@ -420,9 +412,6 @@ if %errorLevel% equ 0 (
 ) else (
     echo [INFO] No NVIDIA GPU detected - building for CPU mode.
 )
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0configure_cargo_features.ps1" -Mode !ZB_MODE!
-echo [OK] Cargo.toml configured for !ZB_MODE! build
 echo.
 
 REM ============================================

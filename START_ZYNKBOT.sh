@@ -100,6 +100,15 @@ cleanup() {
 # Set trap to cleanup on exit
 trap cleanup EXIT INT TERM
 
+# Detect CUDA and set features flag accordingly
+TAURI_FEATURES=""
+if command -v nvidia-smi &> /dev/null || ls /usr/lib/x86_64-linux-gnu/libcuda.so* &> /dev/null 2>&1; then
+    if command -v nvcc &> /dev/null; then
+        TAURI_FEATURES="--features cuda"
+        echo "⚡ CUDA detected — building with GPU acceleration"
+    fi
+fi
+
 # Start Tauri app (Rust backend runs automatically inside Tauri)
 echo "🚀 Starting Tauri app with Rust backend..."
-npm run tauri:dev
+npm run tauri -- dev $TAURI_FEATURES

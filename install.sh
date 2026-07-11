@@ -151,28 +151,12 @@ elif ls /usr/lib/x86_64-linux-gnu/libcuda.so* &> /dev/null 2>&1; then
     echo "🎮 NVIDIA GPU detected (driver present, nvidia-smi not in PATH)"
 fi
 
-CARGO_TOML="$SCRIPT_DIR/zynkbot_rust/src-tauri/Cargo.toml"
-REV="1dd2d2c70a41d2969f13d5aa5c512251dc353773"
-
 if [ "$NVIDIA_GPU" = "1" ]; then
     echo ""
 
     if command -v nvcc &> /dev/null; then
         echo "✅ CUDA toolkit found: $(nvcc --version | grep 'release' | awk '{print $5}' | tr -d ',')"
-        echo "⚡ Configuring Cargo.toml for CUDA acceleration..."
-
-        sed -i \
-            "s|candle-core = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|candle-core = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = [\"cuda\"] }|g" \
-            "$CARGO_TOML"
-        sed -i \
-            "s|candle-nn = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|candle-nn = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = [\"cuda\"] }|g" \
-            "$CARGO_TOML"
-        sed -i \
-            "s|candle-transformers = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|candle-transformers = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = [\"cuda\"] }|g" \
-            "$CARGO_TOML"
-        sed -i \
-            "s|llama-cpp-2 = \"0.1\"|llama-cpp-2 = { version = \"0.1\", features = [\"cuda\"] }|g" \
-            "$CARGO_TOML"
+        echo "⚡ GPU acceleration will be enabled automatically when you run START_ZYNKBOT.sh"
 
         # Create /usr/local/cuda/lib64 symlink structure expected by the build system.
         # apt installs CUDA libraries to /usr/lib/x86_64-linux-gnu/ instead of the
@@ -190,8 +174,6 @@ if [ "$NVIDIA_GPU" = "1" ]; then
         fi
 
         GPU_DETECTED=1
-        echo "✅ CUDA features enabled in Cargo.toml (candle-core, candle-nn, candle-transformers, llama-cpp-2)"
-        echo "   Local models and embeddings will run on GPU"
     else
         echo ""
         echo "⚠️  NVIDIA GPU found, but CUDA toolkit (nvcc) is not installed."
@@ -202,26 +184,11 @@ if [ "$NVIDIA_GPU" = "1" ]; then
         echo "   Arch:           sudo pacman -S cuda"
         echo "   All distros:    https://developer.nvidia.com/cuda-downloads"
         echo ""
-        echo "   After installing the toolkit, re-run install.sh to enable GPU automatically."
-
-        # Strip any leftover CUDA features so the CPU build succeeds
-        sed -i \
-            -e "s|candle-core = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = \[\"cuda\"\] }|candle-core = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|g" \
-            -e "s|candle-nn = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = \[\"cuda\"\] }|candle-nn = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|g" \
-            -e "s|candle-transformers = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = \[\"cuda\"\] }|candle-transformers = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|g" \
-            -e "s|llama-cpp-2 = { version = \"0.1\", features = \[\"cuda\"\] }|llama-cpp-2 = \"0.1\"|g" \
-            "$CARGO_TOML"
+        echo "   After installing the toolkit, re-run install.sh to set up symlinks, then"
+        echo "   START_ZYNKBOT.sh will automatically build with GPU acceleration."
     fi
 else
     echo "ℹ️  No NVIDIA GPU detected — building for CPU mode"
-
-    # Strip any leftover CUDA features so the CPU build succeeds
-    sed -i \
-        -e "s|candle-core = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = \[\"cuda\"\] }|candle-core = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|g" \
-        -e "s|candle-nn = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = \[\"cuda\"\] }|candle-nn = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|g" \
-        -e "s|candle-transformers = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\", features = \[\"cuda\"\] }|candle-transformers = { git = \"https://github.com/huggingface/candle.git\", rev = \"${REV}\" }|g" \
-        -e "s|llama-cpp-2 = { version = \"0.1\", features = \[\"cuda\"\] }|llama-cpp-2 = \"0.1\"|g" \
-        "$CARGO_TOML"
 fi
 
 echo ""
