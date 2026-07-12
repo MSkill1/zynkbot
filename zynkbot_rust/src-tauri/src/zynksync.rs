@@ -277,6 +277,10 @@ impl ZynkSyncService {
         self.db_pool.clone()
     }
 
+    pub async fn get_http_client(&self) -> reqwest::Client {
+        self.http_client.read().await.clone()
+    }
+
     /// Generate a new 6-digit pairing code
     pub async fn generate_pairing_code(&self) -> Result<String, String> {
         // Use rand::random() instead of thread_rng() for Send compatibility
@@ -3540,8 +3544,9 @@ async fn handle_zynklink_notify_unpaired(
 
     let local_user_id = crate::user_identity::get_user_id()
         .map_err(|e| format!("Failed to get local user ID: {}", e))?;
+    let local_device_id = crate::user_identity::get_device_id().unwrap_or_default();
 
-    // Fetch device IDs before deleting the pairing so we can sweep zchat messages
+    // Resolve the peer's device_id before we clear (clear_link_data removes the pairing row)
     let device_ids = sqlx::query_as::<_, (String, String)>(
         "SELECT device1_id, device2_id FROM zynklink_pairings
          WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
@@ -3553,64 +3558,16 @@ async fn handle_zynklink_notify_unpaired(
     .ok()
     .flatten();
 
-    let result = sqlx::query(
-        "DELETE FROM zynklink_pairings
-         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
-    )
-    .bind(&local_user_id).bind(unlinked_user_id)
-    .bind(unlinked_user_id).bind(&local_user_id)
-    .execute(&service.db_pool)
-    .await
-    .map_err(|e| format!("Failed to remove pairing: {}", e))?;
+    let peer_device_id = device_ids.as_ref().map(|(d1, d2)| {
+        if d1 == &local_device_id { d2.clone() } else { d1.clone() }
+    });
 
-    println!("[ZynkLink] Remote unlink: removed {} pairing record(s) for user {}",
-        result.rows_affected(), &unlinked_user_id[..8.min(unlinked_user_id.len())]);
-
-    // Delete zchat messages between the two devices — best-effort
-    if let Some((d1, d2)) = device_ids {
-        if let (Ok(uuid1), Ok(uuid2)) = (uuid::Uuid::parse_str(&d1), uuid::Uuid::parse_str(&d2)) {
-            match sqlx::query(
-                "DELETE FROM zchat_messages
-                 WHERE (from_device_id = ? AND to_device_id = ?)
-                    OR (from_device_id = ? AND to_device_id = ?)"
-            )
-            .bind(uuid1).bind(uuid2).bind(uuid2).bind(uuid1)
-            .execute(&service.db_pool)
-            .await {
-                Ok(r) if r.rows_affected() > 0 => println!("[ZynkLink] Deleted {} zchat message(s) on remote unlink", r.rows_affected()),
-                Err(e) => println!("[ZynkLink] Note: zchat cleanup failed (non-fatal): {}", e),
-                _ => {}
-            }
+    // Delegate full ZynkLink cleanup to clear_link_data — preserves ZynkSync if active
+    if let Some(ref peer_id) = peer_device_id {
+        match service.clear_link_data(peer_id).await {
+            Ok(_) => println!("[ZynkLink] ✓ Remote unlink: cleared link data for peer {}", &peer_id[..peer_id.len().min(8)]),
+            Err(e) => println!("[ZynkLink] Note: clear_link_data on notify-unpaired failed (non-fatal): {}", e),
         }
-    }
-
-    // Clean up orphaned device records — best-effort, must not block the UI event below
-    let local_device_id = crate::user_identity::get_device_id().unwrap_or_default();
-    match sqlx::query(
-        "DELETE FROM zynk_devices
-         WHERE device_id != ?
-           AND NOT EXISTS (SELECT 1 FROM zynk_device_pairings WHERE device_a_id = zynk_devices.device_id OR device_b_id = zynk_devices.device_id)
-           AND NOT EXISTS (SELECT 1 FROM zynklink_pairings WHERE is_active = 1 AND (device1_id = zynk_devices.device_id OR device2_id = zynk_devices.device_id))"
-    )
-    .bind(&local_device_id)
-    .execute(&service.db_pool)
-    .await {
-        Ok(r) if r.rows_affected() > 0 => println!("[ZynkLink] Cleaned up {} orphaned device record(s)", r.rows_affected()),
-        Err(e) => println!("[ZynkLink] Note: orphaned device cleanup failed (non-fatal): {}", e),
-        _ => {}
-    }
-
-    // Sweep expired / already-used ZynkLink codes — best-effort
-    match sqlx::query(
-        "DELETE FROM zynklink_codes
-         WHERE is_active = 0
-            OR (expires_at IS NOT NULL AND expires_at < datetime('now'))"
-    )
-    .execute(&service.db_pool)
-    .await {
-        Ok(r) if r.rows_affected() > 0 => println!("[ZynkLink] Swept {} expired/used ZynkLink code(s)", r.rows_affected()),
-        Err(e) => println!("[ZynkLink] Note: code sweep failed (non-fatal): {}", e),
-        _ => {}
     }
 
     if let Ok(guard) = crate::APP_HANDLE.lock() {

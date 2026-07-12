@@ -290,11 +290,35 @@ pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_user_id: Stri
         None => return Err("No active pairing found with this user".to_string()),
     };
 
+    // Grab peer IP before clearing (clear_link_data may delete the device row)
+    let peer_ip = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
+    )
+    .bind(&peer_device_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|r| r.0);
+
     // Clear ZynkLink-specific data locally. ZynkSync pairing is preserved if active.
     service.clear_link_data(&peer_device_id).await?;
 
-    // A trusted peer is gone — rebuild the cert-pinned HTTP client so it stops
-    // trusting the now-removed device.
+    // Notify peer to do the same — fire-and-forget
+    if let Some(ip) = peer_ip {
+        let http_client = service.get_http_client().await;
+        let notify_user_id = user_id.clone();
+        tokio::spawn(async move {
+            let url = format!("https://{}:57963/api/zynklink/notify-unpaired", ip);
+            let payload = serde_json::json!({ "unlinked_user_id": notify_user_id });
+            match http_client.post(&url).json(&payload).send().await {
+                Ok(_) => println!("[ZynkLink] ✓ Notified peer of unlink"),
+                Err(e) => println!("[ZynkLink] Note: could not notify peer of unlink (offline?): {}", e),
+            }
+        });
+    }
+
+    // Rebuild cert-pinned HTTP client
     if let Err(e) = service.rebuild_http_client().await {
         eprintln!("[ZynkLink] Warning: failed to rebuild HTTP client after unlink: {}", e);
     }
