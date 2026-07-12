@@ -758,7 +758,7 @@ export default function App() {
 
   // Show setup wizard on first run
   if (needsSetup === true) {
-    return <SetupWizard onComplete={() => setNeedsSetup(false)} />;
+    return <SetupWizard onComplete={async () => { setNeedsSetup(false); await fetchModels(); }} />;
   }
 
   // Wait for user identity to load before rendering
