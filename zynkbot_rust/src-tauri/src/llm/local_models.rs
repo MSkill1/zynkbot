@@ -268,6 +268,11 @@ impl LocalModelSession {
 
         // 999 = offload all layers to GPU if CUDA is compiled in.
         // llama.cpp silently ignores this on CPU-only builds — safe in both modes.
+        #[cfg(feature = "cuda")]
+        println!("[Rust Local Models] ⚡ CUDA build — requesting 999 GPU layers");
+        #[cfg(not(feature = "cuda"))]
+        println!("[Rust Local Models] ℹ️  CPU-only build — GPU offload disabled");
+
         let model_params = LlamaModelParams::default().with_n_gpu_layers(999);
         let model = LlamaModel::load_from_file(&BACKEND, path, &model_params)
             .map_err(|e| LLMError::RequestFailed(format!("Failed to load model: {}", e)))?;
