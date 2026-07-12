@@ -233,7 +233,7 @@ impl ZynkSyncService {
     /// Called at startup (after load_devices) and after each new pairing.
     pub async fn rebuild_http_client(&self) -> Result<(), String> {
         let rows = sqlx::query(
-            "SELECT tls_cert_der FROM zynk_devices WHERE tls_cert_der IS NOT NULL AND is_paired = 1"
+            "SELECT tls_cert_der FROM zynk_devices WHERE tls_cert_der IS NOT NULL AND sync_paired = 1"
         )
         .fetch_all(&self.db_pool)
         .await
@@ -326,7 +326,7 @@ impl ZynkSyncService {
         let rows = sqlx::query(
             "SELECT device_id, device_name, device_ip, port, last_seen_at
              FROM zynk_devices
-             WHERE is_paired = 1
+             WHERE sync_paired = 1
              ORDER BY last_seen_at DESC"
         )
         .fetch_all(&self.db_pool)
@@ -549,17 +549,18 @@ impl ZynkSyncService {
         // Store in database
         // IMPORTANT: Store the HOST's user_id (not the client's) for proper identity tracking
         sqlx::query(
-            "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, owner_user_id, tls_cert_der, last_seen_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, sync_paired, owner_user_id, tls_cert_der, last_seen_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (device_id) DO UPDATE
-             SET device_name = ?, device_ip = ?, port = ?, is_paired = ?, owner_user_id = ?, tls_cert_der = ?, last_seen_at = ?"
+             SET device_name = ?, device_ip = ?, port = ?, is_paired = ?, sync_paired = ?, owner_user_id = ?, tls_cert_der = ?, last_seen_at = ?"
         )
         .bind(&device_id)
         .bind(&device_name)
         .bind(&host)
         .bind(port as i32)
         .bind("")  // device_platform - not critical for manual addition
-        .bind(true)  // is_paired - manually added devices are considered paired
+        .bind(true)  // is_paired
+        .bind(true)  // sync_paired - this is a ZynkSync pairing
         .bind(host_user_id.as_deref())
         .bind(peer_cert_der.as_deref())
         .bind(Utc::now())
@@ -569,6 +570,7 @@ impl ZynkSyncService {
         .bind(&host)
         .bind(port as i32)
         .bind(true)
+        .bind(true)  // sync_paired
         .bind(host_user_id.as_deref())
         .bind(peer_cert_der.as_deref())
         .bind(Utc::now())
@@ -603,21 +605,86 @@ impl ZynkSyncService {
         Ok(peer)
     }
 
-    /// Remove a device from the database and in-memory map only — no peer notification.
-    /// Called directly by `handle_notify_unsynced` to avoid a round-trip loop.
-    async fn remove_device_db_only(&self, device_id: &str) -> Result<(), String> {
-        println!("[ZynkSync] Removing device: {}", device_id);
+    /// Clear ZynkSync pairing data for a device. No peer notification — called directly
+    /// by `handle_notify_unsynced` to avoid a round-trip loop, and by `remove_device()`.
+    /// Preserves ZynkLink data (zynk_linked_directories, zynk_file_manifest, etc.).
+    /// If `is_paired = 0` (no ZynkLink either) the device row is deleted entirely.
+    /// If `is_paired = 1` (ZynkLink still active) the row is kept with sync_paired = 0.
+    async fn clear_sync_data_db_only(&self, device_id: &str) -> Result<(), String> {
+        println!("[ZynkSync] Clearing sync data for device: {}", &device_id[..device_id.len().min(8)]);
 
-        // zchat_messages stores device IDs as UUID blobs, not text strings.
+        let mut tx = self.db_pool.begin().await
+            .map_err(|e| format!("Failed to start sync removal transaction: {}", e))?;
+
+        // ZynkSync-specific tables only — do NOT touch ZynkLink tables.
+
+        // zynk_sync_state — no FK to zynk_devices, CASCADE would never reach it
+        sqlx::query("DELETE FROM zynk_sync_state WHERE source_device_id = ? OR target_device_id = ?")
+            .bind(device_id).bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete sync state: {}", e))?;
+
+        // zynk_device_pairings
+        sqlx::query("DELETE FROM zynk_device_pairings WHERE device_a_id = ? OR device_b_id = ?")
+            .bind(device_id).bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete device pairings: {}", e))?;
+
+        // zynk_device_certificates — no FK to zynk_devices, CASCADE would never reach it
+        sqlx::query("DELETE FROM zynk_device_certificates WHERE device_id = ?")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete device certificates: {}", e))?;
+
+        // user_sync_codes — no FK to zynk_devices, CASCADE would never reach it
+        sqlx::query("DELETE FROM user_sync_codes WHERE device_id = ?")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete user sync codes: {}", e))?;
+
+        // Check if ZynkLink is still active for this device
+        let is_paired: Option<i64> = sqlx::query_scalar(
+            "SELECT is_paired FROM zynk_devices WHERE device_id = ?"
+        )
+        .bind(device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to check is_paired: {}", e))?
+        .flatten();
+
+        if is_paired == Some(1) {
+            // ZynkLink still active — keep the device row, just clear sync fields
+            sqlx::query("UPDATE zynk_devices SET sync_paired = 0, tls_cert_der = NULL WHERE device_id = ?")
+                .bind(device_id).execute(&mut *tx).await
+                .map_err(|e| format!("Failed to clear sync_paired: {}", e))?;
+        } else {
+            // No ZynkLink either — delete the device row entirely
+            sqlx::query("DELETE FROM zynk_devices WHERE device_id = ?")
+                .bind(device_id).execute(&mut *tx).await
+                .map_err(|e| format!("Failed to remove device from database: {}", e))?;
+        }
+
+        tx.commit().await
+            .map_err(|e| format!("Failed to commit sync data removal: {}", e))?;
+
+        // Remove from in-memory peers map
+        {
+            let mut peers_map = self.peers.write().await;
+            peers_map.remove(device_id);
+        }
+
+        println!("[ZynkSync] ✓ Cleared sync data for device {}", &device_id[..device_id.len().min(8)]);
+        Ok(())
+    }
+
+    /// Clear ZynkLink pairing data for a device. Called by revoke_zynklink_pairing.
+    /// Preserves ZynkSync pairing if sync_paired = 1.
+    pub async fn clear_link_data(&self, device_id: &str) -> Result<(), String> {
+        println!("[ZynkLink] Clearing link data for device: {}", &device_id[..device_id.len().min(8)]);
+
         let device_uuid = uuid::Uuid::parse_str(device_id)
             .map_err(|e| format!("Invalid device ID: {}", e))?;
 
         let mut tx = self.db_pool.begin().await
-            .map_err(|e| format!("Failed to start removal transaction: {}", e))?;
+            .map_err(|e| format!("Failed to start link removal transaction: {}", e))?;
 
-        // Delete in child-first order. We don't rely on CASCADE because SQLite requires
-        // PRAGMA foreign_keys=ON per-connection and the pool may hand out connections
-        // that haven't had it set. Explicit deletes are defense-in-depth regardless.
+        // ZynkLink-specific tables
 
         // zynk_file_manifest — child of zynk_linked_directories
         sqlx::query("DELETE FROM zynk_file_manifest WHERE shared_directory_id IN (SELECT id FROM zynk_linked_directories WHERE device_id = ?)")
@@ -634,21 +701,6 @@ impl ZynkSyncService {
             .bind(device_id).execute(&mut *tx).await
             .map_err(|e| format!("Failed to delete linked directories: {}", e))?;
 
-        // zynk_device_pairings
-        sqlx::query("DELETE FROM zynk_device_pairings WHERE device_a_id = ? OR device_b_id = ?")
-            .bind(device_id).bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete device pairings: {}", e))?;
-
-        // zynk_device_certificates — no FK to zynk_devices, CASCADE would never reach it
-        sqlx::query("DELETE FROM zynk_device_certificates WHERE device_id = ?")
-            .bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete device certificates: {}", e))?;
-
-        // zynk_sync_state — no FK to zynk_devices, CASCADE would never reach it
-        sqlx::query("DELETE FROM zynk_sync_state WHERE source_device_id = ? OR target_device_id = ?")
-            .bind(device_id).bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete sync state: {}", e))?;
-
         // zynklink_codes
         sqlx::query("DELETE FROM zynklink_codes WHERE creator_device_id = ? OR accepted_by_device_id = ?")
             .bind(device_id).bind(device_id).execute(&mut *tx).await
@@ -659,35 +711,42 @@ impl ZynkSyncService {
             .bind(device_id).bind(device_id).execute(&mut *tx).await
             .map_err(|e| format!("Failed to delete ZynkLink pairings: {}", e))?;
 
-        // user_sync_codes — no FK to zynk_devices, CASCADE would never reach it
-        sqlx::query("DELETE FROM user_sync_codes WHERE device_id = ?")
-            .bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete user sync codes: {}", e))?;
-
         // zchat_messages — UUID blob columns
         sqlx::query("DELETE FROM zchat_messages WHERE from_device_id = ? OR to_device_id = ?")
             .bind(device_uuid).bind(device_uuid).execute(&mut *tx).await
             .map_err(|e| format!("Failed to delete chat history: {}", e))?;
 
-        // zynk_devices — last, after all dependents
-        let result = sqlx::query("DELETE FROM zynk_devices WHERE device_id = ?")
-            .bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to remove device from database: {}", e))?;
+        // Check if sync pairing is still active
+        let sync_paired: Option<i64> = sqlx::query_scalar(
+            "SELECT sync_paired FROM zynk_devices WHERE device_id = ?"
+        )
+        .bind(device_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| format!("Failed to check sync_paired: {}", e))?
+        .flatten();
 
-        if result.rows_affected() == 0 {
-            return Err("Device not found".to_string());
+        if sync_paired == Some(1) {
+            // Sync is still active — just clear the link flag
+            sqlx::query("UPDATE zynk_devices SET is_paired = 0 WHERE device_id = ?")
+                .bind(device_id).execute(&mut *tx).await
+                .map_err(|e| format!("Failed to clear is_paired: {}", e))?;
+        } else {
+            // No sync either — delete the device row entirely
+            sqlx::query("DELETE FROM zynk_devices WHERE device_id = ?")
+                .bind(device_id).execute(&mut *tx).await
+                .map_err(|e| format!("Failed to delete device row: {}", e))?;
+            // Remove from in-memory peers map (device is gone entirely)
+            let mut peers_map = self.peers.write().await;
+            peers_map.remove(device_id);
+            // Must drop write lock before committing
+            drop(peers_map);
         }
 
         tx.commit().await
-            .map_err(|e| format!("Failed to commit device removal: {}", e))?;
+            .map_err(|e| format!("Failed to commit link removal: {}", e))?;
 
-        // Remove from in-memory peers map
-        {
-            let mut peers_map = self.peers.write().await;
-            peers_map.remove(device_id);
-        }
-
-        println!("[ZynkSync] ✓ Removed device {} and all related data", device_id);
+        println!("[ZynkLink] ✓ Cleared link data for device {}", &device_id[..device_id.len().min(8)]);
         Ok(())
     }
 
@@ -704,7 +763,7 @@ impl ZynkSyncService {
         .flatten()
         .and_then(|r| r.0);
 
-        self.remove_device_db_only(device_id).await?;
+        self.clear_sync_data_db_only(device_id).await?;
 
         // Best-effort: tell the peer to remove us from its list too.
         // Fire-and-forget — if they're offline the auth check blocks re-insertion anyway.
@@ -2668,13 +2727,14 @@ async fn handle_verify_pairing(
 
             // Store client device with its TLS cert for future pinned connections
             sqlx::query(
-                "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, tls_cert_der, last_seen_at, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, sync_paired, tls_cert_der, last_seen_at, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (device_id) DO UPDATE
                  SET device_name = excluded.device_name,
                      device_ip = excluded.device_ip,
                      port = excluded.port,
                      is_paired = excluded.is_paired,
+                     sync_paired = excluded.sync_paired,
                      tls_cert_der = excluded.tls_cert_der,
                      last_seen_at = excluded.last_seen_at"
             )
@@ -2684,6 +2744,7 @@ async fn handle_verify_pairing(
             .bind(port as i32)
             .bind("")  // device_platform
             .bind(true)  // is_paired
+            .bind(true)  // sync_paired
             .bind(client_cert_der.as_deref())
             .bind(Utc::now())
             .bind(Utc::now())
@@ -2859,9 +2920,9 @@ async fn handle_notify_unsynced(
 
     // Best-effort — device may already be gone or never fully paired.
     // Call db_only to avoid firing a return notification (round-trip loop).
-    match service.remove_device_db_only(removed_device_id).await {
+    match service.clear_sync_data_db_only(removed_device_id).await {
         Ok(_) => println!("[ZynkSync] ✓ Removed peer device on their request"),
-        Err(e) => println!("[ZynkSync] Note: remove_device on notify-unsynced failed (non-fatal): {}", e),
+        Err(e) => println!("[ZynkSync] Note: clear_sync_data_db_only on notify-unsynced failed (non-fatal): {}", e),
     }
 
     if let Ok(guard) = crate::APP_HANDLE.lock() {
@@ -2955,10 +3016,10 @@ async fn handle_consume_sync_code(
     // Record the remote device as paired (IP comes from TCP connection, not request body)
     let client_ip = addr.ip().to_string();
     sqlx::query(
-        "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, last_seen_at, created_at)
-         VALUES (?, 'Remote Device', ?, 57963, '', 1, datetime('now'), datetime('now'))
+        "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, device_platform, is_paired, sync_paired, last_seen_at, created_at)
+         VALUES (?, 'Remote Device', ?, 57963, '', 1, 1, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, is_paired = 1, last_seen_at = datetime('now')"
+         SET device_ip = ?, is_paired = 1, sync_paired = 1, last_seen_at = datetime('now')"
     )
     .bind(remote_device_id)
     .bind(&client_ip)
@@ -3263,10 +3324,10 @@ async fn check_sync_authorized(
     // Check zynk_devices (not zynk_device_pairings) because the pairing row is
     // created by the first sync itself — using it as the gate causes a
     // chicken-and-egg rejection of every first sync from a newly added device.
-    // zynk_devices.is_paired=1 is set during the pairing handshake and cleared
-    // (via DELETE) by remove_device(), so it's the correct liveness indicator.
+    // zynk_devices.sync_paired=1 is set during the ZynkSync pairing handshake and
+    // cleared by clear_sync_data_db_only(), so it's the correct liveness indicator.
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM zynk_devices WHERE device_id = ? AND is_paired = 1"
+        "SELECT COUNT(*) FROM zynk_devices WHERE device_id = ? AND sync_paired = 1"
     )
     .bind(device_id)
     .fetch_one(pool)

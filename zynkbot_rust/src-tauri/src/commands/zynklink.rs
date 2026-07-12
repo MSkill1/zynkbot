@@ -250,16 +250,14 @@ pub async fn list_zynklink_pairings() -> Result<serde_json::Value, String> {
     zynklink::list_zynklink_pairings(&pool, &user_id, &device_id).await
 }
 
-/// Unlink from a device — FULL teardown of BOTH file-sharing (ZynkLink) AND
-/// conversation sync (ZynkSync), including the pinned TLS cert, on BOTH devices.
+/// Unlink from a device — tears down only file-sharing (ZynkLink) and ZChat data.
 ///
-/// Link and sync share a single trust relationship (the peer's pinned cert in
-/// `zynk_devices.tls_cert_der`), so an "unlink" must tear everything down and force
-/// a full re-pair. This previously removed only the ZynkLink file-sharing pairing,
-/// leaving the sync pairing + pinned cert intact — so devices kept syncing after an
-/// unlink and fell into a 401 loop whenever only one side tore down. We now delegate
-/// to `remove_device()`, which deletes the peer's cert + all pairing rows locally and
-/// fires `notify-unsynced` so the peer performs the same full removal.
+/// ZynkLink and ZynkSync now use independent trust relationships tracked by separate
+/// flags (`is_paired` and `sync_paired`) on the `zynk_devices` row. Unlinking clears
+/// the ZynkLink pairing, shared directories, file manifests, ZynkLink codes, and ZChat
+/// history, but leaves ZynkSync pairing intact if it was established separately. The
+/// device row itself is only deleted if both `is_paired` and `sync_paired` are clear.
+/// Use the ZynkSync unsync flow to tear down memory sync independently.
 #[tauri::command]
 pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_user_id: String) -> Result<serde_json::Value, String> {
     let user_id = crate::user_identity::get_user_id()?;
@@ -292,8 +290,8 @@ pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_user_id: Stri
         None => return Err("No active pairing found with this user".to_string()),
     };
 
-    // Full teardown locally + notify the peer to do the same (fire-and-forget).
-    service.remove_device(&peer_device_id).await?;
+    // Clear ZynkLink-specific data locally. ZynkSync pairing is preserved if active.
+    service.clear_link_data(&peer_device_id).await?;
 
     // A trusted peer is gone — rebuild the cert-pinned HTTP client so it stops
     // trusting the now-removed device.
@@ -307,7 +305,7 @@ pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_user_id: Stri
 
     Ok(serde_json::json!({
         "success": true,
-        "message": "Unlinked and unsynced. Both devices must re-pair to reconnect."
+        "message": "Unlinked successfully. ZynkSync pairing (if established) remains active."
     }))
 }
 
