@@ -758,7 +758,15 @@ export default function App() {
 
   // Show setup wizard on first run
   if (needsSetup === true) {
-    return <SetupWizard onComplete={async () => { setNeedsSetup(false); await fetchModels(); }} />;
+    return <SetupWizard onComplete={async () => {
+      setNeedsSetup(false);
+      for (let i = 0; i < 8; i++) {
+        const models = await fetchModels();
+        const gotReal = models?.length > 0 && !(models.length === 1 && models[0].id === 'local');
+        if (gotReal) break;
+        await new Promise(r => setTimeout(r, 750));
+      }
+    }} />;
   }
 
   // Wait for user identity to load before rendering

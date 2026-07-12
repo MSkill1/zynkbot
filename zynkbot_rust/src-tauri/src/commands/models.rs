@@ -83,10 +83,6 @@ pub async fn get_models() -> Result<Vec<ModelInfo>, String> {
         eprintln!("[RUST] Create it with: mkdir -p {}", user_models_dir.display());
     }
 
-    if models.is_empty() {
-        return Err("No AI models configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or LOCAL_MODEL_PATH environment variable.".to_string());
-    }
-
     Ok(models)
 }
 
