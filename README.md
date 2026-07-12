@@ -374,7 +374,7 @@ If you have an NVIDIA GPU, the installation script automatically enables CUDA so
 
 **What the installer does:**
 - Detects your GPU via `nvidia-smi`
-- If the CUDA toolkit (`nvcc`) is also present, it patches `Cargo.toml` to enable CUDA on all three Candle ML dependencies before building
+- If the CUDA toolkit (`nvcc`) is also present, `START_ZYNKBOT.sh` / `START_ZYNKBOT.bat` passes `--features cuda` to the Rust compiler at build time — no files are modified
 - If only the GPU is found (no toolkit), it prints instructions and builds CPU-only
 
 **If the installer built CPU-only and you want GPU acceleration:**
