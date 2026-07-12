@@ -76,7 +76,7 @@ When AI detects contradicting information during conversation:
 ### Implementation
 
 - **Backend**: Pure Rust async implementation (`zynkbot_rust/src-tauri/src/zynksync.rs`)
-- **Protocol**: HTTP-based sync over port 57963
+- **Protocol**: HTTPS/TLS-encrypted sync over port 57963
 - **Storage**: Local SQLite database
 - **Security**: 6-digit pairing codes, 10-minute timeout
 - **Database**: All memories with `is_syncable = true` are synced (enforced in every sync query); `namespace` is preserved per memory but not yet used to filter what syncs — per-namespace sync control is planned
@@ -168,7 +168,7 @@ The 6-digit code (10-minute expiry) handles security so no additional setup is n
 
 - **Backend**: Pure Rust implementation (`zynkbot_rust/src-tauri/src/zynklink.rs`)
 - **Frontend**: `ZynkLinkPanel.jsx` with KB integration
-- **Protocol**: HTTP-based file serving
+- **Protocol**: HTTPS/TLS-encrypted file serving
 - **Storage**: Local SQLite tracking of shared directories
 - **Database**: `zynk_linked_directories` and `zynk_file_manifest` tables
 
@@ -262,7 +262,7 @@ All networking features share common infrastructure:
 
 ### Communication
 
-- **Protocol**: HTTP-based communication
+- **Protocol**: HTTPS/TLS 1.3 encrypted communication
 - **Port**: 57963 (ZynkSync/ZynkLink/ZChat)
 - **Network**: Local network only (WiFi/LAN)
 - **Security**: Pairing required, path validation
@@ -285,7 +285,7 @@ All networking features share common infrastructure:
 - ⚠️ **Local network only** - not exposed to internet
 - ✅ **Path validation** prevents directory traversal
 - ✅ **Pairing required** for all network features
-- ℹ️ **One trust relationship per device pair** — unsyncing a device also removes its ZynkLink pairing. Re-link after re-syncing if needed. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) (KI-009).
+- ✅ **Independent trust relationships** — ZynkLink and ZynkSync are separate pairings. Unsyncing a device does not remove its ZynkLink pairing, and unlinking does not remove its ZynkSync pairing. Each can be revoked independently.
 
 **Safe for:**
 - Home networks

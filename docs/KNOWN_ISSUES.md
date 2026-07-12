@@ -69,12 +69,25 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ## Networking
 
 ### KI-009 — Unsyncing a device also removes the ZynkLink pairing
-**Status:** Open / by design  
+**Status:** Fixed in this release  
 **Affected:** Users who have both ZynkSync and ZynkLink active between the same two devices  
-**Description:** ZynkSync and ZynkLink share a single device trust record. Unsyncing removes that record entirely, which also clears the ZynkLink pairing. If you were sharing a folder between the two devices, you will need to re-establish the ZynkLink pairing after re-syncing.  
-**Why:** One trust relationship per device pair — revoking it revokes everything. This is simpler and more secure than maintaining separate trust states for each feature.  
-**Workaround:** After re-syncing, re-open ZynkLink and re-add the shared directory. The sync pairing and link pairing are independent operations, so re-linking takes only a few seconds.  
-**Fix target:** No fix planned for v1.x. A split trust model (separate sync and link relationships) could be added in a future release if there is user demand.
+**Description:** ZynkSync and ZynkLink now maintain independent trust relationships via the `sync_paired` column. Unsyncing only clears the ZynkSync pairing; the ZynkLink pairing remains active. Unlinking only clears the ZynkLink pairing; the ZynkSync pairing remains active. Each can be revoked independently without affecting the other.
+
+---
+
+### KI-010 — ZynkLink pairing appeared in the ZynkSync device list
+**Status:** Fixed in this release  
+**Affected:** Users who established a ZynkLink pairing without a ZynkSync pairing  
+**Description:** Establishing a ZynkLink pairing would register the remote device in `zynk_devices` with `is_paired = 1`, causing it to appear in the ZynkSync panel as a paired sync device even though no sync pairing had been established. The `sync_paired` column now tracks sync pairings separately — ZynkLink-only devices no longer appear in the ZynkSync panel.
+
+---
+
+### KI-011 — Pre-existing memories are orphaned after first sync
+**Status:** Open  
+**Affected:** Users who have existing memories on a device before performing their first ZynkSync with a new partner device  
+**Description:** When two devices sync for the first time, memories that already existed on the receiving device before the sync are not automatically merged or associated with the synced identity. They remain as orphaned records in the local database — accessible locally but not part of the synced memory set. New memories created after the first sync are handled correctly.  
+**Workaround:** No workaround currently. Orphaned memories remain visible and usable in local conversation but will not propagate to other devices.  
+**Fix target:** v1.0 — requires an identity merge step during the first sync handshake to adopt pre-existing memories into the synced namespace.
 
 ---
 
