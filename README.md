@@ -96,7 +96,7 @@ Pre-built binaries are available for Linux and Windows — no compilation or dev
 
 A first-run setup wizard automatically downloads all required AI models on first launch.
 
-> ⚠️ **Local models are CPU-only in pre-built binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok, xAI) are unaffected.
+> ⚠️ **Local models are CPU-only in pre-built binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected.
 
 ### Developer Install (from source)
 
