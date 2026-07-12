@@ -427,6 +427,39 @@ echo "✅ Desktop entry created — Zynkbot now appears in your application menu
 echo ""
 
 # ============================================
+# Pre-compile Rust Backend (one-time build)
+# ============================================
+echo "========================================="
+echo "Pre-compiling Rust Backend"
+echo "========================================="
+echo ""
+echo "⏳ Building Zynkbot for the first time. This takes 10–20 minutes"
+echo "   depending on your machine. The build may appear frozen — this"
+echo "   is normal. Do NOT close this terminal."
+echo ""
+
+source "$HOME/.cargo/env" 2>/dev/null || true
+export PATH="$HOME/.cargo/bin:$PATH"
+
+PRECOMPILE_FEATURES=""
+if [ "$GPU_DETECTED" = "1" ]; then
+    PRECOMPILE_FEATURES="--features cuda"
+fi
+
+cd "$SCRIPT_DIR/zynkbot_rust/src-tauri"
+if cargo build $PRECOMPILE_FEATURES; then
+    echo ""
+    echo "✅ Rust backend compiled successfully"
+else
+    echo ""
+    echo "❌ Build failed — see errors above."
+    echo "   Fix the issue and re-run install.sh, or run START_ZYNKBOT.sh"
+    echo "   manually (it will compile on first launch)."
+fi
+cd "$SCRIPT_DIR"
+echo ""
+
+# ============================================
 # Installation Complete
 # ============================================
 echo "========================================="
@@ -438,13 +471,6 @@ echo ""
 echo "1. Start Zynkbot:"
 echo "   cd $SCRIPT_DIR"
 echo "   ./START_ZYNKBOT.sh"
-echo ""
-echo "   ⚠️  IMPORTANT: First launch compiles the Rust backend.
-   This can take 10–15 minutes, or longer if CUDA is being set up.
-   The build may appear to freeze (often around line 774) — this is normal.
-   Do NOT close the terminal. Let it complete."
-echo "   If you see 'cargo: command not found', restart your terminal"
-echo "   or run: source \$HOME/.cargo/env"
 echo ""
 echo "2. Add API keys (optional, for cloud models):"
 echo "   Click ⚙️ Settings → API Keys in the app"

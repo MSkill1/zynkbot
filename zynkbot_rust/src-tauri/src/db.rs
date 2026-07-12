@@ -10,29 +10,19 @@ pub fn get_app_data_dir() -> PathBuf {
 }
 
 pub fn get_models_dir() -> PathBuf {
-    let data_models = get_app_data_dir().join("models");
-    // Only use data dir if it actually contains model files, not just the empty directory
-    let has_models = data_models.join("system/all-MiniLM-L6-v2/model.safetensors").exists()
-        || data_models.join("system/bert-base-NER/model.safetensors").exists()
-        || data_models.join("system/toxic-bert/model.safetensors").exists();
-    if has_models {
-        return data_models;
-    }
-    // Dev mode fallback: models live in src-tauri/models/ relative to the exe in target/
+    // Dev mode: exe lives at src-tauri/target/debug/app — always use src-tauri/models/
     if let Ok(exe) = std::env::current_exe() {
-        if exe.to_string_lossy().contains("target") {
+        let exe_str = exe.to_string_lossy();
+        if exe_str.contains("/target/debug/") || exe_str.contains("\\target\\debug\\") {
             if let Some(exe_dir) = exe.parent() {
-                let dev_models = exe_dir.parent()
-                    .and_then(|p| p.parent())
-                    .unwrap_or(exe_dir)
-                    .join("models");
-                if dev_models.exists() {
-                    return dev_models;
+                if let Some(src_tauri) = exe_dir.parent().and_then(|p| p.parent()) {
+                    return src_tauri.join("models");
                 }
             }
         }
     }
-    data_models
+    // Installed binary: models live in the app data directory
+    get_app_data_dir().join("models")
 }
 
 pub fn get_db_path() -> PathBuf {

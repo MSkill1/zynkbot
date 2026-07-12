@@ -69,19 +69,11 @@ if [ ! -f "$SCRIPT_DIR/zynkbot_rust/src-tauri/.env" ]; then
 fi
 
 
-# Show extended first-build warning only when the binary hasn't been compiled yet
 BINARY="$SCRIPT_DIR/zynkbot_rust/src-tauri/target/debug/app"
 if [ ! -f "$BINARY" ]; then
-    echo "⚠️  FIRST-TIME BUILD DETECTED"
-    echo "   Zynkbot is compiling its Rust backend for the first time."
-    echo "   This takes 10-15 minutes and only happens once."
-    echo ""
-    echo "   In the 700s, compilation will appear to pause or freeze for"
-    echo "   several minutes. This is normal — do NOT close this window."
-    echo "   Let it complete. The app will open automatically when done."
-    echo ""
-    echo "Starting in 5 seconds..."
-    sleep 5
+    echo "⚠️  Binary not found — Rust backend has not been compiled yet."
+    echo "   Run install.sh first. Starting anyway in 10 seconds... (Ctrl+C to cancel)"
+    sleep 10
 else
     echo "Starting Zynkbot..."
     sleep 1
