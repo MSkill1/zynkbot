@@ -642,17 +642,20 @@ impl ZynkSyncService {
             .bind(device_id).execute(&mut *tx).await
             .map_err(|e| format!("Failed to delete user sync codes: {}", e))?;
 
-        // Check if ZynkLink is still active for this device
-        let is_paired: Option<i64> = sqlx::query_scalar(
-            "SELECT is_paired FROM zynk_devices WHERE device_id = ?"
+        // Check if ZynkLink is still active for this device by querying zynklink_pairings
+        // directly — do not read is_paired, which is a ZynkSync-managed column and would
+        // couple the two independent trust systems.
+        let has_link: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM zynklink_pairings
+             WHERE (device1_id = ? OR device2_id = ?) AND is_active = 1"
         )
         .bind(device_id)
-        .fetch_optional(&mut *tx)
+        .bind(device_id)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(|e| format!("Failed to check is_paired: {}", e))?
-        .flatten();
+        .map_err(|e| format!("Failed to check ZynkLink pairing: {}", e))?;
 
-        if is_paired == Some(1) {
+        if has_link > 0 {
             // ZynkLink still active — keep the device row, just clear sync fields
             sqlx::query("UPDATE zynk_devices SET sync_paired = 0, tls_cert_der = NULL WHERE device_id = ?")
                 .bind(device_id).execute(&mut *tx).await
