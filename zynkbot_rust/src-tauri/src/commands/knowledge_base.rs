@@ -128,6 +128,27 @@ pub async fn open_external_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a URL in the default system browser
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let command = "start";
+
+    #[cfg(target_os = "macos")]
+    let command = "open";
+
+    #[cfg(target_os = "linux")]
+    let command = "xdg-open";
+
+    std::process::Command::new(command)
+        .arg(&url)
+        .spawn()
+        .map_err(|e| format!("Failed to open URL: {}", e))?;
+
+    println!("[External] Opened URL: {}", url);
+    Ok(())
+}
+
 /// Index a document: chunk it, generate embeddings, store in vector DB
 #[tauri::command]
 pub async fn index_kb_document(

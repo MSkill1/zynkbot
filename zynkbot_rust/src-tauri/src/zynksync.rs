@@ -74,6 +74,8 @@ pub struct SyncMemory {
     pub event_date: Option<DateTime<Utc>>,
     pub entities_detected: Option<serde_json::Value>,  // NER entities for hybrid search
     #[serde(default)]
+    pub original_text: Option<String>,
+    #[serde(default)]
     pub relationships: Vec<MemoryRelationship>,  // Relationships from memory_links
 }
 
@@ -961,7 +963,7 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected
+                        event_type, event_date, entities_detected, original_text
                  FROM memories
                  WHERE is_syncable = 1
                    AND created_at > ?
@@ -978,7 +980,7 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected
+                        event_type, event_date, entities_detected, original_text
                  FROM memories
                  WHERE is_syncable = 1
                    AND (? IS NULL OR user_id = ?)
@@ -1026,6 +1028,7 @@ impl ZynkSyncService {
                     event_type: row.get("event_type"),
                     event_date: row.get("event_date"),
                     entities_detected: row.get("entities_detected"),
+                    original_text: row.get("original_text"),
                     relationships: Vec::new(),  // Will be populated below
                 }
             })
@@ -1072,7 +1075,7 @@ impl ZynkSyncService {
                         "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                                 parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                                 embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                                event_type, event_date, entities_detected
+                                event_type, event_date, entities_detected, original_text
                          FROM memories WHERE id IN ({})",
                         in_clause
                     );
@@ -1113,6 +1116,7 @@ impl ZynkSyncService {
                         event_type: row.get("event_type"),
                         event_date: row.get("event_date"),
                         entities_detected: row.get("entities_detected"),
+                        original_text: row.get("original_text"),
                         relationships: Vec::new(),  // Will be populated below
                     });
                 }
@@ -1357,7 +1361,7 @@ impl ZynkSyncService {
                                  namespace = ?, is_syncable = ?, is_shareable = ?,
                                  embedding = ?, link_count = ?, is_ephemeral = ?, expires_at = ?,
                                  sentiment_score = ?, sentiment_label = ?, event_type = ?, event_date = ?,
-                                 entities_detected = ?
+                                 entities_detected = ?, original_text = ?
                              WHERE id = ?"
                         )
                         .bind(&memory.user_id)
@@ -1381,6 +1385,7 @@ impl ZynkSyncService {
                         .bind(memory.event_type.as_deref())
                         .bind(memory.event_date)
                         .bind(memory.entities_detected.as_ref())
+                        .bind(memory.original_text.as_deref())
                         .bind(memory.id)
                         .execute(&self.db_pool)
                         .await
@@ -1401,8 +1406,8 @@ impl ZynkSyncService {
                     "INSERT INTO memories (id, user_id, session_id, content, title, source_type, created_at, updated_at,
                                           parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                                           embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                                          event_type, event_date, entities_detected)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                          event_type, event_date, entities_detected, original_text)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 )
                 .bind(memory.id)
                 .bind(&memory.user_id)
@@ -1426,6 +1431,7 @@ impl ZynkSyncService {
                 .bind(memory.event_type.as_deref())
                 .bind(memory.event_date)
                 .bind(memory.entities_detected.as_ref())
+                .bind(memory.original_text.as_deref())
                 .execute(&self.db_pool)
                 .await
                 .map_err(|e| format!("Failed to insert memory: {}", e))?;
@@ -2036,7 +2042,7 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected
+                        event_type, event_date, entities_detected, original_text
                  FROM memories WHERE id IN ({})",
                 in_clause
             );
@@ -2079,6 +2085,7 @@ impl ZynkSyncService {
                     event_type: row.get("event_type"),
                     event_date: row.get("event_date"),
                     entities_detected: row.get("entities_detected"),
+                    original_text: row.get("original_text"),
                     relationships: Vec::new(),  // Will be populated below
                 }
             })

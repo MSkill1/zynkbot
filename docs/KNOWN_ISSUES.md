@@ -7,20 +7,18 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ## Memory Pipeline
 
 ### KI-012 — Original text not preserved when memory is stored via contradiction resolution
-**Status:** Open  
+**Status:** Fixed in this release  
 **Affected:** All users — any memory stored after resolving a contradiction modal  
-**Description:** The `original_text` field (the verbatim user input) is correctly stored for memories created through the normal path. However, when a contradiction is detected and the user resolves it via the modal, the memory is stored through `store_pending_memory`, which passes `pending.content` (the LLM-extracted fact) as `original_text` instead of the raw user message. Both the Content and Original fields in Memory Manager show the same extracted text.  
-**Workaround:** None — the verbatim original is not recoverable for these memories.  
-**Fix target:** Add `original_text` field to `PendingMemory` struct and thread it through the contradiction resolution path in `lib.rs`.
+**Description:** The `original_text` field (the verbatim user input) is correctly stored for memories created through the normal path. However, when a contradiction is detected and the user resolves it via the modal, the memory was stored through `store_pending_memory`, which passed `pending.content` (the LLM-extracted fact) as `original_text` instead of the raw user message. Both the Content and Original fields in Memory Manager showed the same extracted text. Fixed by adding `original_text` to `PendingMemory` and threading `bg_message` through the contradiction event payload.  
+**Impact:** None — resolved.
 
 ---
 
 ### KI-013 — Original text not preserved when memory arrives via ZynkSync
-**Status:** Open  
+**Status:** Fixed in this release  
 **Affected:** All users — any memory received from a paired device via ZynkSync  
-**Description:** The `original_text` field (the verbatim user input) is not included in the ZynkSync payload. Memories created on one device and synced to another will have no `original_text` on the receiving device — the Original field in Memory Manager will be blank or absent for synced memories.  
-**Workaround:** None — check the originating device to see the verbatim input.  
-**Fix target:** Add `original_text` to the sync memory payload in `zynksync.rs` alongside KI-012.
+**Description:** The `original_text` field (the verbatim user input) was not included in the ZynkSync payload. Memories created on one device and synced to another had no `original_text` on the receiving device. Fixed by adding `original_text` to the `SyncMemory` struct, all memory SELECT queries, and the receive INSERT/UPDATE paths in `zynksync.rs`.  
+**Impact:** None — resolved. Note: memories synced before this release will still lack `original_text` on the receiving device; only new syncs after upgrading will carry the field.
 
 ---
 
@@ -117,4 +115,4 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-*Last updated: 2026-06-17*
+*Last updated: 2026-07-12*

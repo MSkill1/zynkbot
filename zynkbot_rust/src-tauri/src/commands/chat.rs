@@ -1227,6 +1227,7 @@ pub async fn send_message_with_memory(
                                 "content": factual_content.clone(),
                                 "title": llm_title.clone(),
                                 "embedding": message_embedding.clone(),
+                                "original_text": bg_message.clone(),
                             },
                             "relationships": llm_relationships,
                             "user_id": bg_user_id.clone(),

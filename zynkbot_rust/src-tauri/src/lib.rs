@@ -1692,6 +1692,8 @@ pub struct PendingMemory {
     content: String,
     title: Option<String>,
     embedding: Vec<f32>,
+    #[serde(default)]
+    original_text: Option<String>,
 }
 
 /// Helper: Store pending memory with NLP enhancement
@@ -1735,7 +1737,7 @@ pub async fn store_pending_memory(
         Some(entities),
         event_type.as_deref(),
         event_date,
-        Some(&pending.content),
+        pending.original_text.as_deref(),
     ).await
     .map_err(|e| format!("Failed to insert memory: {}", e))?;
 
@@ -2216,6 +2218,7 @@ pub fn run() {
             // External file/folder opening + Knowledge Base
             commands::knowledge_base::open_external_file,
             commands::knowledge_base::open_external_folder,
+            commands::knowledge_base::open_external_url,
             commands::knowledge_base::scan_knowledge_base,
             commands::knowledge_base::search_knowledge_base,
             commands::knowledge_base::read_knowledge_base_file,
