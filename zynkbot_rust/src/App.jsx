@@ -809,6 +809,20 @@ export default function App() {
         onInfoClick={() => setShowUserIdentity(true)}
         voiceInputEnabled={voiceInputEnabled}
         hideToggle={showConversationHistory}
+        onOpen={() => {
+          setShowAbout(false);
+          setShowDemoGuide(false);
+          setShowWhyZynkbot(false);
+          setShowAPIKeys(false);
+          setShowUserIdentity(false);
+          setShowEnsemble(false);
+          setShowConflictResolution(false);
+          setShowZynkCluster(false);
+          setShowKBManager(false);
+          setShowOnboarding(false);
+          setShowSnapInModal(false);
+          memoryManagerRef.current?.close();
+        }}
         onVoiceToggle={(enabled) => {
           setVoiceInputEnabled(enabled);
           localStorage.setItem('zynkbot_voice_input_enabled', enabled.toString());

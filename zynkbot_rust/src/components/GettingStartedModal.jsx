@@ -80,6 +80,12 @@ export default function GettingStartedModal({ isOpen, onClose }) {
             <li>How Zynkbot used them in the response</li>
             <li>The similarity scores showing relevance</li>
           </ul>
+          <div className="info-box">
+            <strong>Ready to use Zynkbot for yourself?</strong> When you're done exploring, open
+            <strong> 📚 Memory Manager</strong> and click <strong>Clear All Memories</strong> to clear the Einstein demo.
+            Then go to <strong>⚙️ Settings → Getting Started → Onboarding</strong> to set up your
+            own profile.
+          </div>
         </div>
 
         {/* Step 4: Explore More Features */}

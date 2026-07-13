@@ -1,13 +1,18 @@
 import React, { useState } from 'react';
 
-export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, hideToggle }) {
+export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, hideToggle, onOpen }) {
   const [isOpen, setIsOpen] = useState(false);
+
+  const handleToggle = () => {
+    if (!isOpen && onOpen) onOpen();
+    setIsOpen(!isOpen);
+  };
 
   return (
     <>
       {/* Icon button (always visible) - BOTTOM LEFT */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={handleToggle}
         hidden={hideToggle}
         style={{
           position: 'fixed',
