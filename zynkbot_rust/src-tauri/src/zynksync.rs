@@ -2993,6 +2993,11 @@ async fn handle_pause(
     if let Err(e) = crate::save_sync_state(false).await {
         eprintln!("[ZynkSync] Failed to persist pause state: {}", e);
     }
+    if let Ok(app_guard) = crate::APP_HANDLE.lock() {
+        if let Some(app) = app_guard.as_ref() {
+            let _ = app.emit("zynksync-status-changed", serde_json::json!({"status": "paused"}));
+        }
+    }
     println!("[ZynkSync] ✅ Paused by peer {}", device_id);
     Ok(Json(serde_json::json!({"success": true, "action": "paused"})))
 }
@@ -3013,6 +3018,11 @@ async fn handle_resume(
     }
     if let Err(e) = crate::save_sync_state(true).await {
         eprintln!("[ZynkSync] Failed to persist resume state: {}", e);
+    }
+    if let Ok(app_guard) = crate::APP_HANDLE.lock() {
+        if let Some(app) = app_guard.as_ref() {
+            let _ = app.emit("zynksync-status-changed", serde_json::json!({"status": "running"}));
+        }
     }
     println!("[ZynkSync] ✅ Resumed by peer {}", device_id);
     Ok(Json(serde_json::json!({"success": true, "action": "resumed"})))

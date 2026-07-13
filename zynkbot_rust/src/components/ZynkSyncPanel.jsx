@@ -328,6 +328,25 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
     return () => { if (typeof unlisten === 'function') unlisten(); };
   }, [fetchPeers]);
 
+  useEffect(() => {
+    let unlisten;
+    const setup = async () => {
+      unlisten = await listen('zynksync-status-changed', (event) => {
+        const { status } = event.payload;
+        if (status === 'paused') {
+          setSyncStatus('stopped');
+          setMessage('ZynkSync paused by another device. Click "Resume Syncing" to start.');
+        } else if (status === 'running') {
+          setSyncStatus('running');
+          setMessage('✓ ZynkSync resumed by another device.');
+          fetchPeers();
+        }
+      });
+    };
+    setup();
+    return () => { if (typeof unlisten === 'function') unlisten(); };
+  }, [fetchPeers]);
+
   // Auto-refresh peers every 30 seconds when service is running
   useEffect(() => {
     if (syncStatus === 'running' && autoRefresh) {
