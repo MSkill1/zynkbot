@@ -75,6 +75,15 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-014 — Ensemble mode disabled for local models in the CPU binary
+**Status:** By design  
+**Affected:** Binary (AppImage / deb / rpm) users with local GGUF models  
+**Description:** CPU-mode local model inference runs synchronously on the CPU and has no reliable interrupt mechanism. In ensemble mode, a local model that stalls or never produces an end-of-generation token blocks the entire phase indefinitely. To prevent this, local models are disabled in the ensemble model picker in production binary builds.  
+**Workaround:** Use API models (Claude, GPT-4, Grok) for ensemble mode. If you need local models in ensemble, build from source — the developer build has no restriction. A CUDA-optimized binary (coming soon) will re-enable local models in ensemble with proper GPU acceleration.  
+**Fix target:** CUDA binary release.
+
+---
+
 ### KI-005 — Untested models may require prompt format tuning
 **Status:** Open / by design  
 **Description:** Zynkbot ships with verified optimizations for Qwen3, DeepSeek R1 Distill Llama 8B, and Llama 3.1 Lexi Uncensored V2. Other GGUF models should work but have not been tested. Models using non-standard prompt formats or tokenizer types may produce incomplete or malformed responses.  
