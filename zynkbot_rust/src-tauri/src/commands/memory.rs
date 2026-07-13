@@ -37,7 +37,7 @@ pub async fn list_memories(
     if event_type.is_some() { sql.push_str(" AND event_type = ?"); }
     if date_from.is_some() { sql.push_str(" AND created_at >= ?"); }
     if date_to.is_some() { sql.push_str(" AND created_at <= ?"); }
-    sql.push_str(" ORDER BY created_at DESC");
+    sql.push_str(" ORDER BY datetime(created_at) DESC");
 
     let mut query = sqlx::query_as::<_, memory::Memory>(&sql);
     if let Some(uid) = user_id.as_ref() { query = query.bind(uid); }

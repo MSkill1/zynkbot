@@ -680,6 +680,14 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         {selectedMemory.content}
                       </div>
                     </div>
+                    {selectedMemory.original_text && (
+                      <div className="detail-section">
+                        <strong>Original:</strong>
+                        <div className="content-box" style={{ color: '#9aa5c4', fontStyle: 'italic' }}>
+                          {selectedMemory.original_text}
+                        </div>
+                      </div>
+                    )}
                     {selectedMemory.entities_detected && selectedMemory.entities_detected.length > 0 && (
                       <div className="detail-row">
                         <strong>Entities:</strong>

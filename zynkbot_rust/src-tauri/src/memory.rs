@@ -441,7 +441,7 @@ pub async fn list_memories(
     if namespace.is_some() {
         sql.push_str(" AND namespace = ?");
     }
-    sql.push_str(" ORDER BY created_at DESC");
+    sql.push_str(" ORDER BY datetime(created_at) DESC");
 
     let mut query = sqlx::query_as::<_, Memory>(&sql);
     if let Some(uid) = user_id {
@@ -581,7 +581,7 @@ pub async fn get_memory_relationships(
                 confidence, direction, created_at, notes, created_by
          FROM memory_relationships
          WHERE memory_id = ?
-         ORDER BY created_at DESC",
+         ORDER BY datetime(created_at) DESC",
     )
     .bind(memory_id)
     .fetch_all(pool)
@@ -599,7 +599,7 @@ pub async fn get_memory_links(
                 confidence, created_at, notes, created_by
          FROM memory_links
          WHERE source_memory_id = ? OR target_memory_id = ?
-         ORDER BY created_at DESC",
+         ORDER BY datetime(created_at) DESC",
     )
     .bind(memory_id)
     .bind(memory_id)
