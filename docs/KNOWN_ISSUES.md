@@ -15,6 +15,15 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-013 — Original text not preserved when memory arrives via ZynkSync
+**Status:** Open  
+**Affected:** All users — any memory received from a paired device via ZynkSync  
+**Description:** The `original_text` field (the verbatim user input) is not included in the ZynkSync payload. Memories created on one device and synced to another will have no `original_text` on the receiving device — the Original field in Memory Manager will be blank or absent for synced memories.  
+**Workaround:** None — check the originating device to see the verbatim input.  
+**Fix target:** Add `original_text` to the sync memory payload in `zynksync.rs` alongside KI-012.
+
+---
+
 ### KI-001 — Double memory on contradiction resolution (edge case)
 **Status:** Partially fixed  
 **Affected:** All local models  
