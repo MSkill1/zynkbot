@@ -435,7 +435,7 @@ pub async fn list_remote_directories() -> Result<serde_json::Value, String> {
     let mut all_directories = Vec::new();
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -529,7 +529,7 @@ pub async fn list_shared_files(share_id: i32, device_id: String) -> Result<serde
 
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(60))
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
