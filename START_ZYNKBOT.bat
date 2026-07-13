@@ -164,19 +164,24 @@ echo   Close this window to stop Zynkbot
 echo ========================================
 echo.
 if not exist "zynkbot_rust\src-tauri\target\debug\app.exe" (
-    echo [!] FIRST-TIME BUILD DETECTED
-    echo     Zynkbot is compiling its Rust backend for the first time.
-    echo     This takes 10-15 minutes and only happens once.
-    echo.
-    echo     In the 700s, compilation will appear to pause or freeze for
-    echo     several minutes. This is normal -- do NOT close this window.
-    echo     Let it complete. The app will open automatically when done.
-    echo.
-    timeout /t 5 /nobreak >nul
+    echo [WARNING] Binary not found -- Rust backend has not been compiled yet.
+    echo           Run install.bat first. Starting anyway in 10 seconds...
+    timeout /t 10 /nobreak >nul
+)
+
+REM Detect CUDA and set features flag
+set "FEATURES_FLAG="
+where nvcc >nul 2>&1
+if !errorLevel! equ 0 (
+    where nvidia-smi >nul 2>&1
+    if !errorLevel! equ 0 (
+        set "FEATURES_FLAG=--features cuda"
+        echo [OK] CUDA detected - building with GPU acceleration
+    )
 )
 
 cd zynkbot_rust
-call npm run tauri:dev
+call npm run tauri -- dev !FEATURES_FLAG!
 
 REM ============================================================
 REM Cleanup on Exit

@@ -48,7 +48,8 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
 
   // Expose fetchMemories to parent component via ref
   useImperativeHandle(ref, () => ({
-    refresh: fetchMemories
+    refresh: fetchMemories,
+    close: () => setShowModal(false),
   }));
 
   if (isLoading) {

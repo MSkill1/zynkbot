@@ -6,6 +6,22 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ## Memory Pipeline
 
+### KI-012 — Original text not preserved when memory is stored via contradiction resolution
+**Status:** Fixed in this release  
+**Affected:** All users — any memory stored after resolving a contradiction modal  
+**Description:** The `original_text` field (the verbatim user input) is correctly stored for memories created through the normal path. However, when a contradiction is detected and the user resolves it via the modal, the memory was stored through `store_pending_memory`, which passed `pending.content` (the LLM-extracted fact) as `original_text` instead of the raw user message. Both the Content and Original fields in Memory Manager showed the same extracted text. Fixed by adding `original_text` to `PendingMemory` and threading `bg_message` through the contradiction event payload.  
+**Impact:** None — resolved.
+
+---
+
+### KI-013 — Original text not preserved when memory arrives via ZynkSync
+**Status:** Fixed in this release  
+**Affected:** All users — any memory received from a paired device via ZynkSync  
+**Description:** The `original_text` field (the verbatim user input) was not included in the ZynkSync payload. Memories created on one device and synced to another had no `original_text` on the receiving device. Fixed by adding `original_text` to the `SyncMemory` struct, all memory SELECT queries, and the receive INSERT/UPDATE paths in `zynksync.rs`.  
+**Impact:** None — resolved. Note: memories synced before this release will still lack `original_text` on the receiving device; only new syncs after upgrading will carry the field.
+
+---
+
 ### KI-001 — Double memory on contradiction resolution (edge case)
 **Status:** Partially fixed  
 **Affected:** All local models  
@@ -59,6 +75,15 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-014 — Ensemble mode disabled for local models in the CPU binary
+**Status:** By design  
+**Affected:** Binary (AppImage / deb / rpm) users with local GGUF models  
+**Description:** CPU-mode local model inference runs synchronously on the CPU and has no reliable interrupt mechanism. In ensemble mode, a local model that stalls or never produces an end-of-generation token blocks the entire phase indefinitely. To prevent this, local models are disabled in the ensemble model picker in production binary builds.  
+**Workaround:** Use API models (Claude, GPT-4, Grok) for ensemble mode. If you need local models in ensemble, build from source — the developer build has no restriction. A CUDA-optimized binary (coming soon) will re-enable local models in ensemble with proper GPU acceleration.  
+**Fix target:** CUDA binary release.
+
+---
+
 ### KI-005 — Untested models may require prompt format tuning
 **Status:** Open / by design  
 **Description:** Zynkbot ships with verified optimizations for Qwen3, DeepSeek R1 Distill Llama 8B, and Llama 3.1 Lexi Uncensored V2. Other GGUF models should work but have not been tested. Models using non-standard prompt formats or tokenizer types may produce incomplete or malformed responses.  
@@ -69,12 +94,25 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ## Networking
 
 ### KI-009 — Unsyncing a device also removes the ZynkLink pairing
-**Status:** Open / by design  
+**Status:** Fixed in this release  
 **Affected:** Users who have both ZynkSync and ZynkLink active between the same two devices  
-**Description:** ZynkSync and ZynkLink share a single device trust record. Unsyncing removes that record entirely, which also clears the ZynkLink pairing. If you were sharing a folder between the two devices, you will need to re-establish the ZynkLink pairing after re-syncing.  
-**Why:** One trust relationship per device pair — revoking it revokes everything. This is simpler and more secure than maintaining separate trust states for each feature.  
-**Workaround:** After re-syncing, re-open ZynkLink and re-add the shared directory. The sync pairing and link pairing are independent operations, so re-linking takes only a few seconds.  
-**Fix target:** No fix planned for v1.x. A split trust model (separate sync and link relationships) could be added in a future release if there is user demand.
+**Description:** ZynkSync and ZynkLink now maintain independent trust relationships via the `sync_paired` column. Unsyncing only clears the ZynkSync pairing; the ZynkLink pairing remains active. Unlinking only clears the ZynkLink pairing; the ZynkSync pairing remains active. Each can be revoked independently without affecting the other.
+
+---
+
+### KI-010 — ZynkLink pairing appeared in the ZynkSync device list
+**Status:** Fixed in this release  
+**Affected:** Users who established a ZynkLink pairing without a ZynkSync pairing  
+**Description:** Establishing a ZynkLink pairing would register the remote device in `zynk_devices` with `is_paired = 1`, causing it to appear in the ZynkSync panel as a paired sync device even though no sync pairing had been established. The `sync_paired` column now tracks sync pairings separately — ZynkLink-only devices no longer appear in the ZynkSync panel.
+
+---
+
+### KI-011 — Pre-existing memories are orphaned after first sync
+**Status:** Open  
+**Affected:** Users who have existing memories on a device before performing their first ZynkSync with a new partner device  
+**Description:** When two devices sync for the first time, memories that already existed on the receiving device before the sync are not automatically merged or associated with the synced identity. They remain as orphaned records in the local database — accessible locally but not part of the synced memory set. New memories created after the first sync are handled correctly.  
+**Workaround:** No workaround currently. Orphaned memories remain visible and usable in local conversation but will not propagate to other devices.  
+**Fix target:** v1.0 — requires an identity merge step during the first sync handshake to adopt pre-existing memories into the synced namespace.
 
 ---
 
@@ -86,4 +124,4 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-*Last updated: 2026-06-17*
+*Last updated: 2026-07-12*

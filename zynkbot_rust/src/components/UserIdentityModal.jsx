@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import '../styles/UserIdentityModal.css';
 
-export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl }) {
+export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl, sessionId }) {
   const [identity, setIdentity] = useState(null);
   const [deviceIp, setDeviceIp] = useState('Loading...');
   const [copyFeedback, setCopyFeedback] = useState('');
@@ -57,6 +57,14 @@ export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl }) {
     if (deviceIp && deviceIp !== 'Loading...' && deviceIp !== 'Unable to determine') {
       navigator.clipboard.writeText(deviceIp);
       setCopyFeedback('ip');
+      setTimeout(() => setCopyFeedback(''), 2000);
+    }
+  };
+
+  const handleCopySessionId = () => {
+    if (sessionId) {
+      navigator.clipboard.writeText(sessionId);
+      setCopyFeedback('session_id');
       setTimeout(() => setCopyFeedback(''), 2000);
     }
   };
@@ -157,6 +165,21 @@ export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl }) {
                   </p>
                 </div>
 
+                <div className="identity-field" style={{ marginBottom: '20px' }}>
+                  <label>Session ID:</label>
+                  <div className="id-display">
+                    <code style={{ wordBreak: 'break-all', whiteSpace: 'normal' }}>{sessionId || '—'}</code>
+                    {sessionId && (
+                      <button onClick={handleCopySessionId} className="copy-button" title="Copy Session ID">
+                        {copyFeedback === 'session_id' ? '✅' : '📋'}
+                      </button>
+                    )}
+                  </div>
+                  <p className="help-text">
+                    Identifies the current conversation session.
+                  </p>
+                </div>
+
                 <div className="identity-field">
                   <label>IP Address:</label>
                   <div className="id-display">
@@ -190,6 +213,9 @@ export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl }) {
                 Used for ZynkLink file sharing with other users.
               </div>
               <div>
+                <strong style={{ color: '#bd93f9' }}>Session ID:</strong> Identifies the current conversation session. Changes when you start a new chat.
+              </div>
+              <div style={{ marginTop: '12px' }}>
                 <strong style={{ color: '#ffb86c' }}>Syncing Devices:</strong> Use the ZynkSync panel in Settings
                 to generate pairing codes and link your devices.
               </div>

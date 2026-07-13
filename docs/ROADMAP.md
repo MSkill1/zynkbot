@@ -13,6 +13,9 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ### Technical Debt
 
+- **Memory identity merge on first sync** — When two devices sync for the first time, memories that already existed on the receiving device are not adopted into the synced namespace (KI-011). Fix requires an identity merge step during the first-sync handshake. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) (KI-011).
+- ~~**ZynkLink/ZynkSync trust split**~~ ✅ — ZynkLink and ZynkSync now maintain independent trust records (`sync_paired` column). Unlinking and unsyncing are independent operations with no side effects on the other pairing.
+
 ### Known Limitations
 
 - **Weak local models may store questions as memories** — The memory gating decision (`should_remember`) is entirely LLM-driven. Strong models (Anthropic Claude, dolphin 8B) correctly return `should_remember=false` for pure questions. Weaker models sometimes return `should_remember=true` for queries like "What's my name?", storing the question itself as a memory. Potential fix: add a lightweight pre-filter that detects obvious pure-question messages before the LLM call, avoiding model-quality dependency for this case.

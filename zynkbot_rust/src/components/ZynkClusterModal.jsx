@@ -7,10 +7,9 @@ export default function ZynkClusterModal({ isOpen, onClose }) {
 
   const openLabsFolder = async () => {
     try {
-      await invoke('open_external_folder', { path: 'labs/moe_poc' });
+      await invoke('open_external_url', { url: 'https://github.com/MSkill1/zynkbot/tree/main/labs/moe_poc' });
     } catch (error) {
-      console.error('Failed to open labs folder:', error);
-      alert('Failed to open documentation folder. Please check if the folder exists.');
+      console.error('Failed to open URL:', error);
     }
   };
 

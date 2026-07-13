@@ -379,21 +379,13 @@ echo Step 4: Detecting GPU Hardware
 echo =========================================
 echo.
 
-REM Cargo.toml is committed with a CPU-only baseline. install.bat layers CUDA on
-REM top only when an NVIDIA GPU + CUDA toolkit are present (mirrors install.sh).
-REM skip-worktree keeps these local edits out of git so a GPU machine never
-REM commits CUDA features back for everyone (that is the regression we fixed).
-git update-index --skip-worktree zynkbot_rust\src-tauri\Cargo.toml 2>nul
-
-set "ZB_MODE=cpu"
 where nvidia-smi >nul 2>&1
 if %errorLevel% equ 0 (
     echo [INFO] NVIDIA GPU detected:
     nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
     where nvcc >nul 2>&1
     if !errorLevel! equ 0 (
-        set "ZB_MODE=cuda"
-        echo [OK] CUDA toolkit found - enabling GPU acceleration
+        echo [OK] CUDA toolkit found - GPU acceleration will be enabled by START_ZYNKBOT.bat
         nvcc --version | findstr "release"
 
         REM Copy CUDA MSBuild integration files for Visual Studio Build Tools
@@ -420,9 +412,6 @@ if %errorLevel% equ 0 (
 ) else (
     echo [INFO] No NVIDIA GPU detected - building for CPU mode.
 )
-
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0configure_cargo_features.ps1" -Mode !ZB_MODE!
-echo [OK] Cargo.toml configured for !ZB_MODE! build
 echo.
 
 REM ============================================
@@ -650,6 +639,42 @@ if %errorLevel% equ 0 (
 echo.
 
 REM ============================================
+REM Pre-compile Rust Backend (one-time build)
+REM ============================================
+echo =========================================
+echo Pre-compiling Rust Backend
+echo =========================================
+echo.
+echo [INFO] Building Zynkbot for the first time.
+echo        This takes 10-20 minutes. The build may appear frozen -- this is normal.
+echo        Do NOT close this window.
+echo.
+
+set "PRECOMPILE_FEATURES="
+where nvcc >nul 2>&1
+if !errorLevel! equ 0 (
+    where nvidia-smi >nul 2>&1
+    if !errorLevel! equ 0 (
+        set "PRECOMPILE_FEATURES=--features cuda"
+        echo [INFO] CUDA detected - compiling with GPU acceleration
+    )
+)
+
+cd zynkbot_rust\src-tauri
+cargo build !PRECOMPILE_FEATURES!
+if !errorLevel! equ 0 (
+    echo.
+    echo [OK] Rust backend compiled successfully
+) else (
+    echo.
+    echo [WARNING] Build failed - see errors above.
+    echo           Fix the issue and re-run install.bat, or run START_ZYNKBOT.bat
+    echo           manually ^(it will compile on first launch^).
+)
+cd ..\..
+echo.
+
+REM ============================================
 REM Installation Complete
 REM ============================================
 echo =========================================
@@ -660,11 +685,6 @@ echo Next Steps:
 echo.
 echo 1. Start Zynkbot:
 echo    Double-click START_ZYNKBOT.bat
-echo.
-echo    *** IMPORTANT: First launch compiles the Rust backend.
-echo    This can take 10-15 minutes, or longer on slower machines.
-echo    The build may appear to freeze for several minutes - this is normal.
-echo    Do NOT close the terminal. Let it complete.
 echo.
 echo 2. Add API keys (optional, for cloud models^):
 echo    Click Settings (gear icon^) -^> API Keys in the app

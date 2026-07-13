@@ -62,6 +62,12 @@ pub async fn start_zynksync(_sync_interval_secs: Option<u64>) -> Result<String, 
         eprintln!("[ZynkSync] ⚠️ Failed to save sync state: {}", e);
     }
 
+    // Broadcast resume to all paired peers (non-blocking)
+    let service_for_broadcast = Arc::clone(&service);
+    tokio::spawn(async move {
+        service_for_broadcast.broadcast_resume_to_peers().await;
+    });
+
     let device_id = crate::user_identity::get_device_id()
         .map_err(|e| format!("Failed to get device ID: {}", e))?;
     Ok(device_id)
@@ -81,6 +87,10 @@ pub async fn stop_zynksync() -> Result<(), String> {
 
         service.stop_auto_sync().await;
         println!("[ZynkSync] ✅ Auto-sync stopped (HTTP server still running for ZynkLink)");
+
+        // Broadcast pause to all paired peers
+        let paused_count = service.broadcast_pause_to_peers().await;
+        println!("[ZynkSync] Pause broadcast to {} peer(s)", paused_count);
 
         if let Err(e) = crate::save_sync_state(false).await {
             eprintln!("[ZynkSync] ⚠️ Failed to save sync state: {}", e);

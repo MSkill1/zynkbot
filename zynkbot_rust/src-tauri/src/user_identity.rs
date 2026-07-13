@@ -155,26 +155,16 @@ static IDENTITY_MANAGER: once_cell::sync::Lazy<IdentityManager> =
         // Use a fixed, reliable location for identity files to ensure single user_id
         // regardless of where the app is launched from
 
-        let identity_base = if PathBuf::from("/opt/zynkbot").exists() {
-            // Production installation - use /opt/zynkbot for single-user system
-            println!("[Identity] Detected production installation at /opt/zynkbot");
-            PathBuf::from("/opt/zynkbot")
-        } else {
-            // Development/user installation - use ~/.config/Zynkbot/
-            // This ensures ONE user_id per system user, regardless of project location
+        let identity_base = {
             let config_dir = dirs::config_dir()
                 .unwrap_or_else(|| {
                     eprintln!("[Identity] WARNING: Could not get config dir, using home");
                     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
                 })
                 .join("Zynkbot");
-
-            // Create directory if it doesn't exist
             if !config_dir.exists() {
                 let _ = std::fs::create_dir_all(&config_dir);
             }
-
-            println!("[Identity] Using config directory for identity");
             config_dir
         };
 

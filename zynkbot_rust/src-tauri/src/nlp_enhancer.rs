@@ -43,7 +43,6 @@ use candle_transformers::models::bert::{BertForTokenClassification, Config as Be
 use candle_core::{Device, Tensor};
 use tokenizers::Tokenizer;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 // Simple offset struct
 #[derive(Debug, Clone)]
@@ -86,7 +85,7 @@ impl CandleBertNER {
         let device = Device::Cpu;
 
         // Get model directory path
-        let model_dir = PathBuf::from("models/system/bert-base-NER");
+        let model_dir = crate::db::get_models_dir().join("system/bert-base-NER");
 
         if !model_dir.exists() {
             return Err(format!(

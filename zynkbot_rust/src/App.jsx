@@ -24,8 +24,8 @@ import VoiceButton from "./components/VoiceButton";
 import ZChatModal from "./components/ZChatModal";
 import ZynkClusterModal from "./components/ZynkClusterModal";
 import OnboardingModal from "./components/OnboardingModal";
+import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
-import SessionInfoModal from "./components/SessionInfoModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
 
 // API Base URL - DEPRECATED: All API calls now use Tauri commands
@@ -152,7 +152,6 @@ export default function App() {
   const [showEnsemble, setShowEnsemble] = useState(false);
   const [showConflictResolution, setShowConflictResolution] = useState(false);
   const [showZynkCluster, setShowZynkCluster] = useState(false);
-  const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [showConversationHistory, setShowConversationHistory] = useState(false);
   const [currentConflict, setCurrentConflict] = useState(null);
   const [chatDevice, setChatDevice] = useState(null);
@@ -184,8 +183,8 @@ export default function App() {
   // Lock body scroll when any modal is open to prevent scrollbar ghost artifact
   const anyModalOpen = showAbout || showDemoGuide || showWhyZynkbot || showAPIKeys ||
     showUserIdentity || showEnsemble || showConflictResolution || showZynkCluster ||
-    showSessionInfo || showConversationHistory || showKBManager || showOnboarding ||
-    showGettingStarted || showSnapInModal;
+    showConversationHistory || showKBManager || showOnboarding ||
+    showSnapInModal;
   useLayoutEffect(() => {
     if (anyModalOpen) {
       document.body.style.overflow = 'hidden';
@@ -202,6 +201,14 @@ export default function App() {
 
   // Check for access token in URL
   const [hasAccess] = useState(true); // Disabled for local development
+  const [needsSetup, setNeedsSetup] = useState(null); // null = checking, true/false = result
+
+  // Check if first-run setup is needed
+  useEffect(() => {
+    invoke('check_needs_setup')
+      .then(needs => setNeedsSetup(needs))
+      .catch(() => setNeedsSetup(false));
+  }, []);
 
   // Fetch persistent user identity from backend on mount
   useEffect(() => {
@@ -747,6 +754,19 @@ export default function App() {
     return <AccessGate />;
   }
 
+  // Show setup wizard on first run
+  if (needsSetup === true) {
+    return <SetupWizard onComplete={async () => {
+      setNeedsSetup(false);
+      for (let i = 0; i < 8; i++) {
+        const models = await fetchModels();
+        const gotReal = models?.length > 0 && !(models.length === 1 && models[0].id === 'local');
+        if (gotReal) break;
+        await new Promise(r => setTimeout(r, 750));
+      }
+    }} />;
+  }
+
   // Wait for user identity to load before rendering
   if (isLoadingIdentity || !userId) {
     return (
@@ -786,9 +806,23 @@ export default function App() {
       <CollapsibleSidebar
         icon="⚙️"
         title="System Controls"
-        onInfoClick={() => setShowSessionInfo(true)}
+        onInfoClick={() => setShowUserIdentity(true)}
         voiceInputEnabled={voiceInputEnabled}
         hideToggle={showConversationHistory}
+        onOpen={() => {
+          setShowAbout(false);
+          setShowDemoGuide(false);
+          setShowWhyZynkbot(false);
+          setShowAPIKeys(false);
+          setShowUserIdentity(false);
+          setShowEnsemble(false);
+          setShowConflictResolution(false);
+          setShowZynkCluster(false);
+          setShowKBManager(false);
+          setShowOnboarding(false);
+          setShowSnapInModal(false);
+          memoryManagerRef.current?.close();
+        }}
         onVoiceToggle={(enabled) => {
           setVoiceInputEnabled(enabled);
           localStorage.setItem('zynkbot_voice_input_enabled', enabled.toString());
@@ -1621,12 +1655,6 @@ export default function App() {
       <WhyZynkbotModal isOpen={showWhyZynkbot} onClose={() => setShowWhyZynkbot(false)} />
       <AboutModal isOpen={showAbout} onClose={() => setShowAbout(false)} />
       <GettingStartedModal isOpen={showDemoGuide} onClose={() => setShowDemoGuide(false)} />
-      <SessionInfoModal
-        show={showSessionInfo}
-        onClose={() => setShowSessionInfo(false)}
-        userId={userId}
-        sessionId={sessionId}
-      />
       <APIKeyModal
         isOpen={showAPIKeys}
         onClose={() => setShowAPIKeys(false)}
@@ -1636,7 +1664,7 @@ export default function App() {
           console.log('✅ Models refreshed');
         }}
       />
-      <UserIdentityModal isOpen={showUserIdentity} onClose={() => setShowUserIdentity(false)} apiBaseUrl={API_BASE_URL} />
+      <UserIdentityModal isOpen={showUserIdentity} onClose={() => setShowUserIdentity(false)} apiBaseUrl={API_BASE_URL} sessionId={sessionId} />
       <ConversationHistoryPanel
         isOpen={showConversationHistory}
         onClose={() => setShowConversationHistory(false)}

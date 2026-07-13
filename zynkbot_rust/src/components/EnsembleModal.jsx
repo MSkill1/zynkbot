@@ -339,35 +339,56 @@ export default function EnsembleModal({
               <h3 style={{ color: '#f8f8f2', fontSize: '1rem', marginBottom: '10px' }}>
                 Select Models (minimum 2):
               </h3>
+              {process.env.NODE_ENV === 'production' && availableModels.some(m => m.type === 'local') && (
+                <div style={{
+                  padding: '8px 12px',
+                  marginBottom: '10px',
+                  background: '#21222c',
+                  border: '1px solid #44475a',
+                  borderRadius: '6px',
+                  color: '#6272a4',
+                  fontSize: '0.82rem',
+                  lineHeight: '1.4'
+                }}>
+                  🔒 <strong style={{ color: '#9aa5c4' }}>Local models require the CUDA build</strong> (coming soon).
+                  To use local models in ensemble now, build the developer version from source.
+                </div>
+              )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {availableModels.map(model => (
-                  <label
-                    key={model.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '10px',
-                      background: selectedModels.includes(model.id) ? '#44475a' : '#282a36',
-                      border: `2px solid ${selectedModels.includes(model.id) ? '#8be9fd' : '#44475a'}`,
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedModels.includes(model.id)}
-                      onChange={() => handleModelToggle(model.id)}
-                      style={{ marginRight: '10px', cursor: 'pointer' }}
-                    />
-                    <span style={{ color: '#f8f8f2', fontWeight: selectedModels.includes(model.id) ? 'bold' : 'normal' }}>
-                      {model.name}
-                    </span>
-                    <span style={{ marginLeft: 'auto', color: '#9aa5c4', fontSize: '0.85rem' }}>
-                      {model.type === 'local' ? '🔒 Local' : '☁️ API'}
-                    </span>
-                  </label>
-                ))}
+                {availableModels.map(model => {
+                  const isLocalInProd = process.env.NODE_ENV === 'production' && model.type === 'local';
+                  return (
+                    <label
+                      key={model.id}
+                      title={isLocalInProd ? 'Local models require the CUDA build (coming soon). Build the developer version now to use CUDA-optimized local models.' : undefined}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '10px',
+                        background: isLocalInProd ? '#1a1b26' : selectedModels.includes(model.id) ? '#44475a' : '#282a36',
+                        border: `2px solid ${isLocalInProd ? '#44475a' : selectedModels.includes(model.id) ? '#8be9fd' : '#44475a'}`,
+                        borderRadius: '6px',
+                        cursor: isLocalInProd ? 'not-allowed' : 'pointer',
+                        opacity: isLocalInProd ? 0.5 : 1,
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedModels.includes(model.id)}
+                        onChange={() => handleModelToggle(model.id)}
+                        disabled={isLocalInProd}
+                        style={{ marginRight: '10px', cursor: isLocalInProd ? 'not-allowed' : 'pointer' }}
+                      />
+                      <span style={{ color: isLocalInProd ? '#6272a4' : '#f8f8f2', fontWeight: selectedModels.includes(model.id) ? 'bold' : 'normal' }}>
+                        {model.name}
+                      </span>
+                      <span style={{ marginLeft: 'auto', color: '#9aa5c4', fontSize: '0.85rem' }}>
+                        {isLocalInProd ? '🔒 CUDA required' : model.type === 'local' ? '🔒 Local' : '☁️ API'}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
               {selectedModels.length === 1 && (
                 <p style={{ color: '#ffb86c', fontSize: '0.85rem', marginTop: '8px' }}>

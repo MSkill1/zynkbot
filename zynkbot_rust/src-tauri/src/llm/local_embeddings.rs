@@ -3,7 +3,6 @@ use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config, DTYPE};
 use std::sync::Mutex;
-use std::path::PathBuf;
 use once_cell::sync::Lazy;
 use tokenizers::Tokenizer;
 
@@ -30,7 +29,7 @@ impl EmbeddingModel {
         println!("[Candle Embeddings] Using CPU for embeddings (reliable background processing)");
 
         // Get model directory path
-        let model_dir = PathBuf::from("models/system/all-MiniLM-L6-v2");
+        let model_dir = crate::db::get_models_dir().join("system/all-MiniLM-L6-v2");
 
         if !model_dir.exists() {
             return Err(LLMError::RequestFailed(

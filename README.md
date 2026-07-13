@@ -83,9 +83,22 @@ v1.0 and mobile development depend on what we learn in this phase. If you have a
 
 ## Installation
 
-Both platforms include an automated installer script and a detailed step-by-step guide. Installation time varies — 15 minutes if you have the database and Rust already installed, up to 45 minutes if you're starting from scratch and downloading everything including local AI models.  
+### Quick Install (Recommended)
 
-When you install Zynkbot you can explore a demo that loads 59 theoretical memories from Einstein's perspective into the memory database for testing and experimenting - you can interact with Zynkbot as if you were Einstein and it will act as Einstein's AI companion to give a feel for how the memory system works. When you're done, simply clear the memory database in the memory manager and proceed with the 5 minute on-boarding process.  Remember, your memory database and the personal understanding about you that Zynkbot constructs over time never leaves your devices, and API calls are not stored, so you can be honest during your conversations without any concern.  Someone would have to steal and unlock your device to access your memories, just like they would have to steal your diary. It's possible, but unlikely, and the fact is that most people won't be storing highly valuable data in their companion's memory - that is not really Zynkbot's purpose.
+Pre-built binaries are available for Linux and Windows — no compilation or developer tools required.
+
+**[Download from GitHub Releases →](https://github.com/MSkill1/zynkbot/releases/latest)**
+
+| Platform | Package |
+|---|---|
+| Linux | `Zynkbot_0.9.0_amd64.deb` |
+| Windows | `Zynkbot_0.9.0_x64-setup.exe` |
+
+A first-run setup wizard automatically downloads all required AI models on first launch.
+
+> ⚠️ **Local models are CPU-only in pre-built binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected.
+
+### Developer Install (from source)
 
 - **[Windows Installation Guide](docs/WINDOWS_INSTALLATION_GUIDE.md)** — automated installer (`install.bat`) with step-by-step instructions
 - **[Linux Installation Guide](docs/LINUX_INSTALLATION_GUIDE.md)** — automated installer (`install.sh`) with step-by-step instructions for Ubuntu, Arch, and Fedora
@@ -361,7 +374,7 @@ If you have an NVIDIA GPU, the installation script automatically enables CUDA so
 
 **What the installer does:**
 - Detects your GPU via `nvidia-smi`
-- If the CUDA toolkit (`nvcc`) is also present, it patches `Cargo.toml` to enable CUDA on all three Candle ML dependencies before building
+- If the CUDA toolkit (`nvcc`) is also present, `START_ZYNKBOT.sh` / `START_ZYNKBOT.bat` passes `--features cuda` to the Rust compiler at build time — no files are modified
 - If only the GPU is found (no toolkit), it prints instructions and builds CPU-only
 
 **If the installer built CPU-only and you want GPU acceleration:**

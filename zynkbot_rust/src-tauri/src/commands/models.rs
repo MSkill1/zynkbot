@@ -50,28 +50,7 @@ pub async fn get_models() -> Result<Vec<ModelInfo>, String> {
         });
     }
 
-    let models_base = if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            if exe_dir.to_string_lossy().contains("target") {
-                exe_dir.parent()
-                    .and_then(|p| p.parent())
-                    .unwrap_or(exe_dir)
-                    .join("models")
-            } else {
-                exe_dir.join("models")
-            }
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join("models")
-        }
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("models")
-    };
-
-    let user_models_dir = models_base.join("user");
+    let user_models_dir = crate::db::get_models_dir().join("user");
 
     println!("[RUST] Scanning for user models in: {}", user_models_dir.display());
 
@@ -104,38 +83,13 @@ pub async fn get_models() -> Result<Vec<ModelInfo>, String> {
         eprintln!("[RUST] Create it with: mkdir -p {}", user_models_dir.display());
     }
 
-    if models.is_empty() {
-        return Err("No AI models configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or LOCAL_MODEL_PATH environment variable.".to_string());
-    }
-
     Ok(models)
 }
 
 /// Open the local models/user/ folder in the system file manager
 #[tauri::command]
 pub async fn open_models_folder() -> Result<(), String> {
-    let models_base = if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            if exe_dir.to_string_lossy().contains("target") {
-                exe_dir.parent()
-                    .and_then(|p| p.parent())
-                    .unwrap_or(exe_dir)
-                    .join("models")
-            } else {
-                exe_dir.join("models")
-            }
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join("models")
-        }
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("models")
-    };
-
-    let user_models_dir = models_base.join("user");
+    let user_models_dir = crate::db::get_models_dir().join("user");
 
     if !user_models_dir.exists() {
         std::fs::create_dir_all(&user_models_dir)
@@ -189,31 +143,7 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
 /// Set an API key in the .env file and current session
 #[tauri::command]
 pub async fn set_api_key(key: String, value: String) -> Result<(), String> {
-    let current = std::env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?;
-
-    println!("[API Keys] Current directory: {:?}", current);
-
-    let mut possible_paths = vec![
-        current.join(".env"),
-        current.join("src-tauri").join(".env"),
-    ];
-
-    if let Some(parent) = current.parent() {
-        if let Some(grandparent) = parent.parent() {
-            possible_paths.push(grandparent.join("zynkbot_rust/src-tauri/.env"));
-        }
-    }
-
-    let env_path = possible_paths
-        .into_iter()
-        .find(|p| {
-            let exists = p.exists();
-            let parent_exists = p.parent().map(|parent| parent.exists()).unwrap_or(false);
-            println!("[API Keys] Checking path: {:?} (exists: {}, parent_exists: {})", p, exists, parent_exists);
-            exists || parent_exists
-        })
-        .ok_or_else(|| format!("Could not find .env file location. Current dir: {:?}", current))?;
+    let env_path = crate::db::get_app_data_dir().join(".env");
 
     println!("[API Keys] Selected .env path: {:?}", env_path);
     println!("[API Keys] Saving {} (value length: {} chars)", key, value.len());
@@ -252,24 +182,7 @@ pub async fn set_api_key(key: String, value: String) -> Result<(), String> {
 /// Remove an API key from the .env file
 #[tauri::command]
 pub async fn remove_api_key(key: String) -> Result<(), String> {
-    let current = std::env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {}", e))?;
-
-    let mut possible_paths = vec![
-        current.join(".env"),
-        current.join("src-tauri").join(".env"),
-    ];
-
-    if let Some(parent) = current.parent() {
-        if let Some(grandparent) = parent.parent() {
-            possible_paths.push(grandparent.join("zynkbot_rust/src-tauri/.env"));
-        }
-    }
-
-    let env_path = possible_paths
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| format!("Could not find .env file. Current dir: {:?}", current))?;
+    let env_path = crate::db::get_app_data_dir().join(".env");
 
     let content = std::fs::read_to_string(&env_path)
         .unwrap_or_else(|e| {

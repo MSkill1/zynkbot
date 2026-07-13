@@ -36,10 +36,30 @@ export default function GettingStartedModal({ isOpen, onClose }) {
           </div>
         </div>
 
-        {/* Step 2: Test Memory Recall */}
+        {/* Step 2: View & Edit Memories */}
         <div className="guide-step">
           <div className="step-header">
             <span className="step-number">2</span>
+            <h3>View & Edit Memories</h3>
+          </div>
+          <p>Unlike ChatGPT's hidden memory, you can see and control everything Zynkbot knows:</p>
+          <ol>
+            <li>Click <strong>📚 Memory Manager</strong> button in the Recent Memories section</li>
+            <li>Browse through Einstein's memories and relationships</li>
+            <li>Click the <strong>🕸️ Graph View</strong> tab to see memory connections</li>
+            <li>Try editing or deleting a memory, then ask a related question</li>
+            <li>Notice how Zynkbot's response changes based on your edits</li>
+          </ol>
+          <div className="info-box warning">
+            <strong>This is the key difference:</strong> With ChatGPT, if it remembers something wrong,
+            you can't see or fix it. With Zynkbot, you have complete visibility and control.
+          </div>
+        </div>
+
+        {/* Step 3: Test Memory Recall */}
+        <div className="guide-step">
+          <div className="step-header">
+            <span className="step-number">3</span>
             <h3>Test Memory Recall</h3>
           </div>
           <p>Now ask questions to see how Zynkbot recalls and uses memories:</p>
@@ -60,25 +80,11 @@ export default function GettingStartedModal({ isOpen, onClose }) {
             <li>How Zynkbot used them in the response</li>
             <li>The similarity scores showing relevance</li>
           </ul>
-        </div>
-
-        {/* Step 3: View & Edit Memories */}
-        <div className="guide-step">
-          <div className="step-header">
-            <span className="step-number">3</span>
-            <h3>View & Edit Memories</h3>
-          </div>
-          <p>Unlike ChatGPT's hidden memory, you can see and control everything Zynkbot knows:</p>
-          <ol>
-            <li>Click <strong>📚 Memory Manager</strong> button in the Recent Memories section</li>
-            <li>Browse through Einstein's memories and relationships</li>
-            <li>Click the <strong>🕸️ Graph View</strong> tab to see memory connections</li>
-            <li>Try editing or deleting a memory, then ask a related question</li>
-            <li>Notice how Zynkbot's response changes based on your edits</li>
-          </ol>
-          <div className="info-box warning">
-            <strong>This is the key difference:</strong> With ChatGPT, if it remembers something wrong,
-            you can't see or fix it. With Zynkbot, you have complete visibility and control.
+          <div className="info-box">
+            <strong>Ready to use Zynkbot for yourself?</strong> When you're done exploring, open
+            <strong> 📚 Memory Manager</strong> and click <strong>Clear All Memories</strong> to clear the Einstein demo.
+            Then go to <strong>⚙️ Settings → Getting Started → Onboarding</strong> to set up your
+            own profile.
           </div>
         </div>
 

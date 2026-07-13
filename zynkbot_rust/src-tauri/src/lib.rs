@@ -1692,6 +1692,8 @@ pub struct PendingMemory {
     content: String,
     title: Option<String>,
     embedding: Vec<f32>,
+    #[serde(default)]
+    original_text: Option<String>,
 }
 
 /// Helper: Store pending memory with NLP enhancement
@@ -1735,7 +1737,7 @@ pub async fn store_pending_memory(
         Some(entities),
         event_type.as_deref(),
         event_date,
-        Some(&pending.content),
+        pending.original_text.as_deref(),
     ).await
     .map_err(|e| format!("Failed to insert memory: {}", e))?;
 
@@ -1971,25 +1973,32 @@ pub fn run() {
 
     tauri::Builder::default()
         .setup(|app| {
-            // Load .env file from project root (cross-platform)
-            // Try multiple paths to handle different execution contexts
-            let env_paths = [
-                "../../.env",           // From target/debug/
-                "../../../.env",        // Alternative path
-                ".env",                 // Current directory
-                "../../../../../../.env" // From deep nested paths
-            ];
+            // Ensure model directories exist in user data dir (for installed binary)
+            let models_dir = crate::db::get_app_data_dir();
+            std::fs::create_dir_all(models_dir.join("models/system")).ok();
+            std::fs::create_dir_all(models_dir.join("models/user")).ok();
 
-            for path in &env_paths {
-                if std::path::Path::new(path).exists() {
-                    println!("[Dotenv] Loading .env from: {}", path);
-                    dotenv::from_path(path).ok();
-                    break;
+            // Load .env — check user data dir first (installed binary), then dev paths
+            let data_dir_env = crate::db::get_app_data_dir().join(".env");
+            if data_dir_env.exists() {
+                println!("[Dotenv] Loading .env from: {}", data_dir_env.display());
+                dotenv::from_path(&data_dir_env).ok();
+            } else {
+                // Dev mode fallbacks
+                let env_paths = [
+                    "../../.env",
+                    "../../../.env",
+                    ".env",
+                    "../../../../../../.env",
+                ];
+                for path in &env_paths {
+                    if std::path::Path::new(path).exists() {
+                        println!("[Dotenv] Loading .env from: {}", path);
+                        dotenv::from_path(path).ok();
+                        break;
+                    }
                 }
-            }
-
-            // Fallback: Search upwards from current directory
-            {  // Load dotenv for API keys
+                // Last resort: search upward
                 let mut current_dir = std::env::current_dir().unwrap_or_default();
                 for _ in 0..5 {
                     let env_file = current_dir.join(".env");
@@ -1998,9 +2007,7 @@ pub fn run() {
                         dotenv::from_path(env_file).ok();
                         break;
                     }
-                    if !current_dir.pop() {
-                        break;
-                    }
+                    if !current_dir.pop() { break; }
                 }
             }
 
@@ -2211,6 +2218,7 @@ pub fn run() {
             // External file/folder opening + Knowledge Base
             commands::knowledge_base::open_external_file,
             commands::knowledge_base::open_external_folder,
+            commands::knowledge_base::open_external_url,
             commands::knowledge_base::scan_knowledge_base,
             commands::knowledge_base::search_knowledge_base,
             commands::knowledge_base::read_knowledge_base_file,
@@ -2232,6 +2240,10 @@ pub fn run() {
             commands::conversation::delete_conversation_session,
             // Feedback / training data collection
             commands::conversation::store_message_feedback,
+            // Setup wizard
+            commands::setup_wizard::check_needs_setup,
+            commands::setup_wizard::download_system_models,
+            commands::setup_wizard::download_user_model,
         ])
         .on_window_event(|_window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {

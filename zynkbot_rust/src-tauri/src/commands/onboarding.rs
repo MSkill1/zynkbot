@@ -378,10 +378,9 @@ pub async fn index_system_documentation() -> Result<String, String> {
     }
 
     if !kb_path.exists() {
-        let error_msg = format!("System documentation directory not found at: {:?}", kb_path);
-        eprintln!("[System KB] ⚠️ {}", error_msg);
+        eprintln!("[System KB] ⚠️ System documentation directory not found — skipping (installed binary without bundled docs)");
         db_pool.close().await;
-        return Err(error_msg);
+        return Ok("System documentation not available in this installation".to_string());
     }
 
     println!("[System KB] Found system docs directory: {:?}", kb_path);

@@ -4,6 +4,24 @@
 
 ---
 
+## Binary Install (Recommended)
+
+No compilation required. Download and install the `.deb` package:
+
+```bash
+sudo dpkg -i Zynkbot_0.9.0_amd64.deb
+```
+
+**[Download from GitHub Releases →](https://github.com/MSkill1/zynkbot/releases/latest)**
+
+A first-run setup wizard handles all model downloads automatically.
+
+> ⚠️ **Local models are CPU-only in pre-built binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models are unaffected.
+
+---
+
+## Developer Install (from source)
+
 ## Quick Start (TL;DR)
 
 ```bash

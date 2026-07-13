@@ -69,19 +69,11 @@ if [ ! -f "$SCRIPT_DIR/zynkbot_rust/src-tauri/.env" ]; then
 fi
 
 
-# Show extended first-build warning only when the binary hasn't been compiled yet
 BINARY="$SCRIPT_DIR/zynkbot_rust/src-tauri/target/debug/app"
 if [ ! -f "$BINARY" ]; then
-    echo "⚠️  FIRST-TIME BUILD DETECTED"
-    echo "   Zynkbot is compiling its Rust backend for the first time."
-    echo "   This takes 10-15 minutes and only happens once."
-    echo ""
-    echo "   In the 700s, compilation will appear to pause or freeze for"
-    echo "   several minutes. This is normal — do NOT close this window."
-    echo "   Let it complete. The app will open automatically when done."
-    echo ""
-    echo "Starting in 5 seconds..."
-    sleep 5
+    echo "⚠️  Binary not found — Rust backend has not been compiled yet."
+    echo "   Run install.sh first. Starting anyway in 10 seconds... (Ctrl+C to cancel)"
+    sleep 10
 else
     echo "Starting Zynkbot..."
     sleep 1
@@ -100,6 +92,15 @@ cleanup() {
 # Set trap to cleanup on exit
 trap cleanup EXIT INT TERM
 
+# Detect CUDA and set features flag accordingly
+TAURI_FEATURES=""
+if command -v nvidia-smi &> /dev/null || ls /usr/lib/x86_64-linux-gnu/libcuda.so* &> /dev/null 2>&1; then
+    if command -v nvcc &> /dev/null; then
+        TAURI_FEATURES="--features cuda"
+        echo "⚡ CUDA detected — building with GPU acceleration"
+    fi
+fi
+
 # Start Tauri app (Rust backend runs automatically inside Tauri)
 echo "🚀 Starting Tauri app with Rust backend..."
-npm run tauri:dev
+npm run tauri -- dev $TAURI_FEATURES

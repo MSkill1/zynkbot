@@ -4,6 +4,22 @@
 
 ---
 
+## Binary Install (Recommended)
+
+No compilation or build tools required. Download and run the installer:
+
+**[Download Zynkbot_0.9.0_x64-setup.exe →](https://github.com/MSkill1/zynkbot/releases/latest)**
+
+A first-run setup wizard handles all model downloads automatically.
+
+> ⚠️ **Local models are CPU-only in pre-built binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models are unaffected.
+
+**Uninstalling:** Use Add/Remove Programs as normal. To fully delete your data (memories, conversation history, downloaded models), also manually delete `%LOCALAPPDATA%\zynkbot` after uninstalling.
+
+---
+
+## Developer Install (from source)
+
 ## Quick Start 
 
 ```batch

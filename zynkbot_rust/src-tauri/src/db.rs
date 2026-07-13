@@ -9,6 +9,22 @@ pub fn get_app_data_dir() -> PathBuf {
     data_dir
 }
 
+pub fn get_models_dir() -> PathBuf {
+    // Dev mode: exe lives at src-tauri/target/debug/app — always use src-tauri/models/
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_str = exe.to_string_lossy();
+        if exe_str.contains("/target/debug/") || exe_str.contains("\\target\\debug\\") {
+            if let Some(exe_dir) = exe.parent() {
+                if let Some(src_tauri) = exe_dir.parent().and_then(|p| p.parent()) {
+                    return src_tauri.join("models");
+                }
+            }
+        }
+    }
+    // Installed binary: models live in the app data directory
+    get_app_data_dir().join("models")
+}
+
 pub fn get_db_path() -> PathBuf {
     get_app_data_dir().join("zynkbot.db")
 }

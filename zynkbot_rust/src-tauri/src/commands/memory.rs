@@ -37,7 +37,7 @@ pub async fn list_memories(
     if event_type.is_some() { sql.push_str(" AND event_type = ?"); }
     if date_from.is_some() { sql.push_str(" AND created_at >= ?"); }
     if date_to.is_some() { sql.push_str(" AND created_at <= ?"); }
-    sql.push_str(" ORDER BY created_at DESC");
+    sql.push_str(" ORDER BY datetime(created_at) DESC");
 
     let mut query = sqlx::query_as::<_, memory::Memory>(&sql);
     if let Some(uid) = user_id.as_ref() { query = query.bind(uid); }
@@ -1031,6 +1031,20 @@ pub async fn resolve_memory_conflict_v2(
         "keep_new" => {
             println!("[Rust] Resolution: Keep NEW memory, delete OLD #{}", conflicting_memory_id);
 
+            // Compute hash before deleting so we can propagate to sync peers
+            let content_hash: Option<String> = sqlx::query_scalar::<_, String>(
+                "SELECT content FROM memories WHERE id = ?"
+            )
+            .bind(conflicting_memory_id)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|content| {
+                use sha2::{Digest, Sha256};
+                format!("{:x}", Sha256::digest(content.as_bytes()))
+            });
+
             sqlx::query("DELETE FROM memories WHERE id = ?")
                 .bind(conflicting_memory_id)
                 .execute(&pool)
@@ -1038,6 +1052,19 @@ pub async fn resolve_memory_conflict_v2(
                 .map_err(|e| format!("Failed to delete old memory: {}", e))?;
 
             println!("[Rust] ✅ Deleted old memory #{}", conflicting_memory_id);
+
+            // Propagate deletion to sync peers so they don't restore the old memory
+            if let Some(hash) = content_hash {
+                let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
+                if let Some(service) = zynksync_service.as_ref() {
+                    if service.is_auto_sync_enabled().await {
+                        match service.propagate_deletion_by_hash(hash).await {
+                            Ok(count) => println!("[Rust] ✓ Deletion propagated to {} device(s)", count),
+                            Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to propagate deletion: {}", e),
+                        }
+                    }
+                }
+            }
 
             let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
 
