@@ -20,7 +20,7 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 
 <img src="assets/main.png" alt="Zynkbot main interface" width="800">
 
-**Current Status**: Feature-complete v0.9 (Rust/Tauri desktop, Windows and Linux; open beta — see below). Mobile (Android, iOS) support planned via Tauri Mobile.
+**Current Status**: v0.9.0 released (Rust/Tauri desktop, Windows and Linux). Mobile (Android, iOS) in active development via Tauri Mobile.
 
 ---
 
