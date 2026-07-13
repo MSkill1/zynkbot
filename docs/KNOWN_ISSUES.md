@@ -6,6 +6,15 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ## Memory Pipeline
 
+### KI-012 — Original text not preserved when memory is stored via contradiction resolution
+**Status:** Open  
+**Affected:** All users — any memory stored after resolving a contradiction modal  
+**Description:** The `original_text` field (the verbatim user input) is correctly stored for memories created through the normal path. However, when a contradiction is detected and the user resolves it via the modal, the memory is stored through `store_pending_memory`, which passes `pending.content` (the LLM-extracted fact) as `original_text` instead of the raw user message. Both the Content and Original fields in Memory Manager show the same extracted text.  
+**Workaround:** None — the verbatim original is not recoverable for these memories.  
+**Fix target:** Add `original_text` field to `PendingMemory` struct and thread it through the contradiction resolution path in `lib.rs`.
+
+---
+
 ### KI-001 — Double memory on contradiction resolution (edge case)
 **Status:** Partially fixed  
 **Affected:** All local models  
