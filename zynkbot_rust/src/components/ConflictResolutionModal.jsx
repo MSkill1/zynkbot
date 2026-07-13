@@ -11,15 +11,11 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
 
   if (!memoryA || !memoryB) return null;
 
-  const memoryADate = new Date(memoryA.created_at);
-  const memoryBDate = new Date(memoryB.created_at);
-  const isMemoryAOlder = memoryADate < memoryBDate;
+  const oldMemory = memoryA;
+  const newMemory = memoryB;
 
-  const oldMemory = isMemoryAOlder ? memoryA : memoryB;
-  const newMemory = isMemoryAOlder ? memoryB : memoryA;
-
-  const keepOldValue = isMemoryAOlder ? "memoryA" : "memoryB";
-  const keepNewValue = isMemoryAOlder ? "memoryB" : "memoryA";
+  const keepOldValue = "memoryA";
+  const keepNewValue = "memoryB";
 
   const handleOptionChange = (option) => {
     setSelectedOption(option);
