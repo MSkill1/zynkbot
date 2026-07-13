@@ -2404,6 +2404,64 @@ impl ZynkSyncService {
         println!("[ZynkSync] Auto-sync disabled (HTTP server still running for ZynkLink)");
     }
 
+    /// Broadcast a pause signal to all sync-paired peers so they also pause
+    pub async fn broadcast_pause_to_peers(&self) -> usize {
+        println!("[ZynkSync] Broadcasting pause to all paired devices");
+        let peers = {
+            let peers_map = self.peers.read().await;
+            peers_map.values().filter(|p| p.paired).cloned().collect::<Vec<_>>()
+        };
+        let mut count = 0;
+        for peer in peers {
+            let endpoint = format!("{}/api/zynksync/pause", peer.url);
+            let client = self.http_client.read().await.clone();
+            match client
+                .post(&endpoint)
+                .header("X-Device-ID", &self.device_id)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    count += 1;
+                    println!("[ZynkSync] ✓ Pause broadcast to {}", peer.device_name);
+                }
+                Ok(r) => eprintln!("[ZynkSync] ✗ Pause rejected by {}: {}", peer.device_name, r.status()),
+                Err(e) => eprintln!("[ZynkSync] ✗ Could not reach {} for pause: {}", peer.device_name, e),
+            }
+        }
+        count
+    }
+
+    /// Broadcast a resume signal to all sync-paired peers so they also resume
+    pub async fn broadcast_resume_to_peers(&self) -> usize {
+        println!("[ZynkSync] Broadcasting resume to all paired devices");
+        let peers = {
+            let peers_map = self.peers.read().await;
+            peers_map.values().filter(|p| p.paired).cloned().collect::<Vec<_>>()
+        };
+        let mut count = 0;
+        for peer in peers {
+            let endpoint = format!("{}/api/zynksync/resume", peer.url);
+            let client = self.http_client.read().await.clone();
+            match client
+                .post(&endpoint)
+                .header("X-Device-ID", &self.device_id)
+                .timeout(Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    count += 1;
+                    println!("[ZynkSync] ✓ Resume broadcast to {}", peer.device_name);
+                }
+                Ok(r) => eprintln!("[ZynkSync] ✗ Resume rejected by {}: {}", peer.device_name, r.status()),
+                Err(e) => eprintln!("[ZynkSync] ✗ Could not reach {} for resume: {}", peer.device_name, e),
+            }
+        }
+        count
+    }
+
     /// Check if auto-sync is currently enabled
     pub async fn is_auto_sync_enabled(&self) -> bool {
         let enabled = self.auto_sync_enabled.read().await;
@@ -2532,6 +2590,8 @@ impl ZynkSyncService {
             .route("/api/zynksync/conversations/receive", post(handle_receive_conversations))
             .route("/api/presence/heartbeat", post(handle_heartbeat))
             .route("/api/presence/goodbye", post(handle_goodbye))
+            .route("/api/zynksync/pause", post(handle_pause))
+            .route("/api/zynksync/resume", post(handle_resume))
             .with_state(Arc::clone(&self));
 
         // Build TLS config from this device's certificate
@@ -2917,6 +2977,45 @@ async fn handle_goodbye(
     .map_err(|e| format!("Failed to set offline: {}", e))?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Axum handler: pause auto-sync on this device (called by a peer broadcasting pause)
+async fn handle_pause(
+    State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
+
+    service.stop_auto_sync().await;
+    if let Err(e) = crate::save_sync_state(false).await {
+        eprintln!("[ZynkSync] Failed to persist pause state: {}", e);
+    }
+    println!("[ZynkSync] ✅ Paused by peer {}", device_id);
+    Ok(Json(serde_json::json!({"success": true, "action": "paused"})))
+}
+
+/// Axum handler: resume auto-sync on this device (called by a peer broadcasting resume)
+async fn handle_resume(
+    State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
+
+    {
+        let mut enabled = service.auto_sync_enabled.write().await;
+        *enabled = true;
+    }
+    if let Err(e) = crate::save_sync_state(true).await {
+        eprintln!("[ZynkSync] Failed to persist resume state: {}", e);
+    }
+    println!("[ZynkSync] ✅ Resumed by peer {}", device_id);
+    Ok(Json(serde_json::json!({"success": true, "action": "resumed"})))
 }
 
 /// Axum handler for unsync push notification.

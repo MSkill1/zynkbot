@@ -29,12 +29,12 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
     if (loading) return; // Prevent concurrent calls
     setLoading(true);
     try {
-      setMessage('Starting ZynkSync service...');
+      setMessage('Resuming ZynkSync...');
       const result = await invoke('start_zynksync', {
         syncIntervalSecs: 60  // Sync every 60 seconds
       });
       setSyncStatus('running');
-      setMessage('✓ ZynkSync started - ready to sync with devices');
+      setMessage('✓ ZynkSync resumed — syncing with devices');
       console.log('[ZynkSync] Service started:', result);
 
       // Start polling for peers
@@ -55,10 +55,10 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
     if (loading) return; // Prevent concurrent calls
     setLoading(true);
     try {
-      setMessage('Stopping ZynkSync service...');
+      setMessage('Pausing ZynkSync...');
       await invoke('stop_zynksync');
       setSyncStatus('stopped');
-      setMessage('✓ ZynkSync stopped');
+      setMessage('✓ ZynkSync paused');
       setPeers([]);
       setPairingCode('');
       setLocalIp('');
@@ -262,7 +262,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
         const isRunning = await invoke('get_zynksync_status');
         if (isRunning) {
           setSyncStatus('running');
-          setMessage('✓ ZynkSync service is running');
+          setMessage('✓ ZynkSync is running');
           console.log('[ZynkSync] Service already running on mount');
           // Fetch peers if already running
           if (autoRefresh) {
@@ -270,13 +270,13 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
           }
         } else {
           setSyncStatus('stopped');
-          setMessage('ZynkSync is stopped. Click "Start Sync" to begin syncing.');
+          setMessage('ZynkSync paused. Click "Resume Syncing" to start.');
           console.log('[ZynkSync] Service not running - waiting for user to start');
         }
       } catch (error) {
         console.error('[ZynkSync] Failed to check status:', error);
         setSyncStatus('stopped');
-        setMessage('Click "Start Sync" to begin syncing with your devices.');
+        setMessage('Click "Resume Syncing" to begin syncing with your devices.');
       }
     };
 
@@ -366,7 +366,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
             opacity: loading ? 0.5 : 1
           }}
         >
-          {syncStatus === 'running' ? '⏸ Stop' : '▶ Start'} ZynkSync
+          {syncStatus === 'running' ? '⏸ Pause Syncing' : '▶ Resume Syncing'}
         </button>
         <button
           onClick={onOpenUserIdentity}

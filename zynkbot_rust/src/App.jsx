@@ -26,7 +26,6 @@ import ZynkClusterModal from "./components/ZynkClusterModal";
 import OnboardingModal from "./components/OnboardingModal";
 import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
-import SessionInfoModal from "./components/SessionInfoModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
 
 // API Base URL - DEPRECATED: All API calls now use Tauri commands
@@ -153,7 +152,6 @@ export default function App() {
   const [showEnsemble, setShowEnsemble] = useState(false);
   const [showConflictResolution, setShowConflictResolution] = useState(false);
   const [showZynkCluster, setShowZynkCluster] = useState(false);
-  const [showSessionInfo, setShowSessionInfo] = useState(false);
   const [showConversationHistory, setShowConversationHistory] = useState(false);
   const [currentConflict, setCurrentConflict] = useState(null);
   const [chatDevice, setChatDevice] = useState(null);
@@ -185,7 +183,7 @@ export default function App() {
   // Lock body scroll when any modal is open to prevent scrollbar ghost artifact
   const anyModalOpen = showAbout || showDemoGuide || showWhyZynkbot || showAPIKeys ||
     showUserIdentity || showEnsemble || showConflictResolution || showZynkCluster ||
-    showSessionInfo || showConversationHistory || showKBManager || showOnboarding ||
+    showConversationHistory || showKBManager || showOnboarding ||
     showSnapInModal;
   useLayoutEffect(() => {
     if (anyModalOpen) {
@@ -808,7 +806,7 @@ export default function App() {
       <CollapsibleSidebar
         icon="⚙️"
         title="System Controls"
-        onInfoClick={() => setShowSessionInfo(true)}
+        onInfoClick={() => setShowUserIdentity(true)}
         voiceInputEnabled={voiceInputEnabled}
         hideToggle={showConversationHistory}
         onVoiceToggle={(enabled) => {
@@ -1643,12 +1641,6 @@ export default function App() {
       <WhyZynkbotModal isOpen={showWhyZynkbot} onClose={() => setShowWhyZynkbot(false)} />
       <AboutModal isOpen={showAbout} onClose={() => setShowAbout(false)} />
       <GettingStartedModal isOpen={showDemoGuide} onClose={() => setShowDemoGuide(false)} />
-      <SessionInfoModal
-        show={showSessionInfo}
-        onClose={() => setShowSessionInfo(false)}
-        userId={userId}
-        sessionId={sessionId}
-      />
       <APIKeyModal
         isOpen={showAPIKeys}
         onClose={() => setShowAPIKeys(false)}
@@ -1658,7 +1650,7 @@ export default function App() {
           console.log('✅ Models refreshed');
         }}
       />
-      <UserIdentityModal isOpen={showUserIdentity} onClose={() => setShowUserIdentity(false)} apiBaseUrl={API_BASE_URL} />
+      <UserIdentityModal isOpen={showUserIdentity} onClose={() => setShowUserIdentity(false)} apiBaseUrl={API_BASE_URL} sessionId={sessionId} />
       <ConversationHistoryPanel
         isOpen={showConversationHistory}
         onClose={() => setShowConversationHistory(false)}
