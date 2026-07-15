@@ -123,6 +123,48 @@ pub async fn open_models_folder() -> Result<(), String> {
     Ok(())
 }
 
+/// List all downloaded user model filenames
+#[tauri::command]
+pub async fn list_user_models() -> Result<Vec<String>, String> {
+    let user_models_dir = crate::db::get_models_dir().join("user");
+    let mut names = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&user_models_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext.eq_ignore_ascii_case("gguf") {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            names.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(names)
+}
+
+/// Delete a user model file by filename
+#[tauri::command]
+pub async fn delete_user_model(filename: String) -> Result<(), String> {
+    let user_models_dir = crate::db::get_models_dir().join("user");
+    let path = user_models_dir.join(&filename);
+
+    if !path.starts_with(&user_models_dir) {
+        return Err("Invalid filename".to_string());
+    }
+    if !path.exists() {
+        return Err(format!("Model file not found: {}", filename));
+    }
+
+    std::fs::remove_file(&path)
+        .map_err(|e| format!("Failed to delete model: {}", e))?;
+
+    println!("[RUST] Deleted user model: {}", filename);
+    Ok(())
+}
+
 /// Get configured API keys (returns values for current session)
 #[tauri::command]
 pub async fn get_api_keys() -> Result<serde_json::Value, String> {

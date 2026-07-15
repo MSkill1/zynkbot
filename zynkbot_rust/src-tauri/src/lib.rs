@@ -2117,6 +2117,8 @@ pub fn run() {
             // Model and API key commands
             commands::models::get_models,
             commands::models::open_models_folder,
+            commands::models::list_user_models,
+            commands::models::delete_user_model,
             commands::models::get_api_keys,
             commands::models::set_api_key,
             commands::models::remove_api_key,

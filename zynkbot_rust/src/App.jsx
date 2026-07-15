@@ -107,6 +107,51 @@ function AccessGate() {
   );
 }
 
+function MobileModelManager() {
+  const [models, setModels] = useState([]);
+  const [deleting, setDeleting] = useState(null);
+
+  useEffect(() => {
+    invoke('list_user_models').then(setModels).catch(() => {});
+  }, []);
+
+  const handleDelete = async (filename) => {
+    if (!window.confirm(`Delete ${filename}? This cannot be undone.`)) return;
+    setDeleting(filename);
+    try {
+      await invoke('delete_user_model', { filename });
+      setModels(prev => prev.filter(f => f !== filename));
+    } catch (e) {
+      alert('Delete failed: ' + e);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  if (models.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: '20px', padding: '15px', background: '#1e1f29', borderRadius: '8px', border: '1px solid #44475a' }}>
+      <h4 style={{ color: '#ff5555', fontSize: '0.95rem', margin: '0 0 10px' }}>🗑️ Downloaded Local Models</h4>
+      <p style={{ fontSize: '0.82rem', color: '#9aa5c4', marginBottom: '10px' }}>
+        Local models are not supported on Android. Delete to free up storage.
+      </p>
+      {models.map(filename => (
+        <div key={filename} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', padding: '8px 10px', background: '#282a36', borderRadius: '6px' }}>
+          <span style={{ fontSize: '0.82rem', color: '#f8f8f2', wordBreak: 'break-all', flex: 1, marginRight: '10px' }}>{filename}</span>
+          <button
+            onClick={() => handleDelete(filename)}
+            disabled={deleting === filename}
+            style={{ padding: '5px 12px', background: '#ff5555', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
+          >
+            {deleting === filename ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function App() {
   // Persistent user ID from backend (shared across all YOUR devices)
   const [userId, setUserId] = useState(null);
@@ -931,6 +976,9 @@ export default function App() {
             )}
           </p>
         </div>
+
+        {/* Mobile: Manage Downloaded Models */}
+        {isMobile && <MobileModelManager />}
 
         {/* Getting Started */}
         <div style={{marginTop: '20px', padding: '15px', background: '#1e1f29', borderRadius: '8px', border: '1px solid #44475a'}}>

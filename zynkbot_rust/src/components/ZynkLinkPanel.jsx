@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { open as openFolderDialog } from '@tauri-apps/plugin-dialog';
 import ZChatModal from './ZChatModal';
 import ZynkFileBrowserModal from './ZynkFileBrowserModal';
 
@@ -582,8 +583,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
         </div>
       )}
 
-      {/* Share New Directory — desktop only; Android uses scoped storage */}
-      {!isMobile && <div style={{ marginBottom: '20px' }}>
+      {/* Share New Directory */}
+      <div style={{ marginBottom: '20px' }}>
         <label style={{ display: 'block', color: '#f8f8f2', fontSize: '0.9rem', marginBottom: '5px' }}>
           📁 Share a Directory:
         </label>
@@ -603,41 +604,92 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             fontSize: '0.9rem'
           }}
         />
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <input
-            type="text"
-            value={newDirPath}
-            onChange={(e) => setNewDirPath(e.target.value)}
-            placeholder="e.g., C:\MyFiles or /home/user/files"
-            style={{
-              flex: 1,
-              padding: '8px',
-              background: '#1e1f29',
-              border: '1px solid #44475a',
-              borderRadius: '4px',
-              color: '#f8f8f2',
-              fontSize: '0.9rem'
-            }}
-          />
-          <button
-            onClick={handleShareDirectory}
-            disabled={loading || !newDirPath.trim() || !newShareName.trim()}
-            style={{
-              padding: '8px 16px',
-              background: '#8be9fd',
-              color: '#282a36',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: loading ? 'wait' : 'pointer',
-              fontWeight: 'bold',
-              fontSize: '0.9rem',
-              opacity: (!newDirPath.trim() || !newShareName.trim() || loading) ? 0.5 : 1
-            }}
-          >
-            Share
-          </button>
-        </div>
-      </div>}
+        {isMobile ? (
+          <div>
+            {newDirPath && (
+              <div style={{ fontSize: '0.8rem', color: '#9aa5c4', marginBottom: '8px', wordBreak: 'break-all' }}>
+                Selected: {newDirPath}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={async () => {
+                  try {
+                    const selected = await openFolderDialog({ directory: true, multiple: false });
+                    if (selected) setNewDirPath(typeof selected === 'string' ? selected : selected.path || selected);
+                  } catch (e) {
+                    alert('Could not open folder picker: ' + e);
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  background: '#1e1f29',
+                  border: '1px solid #44475a',
+                  borderRadius: '4px',
+                  color: '#f8f8f2',
+                  fontSize: '0.9rem',
+                  cursor: 'pointer'
+                }}
+              >
+                📂 Choose Folder
+              </button>
+              <button
+                onClick={handleShareDirectory}
+                disabled={loading || !newDirPath.trim() || !newShareName.trim()}
+                style={{
+                  padding: '10px 16px',
+                  background: '#8be9fd',
+                  color: '#282a36',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: loading ? 'wait' : 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '0.9rem',
+                  opacity: (!newDirPath.trim() || !newShareName.trim() || loading) ? 0.5 : 1
+                }}
+              >
+                Share
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input
+              type="text"
+              value={newDirPath}
+              onChange={(e) => setNewDirPath(e.target.value)}
+              placeholder="e.g., C:\MyFiles or /home/user/files"
+              style={{
+                flex: 1,
+                padding: '8px',
+                background: '#1e1f29',
+                border: '1px solid #44475a',
+                borderRadius: '4px',
+                color: '#f8f8f2',
+                fontSize: '0.9rem'
+              }}
+            />
+            <button
+              onClick={handleShareDirectory}
+              disabled={loading || !newDirPath.trim() || !newShareName.trim()}
+              style={{
+                padding: '8px 16px',
+                background: '#8be9fd',
+                color: '#282a36',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: loading ? 'wait' : 'pointer',
+                fontWeight: 'bold',
+                fontSize: '0.9rem',
+                opacity: (!newDirPath.trim() || !newShareName.trim() || loading) ? 0.5 : 1
+              }}
+            >
+              Share
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* My Shared Directories */}
       <div style={{ marginBottom: '15px' }}>
