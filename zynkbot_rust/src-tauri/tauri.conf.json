@@ -41,6 +41,7 @@
             "core:window:default",
             "dialog:allow-open",
             "dialog:default",
+            "opener:default",
             "core:webview:allow-internal-toggle-devtools",
             "core:webview:default"
           ]

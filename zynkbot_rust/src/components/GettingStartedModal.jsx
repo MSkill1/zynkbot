@@ -1,20 +1,52 @@
-import React from "react";
+import React, { useState } from "react";
+import CostGuideModal from "./CostGuideModal";
 import "../styles/GettingStartedModal.css";
 
-export default function GettingStartedModal({ isOpen, onClose }) {
+export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) {
+  const [showCostGuide, setShowCostGuide] = useState(false);
+
   if (!isOpen) return null;
 
   return (
+    <>
+    <CostGuideModal isOpen={showCostGuide} onClose={() => setShowCostGuide(false)} />
     <div className="modal-overlay" onClick={onClose}>
       <div className="getting-started-modal-container" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose}>×</button>
 
         <h2>Getting Started with Zynkbot</h2>
 
-        <p className="guide-intro">
-          Zynkbot is different from ChatGPT and other AI assistants. Instead of hiding memories in a black box,
-          Zynkbot gives you complete transparency and control. Let's see how it works using the Einstein demo.
-        </p>
+        <div className="guide-intro" style={{ marginBottom: '16px' }}>
+          <p style={{ marginBottom: '10px' }}>
+            Zynkbot is different from ChatGPT and other AI assistants — instead of hiding memories in a black box,
+            it gives you complete transparency and control over what it knows about you.
+          </p>
+          <p style={{ marginBottom: '12px' }}>
+            <strong>Two ways to use it:</strong>
+          </p>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            <div style={{ flex: '1', minWidth: '200px', background: '#21222c', borderRadius: '8px', padding: '12px', borderLeft: '3px solid #50fa7b' }}>
+              <strong style={{ color: '#50fa7b' }}>🖥️ Local model (free)</strong>
+              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Download a GGUF model and run entirely on your device. No API keys, no cost, complete privacy. Slower on most hardware.</p>
+            </div>
+            <div style={{ flex: '1', minWidth: '200px', background: '#21222c', borderRadius: '8px', padding: '12px', borderLeft: '3px solid #8be9fd' }}>
+              <strong style={{ color: '#8be9fd' }}>⚡ API key (pay-per-use)</strong>
+              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Connect Claude, GPT, or Grok via API key for fast, capable responses. Most users spend $2–15/month.</p>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            {onOpenAPIKeys && (
+              <button
+                onClick={() => { onClose(); onOpenAPIKeys(); }}
+                style={{ padding: '8px 18px', background: '#8be9fd', color: '#282a36', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.9rem' }}
+              >🔑 Set Up API Keys</button>
+            )}
+            <button
+              onClick={() => setShowCostGuide(true)}
+              style={{ padding: '8px 18px', background: 'none', color: '#50fa7b', border: '1px solid #50fa7b', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem' }}
+            >💰 What will this cost? →</button>
+          </div>
+        </div>
 
         {/* Step 1: Load Einstein Demo */}
         <div className="guide-step">
@@ -179,5 +211,6 @@ export default function GettingStartedModal({ isOpen, onClose }) {
         </div>
       </div>
     </div>
+    </>
   );
 }

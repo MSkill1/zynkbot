@@ -152,9 +152,13 @@ To share with another person:
 /// Global identity manager instance
 static IDENTITY_MANAGER: once_cell::sync::Lazy<IdentityManager> =
     once_cell::sync::Lazy::new(|| {
-        // Use a fixed, reliable location for identity files to ensure single user_id
-        // regardless of where the app is launched from
+        // On Android, dirs::config_dir() returns a path outside the writable files/
+        // directory, causing every launch to generate a new random UUID fallback.
+        // Use get_app_data_dir() instead, which resolves to $HOME/files/zynkbot.
+        #[cfg(target_os = "android")]
+        let identity_base = crate::db::get_app_data_dir();
 
+        #[cfg(not(target_os = "android"))]
         let identity_base = {
             let config_dir = dirs::config_dir()
                 .unwrap_or_else(|| {

@@ -454,7 +454,9 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
                 textAlign: 'center',
                 letterSpacing: '2px',
                 border: '2px solid #50fa7b',
-                marginBottom: '10px'
+                marginBottom: '10px',
+                wordBreak: 'break-all',
+                overflowWrap: 'break-word'
               }}>
                 {localIp}:{pairingCode}
               </div>

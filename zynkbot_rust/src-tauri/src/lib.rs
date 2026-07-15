@@ -2025,6 +2025,9 @@ pub fn run() {
             // Initialize shell plugin for opening folders/URLs
             app.handle().plugin(tauri_plugin_shell::init())?;
 
+            // Initialize opener plugin (uses Android Intent system on mobile, xdg-open on Linux)
+            app.handle().plugin(tauri_plugin_opener::init())?;
+
             // Store app handle globally for HTTP server event emission
             {
                 let mut global_app_handle = APP_HANDLE.lock()

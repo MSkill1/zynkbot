@@ -175,9 +175,16 @@ export default function App() {
     const stored = localStorage.getItem('zynkbot_voice_input_enabled');
     return stored === null ? true : stored === 'true';
   });
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
   const memoryManagerRef = useRef(null);
   const conversationEndRef = useRef(null);
   const chatContainerRef = useRef(null);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
 
   // Lock body scroll when any modal is open to prevent scrollbar ghost artifact
@@ -837,6 +844,7 @@ export default function App() {
           <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px'}}>
             <h3 style={{color: '#f8f8f2', fontSize: '1.1rem', margin: 0}}>Current Model ↓</h3>
             <div style={{display: 'flex', gap: '8px'}}>
+              {!isMobile && (
               <button
                 onClick={async () => {
                   try {
@@ -863,6 +871,7 @@ export default function App() {
               >
                 📁 Add Models
               </button>
+              )}
               <button
                 onClick={() => setShowAPIKeys(true)}
                 style={{
@@ -1208,8 +1217,8 @@ export default function App() {
           )}
         </div>
 
-        {/* ZynkCluster - Distributed MoE Inference (Upcoming) */}
-        <div style={{marginTop: '15px', marginBottom: '150px', padding: '15px', background: '#282a36', borderRadius: '8px', border: '1px solid #bd93f9'}}>
+        {/* ZynkCluster - hidden on mobile (desktop-only feature) */}
+        {!isMobile && <div style={{marginTop: '15px', marginBottom: '150px', padding: '15px', background: '#282a36', borderRadius: '8px', border: '1px solid #bd93f9'}}>
           <div
             onClick={() => setShowZynkClusterSection(!showZynkClusterSection)}
             style={{
@@ -1254,7 +1263,7 @@ export default function App() {
           </p>
           </div>
           )}
-        </div>
+        </div>}
 
       </CollapsibleSidebar>
 
@@ -1369,7 +1378,7 @@ export default function App() {
             )}
 
             {/* INPUT LAYOUT: Textarea + 2x2 Button Grid */}
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'stretch', marginTop: '8px' }}>
+            <div className="chat-input-wrapper" style={{ display: 'flex', gap: '10px', alignItems: 'stretch', marginTop: '8px' }}>
               {/* Left: Textarea with KB button inside */}
               <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
                 <textarea
@@ -1493,15 +1502,15 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right: 2x2 Button Grid */}
-              <div style={{
+              {/* Right: 2x2 Button Grid (1x2 on mobile — no Voice/Send) */}
+              <div className="chat-button-grid" style={{
                 display: 'grid',
-                gridTemplateColumns: '85px 85px',
-                gridTemplateRows: '42px 42px',
+                gridTemplateColumns: isMobile ? '85px' : '85px 85px',
+                gridTemplateRows: isMobile ? '42px 42px' : '42px 42px',
                 gap: '10px'
               }}>
-                {/* Top Left: Voice (Web Speech API - conditionally shown) */}
-                {voiceInputEnabled ? (
+                {/* Top Left: Voice (hidden on mobile — Android keyboard handles dictation) */}
+                {!isMobile && (voiceInputEnabled ? (
                   <VoiceButton
                     onTranscript={(text) => setInput(text)}
                     disabled={isLoading}
@@ -1532,7 +1541,7 @@ export default function App() {
                   }}>
                     Voice Disabled
                   </div>
-                )}
+                ))}
 
                 {/* Top Right: Ensemble */}
                 <button
@@ -1568,38 +1577,40 @@ export default function App() {
                   Ensemble
                 </button>
 
-                {/* Bottom Left: Send */}
-                <button
-                  onClick={() => handleSendMessage(input)}
-                  disabled={isLoading}
-                  style={{
-                    width: '85px',
-                    height: '42px',
-                    minWidth: '85px',
-                    maxWidth: '85px',
-                    minHeight: '42px',
-                    maxHeight: '42px',
-                    padding: '0',
-                    background: 'linear-gradient(135deg, #50fa7b 0%, #3dd66b 100%)',
-                    color: '#282a36',
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    fontWeight: 'bold',
-                    fontSize: '0.75rem',
-                    transition: 'all 0.2s',
-                    opacity: isLoading ? 0.5 : 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                    flex: 'none'
-                  }}
-                  onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
-                  onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
-                >
-                  {isLoading ? 'Sending...' : 'Send'}
-                </button>
+                {/* Bottom Left: Send (hidden on mobile — Android keyboard Enter key handles send) */}
+                {!isMobile && (
+                  <button
+                    onClick={() => handleSendMessage(input)}
+                    disabled={isLoading}
+                    style={{
+                      width: '85px',
+                      height: '42px',
+                      minWidth: '85px',
+                      maxWidth: '85px',
+                      minHeight: '42px',
+                      maxHeight: '42px',
+                      padding: '0',
+                      background: 'linear-gradient(135deg, #50fa7b 0%, #3dd66b 100%)',
+                      color: '#282a36',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '0.75rem',
+                      transition: 'all 0.2s',
+                      opacity: isLoading ? 0.5 : 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      flex: 'none'
+                    }}
+                    onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
+                    onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
+                  >
+                    {isLoading ? 'Sending...' : 'Send'}
+                  </button>
+                )}
 
                 {/* Bottom Right: Clear */}
                 <button
@@ -1654,7 +1665,7 @@ export default function App() {
 
       <WhyZynkbotModal isOpen={showWhyZynkbot} onClose={() => setShowWhyZynkbot(false)} />
       <AboutModal isOpen={showAbout} onClose={() => setShowAbout(false)} />
-      <GettingStartedModal isOpen={showDemoGuide} onClose={() => setShowDemoGuide(false)} />
+      <GettingStartedModal isOpen={showDemoGuide} onClose={() => setShowDemoGuide(false)} onOpenAPIKeys={() => setShowAPIKeys(true)} />
       <APIKeyModal
         isOpen={showAPIKeys}
         onClose={() => setShowAPIKeys(false)}

@@ -14,6 +14,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
       <button
         onClick={handleToggle}
         hidden={hideToggle}
+        className={`sidebar-toggle-btn${isOpen ? ' sidebar-open' : ''}`}
         style={{
           position: 'fixed',
           left: isOpen ? '460px' : '10px',
@@ -40,6 +41,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
 
       {/* Sidebar panel - WIDER (460px) */}
       <div
+        className="sidebar-panel"
         style={{
           position: 'fixed',
           left: isOpen ? '0' : '-490px',  // Wider off-screen position
@@ -51,7 +53,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
           transition: 'left 0.3s ease',
           zIndex: 1000,
           overflowY: 'auto',
-          padding: '20px 15px 100px 15px',  // Extra bottom padding for floating button
+          padding: 'calc(env(safe-area-inset-top, 28px) + 20px) 15px 100px 15px',
           borderRight: '1px solid #44475a'
         }}
       >
@@ -148,6 +150,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
       {/* Backdrop (click to close) */}
       {isOpen && (
         <div
+          className="sidebar-backdrop"
           onClick={() => setIsOpen(false)}
           style={{
             position: 'fixed',

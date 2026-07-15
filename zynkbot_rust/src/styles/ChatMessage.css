@@ -128,3 +128,10 @@
 .recalled-memories-detail li::marker {
   color: #8be9fd;
 }
+
+@media (max-width: 768px) {
+  .chat-message {
+    border-left: none;
+    padding: 0.75rem 0.5rem;
+  }
+}

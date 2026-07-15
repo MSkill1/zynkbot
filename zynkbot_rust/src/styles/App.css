@@ -13,6 +13,16 @@
   color: #ececec;
 }
 
+@media (max-width: 768px) {
+  .app-header {
+    display: none;
+  }
+
+  .app.dark-theme {
+    padding-top: env(safe-area-inset-top, 28px);
+  }
+}
+
 .app-columns {
   display: flex;
   flex-direction: row;
@@ -316,5 +326,139 @@ body.modal-open .conversation-history {
   }
   .conversation-history {
     max-height: 220px;
+  }
+}
+
+/* ── Mobile (≤768px) ──────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* App root: use dvh so address bar is excluded */
+  .app.dark-theme {
+    min-height: 100dvh;
+  }
+
+  /* === SIDEBAR === */
+  /* Full-screen drawer — clip any internal content that overflows */
+  .sidebar-panel {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  /* When open, keep toggle button on-screen (right edge, not left+460px) */
+  .sidebar-toggle-btn.sidebar-open {
+    left: auto !important;
+    right: 15px !important;
+  }
+
+  /* Full-screen drawer needs no partial backdrop */
+  .sidebar-backdrop {
+    display: none !important;
+  }
+
+  /* Clip any internal content that exceeds the sidebar width */
+  .sidebar-panel * {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* === HEADER === */
+  /* Collapse the long beta description so chat gets more vertical space */
+  .app-header > div > p {
+    display: none;
+  }
+
+  /* Hide Why/Getting Started/About — users who installed already know */
+  .header-buttons {
+    display: none !important;
+  }
+
+  .app-header {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  .app-header h1 {
+    font-size: 1.3rem;
+    margin: 0;
+  }
+
+  /* === CONVERSATION AREA === */
+  /* dvh keeps height stable as mobile keyboard appears/disappears */
+  .conversation-history {
+    max-height: 45dvh;
+    min-height: 120px;
+  }
+
+  /* === INPUT AREA === */
+  /* Stack textarea above buttons on very narrow screens */
+  .chat-input-wrapper {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+
+  /* Full-width 2x2 grid, taller touch targets */
+  .chat-button-grid {
+    grid-template-columns: 1fr 1fr !important;
+    grid-template-rows: 48px 48px !important;
+    width: 100% !important;
+  }
+
+  /* Override per-button hardcoded widths/heights */
+  .chat-button-grid > * {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: 48px !important;
+    min-height: 48px !important;
+    max-height: 48px !important;
+  }
+
+  /* === CONVERSATION HISTORY PANEL === */
+  /* Right-side slide-in panel: full-width on mobile */
+  .conv-history-panel {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Close button: proper touch target */
+  .conv-history-close {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 1.6rem !important;
+    padding: 8px !important;
+    color: #f8f8f2 !important;
+  }
+
+  /* === MODAL CLOSE BUTTONS === */
+  /* All close button variants: minimum 44x44px touch target */
+  .modal-close,
+  .close-button,
+  .kb-close-button,
+  .conv-history-close {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 1.6rem !important;
+    padding: 8px !important;
+  }
+
+  /* Ensure absolutely-positioned close buttons stay within the modal */
+  .modal-close {
+    top: 8px !important;
+    right: 8px !important;
+  }
+
+  /* === MODALS === */
+  /* Tighter overlay padding so modals use the full screen */
+  .modal-overlay {
+    padding: 6px !important;
   }
 }

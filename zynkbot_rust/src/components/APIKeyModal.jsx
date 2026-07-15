@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { invoke } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-shell';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import CostGuideModal from "./CostGuideModal";
 import "../styles/APIKeyModal.css";
 
 const PROVIDERS = [
@@ -33,6 +34,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [tempValue, setTempValue] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [showKeys, setShowKeys] = useState({});
+  const [showCostGuide, setShowCostGuide] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -125,13 +127,19 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   if (!isOpen) return null;
 
   return (
+    <>
+    <CostGuideModal isOpen={showCostGuide} onClose={() => setShowCostGuide(false)} />
     <div className="modal-overlay" onClick={onClose}>
       <div className="api-key-modal-container" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose}>×</button>
 
         <h2>API Key Management</h2>
         <p className="modal-subtitle">
-          Configure your AI provider API keys to enable cloud models
+          Configure your AI provider API keys to enable cloud models.{' '}
+          <button
+            onClick={() => setShowCostGuide(true)}
+            style={{ background: 'none', border: 'none', color: '#50fa7b', cursor: 'pointer', textDecoration: 'underline', fontSize: 'inherit', padding: 0 }}
+          >💰 What will this cost?</button>
         </p>
 
         <div className="api-keys-list">
@@ -218,7 +226,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                           🗑️ Remove
                         </button>
                         <button
-                          onClick={() => open(provider.link)}
+                          onClick={() => openUrl(provider.link)}
                           className="btn-get-key"
                         >
                           🔗 Get Key
@@ -234,7 +242,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                         ➕ Add Key
                       </button>
                       <button
-                        onClick={() => open(provider.link)}
+                        onClick={() => openUrl(provider.link)}
                         className="btn-get-key"
                       >
                         🔗 Get Key
@@ -259,5 +267,6 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
         </div>
       </div>
     </div>
+    </>
   );
 }

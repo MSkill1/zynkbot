@@ -18,6 +18,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [chatDevice, setChatDevice] = useState(null); // Track which device chat is open for
   const [localDeviceId, setLocalDeviceId] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({}); // Map of device_id -> unread count
+  const [isMobile] = useState(() => window.innerWidth <= 768);
   const [showEnterCodeInput, setShowEnterCodeInput] = useState(false); // Toggle for enter code input
 
   const fetchSharedDirectories = useCallback(async () => {
@@ -374,7 +375,9 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             color: '#50fa7b',
             textAlign: 'center',
             letterSpacing: '2px',
-            border: '2px solid #50fa7b'
+            border: '2px solid #50fa7b',
+            wordBreak: 'break-all',
+            overflowWrap: 'break-word'
           }}>
             {generatedCode}
           </div>
@@ -579,8 +582,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
         </div>
       )}
 
-      {/* Share New Directory */}
-      <div style={{ marginBottom: '20px' }}>
+      {/* Share New Directory — desktop only; Android uses scoped storage */}
+      {!isMobile && <div style={{ marginBottom: '20px' }}>
         <label style={{ display: 'block', color: '#f8f8f2', fontSize: '0.9rem', marginBottom: '5px' }}>
           📁 Share a Directory:
         </label>
@@ -634,7 +637,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             Share
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* My Shared Directories */}
       <div style={{ marginBottom: '15px' }}>
@@ -643,7 +646,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
         </div>
         {sharedDirs.length === 0 ? (
           <div style={{ color: '#9aa5c4', fontSize: '0.85rem', padding: '10px' }}>
-            No directories shared. Share a directory above to make it available to paired devices.
+            No directories shared. Use a paired desktop to share directories — they'll appear here automatically.
           </div>
         ) : (
           <div>

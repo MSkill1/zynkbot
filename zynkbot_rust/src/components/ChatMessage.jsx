@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { open } from "@tauri-apps/plugin-shell";
+import { openUrl } from '@tauri-apps/plugin-opener';
 import "../styles/ChatMessage.css";
 
 export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId }) {
@@ -28,7 +28,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
       <div className="chat-message">
         <div className="message-user">
           <div className="message-header">
-            <strong>User:</strong>
+            <strong>You:</strong>
             {schema && (
               <span className={`schema-badge badge-${schema}`}>
                 {schema}
@@ -193,7 +193,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
                     </div>
                     <div style={{ fontSize: '0.85rem', color: '#8be9fd', marginBottom: '5px', wordBreak: 'break-all' }}>
                       <span
-                        onClick={() => open(result.url)}
+                        onClick={() => openUrl(result.url)}
                         style={{ color: '#8be9fd', textDecoration: 'underline', cursor: 'pointer' }}
                       >
                         {result.url}

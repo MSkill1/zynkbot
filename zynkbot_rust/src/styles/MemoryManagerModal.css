@@ -625,3 +625,51 @@
     height: 95vh;
   }
 }
+
+@media (max-width: 768px) {
+  .memory-manager-modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 95dvh !important;
+    border-radius: 8px;
+    overflow-x: hidden;
+  }
+
+  /* Header: wrap title + actions so nothing clips */
+  .modal-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .modal-header h2 {
+    font-size: 1.2rem;
+  }
+
+  /* Filter controls: stack search + selectors vertically */
+  .modal-controls {
+    flex-direction: column !important;
+    gap: 8px !important;
+    padding: 12px !important;
+  }
+
+  .search-input,
+  .filter-select {
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Date range inputs look like broken dropdowns on Android — hide on mobile */
+  .date-input {
+    display: none !important;
+  }
+
+  /* Scrollable panels: pull scrollbar inward so it's tappable */
+  .memory-list-scroll,
+  .memory-details-panel,
+  .relationships-panel {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-right: 4px;
+  }
+}
