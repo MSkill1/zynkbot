@@ -17,3 +17,22 @@ rustflags = ["-C", "target-cpu=x86-64"]
 [target.x86_64-apple-darwin]
 # macOS-specific: Use baseline x86-64 instructions only
 rustflags = ["-C", "target-cpu=x86-64"]
+
+[target.aarch64-linux-android]
+linker = "/home/matt/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+ar = "/home/matt/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+# Enable fp16 arithmetic — required by candle's gemm dependency; supported on all modern Android
+# phones (ARMv8.2-A, i.e. Snapdragon 730+ / Dimensity / Exynos 9 series and later, ~2018+)
+rustflags = ["-C", "target-feature=+fullfp16,+fp16"]
+
+[target.armv7-linux-androideabi]
+linker = "/home/matt/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi26-clang"
+ar = "/home/matt/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+
+[target.i686-linux-android]
+linker = "/home/matt/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android26-clang"
+ar = "/home/matt/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+
+[target.x86_64-linux-android]
+linker = "/home/matt/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android26-clang"
+ar = "/home/matt/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"

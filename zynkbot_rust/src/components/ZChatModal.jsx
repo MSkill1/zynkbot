@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import VoiceButton from './VoiceButton';
+import { playNotification } from '../utils/sounds';
 
 export default function ZChatModal({
   isOpen,
@@ -31,6 +32,8 @@ export default function ZChatModal({
     scrollToBottom();
   }, [messages]);
 
+  const prevMessageCount = useRef(0);
+
   const fetchMessages = useCallback(async () => {
     if (!device || !currentDeviceId) return;
 
@@ -42,7 +45,15 @@ export default function ZChatModal({
       });
 
       if (data.messages) {
-        setMessages(data.messages);
+        const newMsgs = data.messages;
+        // Play sound when messages arrive from the other device
+        const incomingCount = newMsgs.filter(m => m.sender_device_id !== currentDeviceId).length;
+        if (incomingCount > prevMessageCount.current) {
+          const soundOn = localStorage.getItem('zynkbot_sound_enabled');
+          if (soundOn === null || soundOn === 'true') playNotification('zchat');
+        }
+        prevMessageCount.current = incomingCount;
+        setMessages(newMsgs);
       }
     } catch (error) {
       console.error('[ZChat] Failed to fetch messages:', error);

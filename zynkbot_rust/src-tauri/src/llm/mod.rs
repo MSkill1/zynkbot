@@ -5,7 +5,51 @@ pub mod anthropic;
 pub mod openai;
 pub mod xai;  // xAI (Grok) API - OpenAI-compatible
 pub mod local_embeddings;
-pub mod local_models;  // Pure Rust local GGUF model execution
+
+#[cfg(not(target_os = "android"))]
+pub mod local_models;
+
+// Android stub: local GGUF LLM inference is Phase 2. Avoids scattering #[cfg]
+// throughout chat.rs and lib.rs while keeping the type system consistent.
+#[cfg(target_os = "android")]
+pub mod local_models {
+    use super::{LLMError, LLMResponse, Message};
+
+    pub struct LocalModelSession;
+
+    impl LocalModelSession {
+        pub fn load(_path: &str) -> Result<Self, LLMError> {
+            Err(LLMError::APIError("Local models not supported on Android".to_string()))
+        }
+        pub fn generate(
+            &self,
+            _messages: Vec<Message>,
+            _max_tokens: Option<u32>,
+            _temperature: Option<f32>,
+            _json_schema: Option<&str>,
+        ) -> Result<LLMResponse, LLMError> {
+            Err(LLMError::APIError("Local models not supported on Android".to_string()))
+        }
+    }
+
+    pub fn generate_with_local_model(
+        _model_path: &str,
+        _messages: Vec<Message>,
+        _max_tokens: Option<u32>,
+        _temperature: Option<f32>,
+    ) -> Result<LLMResponse, LLMError> {
+        Err(LLMError::APIError("Local models not supported on Android".to_string()))
+    }
+
+    pub fn generate_with_local_model_constrained(
+        _model_path: &str,
+        _messages: Vec<Message>,
+        _json_schema: &str,
+    ) -> Result<LLMResponse, LLMError> {
+        Err(LLMError::APIError("Local models not supported on Android".to_string()))
+    }
+}
+
 // pub mod whisper;    // TEMPORARILY DISABLED: Conflicts with llama-cpp-2 (GGML symbols)
 
 use serde::{Deserialize, Serialize};

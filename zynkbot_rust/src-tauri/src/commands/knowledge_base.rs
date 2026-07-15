@@ -38,12 +38,14 @@ pub async fn open_kb_folder_in_explorer(user_id: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     let command = "explorer";
-
     #[cfg(target_os = "macos")]
     let command = "open";
-
     #[cfg(target_os = "linux")]
     let command = "xdg-open";
+    #[cfg(target_os = "android")]
+    let command = "";
+    #[cfg(target_os = "android")]
+    return Err("Opening folders is not supported on Android".to_string());
 
     std::process::Command::new(command)
         .arg(&path_str)
@@ -74,16 +76,20 @@ pub async fn open_external_file(path: String) -> Result<(), String> {
     let command = "cmd";
     #[cfg(target_os = "windows")]
     let args = vec!["/C", "start", "", &path_str];
-
     #[cfg(target_os = "macos")]
     let command = "open";
     #[cfg(target_os = "macos")]
     let args = vec![&path_str];
-
     #[cfg(target_os = "linux")]
     let command = "xdg-open";
     #[cfg(target_os = "linux")]
     let args = vec![&path_str];
+    #[cfg(target_os = "android")]
+    let command = "";
+    #[cfg(target_os = "android")]
+    let args: Vec<&str> = vec![];
+    #[cfg(target_os = "android")]
+    return Err("Opening files externally is not supported on Android".to_string());
 
     std::process::Command::new(command)
         .args(&args)
@@ -112,12 +118,14 @@ pub async fn open_external_folder(path: String) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     let command = "explorer";
-
     #[cfg(target_os = "macos")]
     let command = "open";
-
     #[cfg(target_os = "linux")]
     let command = "xdg-open";
+    #[cfg(target_os = "android")]
+    let command = "";
+    #[cfg(target_os = "android")]
+    return Err("Opening folders is not supported on Android".to_string());
 
     std::process::Command::new(command)
         .arg(&path_str)
@@ -133,12 +141,14 @@ pub async fn open_external_folder(path: String) -> Result<(), String> {
 pub async fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let command = "start";
-
     #[cfg(target_os = "macos")]
     let command = "open";
-
     #[cfg(target_os = "linux")]
     let command = "xdg-open";
+    #[cfg(target_os = "android")]
+    let command = "";
+    #[cfg(target_os = "android")]
+    return Err("Opening URLs externally is not supported on Android".to_string());
 
     std::process::Command::new(command)
         .arg(&url)
