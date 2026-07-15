@@ -157,10 +157,10 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   // HIPAA mode — show disabled state
   if (isHipaaMode) {
     return (
-      <div style={panelStyle}>
+      <div className="conv-history-panel" style={panelStyle}>
         <div style={{ padding: "20px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ margin: 0, color: "#f8f8f2", fontSize: "1rem" }}>🕐 Conversation History</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6272a4", fontSize: "1.2rem", cursor: "pointer" }}>×</button>
+          <button onClick={onClose} className="conv-history-close" style={{ background: "none", border: "none", color: "#6272a4", fontSize: "1.2rem", cursor: "pointer" }}>×</button>
         </div>
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px", textAlign: "center", color: "#6272a4" }}>
           <div>
@@ -176,7 +176,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   const groups = groupSessions(sessions);
 
   return (
-    <div style={panelStyle}>
+    <div className="conv-history-panel" style={panelStyle}>
       {/* Header */}
       <div style={{ padding: "16px 20px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1e1f2e" }}>
         <h2 style={{ margin: 0, color: "#f8f8f2", fontSize: "1rem", fontWeight: "bold", flex: 1, minWidth: 0 }}>
@@ -231,7 +231,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
               Clear All
             </button>
           )}
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6272a4", fontSize: "1.4rem", cursor: "pointer", lineHeight: 1 }}>×</button>
+          <button onClick={onClose} className="conv-history-close" style={{ background: "none", border: "none", color: "#6272a4", fontSize: "1.4rem", cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
       </div>
 

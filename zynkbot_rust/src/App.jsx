@@ -875,7 +875,7 @@ export default function App() {
           setShowSnapInModal(false);
           memoryManagerRef.current?.close();
         }}
-        onVoiceToggle={(enabled) => {
+        onVoiceToggle={isMobile ? undefined : (enabled) => {
           setVoiceInputEnabled(enabled);
           localStorage.setItem('zynkbot_voice_input_enabled', enabled.toString());
         }}
@@ -1352,6 +1352,40 @@ export default function App() {
                 History
               </button>
             </div>
+            {availableModels.length === 0 && (
+              <div style={{
+                margin: '8px 12px',
+                padding: '12px 16px',
+                background: '#2a1f00',
+                border: '1px solid #f1c40f',
+                borderRadius: '8px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '10px',
+                flexWrap: 'wrap',
+              }}>
+                <span style={{ color: '#f1c40f', fontSize: '0.9rem' }}>
+                  ⚠️ No AI model configured — add an API key to start chatting.
+                </span>
+                <button
+                  onClick={() => setShowAPIKeys(true)}
+                  style={{
+                    padding: '6px 14px',
+                    background: '#f1c40f',
+                    color: '#1a1a00',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  🔑 Set Up API Keys
+                </button>
+              </div>
+            )}
             <div className="conversation-history" ref={chatContainerRef} style={{minHeight: 'unset', marginBottom: 0}}>
               {messages.length === 0 ? (
                 <p style={{color: '#9aa5c4'}}>Start a conversation...</p>

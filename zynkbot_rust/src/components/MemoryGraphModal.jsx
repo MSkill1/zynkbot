@@ -224,24 +224,11 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
         {/* Controls */}
         <div className="graph-controls">
           <button
-            onClick={() => graphRef.current?.zoom(graphRef.current.zoom() * 1.2, 400)}
-            className="control-button"
-          >
-            🔍+ Zoom In
-          </button>
-          <button
-            onClick={() => graphRef.current?.zoom(graphRef.current.zoom() / 1.2, 400)}
-            className="control-button"
-          >
-            🔍− Zoom Out
-          </button>
-          <button
             onClick={() => {
-              // Zoom to the currently selected node, or center node if nothing selected
               const targetNode = selectedNode || graphData.nodes.find(n => n.isCenter);
               if (targetNode && graphRef.current) {
                 graphRef.current.centerAt(targetNode.x, targetNode.y, 1000);
-                graphRef.current.zoom(6, 1000);  // Zoom in much closer
+                graphRef.current.zoom(6, 1000);
               }
             }}
             className="control-button"
@@ -250,19 +237,13 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
           </button>
           <button
             onClick={() => {
-              const centerNode = graphData.nodes.find(n => n.isCenter);
-              if (centerNode && graphRef.current) {
-                graphRef.current.centerAt(0, 0, 1000);
-              }
+              if (graphRef.current) graphRef.current.centerAt(0, 0, 1000);
             }}
             className="control-button"
           >
             🎯 Center
           </button>
-          <button
-            onClick={fetchGraphData}
-            className="control-button"
-          >
+          <button onClick={fetchGraphData} className="control-button">
             🔄 Refresh
           </button>
           <div className="graph-legend">
@@ -337,7 +318,16 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
         {/* Selected Node Details */}
         {selectedNode && (
           <div className="node-details-panel">
-            <h3>{selectedNode.name}</h3>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <h3 style={{ margin: 0, flex: 1 }}>{selectedNode.name}</h3>
+              <button
+                onClick={() => setSelectedNode(null)}
+                style={{
+                  background: 'none', border: 'none', color: '#9aa5c4',
+                  fontSize: '1.2rem', cursor: 'pointer', padding: '0 0 0 8px', lineHeight: 1,
+                }}
+              >✕</button>
+            </div>
             <div className="node-detail-row">
               <strong>ID:</strong> {selectedNode.id}
             </div>

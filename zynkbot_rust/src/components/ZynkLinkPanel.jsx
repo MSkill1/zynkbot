@@ -14,6 +14,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [newShareName, setNewShareName] = useState('');
   const [browserShare, setBrowserShare] = useState(null);
   const [codeToAccept, setCodeToAccept] = useState('');
+  const [codeIPPart, setCodeIPPart] = useState('');
+  const [codeNumPart, setCodeNumPart] = useState('');
   const [linkedUsers, setLinkedUsers] = useState([]);
   const [generatedCode, setGeneratedCode] = useState(null);
   const [chatDevice, setChatDevice] = useState(null); // Track which device chat is open for
@@ -377,8 +379,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             textAlign: 'center',
             letterSpacing: '2px',
             border: '2px solid #50fa7b',
-            wordBreak: 'break-all',
-            overflowWrap: 'break-word'
+            whiteSpace: 'nowrap',
+            overflowX: 'auto'
           }}>
             {generatedCode}
           </div>
@@ -417,23 +419,34 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             ➕ Enter Code From Other User's Device
           </button>
         ) : (
-        <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-          <input
-            type="text"
-            value={codeToAccept}
-            onChange={(e) => setCodeToAccept(e.target.value)}
-            placeholder="192.168.0.100:456789"
-            style={{
-              flex: 1,
-              padding: '10px',
-              background: '#282a36',
-              border: '1px solid #44475a',
-              borderRadius: '4px',
-              color: '#f8f8f2',
-              fontSize: '0.9rem',
-              fontFamily: 'monospace'
-            }}
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={codeIPPart}
+              onChange={(e) => { setCodeIPPart(e.target.value); setCodeToAccept(e.target.value + ':' + codeNumPart); }}
+              placeholder="192.168.0.100"
+              style={{
+                flex: 3, padding: '10px', background: '#282a36',
+                border: '1px solid #44475a', borderRadius: '4px',
+                color: '#f8f8f2', fontSize: '0.9rem', fontFamily: 'monospace'
+              }}
+            />
+            <span style={{ color: '#f8f8f2', fontSize: '1.2rem', fontWeight: 'bold', padding: '0 2px' }}>:</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={codeNumPart}
+              onChange={(e) => { setCodeNumPart(e.target.value); setCodeToAccept(codeIPPart + ':' + e.target.value); }}
+              placeholder="456789"
+              style={{
+                flex: 2, padding: '10px', background: '#282a36',
+                border: '1px solid #44475a', borderRadius: '4px',
+                color: '#f8f8f2', fontSize: '0.9rem', fontFamily: 'monospace'
+              }}
+            />
+          </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               onClick={handleAcceptCode}
@@ -456,6 +469,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
               onClick={() => {
                 setShowEnterCodeInput(false);
                 setCodeToAccept('');
+                setCodeIPPart('');
+                setCodeNumPart('');
               }}
               disabled={loading}
               style={{
@@ -614,11 +629,26 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 onClick={async () => {
-                  try {
-                    const selected = await openFolderDialog({ directory: true, multiple: false });
-                    if (selected) setNewDirPath(typeof selected === 'string' ? selected : selected.path || selected);
-                  } catch (e) {
-                    alert('Could not open folder picker: ' + e);
+                  if (window.AndroidFolderPicker) {
+                    // Native Android folder picker via JavascriptInterface
+                    try {
+                      const path = await new Promise((resolve, reject) => {
+                        window.__fpResolve = resolve;
+                        window.__fpReject = reject;
+                        window.AndroidFolderPicker.pick();
+                      });
+                      setNewDirPath(path);
+                    } catch (e) {
+                      if (e !== 'cancelled') alert('Folder picker error: ' + e);
+                    }
+                  } else {
+                    // Desktop: tauri-plugin-dialog
+                    try {
+                      const selected = await openFolderDialog({ directory: true, multiple: false });
+                      if (selected) setNewDirPath(typeof selected === 'string' ? selected : selected.path || String(selected));
+                    } catch (e) {
+                      alert('Could not open folder picker: ' + e);
+                    }
                   }
                 }}
                 style={{

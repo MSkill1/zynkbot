@@ -54,6 +54,8 @@ const S = {
   },
 };
 
+const isMobile = window.innerWidth <= 768;
+
 export default function SetupWizard({ onComplete }) {
   const [screen, setScreen]           = useState('welcome');
   const [progress, setProgress]       = useState({ minilm: 0, 'bert-ner': 0, 'toxic-bert': 0 });
@@ -81,7 +83,7 @@ export default function SetupWizard({ onComplete }) {
 
     try {
       await invoke('download_system_models');
-      setScreen('llm_selection');
+      setScreen(isMobile ? 'complete' : 'llm_selection');
     } catch (e) {
       setError(String(e));
     } finally {
@@ -151,12 +153,21 @@ export default function SetupWizard({ onComplete }) {
 
         <hr style={S.divider} />
 
-        <div style={S.label}>Optional — local LLM for offline chat</div>
-        <p style={{ ...S.body, marginBottom: 0 }}>
-          Choose one or more on the next screen (4.7–5.0GB each), or skip and connect
-          an API key (OpenAI, Anthropic, xAI) instead. Local models work without internet;
-          API models require a connection. You can add local models at any time from Settings.
-        </p>
+        {isMobile ? (
+          <p style={{ ...S.body, marginBottom: 0 }}>
+            Add an API key (Anthropic, OpenAI, or xAI) after setup via{' '}
+            <strong style={{ color: '#ccc' }}>⚙ Settings → API Keys</strong>. Local models are not supported on Android.
+          </p>
+        ) : (
+          <>
+            <div style={S.label}>Optional — local LLM for offline chat</div>
+            <p style={{ ...S.body, marginBottom: 0 }}>
+              Choose one or more on the next screen (4.7–5.0GB each), or skip and connect
+              an API key (OpenAI, Anthropic, xAI) instead. Local models work without internet;
+              API models require a connection. You can add local models at any time from Settings.
+            </p>
+          </>
+        )}
 
         <div><button style={S.btn} onClick={startRequired}>Continue</button></div>
       </div>

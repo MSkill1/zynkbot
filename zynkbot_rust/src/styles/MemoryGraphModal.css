@@ -46,15 +46,16 @@
 /* Controls */
 .graph-controls {
   display: flex;
-  gap: 10px;
-  padding: 15px 20px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid #44475a;
   background: #1e1f29;
   align-items: center;
 }
 
 .control-button {
-  padding: 8px 16px;
+  padding: 7px 12px;
   border-radius: 6px;
   border: none;
   background: #44475a;
@@ -62,7 +63,19 @@
   font-weight: bold;
   cursor: pointer;
   transition: background 0.2s;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .graph-controls {
+    padding: 8px;
+    gap: 6px;
+  }
+  .control-button {
+    padding: 8px 10px;
+    font-size: 0.78rem;
+  }
 }
 
 .control-button:hover {
@@ -123,7 +136,7 @@
 }
 
 .node-details-panel h3 {
-  margin: 0 0 12px 0;
+  margin: 0;
   color: #50fa7b;
   font-size: 1.1rem;
 }
