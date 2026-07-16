@@ -27,7 +27,6 @@ import OnboardingModal from "./components/OnboardingModal";
 import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
-import { playNotification } from "./utils/sounds";
 
 // API Base URL - DEPRECATED: All API calls now use Tauri commands
 // Keeping this for legacy components that haven't been migrated yet (ZynkSync, ZynkLink, etc.)
@@ -216,11 +215,6 @@ export default function App() {
   const [showSnapInsSection, setShowSnapInsSection] = useState(false);
   const [showSnapInModal, setShowSnapInModal] = useState(false);
   const [isLoadingEinstein, setIsLoadingEinstein] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(() => {
-    const stored = localStorage.getItem('zynkbot_sound_enabled');
-    return stored === null ? true : stored === 'true';
-  });
-  const prevIsLoading = useRef(false);
   const [voiceInputEnabled, setVoiceInputEnabled] = useState(() => {
     // Default to true (enabled) unless user explicitly disables
     const stored = localStorage.getItem('zynkbot_voice_input_enabled');
@@ -395,13 +389,6 @@ export default function App() {
   }, []);
 
   // Play water-drop sound when AI response arrives
-  useEffect(() => {
-    if (prevIsLoading.current && !isLoading && soundEnabled) {
-      playNotification('ai');
-    }
-    prevIsLoading.current = isLoading;
-  }, [isLoading, soundEnabled]);
-
   // Auto-scroll: only scroll if user is already near the bottom
   useEffect(() => {
     const container = chatContainerRef.current;
@@ -898,24 +885,6 @@ export default function App() {
           currentMode={containmentMode}
           onModeChange={setContainmentMode}
         />
-
-        {/* Sound toggle */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#1e1f29', borderRadius: '8px', marginTop: '12px', border: '1px solid #44475a' }}>
-          <span style={{ color: '#f8f8f2', fontSize: '0.9rem' }}>💧 Notification sounds</span>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={soundEnabled}
-              onChange={(e) => {
-                setSoundEnabled(e.target.checked);
-                localStorage.setItem('zynkbot_sound_enabled', e.target.checked.toString());
-                if (e.target.checked) playNotification('ai');
-              }}
-              style={{ width: '16px', height: '16px', accentColor: '#8be9fd', cursor: 'pointer' }}
-            />
-            <span style={{ fontSize: '0.8rem', color: '#9aa5c4' }}>{soundEnabled ? 'On' : 'Off'}</span>
-          </label>
-        </div>
 
         <div className="model-selector">
           <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px'}}>

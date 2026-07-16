@@ -25,11 +25,9 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
       console.log('[MemoryManager] Raw result from Tauri:', result);
       console.log('[MemoryManager] Result length:', result?.length);
 
-      // Filter out system memories and get only recent 8 user memories
       const userMemories = (result || [])
         .filter(mem => (mem.user_id || '').toLowerCase() !== 'system')
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-        .slice(0, 8);
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
       console.log('[MemoryManager] Filtered user memories:', userMemories.length);
       console.log('[MemoryManager] First memory:', userMemories[0]);
@@ -124,25 +122,12 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
             </div>
           ) : (
           <>
-          <div style={{
-            fontSize: '0.85rem',
-            color: '#8be9fd',
-            marginBottom: '15px',
-            padding: '10px',
-            background: 'rgba(139, 233, 253, 0.1)',
-            borderRadius: '6px',
-            border: '1px solid rgba(139, 233, 253, 0.2)'
-          }}>
-            📝 Showing your 8 most recent memories. <br />
-            Click "📚 Memory Manager" above for advanced search, editing, relationship viewing, and interactive graph visualization.
-          </div>
-
           {memories.length === 0 ? (
             <div className="empty-state">
               <p>No memories yet. Start a conversation and Zynkbot will remember important details.</p>
             </div>
           ) : (
-            <div className="memory-list">
+            <div className="memory-list" style={{ maxHeight: '400px', overflowY: 'auto' }}>
               {memories.map((mem) => (
                 <div key={mem.id} className="memory-item" style={{
                   background: '#282a36',
