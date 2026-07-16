@@ -608,6 +608,117 @@ impl ZynkSyncService {
         }
 
         println!("[ZynkSync] Added device: {} ({})", device_name, device_id);
+
+        // Mesh pairing: host included its peer list — connect to each peer directly.
+        // The host vouches for them; we pre-trust their certs and send an introduce request.
+        if let Some(peers_array) = device_info.get("peers").and_then(|p| p.as_array()) {
+            let intro_peers: Vec<serde_json::Value> = peers_array.clone();
+            if !intro_peers.is_empty() {
+                println!("[ZynkSync] Host introduced {} peer(s) — joining mesh", intro_peers.len());
+                let our_user_id = user_identity::get_user_id().ok();
+
+                // Step 1: store all introduced peer certs in DB so the HTTP client can trust them
+                for peer_json in &intro_peers {
+                    let peer_id = match peer_json.get("device_id").and_then(|v| v.as_str()) {
+                        Some(id) => id, None => continue,
+                    };
+                    let peer_name = peer_json.get("device_name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let peer_ip = peer_json.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+                    let peer_port = peer_json.get("port").and_then(|v| v.as_i64()).unwrap_or(57963) as i32;
+                    let peer_cert_der: Option<Vec<u8>> = peer_json.get("cert_der")
+                        .and_then(|v| v.as_str())
+                        .and_then(|b64| BASE64.decode(b64).ok());
+
+                    // Skip devices we already know
+                    let already_paired: i64 = sqlx::query_scalar(
+                        "SELECT COUNT(*) FROM zynk_devices WHERE device_id = ? AND sync_paired = 1"
+                    )
+                    .bind(peer_id)
+                    .fetch_one(&self.db_pool)
+                    .await
+                    .unwrap_or(0);
+                    if already_paired > 0 { continue; }
+
+                    sqlx::query(
+                        "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, is_paired, sync_paired, tls_cert_der, last_seen_at, created_at)
+                         VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)
+                         ON CONFLICT (device_id) DO UPDATE
+                         SET device_name = excluded.device_name,
+                             device_ip = excluded.device_ip,
+                             sync_paired = 1,
+                             tls_cert_der = excluded.tls_cert_der,
+                             last_seen_at = excluded.last_seen_at"
+                    )
+                    .bind(peer_id).bind(peer_name).bind(peer_ip).bind(peer_port)
+                    .bind(peer_cert_der.as_deref()).bind(Utc::now()).bind(Utc::now())
+                    .execute(&self.db_pool)
+                    .await.ok();
+                    println!("[ZynkSync] Pre-trusted introduced peer: {} ({})", peer_name, peer_id);
+                }
+
+                // Step 2: rebuild client to trust all newly stored certs
+                self.rebuild_http_client().await.ok();
+
+                // Step 3: send introduce request to each peer (best-effort)
+                let our_cert_b64 = BASE64.encode(&self.cert_der);
+                let our_id = self.device_id.clone();
+                let our_name = self.device_name.clone();
+                let host_id = device_id.clone(); // the host who introduced us
+
+                for peer_json in &intro_peers {
+                    let peer_id = match peer_json.get("device_id").and_then(|v| v.as_str()) {
+                        Some(id) => id.to_string(), None => continue,
+                    };
+                    let peer_name = peer_json.get("device_name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let peer_ip = peer_json.get("ip").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let peer_port_num = peer_json.get("port").and_then(|v| v.as_i64()).unwrap_or(57963) as u16;
+
+                    // Skip already known
+                    {
+                        let map = self.peers.read().await;
+                        if map.contains_key(&peer_id) { continue; }
+                    }
+
+                    if peer_ip.is_empty() { continue; }
+
+                    let intro_url = format!("https://{}:{}/api/zynksync/introduce", peer_ip, peer_port_num);
+                    let http_client = self.http_client.read().await.clone();
+                    let mut payload = serde_json::json!({
+                        "new_device_id": our_id,
+                        "new_device_name": our_name,
+                        "new_device_cert_der": our_cert_b64,
+                        "introducer_device_id": host_id,
+                    });
+                    if let Some(ref uid) = our_user_id {
+                        payload["new_device_user_id"] = serde_json::json!(uid);
+                    }
+
+                    match http_client.post(&intro_url).json(&payload).send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            println!("[ZynkSync] ✓ Introduced to peer: {}", peer_name);
+                            // Add confirmed peer to in-memory map
+                            let mut map = self.peers.write().await;
+                            if !map.contains_key(&peer_id) {
+                                map.insert(peer_id.clone(), PeerDevice {
+                                    device_id: peer_id.clone(),
+                                    device_name: peer_name.clone(),
+                                    host: peer_ip.clone(),
+                                    port: peer_port_num,
+                                    url: format!("https://{}:{}", peer_ip, peer_port_num),
+                                    last_seen: Utc::now(),
+                                    paired: true,
+                                    pairing_code: None,
+                                    user_id: None,
+                                });
+                            }
+                        }
+                        Ok(r)  => println!("[ZynkSync] Peer {} introduction returned {}", peer_name, r.status()),
+                        Err(e) => println!("[ZynkSync] Peer {} offline during introduction (will sync when online): {}", peer_name, e),
+                    }
+                }
+            }
+        }
+
         Ok(peer)
     }
 
@@ -2586,6 +2697,7 @@ impl ZynkSyncService {
             .route("/api/zynklink/download", post(handle_zynklink_download))
             .route("/api/zynklink/deliver-chat", post(handle_zynklink_deliver_chat))
             .route("/api/zynklink/notify-unpaired", post(handle_zynklink_notify_unpaired))
+            .route("/api/zynksync/introduce", post(handle_introduce))
             .route("/api/zynksync/notify-unsynced", post(handle_notify_unsynced))
             .route("/api/zynksync/conversations/receive", post(handle_receive_conversations))
             .route("/api/presence/heartbeat", post(handle_heartbeat))
@@ -2896,11 +3008,88 @@ async fn handle_verify_pairing(
                 println!("[ZynkSync] ⚠ Warning: Host user_id not available - security validation skipped");
             }
 
-            // Return this host's device info including TLS cert and user_id for identity sync
+            // Collect existing peers to include in response (mesh pairing)
+            let mesh_peers: Vec<serde_json::Value> = {
+                let rows = sqlx::query(
+                    "SELECT device_id, device_name, device_ip, port, tls_cert_der
+                     FROM zynk_devices
+                     WHERE sync_paired = 1 AND device_id != ? AND device_id != ?"
+                )
+                .bind(client_device_id)
+                .bind(&service.device_id)
+                .fetch_all(&service.db_pool)
+                .await
+                .unwrap_or_default();
+
+                rows.iter().filter_map(|row| {
+                    let dev_id: String = row.try_get("device_id").ok()?;
+                    let dev_name: String = row.try_get("device_name").ok()?;
+                    let ip: String = row.try_get("device_ip").ok()?;
+                    let port_val: i32 = row.try_get("port").ok()?;
+                    let cert: Option<Vec<u8>> = row.try_get("tls_cert_der").ok().flatten();
+                    Some(serde_json::json!({
+                        "device_id": dev_id,
+                        "device_name": dev_name,
+                        "ip": ip,
+                        "port": port_val,
+                        "cert_der": cert.map(|d| BASE64.encode(&d)),
+                    }))
+                }).collect()
+            };
+
+            if !mesh_peers.is_empty() {
+                println!("[ZynkSync] Sending {} peer(s) to new device for mesh pairing", mesh_peers.len());
+            }
+
+            // Notify existing peers about the new device in the background (best-effort)
+            {
+                let svc = Arc::clone(&service);
+                let new_id = client_device_id.to_string();
+                let new_name = client_device_name.to_string();
+                let new_ip = client_ip.clone();
+                let new_cert_b64 = client_cert_der.as_ref().map(|d| BASE64.encode(d)).unwrap_or_default();
+                let new_uid = client_user_id.map(|s| s.to_string());
+                tokio::spawn(async move {
+                    let http_client = svc.http_client.read().await.clone();
+                    let peers: Vec<PeerDevice> = {
+                        let map = svc.peers.read().await;
+                        map.values()
+                            .filter(|p| p.paired && p.device_id != new_id)
+                            .cloned()
+                            .collect()
+                    };
+                    for peer in peers {
+                        let url = format!("{}/api/zynksync/introduce", peer.url);
+                        let mut payload = serde_json::json!({
+                            "new_device_id": new_id,
+                            "new_device_name": new_name,
+                            "new_device_cert_der": new_cert_b64,
+                            "introducer_device_id": svc.device_id,
+                        });
+                        if let Some(ref ip) = Some(new_ip.clone()) {
+                            payload["new_device_ip"] = serde_json::json!(ip);
+                        }
+                        if let Some(ref uid) = new_uid {
+                            payload["new_device_user_id"] = serde_json::json!(uid);
+                        }
+                        match http_client.post(&url).json(&payload).send().await {
+                            Ok(r) if r.status().is_success() =>
+                                println!("[ZynkSync] ✓ Notified {} about new peer {}", peer.device_name, new_name),
+                            Ok(r) =>
+                                println!("[ZynkSync] Peer {} returned {} for introduction", peer.device_name, r.status()),
+                            Err(e) =>
+                                println!("[ZynkSync] Peer {} offline during introduction: {}", peer.device_name, e),
+                        }
+                    }
+                });
+            }
+
+            // Return this host's device info including TLS cert, user_id, and peer list
             let mut response = serde_json::json!({
                 "device_id": service.device_id,
                 "device_name": service.device_name,
                 "cert_der": BASE64.encode(&service.cert_der),
+                "peers": mesh_peers,
             });
 
             if let Some(uid) = host_user_id {
@@ -2938,6 +3127,108 @@ async fn handle_verify_pairing(
             Err("Invalid or expired pairing code".to_string())
         }
     }
+}
+
+/// Axum handler for mesh pairing introductions.
+/// When device C pairs with B, B notifies A via this endpoint so A auto-pairs with C.
+/// Trust rule: only accept introductions from devices already in our sync_paired list.
+async fn handle_introduce(
+    State(service): State<Arc<ZynkSyncService>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(request): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, String> {
+    let new_device_id = request.get("new_device_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing new_device_id")?;
+    let new_device_name = request.get("new_device_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let introducer_device_id = request.get("introducer_device_id")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing introducer_device_id")?;
+    let new_cert_der: Option<Vec<u8>> = request.get("new_device_cert_der")
+        .and_then(|v| v.as_str())
+        .and_then(|b64| BASE64.decode(b64).ok());
+
+    // IP comes from the TCP connection — not from the request body (can't be spoofed)
+    let new_device_ip = addr.ip().to_string();
+
+    // Reject introductions from devices we don't already trust
+    let introducer_trusted: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM zynk_devices WHERE device_id = ? AND sync_paired = 1"
+    )
+    .bind(introducer_device_id)
+    .fetch_one(&service.db_pool)
+    .await
+    .unwrap_or(0);
+
+    if introducer_trusted == 0 {
+        println!("[ZynkSync] ✗ Rejected introduction from untrusted introducer: {}", &introducer_device_id[..8.min(introducer_device_id.len())]);
+        return Err("Introducer not in trusted peer list".to_string());
+    }
+
+    println!("[ZynkSync] ✓ Trusted introduction of {} ({}) via {}", new_device_name, &new_device_id[..8.min(new_device_id.len())], &introducer_device_id[..8.min(introducer_device_id.len())]);
+
+    // Skip if already paired with this device
+    let already: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM zynk_devices WHERE device_id = ? AND sync_paired = 1"
+    )
+    .bind(new_device_id)
+    .fetch_one(&service.db_pool)
+    .await
+    .unwrap_or(0);
+
+    if already == 0 {
+        sqlx::query(
+            "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, is_paired, sync_paired, tls_cert_der, last_seen_at, created_at)
+             VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)
+             ON CONFLICT (device_id) DO UPDATE
+             SET device_name = excluded.device_name,
+                 device_ip = excluded.device_ip,
+                 sync_paired = 1,
+                 tls_cert_der = excluded.tls_cert_der,
+                 last_seen_at = excluded.last_seen_at"
+        )
+        .bind(new_device_id)
+        .bind(new_device_name)
+        .bind(&new_device_ip)
+        .bind(57963i32)
+        .bind(new_cert_der.as_deref())
+        .bind(Utc::now())
+        .bind(Utc::now())
+        .execute(&service.db_pool)
+        .await
+        .map_err(|e| format!("Failed to save introduced device: {}", e))?;
+
+        // Rebuild HTTP client to trust the new peer's cert
+        service.rebuild_http_client().await.ok();
+
+        // Add to in-memory peers map
+        let mut map = service.peers.write().await;
+        if !map.contains_key(new_device_id) {
+            map.insert(new_device_id.to_string(), PeerDevice {
+                device_id: new_device_id.to_string(),
+                device_name: new_device_name.to_string(),
+                host: new_device_ip.clone(),
+                port: 57963,
+                url: format!("https://{}:57963", new_device_ip),
+                last_seen: Utc::now(),
+                paired: true,
+                pairing_code: None,
+                user_id: None,
+            });
+        }
+        println!("[ZynkSync] ✓ Mesh-paired with introduced device: {}", new_device_name);
+    } else {
+        println!("[ZynkSync] Already paired with {} — introduction ignored", new_device_name);
+    }
+
+    // Respond with our own cert so the new device can pin us
+    Ok(Json(serde_json::json!({
+        "device_id": service.device_id,
+        "device_name": service.device_name,
+        "cert_der": BASE64.encode(&service.cert_der),
+    })))
 }
 
 /// Axum handler for heartbeat pings — updates last_seen_at for the sender
