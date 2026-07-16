@@ -316,12 +316,18 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
   const handleSave = async (shareId, relativePath, deviceId) => {
     const filename = relativePath.replace(/\\/g, '/').split('/').pop();
     try {
-      const selectedPath = await save({ defaultPath: filename, title: 'Save File' });
+      let selectedPath;
+      if (window.AndroidFolderPicker) {
+        // Android: save() dialog not implemented — use public Downloads folder
+        selectedPath = `/storage/emulated/0/Download/ZynkLink/${filename}`;
+      } else {
+        selectedPath = await save({ defaultPath: filename, title: 'Save File' });
+      }
       if (!selectedPath) { setMessage('Cancelled'); setTimeout(() => setMessage(''), 2000); return; }
       setMessage(`Downloading ${filename}…`);
       const savedPath = await invoke('download_to_custom_location', { shareId, relativePath, deviceId, destinationPath: selectedPath });
       setMessage(`✓ Saved to: ${savedPath}`);
-      setTimeout(() => setMessage(''), 5000);
+      setTimeout(() => setMessage(''), 8000);
     } catch (err) {
       setMessage(`✗ Failed: ${err}`);
       setTimeout(() => setMessage(''), 5000);
