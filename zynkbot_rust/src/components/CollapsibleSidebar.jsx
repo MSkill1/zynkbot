@@ -44,13 +44,14 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
         className="sidebar-panel"
         style={{
           position: 'fixed',
-          left: isOpen ? '0' : '-490px',  // Wider off-screen position
+          left: '0',
           top: '0',
-          width: '460px',  // Increased from 380px
-          height: '100vh',  // Full viewport height
+          width: '460px',
+          height: '100vh',
           background: '#282a36',
           boxShadow: isOpen ? '4px 0 12px rgba(0, 0, 0, 0.5)' : 'none',
-          transition: 'left 0.3s ease',
+          transform: isOpen ? 'translateX(0)' : 'translateX(-490px)',
+          transition: 'transform 0.3s ease',
           zIndex: 1000,
           overflowY: 'auto',
           padding: 'calc(env(safe-area-inset-top, 28px) + 20px) 15px 100px 15px',

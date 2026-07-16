@@ -65,7 +65,7 @@ export default function KnowledgeBasePanel({ userId, onManageDocuments }) {
               className="directory-input"
               title={kbFolderPath}
             />
-            {!isMobile() && (
+            {!window.AndroidFolderPicker && (
             <button
               onClick={handleOpenFolder}
               className="browse-button"
