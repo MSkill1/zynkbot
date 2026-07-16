@@ -558,10 +558,11 @@ pub async fn list_zynklink_pairings(
     user_id: &str,
     device_id: &str,
 ) -> Result<serde_json::Value, String> {
-    let pairings = sqlx::query_as::<_, (String, String, DateTime<Utc>, Option<DateTime<Utc>>)>(
+    let pairings = sqlx::query_as::<_, (String, String, Option<String>, DateTime<Utc>, Option<DateTime<Utc>>)>(
         "SELECT
             CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END as linked_user_id,
             CASE WHEN device1_id = ? THEN device2_id ELSE device1_id END as linked_device_id,
+            zd.device_name,
             zp.linked_at,
             zd.last_seen_at
          FROM zynklink_pairings zp
@@ -580,7 +581,7 @@ pub async fn list_zynklink_pairings(
 
     let now = Utc::now();
     let mut linked_users: Vec<serde_json::Value> = Vec::new();
-    for (linked_user_id, linked_device_id, linked_at, last_seen_at) in pairings {
+    for (linked_user_id, linked_device_id, device_name, linked_at, last_seen_at) in pairings {
         let is_online = last_seen_at
             .map(|seen| (now - seen).num_seconds() < 20)
             .unwrap_or(false);
@@ -588,6 +589,7 @@ pub async fn list_zynklink_pairings(
         linked_users.push(serde_json::json!({
             "user_id": linked_user_id,
             "device_id": linked_device_id,
+            "device_name": device_name,
             "linked_at": linked_at,
             "is_online": is_online,
             "last_seen_at": last_seen_at,

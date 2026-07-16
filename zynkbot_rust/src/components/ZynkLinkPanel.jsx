@@ -516,14 +516,11 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
               }}
             >
               <div style={{ marginBottom: '8px' }}>
+                <div style={{ fontSize: '0.95rem', color: '#f8f8f2', fontWeight: 'bold', marginBottom: '2px' }}>
+                  {user.device_name || user.device_id.slice(0, 12)}
+                </div>
                 <div style={{ fontSize: '0.9rem', color: user.is_online ? '#50fa7b' : '#ff5555', fontWeight: 'bold', marginBottom: '4px' }}>
                   ● {user.is_online ? 'Online' : 'Offline'}
-                </div>
-                <div style={{ fontSize: '0.8rem', color: '#9aa5c4', marginBottom: '2px' }}>
-                  User: {user.user_id.slice(0, 16)}...
-                </div>
-                <div style={{ fontSize: '0.8rem', color: '#9aa5c4', marginBottom: '2px' }}>
-                  Device: {user.device_id.slice(0, 12)}...
                 </div>
                 <div style={{ fontSize: '0.8rem', color: '#9aa5c4' }}>
                   Linked: {new Date(user.linked_at).toLocaleDateString()}
@@ -841,7 +838,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                       {dir.share_name || dir.local_path}
                     </div>
                     <div style={{ color: '#9aa5c4', fontSize: '0.8rem' }}>
-                      From device: {dir.device_id.substring(0, 8)}...
+                      From: {linkedUsers.find(u => u.device_id === dir.device_id)?.device_name || dir.device_id.substring(0, 8)}
                     </div>
                     <div style={{ color: '#9aa5c4', fontSize: '0.8rem', marginBottom: '8px' }}>
                       Shared: {new Date(dir.created_at).toLocaleDateString()}

@@ -696,6 +696,9 @@ pub async fn download_to_knowledge_base(
         let _cancel_guard = CancelGuard(relative_path.clone());
 
         let temp_path = format!("{}.part", destination_path_str);
+        if let Some(parent) = std::path::Path::new(&temp_path).parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
         let mut file = tokio::fs::File::create(&temp_path).await
             .map_err(|e| format!("Failed to create destination file: {}", e))?;
 
@@ -867,6 +870,9 @@ pub async fn download_to_custom_location(
         let _cancel_guard = CancelGuard(relative_path.clone());
 
         let temp_path = format!("{}.part", destination_path);
+        if let Some(parent) = std::path::Path::new(&temp_path).parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
         let mut file = tokio::fs::File::create(&temp_path).await
             .map_err(|e| format!("Failed to create destination file: {}", e))?;
 
