@@ -16,6 +16,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import java.lang.ref.WeakReference
 
+
+
 class MainActivity : TauriActivity() {
 
     private var webViewRef: WeakReference<WebView>? = null
@@ -104,6 +106,22 @@ class MainActivity : TauriActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         requestAllFilesAccessIfNeeded()
+        requestNotificationPermissionIfNeeded()
+        startSyncService()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+            }
+        }
+    }
+
+    private fun startSyncService() {
+        val intent = Intent(this, SyncForegroundService::class.java)
+        ContextCompat.startForegroundService(this, intent)
     }
 
     private fun requestAllFilesAccessIfNeeded() {
