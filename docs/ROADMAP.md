@@ -181,6 +181,21 @@ Early groundwork for the developer platform. Full SDK public release is v3.0; v1
 - **Per-question model presets** — Save favorite model combinations for specific use cases (e.g. "research" preset, "creative" preset)
 
 ### ZynkLink Enhancements
+
+- **Federated Knowledge Base Query** *(post-Android-launch)* — Allow a paired user to query another user's KB *in place*, without documents ever transferring. User A sends a question to paired User B's device; B's Zynkbot runs local RAG retrieval against B's own KB and returns only the top-k relevant passages. Source documents never leave B's device.
+
+  **Use case:** Small teams and collaborators where one person maintains a reference library (a lawyer's case files, a lab's papers, a team's docs) and others need to query it without receiving wholesale copies. "Query my documents without possessing my documents" — a posture the cloud providers structurally cannot offer.
+
+  **Architecture notes:** Most plumbing already exists — ZynkSync/ZynkLink pairing and auth, TLS transport, and the local RAG query path. The new piece is a remote-query endpoint: receive a question, run local KB retrieval, return relevant chunks. Tractable addition, not a new subsystem.
+
+  **Required for the privacy claim to be honest:**
+  - Returned chunks ARE document contents. This meters disclosure per-query; it does not prevent it. A determined querier could extract a document chunk by chunk. Frame as "granular, logged, revocable sharing" — never as "they can't see your files."
+  - Per-document (or per-folder) sharing consent on the owner's side — opt-in which KB content is remotely queryable, default none.
+  - Query log visible to the KB owner (who asked what, when).
+  - Revocation: unshare instantly, per peer or per document.
+
+  **Why deferred:** Post-launch, post-local-models-on-mobile. Should be informed by real user feedback on whether shared-KB workflows are actually in demand.
+
 - **File Upload** — Send files TO paired devices (not just download); requires write permission
 - **Live File Sync** — Auto-sync changed files in shared directories (incremental, conflict resolution)
 - **Share Permissions UI** — Read/write/delete permissions, time-limited shares

@@ -27,10 +27,7 @@ pub async fn generate_zynklink_code() -> Result<serde_json::Value, String> {
         }
     };
 
-    let device_name = hostname::get()
-        .map_err(|e| format!("Failed to get hostname: {}", e))?
-        .to_string_lossy()
-        .to_string();
+    let device_name = crate::user_identity::get_device_name();
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, owner_user_id, is_paired, port, created_at, last_seen_at)
@@ -162,10 +159,7 @@ pub async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device
     };
 
     println!("[ZynkLink] Device B: Ensuring local device is registered with our IP {}...", local_ip);
-    let device_name = hostname::get()
-        .map_err(|e| format!("Failed to get hostname: {}", e))?
-        .to_string_lossy()
-        .to_string();
+    let device_name = crate::user_identity::get_device_name();
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
@@ -350,10 +344,7 @@ pub async fn share_directory(local_path: String, share_name: String, is_readable
         .await
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
 
-    let device_name = hostname::get()
-        .map_err(|e| format!("Failed to get hostname: {}", e))?
-        .to_string_lossy()
-        .to_string();
+    let device_name = crate::user_identity::get_device_name();
 
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, owner_user_id, is_paired, port, created_at, last_seen_at)

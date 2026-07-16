@@ -7,6 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
+use hostname;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserIdentity {
@@ -199,4 +200,19 @@ pub fn set_user_id(user_id: &str) -> Result<(), String> {
 /// Reset both user_id and device_id (completely new identity)
 pub fn reset_all_identity() -> Result<(String, String), String> {
     IDENTITY_MANAGER.reset_all()
+}
+
+/// Get a human-readable device name.
+/// Falls back to "Android-XXXX" when hostname::get() returns "localhost" (always the case on Android).
+pub fn get_device_name() -> String {
+    let raw = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if raw.is_empty() || raw == "localhost" {
+        let device_id = get_device_id().unwrap_or_else(|_| "00000000-0000-0000-0000-000000000000".to_string());
+        let suffix = &device_id[device_id.len().saturating_sub(8)..device_id.len().saturating_sub(4)];
+        format!("Android-{}", suffix.to_uppercase())
+    } else {
+        raw
+    }
 }

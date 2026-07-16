@@ -249,28 +249,28 @@ impl ZynkSyncService {
             default_headers.insert("x-device-id", val);
         }
 
-        let mut builder = reqwest::ClientBuilder::new()
-            // Peers connect by LAN IP but certs are issued for "localhost".
-            // Skip hostname matching; still verify the cert against the pinned root.
-            .danger_accept_invalid_hostnames(true)
-            .timeout(std::time::Duration::from_secs(30))
-            .default_headers(default_headers);
-
+        let mut pinned_ders: Vec<Vec<u8>> = Vec::new();
         for row in rows {
             let cert_der: Option<Vec<u8>> = row.try_get("tls_cert_der").ok().flatten();
             if let Some(der) = cert_der {
-                match reqwest::Certificate::from_der(&der) {
-                    Ok(cert) => { builder = builder.add_root_certificate(cert); }
-                    Err(e)   => { println!("[TLS] Warning: invalid peer cert in DB: {}", e); }
-                }
+                println!("[TLS] Pinning peer cert ({} bytes)", der.len());
+                pinned_ders.push(der);
+            } else {
+                println!("[TLS] Warning: peer row has NULL tls_cert_der");
             }
         }
+        println!("[TLS] rebuild_http_client: {} peer cert(s) in DB, {} pinned", cert_count, pinned_ders.len());
 
-        let client = builder.build()
+        let tls_config = crate::tls::build_pinned_client_config(pinned_ders);
+        let client = reqwest::ClientBuilder::new()
+            .use_preconfigured_tls(tls_config)
+            .timeout(std::time::Duration::from_secs(30))
+            .default_headers(default_headers)
+            .build()
             .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
         *self.http_client.write().await = client;
-        println!("[TLS] HTTP client rebuilt with {} trusted peer certificates", cert_count);
+        println!("[TLS] HTTP client rebuilt with {} pinned peer certificates", cert_count);
         Ok(())
     }
 
@@ -546,8 +546,8 @@ impl ZynkSyncService {
             .and_then(|v| v.as_str())
             .and_then(|b64| BASE64.decode(b64).ok());
 
-        if peer_cert_der.is_some() {
-            println!("[TLS] Received and storing peer TLS certificate for pinning");
+        if let Some(ref der) = peer_cert_der {
+            println!("[TLS] Received peer cert ({} bytes) — storing for pinning", der.len());
         } else {
             println!("[TLS] Warning: peer did not provide TLS certificate — connection will use TOFU");
         }
@@ -2733,6 +2733,7 @@ async fn handle_verify_pairing(
         .get("client_cert_der")
         .and_then(|v| v.as_str())
         .and_then(|b64| BASE64.decode(b64).ok());
+    println!("[TLS] Client cert received: {} bytes", client_cert_der.as_ref().map_or(0, |d| d.len()));
 
     // Get the REAL client IP from the TCP connection (not from request body!)
     let client_ip = addr.ip().to_string();

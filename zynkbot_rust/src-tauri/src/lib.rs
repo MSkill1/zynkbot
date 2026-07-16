@@ -1820,10 +1820,7 @@ async fn auto_start_http_server() -> Result<(), String> {
     let device_id = user_identity::get_device_id()
         .map_err(|e| format!("Failed to get device ID: {}", e))?;
 
-    let device_name = hostname::get()
-        .map_err(|e| format!("Failed to get hostname: {}", e))?
-        .to_string_lossy()
-        .to_string();
+    let device_name = user_identity::get_device_name();
 
     println!("[HTTP Server] Device: {} ({})", device_name, device_id);
 

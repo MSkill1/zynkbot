@@ -1,7 +1,11 @@
 use std::path::Path;
 use std::fs;
+use std::sync::Arc;
 use sha2::{Sha256, Digest};
 use tokio_rustls::rustls;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
 
 const CERT_PEM_FILE: &str = "zynkbot_tls_cert.pem";
 const KEY_PEM_FILE:  &str = "zynkbot_tls_key.pem";
@@ -59,8 +63,6 @@ fn generate_and_save(data_dir: &Path) -> Result<(String, String, Vec<u8>), Strin
 pub fn build_server_config(cert_pem: &str, key_pem: &str) -> Result<rustls::ServerConfig, String> {
     use rustls_pemfile::{certs, private_key};
     use std::io::BufReader;
-    // rustls 0.23 requires an explicit provider when multiple backends (aws-lc-rs, ring)
-    // are both compiled in. Install ring (pure Rust, PIC-safe) as the process default.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let cert_chain: Vec<rustls::pki_types::CertificateDer<'static>> = {
@@ -92,4 +94,79 @@ pub fn cert_fingerprint(der: &[u8]) -> String {
         .map(|b| format!("{:02X}", b))
         .collect::<Vec<_>>()
         .join(":")
+}
+
+/// Custom rustls ServerCertVerifier that authenticates peers by exact DER byte comparison.
+/// This replaces CA-chain verification: we pinned the peer's cert during pairing, so we
+/// compare presented cert bytes against the pinned set instead of building a trust chain.
+#[derive(Debug)]
+pub struct PinnedCertVerifier {
+    pub pinned_cert_ders: Vec<Vec<u8>>,
+}
+
+impl ServerCertVerifier for PinnedCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, TlsError> {
+        let cert_der = end_entity.as_ref();
+        if self.pinned_cert_ders.iter().any(|p| p.as_slice() == cert_der) {
+            Ok(ServerCertVerified::assertion())
+        } else {
+            Err(TlsError::General(format!(
+                "Cert not pinned ({} bytes presented, {} pinned cert(s))",
+                cert_der.len(),
+                self.pinned_cert_ders.len()
+            )))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Build a reqwest ClientConfig that uses pinned-cert verification.
+/// Call this from rebuild_http_client instead of add_root_certificate.
+pub fn build_pinned_client_config(pinned_ders: Vec<Vec<u8>>) -> rustls::ClientConfig {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let verifier = Arc::new(PinnedCertVerifier { pinned_cert_ders: pinned_ders });
+    rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth()
 }
