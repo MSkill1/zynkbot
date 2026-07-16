@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.DocumentsContract
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -77,35 +78,21 @@ class MainActivity : TauriActivity() {
     inner class ZynkbotPathsBridge {
         @JavascriptInterface
         fun getShareDir(): String {
-            val base = getExternalFilesDir(null) ?: filesDir
-            val dir = File(base, "ZynkbotShare")
+            val dir = zynkShareDir()
             dir.mkdirs()
             return dir.absolutePath
         }
 
         @JavascriptInterface
         fun openShareFolder() {
-            val base = getExternalFilesDir(null) ?: filesDir
-            val dir = File(base, "ZynkbotShare")
-            dir.mkdirs()
+            zynkShareDir().mkdirs()
             runOnUiThread {
-                // Try DocumentsUI browsing to the exact directory
-                var opened = false
+                // Open the Downloads folder — that's where Zynkbot/ lives
                 try {
-                    val docId = "primary:Android/data/${packageName}/files/ZynkbotShare"
-                    val uri = DocumentsContract.buildDocumentUri(
-                        "com.android.externalstorage.documents", docId)
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        data = uri
-                        type = DocumentsContract.Document.MIME_TYPE_DIR
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
+                    val intent = Intent("android.intent.action.VIEW_DOWNLOADS")
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     startActivity(intent)
-                    opened = true
-                } catch (_: Exception) {}
-
-                if (!opened) {
-                    // Fallback: open the system Files app
+                } catch (_: Exception) {
                     try {
                         val intent = packageManager.getLaunchIntentForPackage("com.google.android.apps.nbu.files")
                             ?: packageManager.getLaunchIntentForPackage("com.android.documentsui")
@@ -147,9 +134,19 @@ class MainActivity : TauriActivity() {
         startSyncService()
     }
 
+    private fun zynkShareDir(): File {
+        // Prefer Downloads/Zynkbot — visible in all file managers.
+        // Fall back to app-specific external dir if Downloads isn't writable.
+        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val preferred = File(downloads, "Zynkbot")
+        if (preferred.mkdirs() || preferred.exists()) return preferred
+        val fallback = File(getExternalFilesDir(null) ?: filesDir, "ZynkbotShare")
+        fallback.mkdirs()
+        return fallback
+    }
+
     private fun ensureShareDir() {
-        val base = getExternalFilesDir(null) ?: filesDir
-        File(base, "ZynkbotShare").mkdirs()
+        zynkShareDir() // creates the directory as a side effect
     }
 
     private fun requestNotificationPermissionIfNeeded() {

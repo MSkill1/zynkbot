@@ -111,7 +111,26 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
     };
 
     if (window.AndroidPaths) {
-      setAndroidShareDir(window.AndroidPaths.getShareDir());
+      const dir = window.AndroidPaths.getShareDir();
+      setAndroidShareDir(dir);
+      // Auto-register ZynkbotShare if not already in the shared list
+      invoke('list_my_shared_directories').then(data => {
+        const dirs = data.shared_directories || [];
+        const alreadyShared = dirs.some(d => d.local_path === dir);
+        if (!alreadyShared) {
+          invoke('share_directory', {
+            localPath: dir,
+            shareName: 'ZynkbotShare',
+            isReadable: true,
+            isWritable: false
+          }).then(res => {
+            if (res.success && res.share_id) {
+              fetchSharedDirectories();
+              invoke('scan_shared_directory', { shareId: res.share_id, maxFiles: 1000 });
+            }
+          }).catch(() => {});
+        }
+      }).catch(() => {});
     }
 
     getDeviceId();
@@ -628,40 +647,21 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button
-                onClick={() => window.AndroidPaths?.openShareFolder()}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  background: '#1e1f29',
-                  border: '1px solid #44475a',
-                  borderRadius: '4px',
-                  color: '#f8f8f2',
-                  fontSize: '0.9rem',
-                  cursor: 'pointer'
-                }}
-              >
-                📂 Open Share Folder
-              </button>
-              <button
-                onClick={() => handleShareDirectory(androidShareDir)}
-                disabled={loading || !androidShareDir}
-                style={{
-                  padding: '10px 16px',
-                  background: '#8be9fd',
-                  color: '#282a36',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: loading ? 'wait' : 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '0.9rem',
-                  opacity: (!androidShareDir || loading) ? 0.5 : 1
-                }}
-              >
-                Share
-              </button>
-            </div>
+            <button
+              onClick={() => window.AndroidPaths?.openShareFolder()}
+              style={{
+                width: '100%',
+                padding: '10px',
+                background: '#1e1f29',
+                border: '1px solid #44475a',
+                borderRadius: '4px',
+                color: '#f8f8f2',
+                fontSize: '0.9rem',
+                cursor: 'pointer'
+              }}
+            >
+              📂 Open Share Folder
+            </button>
           </div>
         ) : (
           /* Desktop: name + path entry */
@@ -750,9 +750,11 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                     <div style={{ color: '#f8f8f2', fontWeight: 'bold', marginBottom: '2px' }}>
                       {dir.share_name || dir.local_path}
                     </div>
-                    <div style={{ color: '#9aa5c4', fontSize: '0.8rem' }}>
-                      {dir.local_path}
-                    </div>
+                    {!isAndroid && (
+                      <div style={{ color: '#9aa5c4', fontSize: '0.8rem' }}>
+                        {dir.local_path}
+                      </div>
+                    )}
                     <div style={{ color: '#9aa5c4', fontSize: '0.8rem', marginBottom: '8px' }}>
                       Shared: {new Date(dir.created_at).toLocaleDateString()}
                     </div>
@@ -790,21 +792,23 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                       >
                         🔄 Rescan
                       </button>
-                      <button
-                        onClick={() => handleUnshareDirectory(dir.id)}
-                        disabled={loading}
-                        style={{
-                          padding: '4px 10px',
-                          background: '#ff5555',
-                          color: '#f8f8f2',
-                          border: 'none',
-                          borderRadius: '4px',
-                          cursor: 'pointer',
-                          fontSize: '0.8rem'
-                        }}
-                      >
-                        Unshare
-                      </button>
+                      {!isAndroid && (
+                        <button
+                          onClick={() => handleUnshareDirectory(dir.id)}
+                          disabled={loading}
+                          style={{
+                            padding: '4px 10px',
+                            background: '#ff5555',
+                            color: '#f8f8f2',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                            fontSize: '0.8rem'
+                          }}
+                        >
+                          Unshare
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
