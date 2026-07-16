@@ -317,9 +317,10 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     const filename = relativePath.replace(/\\/g, '/').split('/').pop();
     try {
       let selectedPath;
-      if (window.AndroidFolderPicker) {
-        // Android: save() dialog not implemented — use public Downloads folder
-        selectedPath = `/storage/emulated/0/Download/ZynkLink/${filename}`;
+      if (window.AndroidPaths) {
+        // Android: save to the app's ZynkbotShare folder (no permissions needed)
+        const shareDir = window.AndroidPaths.getShareDir();
+        selectedPath = `${shareDir}/${filename}`;
       } else {
         selectedPath = await save({ defaultPath: filename, title: 'Save File' });
       }

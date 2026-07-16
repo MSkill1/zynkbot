@@ -6,16 +6,14 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.provider.DocumentsContract
-import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import java.io.File
 import java.lang.ref.WeakReference
-
 
 
 class MainActivity : TauriActivity() {
@@ -56,15 +54,9 @@ class MainActivity : TauriActivity() {
             runOnUiThread {
                 val permsNeeded = mutableListOf<String>()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    // Android 13+: granular media permissions
-                    listOf(
-                        Manifest.permission.READ_MEDIA_IMAGES,
-                        Manifest.permission.READ_MEDIA_VIDEO,
-                        Manifest.permission.READ_MEDIA_AUDIO
-                    ).forEach { perm ->
-                        if (ContextCompat.checkSelfPermission(this@MainActivity, perm) != PackageManager.PERMISSION_GRANTED) {
-                            permsNeeded.add(perm)
-                        }
+                    // Android 13+: only request image permission (video/audio not used)
+                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
+                        permsNeeded.add(Manifest.permission.READ_MEDIA_IMAGES)
                     }
                 } else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
                     // Android 12 and below
@@ -77,6 +69,50 @@ class MainActivity : TauriActivity() {
                     requestStoragePermission.launch(permsNeeded.toTypedArray())
                 } else {
                     pickFolderLauncher.launch(null)
+                }
+            }
+        }
+    }
+
+    inner class ZynkbotPathsBridge {
+        @JavascriptInterface
+        fun getShareDir(): String {
+            val base = getExternalFilesDir(null) ?: filesDir
+            val dir = File(base, "ZynkbotShare")
+            dir.mkdirs()
+            return dir.absolutePath
+        }
+
+        @JavascriptInterface
+        fun openShareFolder() {
+            val base = getExternalFilesDir(null) ?: filesDir
+            val dir = File(base, "ZynkbotShare")
+            dir.mkdirs()
+            runOnUiThread {
+                // Try DocumentsUI browsing to the exact directory
+                var opened = false
+                try {
+                    val docId = "primary:Android/data/${packageName}/files/ZynkbotShare"
+                    val uri = DocumentsContract.buildDocumentUri(
+                        "com.android.externalstorage.documents", docId)
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        data = uri
+                        type = DocumentsContract.Document.MIME_TYPE_DIR
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(intent)
+                    opened = true
+                } catch (_: Exception) {}
+
+                if (!opened) {
+                    // Fallback: open the system Files app
+                    try {
+                        val intent = packageManager.getLaunchIntentForPackage("com.google.android.apps.nbu.files")
+                            ?: packageManager.getLaunchIntentForPackage("com.android.documentsui")
+                            ?: Intent(Intent.ACTION_VIEW).apply { type = "resource/folder" }
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                    } catch (_: Exception) {}
                 }
             }
         }
@@ -100,14 +136,20 @@ class MainActivity : TauriActivity() {
     override fun onWebViewCreate(webView: WebView) {
         webViewRef = WeakReference(webView)
         webView.addJavascriptInterface(FolderPickerBridge(), "AndroidFolderPicker")
+        webView.addJavascriptInterface(ZynkbotPathsBridge(), "AndroidPaths")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        requestAllFilesAccessIfNeeded()
+        ensureShareDir()
         requestNotificationPermissionIfNeeded()
         startSyncService()
+    }
+
+    private fun ensureShareDir() {
+        val base = getExternalFilesDir(null) ?: filesDir
+        File(base, "ZynkbotShare").mkdirs()
     }
 
     private fun requestNotificationPermissionIfNeeded() {
@@ -122,20 +164,5 @@ class MainActivity : TauriActivity() {
     private fun startSyncService() {
         val intent = Intent(this, SyncForegroundService::class.java)
         ContextCompat.startForegroundService(this, intent)
-    }
-
-    private fun requestAllFilesAccessIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                try {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                    intent.data = Uri.parse("package:$packageName")
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    val fallback = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                    startActivity(fallback)
-                }
-            }
-        }
     }
 }

@@ -23,6 +23,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [unreadCounts, setUnreadCounts] = useState({}); // Map of device_id -> unread count
   const [isMobile] = useState(() => window.innerWidth <= 768);
   const [showEnterCodeInput, setShowEnterCodeInput] = useState(false); // Toggle for enter code input
+  const isAndroid = !!window.AndroidPaths;
+  const [androidShareDir, setAndroidShareDir] = useState('');
 
   const fetchSharedDirectories = useCallback(async () => {
     try {
@@ -107,6 +109,10 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
         console.debug('[ZynkLink] Auto-scan error:', error);
       }
     };
+
+    if (window.AndroidPaths) {
+      setAndroidShareDir(window.AndroidPaths.getShareDir());
+    }
 
     getDeviceId();
     fetchSharedDirectories();
@@ -235,15 +241,17 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
     }
   };
 
-  const handleShareDirectory = async () => {
-    if (!newDirPath.trim() || !newShareName.trim()) return;
+  const handleShareDirectory = async (overridePath) => {
+    const localPath = (overridePath || newDirPath).trim();
+    const shareName = newShareName.trim() || (overridePath ? 'ZynkbotShare' : '');
+    if (!localPath || !shareName) return;
 
     setLoading(true);
     setMessage('');
     try {
       const data = await invoke('share_directory', {
-        localPath: newDirPath.trim(),
-        shareName: newShareName.trim(),
+        localPath,
+        shareName,
         isReadable: true,
         isWritable: false
       });
@@ -595,59 +603,34 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
         </div>
       )}
 
-      {/* Share New Directory */}
+      {/* Share a Directory */}
       <div style={{ marginBottom: '20px' }}>
-        <label style={{ display: 'block', color: '#f8f8f2', fontSize: '0.9rem', marginBottom: '5px' }}>
-          <strong>📁 Share a Directory:</strong> <span style={{ color: '#9aa5c4', fontWeight: 'normal' }}>name it, pick the folder, tap Share.</span>
-        </label>
-        <input
-          type="text"
-          value={newShareName}
-          onChange={(e) => setNewShareName(e.target.value)}
-          placeholder="Share name (e.g., MyDocuments)"
-          style={{
-            width: '100%',
-            padding: '8px',
-            marginBottom: '8px',
-            background: '#1e1f29',
-            border: '1px solid #44475a',
-            borderRadius: '4px',
-            color: '#f8f8f2',
-            fontSize: '0.9rem'
-          }}
-        />
-        {isMobile ? (
+        {isAndroid ? (
+          /* Android: fixed ZynkbotShare folder — no arbitrary path picker */
           <div>
-            {newDirPath && (
-              <div style={{ fontSize: '0.8rem', color: '#9aa5c4', marginBottom: '8px', wordBreak: 'break-all' }}>
-                Selected: {newDirPath}
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ color: '#f8f8f2', fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '8px' }}>
+              📁 Share Files from This Device
+            </div>
+            <div style={{
+              background: '#1e1f29',
+              border: '1px solid #44475a',
+              borderRadius: '6px',
+              padding: '12px',
+              marginBottom: '8px',
+              fontSize: '0.85rem',
+              color: '#9aa5c4',
+              lineHeight: '1.6'
+            }}>
+              Files placed in your <strong style={{ color: '#f8f8f2' }}>Zynkbot Share folder</strong> are visible to paired devices. Copy or move files there using your device's file manager.
+              {androidShareDir && (
+                <div style={{ marginTop: '8px', wordBreak: 'break-all', color: '#6272a4', fontSize: '0.78rem' }}>
+                  📂 {androidShareDir}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button
-                onClick={async () => {
-                  if (window.AndroidFolderPicker) {
-                    // Native Android folder picker via JavascriptInterface
-                    try {
-                      const path = await new Promise((resolve, reject) => {
-                        window.__fpResolve = resolve;
-                        window.__fpReject = reject;
-                        window.AndroidFolderPicker.pick();
-                      });
-                      setNewDirPath(path);
-                    } catch (e) {
-                      if (e !== 'cancelled') alert('Folder picker error: ' + e);
-                    }
-                  } else {
-                    // Desktop: tauri-plugin-dialog
-                    try {
-                      const selected = await openFolderDialog({ directory: true, multiple: false });
-                      if (selected) setNewDirPath(typeof selected === 'string' ? selected : selected.path || String(selected));
-                    } catch (e) {
-                      alert('Could not open folder picker: ' + e);
-                    }
-                  }
-                }}
+                onClick={() => window.AndroidPaths?.openShareFolder()}
                 style={{
                   flex: 1,
                   padding: '10px',
@@ -659,13 +642,70 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                   cursor: 'pointer'
                 }}
               >
-                📂 Choose Folder
+                📂 Open Share Folder
               </button>
               <button
-                onClick={handleShareDirectory}
-                disabled={loading || !newDirPath.trim() || !newShareName.trim()}
+                onClick={() => handleShareDirectory(androidShareDir)}
+                disabled={loading || !androidShareDir}
                 style={{
                   padding: '10px 16px',
+                  background: '#8be9fd',
+                  color: '#282a36',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: loading ? 'wait' : 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '0.9rem',
+                  opacity: (!androidShareDir || loading) ? 0.5 : 1
+                }}
+              >
+                Share
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Desktop: name + path entry */
+          <div>
+            <label style={{ display: 'block', color: '#f8f8f2', fontSize: '0.9rem', marginBottom: '5px' }}>
+              <strong>📁 Share a Directory:</strong> <span style={{ color: '#9aa5c4', fontWeight: 'normal' }}>name it, pick the folder, tap Share.</span>
+            </label>
+            <input
+              type="text"
+              value={newShareName}
+              onChange={(e) => setNewShareName(e.target.value)}
+              placeholder="Share name (e.g., MyDocuments)"
+              style={{
+                width: '100%',
+                padding: '8px',
+                marginBottom: '8px',
+                background: '#1e1f29',
+                border: '1px solid #44475a',
+                borderRadius: '4px',
+                color: '#f8f8f2',
+                fontSize: '0.9rem'
+              }}
+            />
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <input
+                type="text"
+                value={newDirPath}
+                onChange={(e) => setNewDirPath(e.target.value)}
+                placeholder="e.g., C:\MyFiles or /home/user/files"
+                style={{
+                  flex: 1,
+                  padding: '8px',
+                  background: '#1e1f29',
+                  border: '1px solid #44475a',
+                  borderRadius: '4px',
+                  color: '#f8f8f2',
+                  fontSize: '0.9rem'
+                }}
+              />
+              <button
+                onClick={() => handleShareDirectory()}
+                disabled={loading || !newDirPath.trim() || !newShareName.trim()}
+                style={{
+                  padding: '8px 16px',
                   background: '#8be9fd',
                   color: '#282a36',
                   border: 'none',
@@ -679,41 +719,6 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                 Share
               </button>
             </div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <input
-              type="text"
-              value={newDirPath}
-              onChange={(e) => setNewDirPath(e.target.value)}
-              placeholder="e.g., C:\MyFiles or /home/user/files"
-              style={{
-                flex: 1,
-                padding: '8px',
-                background: '#1e1f29',
-                border: '1px solid #44475a',
-                borderRadius: '4px',
-                color: '#f8f8f2',
-                fontSize: '0.9rem'
-              }}
-            />
-            <button
-              onClick={handleShareDirectory}
-              disabled={loading || !newDirPath.trim() || !newShareName.trim()}
-              style={{
-                padding: '8px 16px',
-                background: '#8be9fd',
-                color: '#282a36',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: loading ? 'wait' : 'pointer',
-                fontWeight: 'bold',
-                fontSize: '0.9rem',
-                opacity: (!newDirPath.trim() || !newShareName.trim() || loading) ? 0.5 : 1
-              }}
-            >
-              Share
-            </button>
           </div>
         )}
       </div>
