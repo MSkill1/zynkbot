@@ -601,7 +601,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
       {/* Share New Directory */}
       <div style={{ marginBottom: '20px' }}>
         <label style={{ display: 'block', color: '#f8f8f2', fontSize: '0.9rem', marginBottom: '5px' }}>
-          📁 Share a Directory:
+          <strong>📁 Share a Directory:</strong> <span style={{ color: '#9aa5c4', fontWeight: 'normal' }}>name it, pick the folder, tap Share.</span>
         </label>
         <input
           type="text"
