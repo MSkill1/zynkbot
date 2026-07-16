@@ -871,8 +871,10 @@ impl ZynkSyncService {
     }
 
     /// Remove a device and notify the peer to do the same (fire-and-forget).
+    /// Also broadcasts a cascade-remove to all other mesh peers so the removed
+    /// device disappears from the entire network, not just this device's list.
     pub async fn remove_device(&self, device_id: &str) -> Result<(), String> {
-        // Grab peer IP before the transaction deletes the zynk_devices row
+        // Grab the removed peer's IP before the transaction deletes its row
         let peer_ip = sqlx::query_as::<_, (Option<String>,)>(
             "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
         )
@@ -883,22 +885,46 @@ impl ZynkSyncService {
         .flatten()
         .and_then(|r| r.0);
 
+        // Collect remaining peers BEFORE deleting, for cascade broadcast
+        let remaining_peers: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
+            "SELECT device_id, device_ip FROM zynk_devices WHERE sync_paired = 1 AND device_id != ?"
+        )
+        .bind(device_id)
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap_or_default();
+
         self.clear_sync_data_db_only(device_id).await?;
 
-        // Best-effort: tell the peer to remove us from its list too.
-        // Fire-and-forget — if they're offline the auth check blocks re-insertion anyway.
-        if let Some(ip) = peer_ip {
-            let local_device_id = self.device_id.clone();
-            let http_client = self.http_client.read().await.clone();
-            tokio::spawn(async move {
+        let local_device_id = self.device_id.clone();
+        let removed_id = device_id.to_string();
+        let http_client = self.http_client.read().await.clone();
+
+        tokio::spawn(async move {
+            // Notify the removed device: "remove me (local) from your list"
+            if let Some(ip) = peer_ip {
                 let url = format!("https://{}:57963/api/zynksync/notify-unsynced", ip);
                 let payload = serde_json::json!({ "removed_device_id": local_device_id });
                 match http_client.post(&url).json(&payload).send().await {
-                    Ok(_) => println!("[ZynkSync] ✓ Notified peer of unsync"),
-                    Err(e) => println!("[ZynkSync] Note: could not notify peer of unsync (offline?): {}", e),
+                    Ok(_) => println!("[ZynkSync] ✓ Notified removed peer of unsync"),
+                    Err(e) => println!("[ZynkSync] Note: removed peer offline during unsync: {}", e),
                 }
-            });
-        }
+            }
+
+            // Cascade: notify every other peer to also remove the departed device
+            for (peer_id, peer_ip) in &remaining_peers {
+                if peer_ip.is_empty() { continue; }
+                let url = format!("https://{}:57963/api/zynksync/notify-unsynced", peer_ip);
+                let payload = serde_json::json!({
+                    "removed_device_id": local_device_id,  // sender identity
+                    "cascade_device_id": removed_id,        // device to actually remove
+                });
+                match http_client.post(&url).json(&payload).send().await {
+                    Ok(_) => println!("[ZynkSync] ✓ Cascade-removed {} from peer {}", &removed_id[..8.min(removed_id.len())], &peer_id[..8.min(peer_id.len())]),
+                    Err(e) => println!("[ZynkSync] Note: peer {} offline during cascade remove: {}", &peer_id[..8.min(peer_id.len())], e),
+                }
+            }
+        });
 
         Ok(())
     }
@@ -3331,14 +3357,28 @@ async fn handle_notify_unsynced(
         .and_then(|v| v.as_str())
         .ok_or("Missing removed_device_id")?;
 
-    println!("[ZynkSync] Peer {} initiated unsync — removing from local list", &removed_device_id[..removed_device_id.len().min(8)]);
+    // cascade_device_id: a third device we're being asked to remove (mesh cascade)
+    // If absent, we remove the sender (removed_device_id) as before.
+    let target_id = payload.get("cascade_device_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or(removed_device_id);
+
+    if target_id != removed_device_id {
+        println!("[ZynkSync] Cascade remove: {} asked us to remove {}",
+            &removed_device_id[..8.min(removed_device_id.len())],
+            &target_id[..8.min(target_id.len())]);
+    } else {
+        println!("[ZynkSync] Peer {} initiated unsync — removing from local list", &removed_device_id[..removed_device_id.len().min(8)]);
+    }
 
     // Best-effort — device may already be gone or never fully paired.
     // Call db_only to avoid firing a return notification (round-trip loop).
-    match service.clear_sync_data_db_only(removed_device_id).await {
+    match service.clear_sync_data_db_only(target_id).await {
         Ok(_) => println!("[ZynkSync] ✓ Removed peer device on their request"),
         Err(e) => println!("[ZynkSync] Note: clear_sync_data_db_only on notify-unsynced failed (non-fatal): {}", e),
     }
+
+    let removed_device_id = target_id.to_string();
 
     if let Ok(guard) = crate::APP_HANDLE.lock() {
         if let Some(app) = guard.as_ref() {
