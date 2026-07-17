@@ -23,6 +23,18 @@ class MainActivity : TauriActivity() {
     private var webViewRef: WeakReference<WebView>? = null
     private var cameraOutputPath: String? = null
 
+    private val requestCameraPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            launchCamera()
+        } else {
+            val wv = webViewRef?.get() ?: return@registerForActivityResult
+            wv.post { wv.evaluateJavascript(
+                "window.__camReject&&window.__camReject('Camera permission denied');window.__camResolve=null;window.__camReject=null;", null) }
+        }
+    }
+
     private val requestStoragePermission = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
@@ -187,24 +199,33 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    private fun launchCamera() {
+        try {
+            val photoFile = File.createTempFile("zynk_photo_", ".jpg", cacheDir)
+            cameraOutputPath = photoFile.absolutePath
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                photoFile
+            )
+            takePictureLauncher.launch(uri)
+        } catch (e: Exception) {
+            val wv = webViewRef?.get() ?: return
+            val msg = (e.message ?: "camera failed").replace("'", "\\'")
+            wv.post { wv.evaluateJavascript(
+                "window.__camReject&&window.__camReject('$msg');window.__camResolve=null;window.__camReject=null;", null) }
+        }
+    }
+
     inner class AndroidCameraBridge {
         @JavascriptInterface
         fun takePicture() {
             runOnUiThread {
-                try {
-                    val photoFile = File.createTempFile("zynk_photo_", ".jpg", cacheDir)
-                    cameraOutputPath = photoFile.absolutePath
-                    val uri = FileProvider.getUriForFile(
-                        this@MainActivity,
-                        "${packageName}.fileprovider",
-                        photoFile
-                    )
-                    takePictureLauncher.launch(uri)
-                } catch (e: Exception) {
-                    val wv = webViewRef?.get() ?: return@runOnUiThread
-                    val msg = (e.message ?: "camera failed").replace("'", "\\'")
-                    wv.post { wv.evaluateJavascript(
-                        "window.__camReject&&window.__camReject('$msg');window.__camResolve=null;window.__camReject=null;", null) }
+                if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    requestCameraPermission.launch(Manifest.permission.CAMERA)
+                } else {
+                    launchCamera()
                 }
             }
         }
