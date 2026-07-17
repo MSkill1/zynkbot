@@ -493,18 +493,41 @@ export default function App() {
     });
     if (!path) return;
     try {
-      const name = path.split('/').pop();
+      // On Android, openFileDialog returns a content:// URI that Rust's fs::read can't open.
+      // Use the AndroidPaths bridge which reads via ContentResolver instead.
+      const name = window.AndroidPaths ? window.AndroidPaths.getFileName(path) : path.split('/').pop();
       const ext = name.split('.').pop().toLowerCase();
       if (IMAGE_EXTENSIONS.includes(ext)) {
-        const base64 = await invoke('read_file_base64', { path });
+        const base64 = window.AndroidPaths
+          ? window.AndroidPaths.readFileBase64(path)
+          : await invoke('read_file_base64', { path });
+        if (!base64) throw new Error('Could not read image');
         const mimeType = MIME_TYPES[ext] || 'image/jpeg';
         setAttachedFile({ name, base64, mimeType, size: base64.length, isImage: true });
       } else {
-        const content = await invoke('read_text_file', { path });
+        const content = window.AndroidPaths
+          ? window.AndroidPaths.readFileText(path)
+          : await invoke('read_text_file', { path });
         setAttachedFile({ name, content, size: content.length, isImage: false });
       }
     } catch (e) {
       alert(`Could not read file: ${e}`);
+    }
+  };
+
+  const handleCameraCapture = async () => {
+    if (!window.AndroidCamera) return;
+    try {
+      const path = await new Promise((resolve, reject) => {
+        window.__camResolve = resolve;
+        window.__camReject = reject;
+        window.AndroidCamera.takePicture();
+      });
+      const name = path.split('/').pop();
+      const base64 = await invoke('read_file_base64', { path });
+      setAttachedFile({ name, base64, mimeType: 'image/jpeg', size: base64.length, isImage: true });
+    } catch (e) {
+      if (e !== 'cancelled') alert(`Camera error: ${e}`);
     }
   };
 
@@ -1582,6 +1605,35 @@ export default function App() {
                   >
                     {attachedFile ? '📎 1 file' : '📎'}
                   </button>
+
+                  {/* Camera button — Android only */}
+                  {window.AndroidCamera && (
+                    <button
+                      onClick={handleCameraCapture}
+                      disabled={isLoading}
+                      title="Take a photo"
+                      style={{
+                        height: '28px',
+                        padding: '0 10px',
+                        background: 'linear-gradient(135deg, #6272a4 0%, #44475a 100%)',
+                        color: '#f8f8f2',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: isLoading ? 'not-allowed' : 'pointer',
+                        fontWeight: 'bold',
+                        fontSize: '0.7rem',
+                        transition: 'all 0.2s',
+                        opacity: isLoading ? 0.5 : 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                      onMouseOver={(e) => !isLoading && (e.currentTarget.style.transform = 'translateY(-1px)')}
+                      onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                    >
+                      📷
+                    </button>
+                  )}
                 </div>
               </div>
 

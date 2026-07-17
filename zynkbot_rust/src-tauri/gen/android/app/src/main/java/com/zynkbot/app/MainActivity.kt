@@ -13,6 +13,7 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import java.io.File
 import java.lang.ref.WeakReference
 
@@ -20,6 +21,7 @@ import java.lang.ref.WeakReference
 class MainActivity : TauriActivity() {
 
     private var webViewRef: WeakReference<WebView>? = null
+    private var cameraOutputPath: String? = null
 
     private val requestStoragePermission = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -84,6 +86,19 @@ class MainActivity : TauriActivity() {
         }.start()
     }
 
+    private val takePictureLauncher = registerForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        val wv = webViewRef?.get() ?: return@registerForActivityResult
+        val script = if (success && cameraOutputPath != null) {
+            val escaped = cameraOutputPath!!.replace("\\", "\\\\").replace("'", "\\'")
+            "window.__camResolve&&window.__camResolve('$escaped');window.__camResolve=null;window.__camReject=null;"
+        } else {
+            "window.__camReject&&window.__camReject('cancelled');window.__camResolve=null;window.__camReject=null;"
+        }
+        wv.post { wv.evaluateJavascript(script, null) }
+    }
+
     inner class FolderPickerBridge {
         @JavascriptInterface
         fun pick() {
@@ -123,6 +138,35 @@ class MainActivity : TauriActivity() {
         }
 
         @JavascriptInterface
+        fun readFileBase64(uriStr: String): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return ""
+                android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            } catch (e: Exception) { "" }
+        }
+
+        @JavascriptInterface
+        fun getFileName(uriStr: String): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    cursor.moveToFirst()
+                    if (idx >= 0) cursor.getString(idx) else null
+                } ?: uriStr.substringAfterLast('/').substringBefore('?')
+            } catch (e: Exception) { uriStr.substringAfterLast('/').substringBefore('?') }
+        }
+
+        @JavascriptInterface
+        fun readFileText(uriStr: String): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                contentResolver.openInputStream(uri)?.use { it.bufferedReader(Charsets.UTF_8).readText() } ?: ""
+            } catch (e: Exception) { "" }
+        }
+
+        @JavascriptInterface
         fun openShareFolder() {
             zynkShareDir().mkdirs()
             runOnUiThread {
@@ -138,6 +182,29 @@ class MainActivity : TauriActivity() {
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         startActivity(intent)
                     } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
+    inner class AndroidCameraBridge {
+        @JavascriptInterface
+        fun takePicture() {
+            runOnUiThread {
+                try {
+                    val photoFile = File.createTempFile("zynk_photo_", ".jpg", cacheDir)
+                    cameraOutputPath = photoFile.absolutePath
+                    val uri = FileProvider.getUriForFile(
+                        this@MainActivity,
+                        "${packageName}.fileprovider",
+                        photoFile
+                    )
+                    takePictureLauncher.launch(uri)
+                } catch (e: Exception) {
+                    val wv = webViewRef?.get() ?: return@runOnUiThread
+                    val msg = (e.message ?: "camera failed").replace("'", "\\'")
+                    wv.post { wv.evaluateJavascript(
+                        "window.__camReject&&window.__camReject('$msg');window.__camResolve=null;window.__camReject=null;", null) }
                 }
             }
         }
@@ -162,6 +229,7 @@ class MainActivity : TauriActivity() {
         webViewRef = WeakReference(webView)
         webView.addJavascriptInterface(FolderPickerBridge(), "AndroidFolderPicker")
         webView.addJavascriptInterface(ZynkbotPathsBridge(), "AndroidPaths")
+        webView.addJavascriptInterface(AndroidCameraBridge(), "AndroidCamera")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
