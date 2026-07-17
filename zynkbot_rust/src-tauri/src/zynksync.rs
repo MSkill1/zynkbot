@@ -441,7 +441,7 @@ impl ZynkSyncService {
         // The pairing code provides the authentication; the cert is pinned after this exchange.
         let tofu_client = reqwest::ClientBuilder::new()
             .danger_accept_invalid_certs(true)
-            .timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| format!("Failed to build pairing client: {}", e))?;
 
