@@ -11,6 +11,8 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
   const [pairingCode, setPairingCode] = useState('');
   const [localIp, setLocalIp] = useState('');
   const [pairingInput, setPairingInput] = useState('');
+  const [pairingIPPart, setPairingIPPart] = useState('');
+  const [pairingNumPart, setPairingNumPart] = useState('');
   const [showAddDevice, setShowAddDevice] = useState(false);
 
   // Fetch peers from Rust backend
@@ -222,6 +224,8 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
       }
 
       setPairingInput('');
+      setPairingIPPart('');
+      setPairingNumPart('');
       setShowAddDevice(false);
       fetchPeers();
     } catch (error) {
@@ -255,7 +259,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
     }
   };
 
-  // Check ZynkSync status on component mount (NO AUTO-START)
+  // Check ZynkSync status on component mount — auto-start if peers exist
   useEffect(() => {
     const checkServiceStatus = async () => {
       try {
@@ -263,15 +267,19 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
         if (isRunning) {
           setSyncStatus('running');
           setMessage('✓ ZynkSync is running');
-          console.log('[ZynkSync] Service already running on mount');
-          // Fetch peers if already running
-          if (autoRefresh) {
-            fetchPeers();
-          }
+          fetchPeers();
         } else {
-          setSyncStatus('stopped');
-          setMessage('ZynkSync paused. Click "Resume Syncing" to start.');
-          console.log('[ZynkSync] Service not running - waiting for user to start');
+          // Auto-start if we have known peers from a previous session
+          const existingPeers = await invoke('get_zynksync_peers');
+          if (existingPeers && existingPeers.length > 0) {
+            await invoke('start_zynksync', { syncIntervalSecs: 60 });
+            setSyncStatus('running');
+            setMessage('✓ ZynkSync resumed automatically');
+            fetchPeers();
+          } else {
+            setSyncStatus('stopped');
+            setMessage('ZynkSync paused. Click "Resume Syncing" to start.');
+          }
         }
       } catch (error) {
         console.error('[ZynkSync] Failed to check status:', error);
@@ -533,28 +541,36 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
                 Enter the IP:code from the other device to sync with it:
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '8px' }}>
-                <input
-                  type="text"
-                  placeholder="192.168.0.100:456789"
-                  value={pairingInput}
-                  onChange={(e) => setPairingInput(e.target.value)}
-                  disabled={loading}
-                  style={{
-                    padding: '12px',
-                    background: '#282a36',
-                    border: '1px solid #44475a',
-                    borderRadius: '4px',
-                    color: '#f8f8f2',
-                    fontSize: '1rem',
-                    fontFamily: 'monospace',
-                    textAlign: 'center'
-                  }}
-                  onKeyPress={(e) => {
-                    if (e.key === 'Enter' && !loading) {
-                      handleAddDevice();
-                    }
-                  }}
-                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="192.168.0.100"
+                    value={pairingIPPart}
+                    onChange={(e) => { setPairingIPPart(e.target.value); setPairingInput(e.target.value + ':' + pairingNumPart); }}
+                    disabled={loading}
+                    style={{
+                      flex: 3, padding: '12px', background: '#282a36',
+                      border: '1px solid #44475a', borderRadius: '4px',
+                      color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
+                    }}
+                  />
+                  <span style={{ color: '#f8f8f2', fontSize: '1.2rem', fontWeight: 'bold', padding: '0 2px' }}>:</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="456789"
+                    value={pairingNumPart}
+                    onChange={(e) => { setPairingNumPart(e.target.value); setPairingInput(pairingIPPart + ':' + e.target.value); }}
+                    onKeyPress={(e) => { if (e.key === 'Enter' && !loading) handleAddDevice(); }}
+                    disabled={loading}
+                    style={{
+                      flex: 2, padding: '12px', background: '#282a36',
+                      border: '1px solid #44475a', borderRadius: '4px',
+                      color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
+                    }}
+                  />
+                </div>
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button
                     onClick={handleAddDevice}
