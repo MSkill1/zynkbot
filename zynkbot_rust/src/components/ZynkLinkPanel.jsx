@@ -113,23 +113,27 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
     if (window.AndroidPaths) {
       const dir = window.AndroidPaths.getShareDir();
       setAndroidShareDir(dir);
-      // Auto-register ZynkbotShare if not already in the shared list
-      invoke('list_my_shared_directories').then(data => {
+      // Ensure exactly one shared directory entry: remove stale entries, register if missing
+      invoke('list_my_shared_directories').then(async data => {
         const dirs = data.shared_directories || [];
-        const alreadyShared = dirs.some(d => d.local_path === dir);
-        if (!alreadyShared) {
-          invoke('share_directory', {
+        const stale = dirs.filter(d => d.local_path !== dir);
+        const current = dirs.find(d => d.local_path === dir);
+        // Remove any entries from old paths (e.g. after folder location changed)
+        for (const d of stale) {
+          await invoke('unshare_directory', { shareId: d.id }).catch(() => {});
+        }
+        if (!current) {
+          const res = await invoke('share_directory', {
             localPath: dir,
             shareName: 'ZynkbotShare',
             isReadable: true,
             isWritable: false
-          }).then(res => {
-            if (res.success && res.share_id) {
-              fetchSharedDirectories();
-              invoke('scan_shared_directory', { shareId: res.share_id, maxFiles: 1000 });
-            }
-          }).catch(() => {});
+          }).catch(() => null);
+          if (res?.success && res.share_id) {
+            invoke('scan_shared_directory', { shareId: res.share_id, maxFiles: 1000 }).catch(() => {});
+          }
         }
+        fetchSharedDirectories();
       }).catch(() => {});
     }
 
