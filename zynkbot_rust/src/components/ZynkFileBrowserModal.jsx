@@ -130,7 +130,7 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
   );
 }
 
-export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceId, shareName, userId }) {
+export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceId, shareName, userId, localDeviceId }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -335,8 +335,27 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     }
   };
 
+  const handleAddFile = async () => {
+    if (!window.AndroidPaths) return;
+    try {
+      await new Promise((resolve, reject) => {
+        window.__zfpResolve = resolve;
+        window.__zfpReject = reject;
+        window.AndroidPaths.pickFile();
+      });
+      setMessage('Scanning…');
+      await invoke('scan_shared_directory', { shareId, maxFiles: 1000 });
+      await loadFiles();
+      setMessage('✓ File added');
+      setTimeout(() => setMessage(''), 3000);
+    } catch (e) {
+      if (e !== 'cancelled') { setMessage('✗ ' + e); setTimeout(() => setMessage(''), 4000); }
+    }
+  };
+
   if (!isOpen) return null;
 
+  const isOwnShare = deviceId === localDeviceId;
   const tree = buildFolderTree(files);
   const topFolderKeys = Object.keys(tree.children);
 
@@ -351,6 +370,11 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
             )}
           </div>
           <div className="zfb-header-right">
+            {window.AndroidPaths && isOwnShare && (
+              <button className="zfb-refresh-btn" onClick={handleAddFile} title="Add files from your device">
+                + Add Files
+              </button>
+            )}
             <button className="zfb-refresh-btn" onClick={loadFiles} disabled={loading} title="Refresh">
               🔄 Refresh
             </button>

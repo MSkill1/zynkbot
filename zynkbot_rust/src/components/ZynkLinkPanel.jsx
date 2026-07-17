@@ -914,6 +914,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
           deviceId={browserShare.deviceId}
           shareName={browserShare.shareName}
           userId={userId}
+          localDeviceId={localDeviceId}
         />
       )}
     </div>

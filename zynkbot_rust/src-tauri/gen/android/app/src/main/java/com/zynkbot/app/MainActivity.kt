@@ -24,7 +24,6 @@ class MainActivity : TauriActivity() {
     private val requestStoragePermission = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
-        // After permission result (granted or denied), launch the folder picker regardless
         pickFolderLauncher.launch(null)
     }
 
@@ -39,7 +38,7 @@ class MainActivity : TauriActivity() {
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
                     android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
-            } catch (e: Exception) { /* ignore non-persistable URIs */ }
+            } catch (e: Exception) { }
             val path = resolveUri(uri) ?: uri.toString()
             val escaped = path.replace("\\", "\\\\").replace("'", "\\'")
             "window.__fpResolve&&window.__fpResolve('$escaped');window.__fpResolve=null;window.__fpReject=null;"
@@ -49,23 +48,56 @@ class MainActivity : TauriActivity() {
         wv.post { wv.evaluateJavascript(script, null) }
     }
 
+    // File picker for adding files into ZynkbotShare
+    private val pickFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        val wv = webViewRef?.get() ?: return@registerForActivityResult
+        if (uri == null) {
+            wv.post { wv.evaluateJavascript(
+                "window.__zfpReject&&window.__zfpReject('cancelled');window.__zfpResolve=null;window.__zfpReject=null;", null) }
+            return@registerForActivityResult
+        }
+        // Copy the file into ZynkbotShare on a background thread
+        Thread {
+            try {
+                val destDir = zynkShareDir()
+                destDir.mkdirs()
+                // Resolve a display name for the file
+                val fileName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    cursor.moveToFirst()
+                    if (nameIndex >= 0) cursor.getString(nameIndex) else null
+                } ?: uri.lastPathSegment ?: "file"
+                val dest = File(destDir, fileName)
+                contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+                val escaped = dest.absolutePath.replace("\\", "\\\\").replace("'", "\\'")
+                wv.post { wv.evaluateJavascript(
+                    "window.__zfpResolve&&window.__zfpResolve('$escaped');window.__zfpResolve=null;window.__zfpReject=null;", null) }
+            } catch (e: Exception) {
+                val msg = (e.message ?: "copy failed").replace("'", "\\'")
+                wv.post { wv.evaluateJavascript(
+                    "window.__zfpReject&&window.__zfpReject('$msg');window.__zfpResolve=null;window.__zfpReject=null;", null) }
+            }
+        }.start()
+    }
+
     inner class FolderPickerBridge {
         @JavascriptInterface
         fun pick() {
             runOnUiThread {
                 val permsNeeded = mutableListOf<String>()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    // Android 13+: only request image permission (video/audio not used)
                     if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
                         permsNeeded.add(Manifest.permission.READ_MEDIA_IMAGES)
                     }
                 } else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
-                    // Android 12 and below
                     if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                         permsNeeded.add(Manifest.permission.READ_EXTERNAL_STORAGE)
                     }
                 }
-
                 if (permsNeeded.isNotEmpty()) {
                     requestStoragePermission.launch(permsNeeded.toTypedArray())
                 } else {
@@ -84,10 +116,16 @@ class MainActivity : TauriActivity() {
         }
 
         @JavascriptInterface
+        fun pickFile() {
+            runOnUiThread {
+                pickFileLauncher.launch(arrayOf("*/*"))
+            }
+        }
+
+        @JavascriptInterface
         fun openShareFolder() {
             zynkShareDir().mkdirs()
             runOnUiThread {
-                // Open the Downloads folder — that's where Zynkbot/ lives
                 try {
                     val intent = Intent("android.intent.action.VIEW_DOWNLOADS")
                     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -135,8 +173,6 @@ class MainActivity : TauriActivity() {
     }
 
     private fun zynkShareDir(): File {
-        // Prefer Downloads/Zynkbot — visible in all file managers.
-        // Fall back to app-specific external dir if Downloads isn't writable.
         val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val preferred = File(downloads, "Zynkbot")
         if (preferred.mkdirs() || preferred.exists()) return preferred
@@ -146,7 +182,7 @@ class MainActivity : TauriActivity() {
     }
 
     private fun ensureShareDir() {
-        zynkShareDir() // creates the directory as a side effect
+        zynkShareDir()
     }
 
     private fun requestNotificationPermissionIfNeeded() {
