@@ -365,19 +365,25 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
         <div className="zfb-header">
           <div className="zfb-header-left">
             <h2>📁 {shareName || 'Shared Files'}</h2>
+          </div>
+          <div className="zfb-header-right">
             {!loading && (
               <span className="zfb-count">{files.length} file{files.length !== 1 ? 's' : ''}</span>
             )}
-          </div>
-          <div className="zfb-header-right">
-            {window.AndroidPaths && isOwnShare && (
-              <button className="zfb-refresh-btn" onClick={handleAddFile} title="Add files from your device">
-                + Add Files
+            {window.AndroidPaths && isOwnShare ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleAddFile}>
+                  + Add Files
+                </button>
+                <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={loadFiles} disabled={loading}>
+                  🔄 Refresh
+                </button>
+              </div>
+            ) : (
+              <button className="zfb-refresh-btn" onClick={loadFiles} disabled={loading} title="Refresh">
+                🔄 Refresh
               </button>
             )}
-            <button className="zfb-refresh-btn" onClick={loadFiles} disabled={loading} title="Refresh">
-              🔄 Refresh
-            </button>
             <button className="zfb-close-btn" onClick={onClose}>✕</button>
           </div>
         </div>
