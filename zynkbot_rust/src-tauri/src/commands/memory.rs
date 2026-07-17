@@ -229,13 +229,16 @@ pub async fn delete_memory(memory_id: i32) -> Result<bool, String> {
         if let Some(hash) = content_hash {
             let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
             if let Some(service) = zynksync_service.as_ref() {
+                // Always record tombstone so future syncs can't resurrect this memory,
+                // regardless of whether auto-sync is currently enabled.
+                let _ = service.record_tombstones(&[hash.clone()]).await;
                 if service.is_auto_sync_enabled().await {
                     match service.propagate_deletion_by_hash(hash).await {
                         Ok(count) => println!("[Rust] ✓ Deletion synced to {} device(s)", count),
                         Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to sync deletion: {}", e),
                     }
                 } else {
-                    println!("[Rust] Auto-sync disabled - deletion not propagated to other devices");
+                    println!("[Rust] Auto-sync disabled - tombstone recorded, deletion not propagated");
                 }
             } else {
                 println!("[Rust] ⚠ ZynkSync not running - deletion not propagated to other devices");

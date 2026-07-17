@@ -540,8 +540,8 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
               <div style={{ fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '8px' }}>
                 Enter the IP:code from the other device to sync with it:
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <input
                     type="text"
                     inputMode="decimal"
@@ -550,22 +550,23 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
                     onChange={(e) => { setPairingIPPart(e.target.value); setPairingInput(e.target.value + ':' + pairingNumPart); }}
                     disabled={loading}
                     style={{
-                      flex: 3, padding: '12px', background: '#282a36',
+                      width: '100%', boxSizing: 'border-box',
+                      padding: '12px', background: '#282a36',
                       border: '1px solid #44475a', borderRadius: '4px',
                       color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
                     }}
                   />
-                  <span style={{ color: '#f8f8f2', fontSize: '1.2rem', fontWeight: 'bold', padding: '0 2px' }}>:</span>
                   <input
                     type="text"
                     inputMode="numeric"
-                    placeholder="456789"
+                    placeholder="Code (456789)"
                     value={pairingNumPart}
                     onChange={(e) => { setPairingNumPart(e.target.value); setPairingInput(pairingIPPart + ':' + e.target.value); }}
                     onKeyPress={(e) => { if (e.key === 'Enter' && !loading) handleAddDevice(); }}
                     disabled={loading}
                     style={{
-                      flex: 2, padding: '12px', background: '#282a36',
+                      width: '100%', boxSizing: 'border-box',
+                      padding: '12px', background: '#282a36',
                       border: '1px solid #44475a', borderRadius: '4px',
                       color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
                     }}

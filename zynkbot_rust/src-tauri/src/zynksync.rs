@@ -111,6 +111,8 @@ pub struct MemoryInventory {
     pub content_hashes: Vec<String>,  // SHA256 hashes of memory content for portable comparison
     pub latest_activity: Option<DateTime<Utc>>,  // Most recent memory timestamp (to determine active device)
     pub memory_count: usize,
+    #[serde(default)]
+    pub deleted_hashes: Vec<String>,  // Tombstones: hashes of explicitly deleted memories
 }
 
 /// Request to get inventory from remote device
@@ -1073,6 +1075,12 @@ impl ZynkSyncService {
         });
         let memory_count = rows.len();
 
+        let deleted_hashes: Vec<String> = sqlx::query_scalar(
+            "SELECT content_hash FROM deleted_memory_hashes"
+        )
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap_or_default();
 
         Ok(MemoryInventory {
             user_id: user_id.to_string(),
@@ -1080,6 +1088,7 @@ impl ZynkSyncService {
             content_hashes,
             latest_activity,
             memory_count,
+            deleted_hashes,
         })
     }
 
@@ -1988,6 +1997,62 @@ impl ZynkSyncService {
             }
         };
 
+        // --- TOMBSTONE RECONCILIATION (before active/passive logic) ---
+        // Tombstones always win: explicit deletions can never be resurrected by sync.
+        let local_tombstones: std::collections::HashSet<String> =
+            local_inventory.deleted_hashes.iter().cloned().collect();
+        let remote_tombstones: std::collections::HashSet<String> =
+            remote_inventory.deleted_hashes.iter().cloned().collect();
+
+        {
+            let local_hashes_ts: std::collections::HashSet<String> =
+                local_inventory.content_hashes.iter().cloned().collect();
+            let local_hash_to_id_ts: std::collections::HashMap<String, i32> =
+                local_inventory.content_hashes.iter()
+                    .zip(local_inventory.memory_ids.iter())
+                    .map(|(h, id)| (h.clone(), *id))
+                    .collect();
+            let remote_hashes_ts: std::collections::HashSet<String> =
+                remote_inventory.content_hashes.iter().cloned().collect();
+
+            // 1. Apply remote tombstones to local memories
+            let to_tombstone_locally: Vec<i32> = remote_tombstones.iter()
+                .filter(|h| local_hashes_ts.contains(*h))
+                .filter_map(|h| local_hash_to_id_ts.get(h).copied())
+                .collect();
+            if !to_tombstone_locally.is_empty() {
+                println!("[ZynkSync] Applying {} remote tombstones locally", to_tombstone_locally.len());
+                self.delete_and_tombstone(&to_tombstone_locally).await?;
+            }
+
+            // 2. Absorb remote tombstones we don't have yet (protection for future syncs)
+            let new_remote_tombstones: Vec<String> = remote_tombstones.iter()
+                .filter(|h| !local_tombstones.contains(*h))
+                .cloned().collect();
+            if !new_remote_tombstones.is_empty() {
+                self.record_tombstones(&new_remote_tombstones).await?;
+            }
+
+            // 3. Propagate our tombstones to remote for memories remote still has
+            let to_tombstone_remotely: Vec<String> = local_tombstones.iter()
+                .filter(|h| remote_hashes_ts.contains(*h))
+                .cloned().collect();
+            if !to_tombstone_remotely.is_empty() {
+                println!("[ZynkSync] Propagating {} local tombstones to remote", to_tombstone_remotely.len());
+                for hash in &to_tombstone_remotely {
+                    let endpoint = format!("{}/api/zynksync/delete-by-hash", peer.url);
+                    let payload = serde_json::json!({ "content_hash": hash });
+                    let client = self.http_client.read().await.clone();
+                    let _ = client.post(&endpoint).json(&payload)
+                        .timeout(Duration::from_secs(10)).send().await;
+                }
+            }
+        }
+
+        // Combined tombstones filter active/passive logic so tombstoned hashes are never synced
+        let all_tombstones: std::collections::HashSet<String> =
+            local_tombstones.union(&remote_tombstones).cloned().collect();
+
         let mut memories_sent = 0;
         let mut memories_received = 0;
 
@@ -2004,8 +2069,10 @@ impl ZynkSyncService {
                 .map(|(h, id)| (h.clone(), *id))
                 .collect();
 
-            // Find memories we have that remote doesn't (by content hash)
-            let hashes_to_send: Vec<String> = local_hashes.difference(&remote_hashes).cloned().collect();
+            // Find memories we have that remote doesn't (by content hash), excluding tombstoned
+            let hashes_to_send: Vec<String> = local_hashes.difference(&remote_hashes)
+                .filter(|h| !all_tombstones.contains(*h))
+                .cloned().collect();
             let to_send: Vec<i32> = hashes_to_send.iter().filter_map(|h| hash_to_id.get(h).copied()).collect();
 
             if !to_send.is_empty() {
@@ -2083,8 +2150,10 @@ impl ZynkSyncService {
                 .map(|(h, id)| (h.clone(), *id))
                 .collect();
 
-            // Find memories remote has that we don't (by content hash)
-            let hashes_to_receive: Vec<String> = remote_hashes.difference(&local_hashes).cloned().collect();
+            // Find memories remote has that we don't (by content hash), excluding tombstoned
+            let hashes_to_receive: Vec<String> = remote_hashes.difference(&local_hashes)
+                .filter(|h| !all_tombstones.contains(*h))
+                .cloned().collect();
             let to_receive: Vec<i32> = hashes_to_receive.iter().filter_map(|h| remote_hash_to_id.get(h).copied()).collect();
 
             if !to_receive.is_empty() {
@@ -2272,21 +2341,47 @@ impl ZynkSyncService {
 
     /// Delete memories by their IDs (used when remote active device no longer has them)
     async fn delete_memories_by_ids(&self, ids: &[i32]) -> Result<usize, String> {
-        let result = if ids.is_empty() {
-            return Ok(0);
-        } else {
-            let in_clause = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-            let sql = format!("DELETE FROM memories WHERE id IN ({})", in_clause);
-            let mut q = sqlx::query(&sql);
-            for id in ids { q = q.bind(id); }
-            q.execute(&self.db_pool)
-                .await
-                .map_err(|e| format!("Failed to delete memories: {}", e))?
-        };
-
+        if ids.is_empty() { return Ok(0); }
+        let in_clause = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let sql = format!("DELETE FROM memories WHERE id IN ({})", in_clause);
+        let mut q = sqlx::query(&sql);
+        for id in ids { q = q.bind(id); }
+        let result = q.execute(&self.db_pool).await
+            .map_err(|e| format!("Failed to delete memories: {}", e))?;
         let deleted_count = result.rows_affected() as usize;
         println!("[ZynkSync] Deleted {} memories", deleted_count);
         Ok(deleted_count)
+    }
+
+    /// Record content hashes as tombstones so they are never resurrected by sync.
+    pub async fn record_tombstones(&self, hashes: &[String]) -> Result<(), String> {
+        for hash in hashes {
+            sqlx::query("INSERT OR IGNORE INTO deleted_memory_hashes (content_hash) VALUES (?)")
+                .bind(hash)
+                .execute(&self.db_pool)
+                .await
+                .map_err(|e| format!("Failed to record tombstone: {}", e))?;
+        }
+        Ok(())
+    }
+
+    /// Delete memories by IDs and record tombstones for each deleted hash.
+    /// Use this for user-visible deletions and remote-tombstone application.
+    async fn delete_and_tombstone(&self, ids: &[i32]) -> Result<usize, String> {
+        if ids.is_empty() { return Ok(0); }
+        // Fetch content hashes before deletion
+        let in_clause = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let hash_sql = format!("SELECT content FROM memories WHERE id IN ({})", in_clause);
+        let mut q = sqlx::query_scalar::<_, String>(&hash_sql);
+        for id in ids { q = q.bind(id); }
+        let contents: Vec<String> = q.fetch_all(&self.db_pool).await.unwrap_or_default();
+        let hashes: Vec<String> = contents.iter().map(|c| {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(c.as_bytes()))
+        }).collect();
+        let count = self.delete_memories_by_ids(ids).await?;
+        self.record_tombstones(&hashes).await?;
+        Ok(count)
     }
 
     /// Propagate a memory deletion to all paired devices
@@ -2329,6 +2424,10 @@ impl ZynkSyncService {
     /// IMPORTANT: Use this when you've already fetched the hash before deletion
     pub async fn propagate_deletion_by_hash(&self, content_hash: String) -> Result<usize, String> {
         println!("[ZynkSync] Propagating deletion by hash {} to paired devices", content_hash);
+
+        // Record tombstone locally so this deletion survives future syncs
+        self.record_tombstones(&[content_hash.clone()]).await
+            .unwrap_or_else(|e| eprintln!("[ZynkSync] Failed to record tombstone: {}", e));
 
         // Get all paired peers
         let peers = {
@@ -3557,6 +3656,14 @@ async fn handle_delete_by_hash(
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing content_hash parameter"}))))?;
 
     println!("[ZynkSync] Delete-by-hash request for hash: {}", content_hash);
+
+    // Record tombstone regardless of whether we have this memory — prevents future resurrection
+    let _ = sqlx::query(
+        "INSERT OR IGNORE INTO deleted_memory_hashes (content_hash) VALUES (?)"
+    )
+    .bind(content_hash)
+    .execute(&service.db_pool)
+    .await;
 
     let memory_id: Option<i32> = {
         use sha2::{Digest, Sha256};
