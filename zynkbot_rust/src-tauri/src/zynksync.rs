@@ -21,11 +21,13 @@ use hyper_util::rt::{TokioIo, TokioExecutor};
 use hyper_util::server::conn::auto::Builder as HyperConnBuilder;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use axum::{
-    routing::post,
+    routing::{post, any},
     Router,
     Json,
-    extract::{State, ConnectInfo},
+    extract::{State, ConnectInfo, Request},
     http::StatusCode,
+    response::{Response, IntoResponse},
+    body::Body,
 };
 use std::net::SocketAddr;
 use sha2::{Sha256, Digest};
@@ -2829,6 +2831,8 @@ impl ZynkSyncService {
             .route("/api/presence/goodbye", post(handle_goodbye))
             .route("/api/zynksync/pause", post(handle_pause))
             .route("/api/zynksync/resume", post(handle_resume))
+            // Ollama proxy: forwards /api/ollama/* to localhost:11434 for LAN inference
+            .route("/api/ollama/*path", any(handle_ollama_proxy))
             .with_state(Arc::clone(&self));
 
         // Build TLS config from this device's certificate
@@ -4138,4 +4142,78 @@ async fn handle_zynklink_notify_unpaired(
     }
 
     Ok(axum::Json(serde_json::json!({ "success": true })))
+}
+
+// =============================================================================
+// Ollama Proxy — forwards /api/ollama/* to localhost:11434
+// Lets paired mobile devices use the desktop's Ollama instance over LAN
+// without exposing Ollama's port directly on the network.
+// =============================================================================
+
+async fn handle_ollama_proxy(
+    State(_service): State<Arc<ZynkSyncService>>,
+    request: Request,
+) -> Response {
+    // Check that local Ollama is configured
+    if std::env::var("CUSTOM_API_URL").is_err() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            "Ollama not configured on this device").into_response();
+    }
+
+    // Strip /api/ollama prefix to get the target path
+    let uri = request.uri().clone();
+    let path = uri.path().trim_start_matches("/api/ollama");
+    let query = uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let target_url = format!("http://localhost:11434{}{}", path, query);
+
+    // Read request body
+    let method_str = request.method().as_str().to_string();
+    let req_content_type = request.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json")
+        .to_string();
+    let body_bytes = match axum::body::to_bytes(request.into_body(), 10 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::BAD_REQUEST, format!("Failed to read body: {}", e)).into_response(),
+    };
+
+    // Forward to local Ollama
+    let client = reqwest::Client::new();
+    let method = match reqwest::Method::from_bytes(method_str.as_bytes()) {
+        Ok(m) => m,
+        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid HTTP method").into_response(),
+    };
+
+    let mut builder = client.request(method, &target_url)
+        .header("content-type", &req_content_type);
+    if !body_bytes.is_empty() {
+        builder = builder.body(body_bytes.to_vec());
+    }
+
+    let ollama_response = match builder.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[OllamaProxy] Failed to reach Ollama: {}", e);
+            return (StatusCode::BAD_GATEWAY,
+                format!("Can't reach Ollama — is it running? ({})", e)).into_response();
+        }
+    };
+
+    let status = StatusCode::from_u16(ollama_response.status().as_u16())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let content_type = ollama_response.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/json")
+        .to_string();
+
+    // Stream response body back to caller
+    let stream = ollama_response.bytes_stream();
+    Response::builder()
+        .status(status)
+        .header("content-type", content_type)
+        .header("access-control-allow-origin", "*")
+        .body(Body::from_stream(stream))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }

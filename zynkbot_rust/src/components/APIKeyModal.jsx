@@ -44,6 +44,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [customStatus, setCustomStatus] = useState({ type: "idle", message: "" });
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [isSavingCustom, setIsSavingCustom] = useState(false);
+  const [syncPeers, setSyncPeers] = useState([]);
 
   useEffect(() => {
     if (isOpen) {
@@ -61,6 +62,10 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     } catch (error) {
       console.error("Error loading API keys:", error);
     }
+    try {
+      const peers = await invoke('get_zynksync_peers');
+      setSyncPeers((peers || []).filter(p => p.paired));
+    } catch (_) {}
   };
 
   const handleSave = async (providerKey) => {
@@ -362,6 +367,38 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxWidth: '420px' }}>
+              {/* Peer-aware quick-connect: show paired devices as one-tap options */}
+              {syncPeers.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '0.8rem', color: '#9aa5c4', marginBottom: '6px' }}>
+                    Use Ollama on a paired device:
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {syncPeers.map(peer => (
+                      <button
+                        key={peer.device_id}
+                        onClick={() => {
+                          const proxyUrl = `https://${peer.host}:${peer.port}/api/ollama/v1`;
+                          setCustomUrl(proxyUrl);
+                          setCustomStatus({ type: "idle", message: "" });
+                          setAvailableCustomModels([]);
+                        }}
+                        style={{
+                          padding: '8px 12px', background: '#2d2f3f', border: '1px solid #6272a4',
+                          borderRadius: '4px', color: '#f8f8f2', cursor: 'pointer',
+                          fontSize: '0.85rem', textAlign: 'left'
+                        }}
+                      >
+                        🖥 Use Ollama on <strong>{peer.device_name}</strong>
+                        <span style={{ color: '#9aa5c4', marginLeft: '8px' }}>({peer.host})</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: '#6272a4', margin: '4px 0 6px' }}>
+                    — or enter a URL manually —
+                  </div>
+                </div>
+              )}
               <input
                 type="text"
                 className="key-input"
