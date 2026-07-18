@@ -37,6 +37,16 @@ pub async fn get_models() -> Result<Vec<ModelInfo>, String> {
         });
     }
 
+    if std::env::var("CUSTOM_API_URL").is_ok() {
+        let model_name = std::env::var("CUSTOM_MODEL")
+            .unwrap_or_else(|_| "custom model".to_string());
+        models.push(ModelInfo {
+            id: "custom".to_string(),
+            name: format!("Custom / Ollama ({})", model_name),
+            model_type: "api".to_string(),
+        });
+    }
+
     if let Ok(model_path) = std::env::var("LOCAL_MODEL_PATH") {
         let model_name = std::path::Path::new(&model_path)
             .file_stem()
@@ -179,6 +189,15 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
     if let Ok(key) = std::env::var("XAI_API_KEY") {
         keys.insert("XAI_API_KEY".to_string(), serde_json::json!(key));
     }
+    if let Ok(url) = std::env::var("CUSTOM_API_URL") {
+        keys.insert("CUSTOM_API_URL".to_string(), serde_json::json!(url));
+    }
+    if let Ok(key) = std::env::var("CUSTOM_API_KEY") {
+        keys.insert("CUSTOM_API_KEY".to_string(), serde_json::json!(key));
+    }
+    if let Ok(model) = std::env::var("CUSTOM_MODEL") {
+        keys.insert("CUSTOM_MODEL".to_string(), serde_json::json!(model));
+    }
     Ok(serde_json::json!(keys))
 }
 
@@ -247,4 +266,44 @@ pub async fn remove_api_key(key: String) -> Result<(), String> {
 
     println!("[API Keys] ✅ Removed {} from .env at {:?}", key, env_path);
     Ok(())
+}
+
+/// Fetch the list of models from a custom OpenAI-compatible endpoint (Ollama, llama-server, etc.)
+#[tauri::command]
+pub async fn fetch_custom_models(base_url: String, api_key: String) -> Result<Vec<String>, String> {
+    let models_url = format!("{}/models", base_url.trim_end_matches('/'));
+    println!("[Custom] Fetching models from: {}", models_url);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut req = client.get(&models_url);
+    if !api_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", api_key));
+    }
+
+    let response = req.send().await.map_err(|e| {
+        format!("Can't reach {} — is the server running? ({})", base_url, e)
+    })?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Server returned {} — is this an OpenAI-compatible endpoint?",
+            response.status()
+        ));
+    }
+
+    let json: serde_json::Value = response.json().await
+        .map_err(|e| format!("Invalid response from server: {}", e))?;
+
+    let models = json["data"].as_array()
+        .ok_or_else(|| "Unexpected response format — expected {\"data\": [...]}".to_string())?
+        .iter()
+        .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+        .collect::<Vec<_>>();
+
+    println!("[Custom] Found {} model(s): {:?}", models.len(), models);
+    Ok(models)
 }

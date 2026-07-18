@@ -569,6 +569,37 @@ pub async fn send_message_with_memory(
             response.content
         }
 
+    } else if forced_backend.to_lowercase() == "custom" {
+        // Custom / Ollama — OpenAI-compatible endpoint at user-supplied URL
+        let base_url = std::env::var("CUSTOM_API_URL")
+            .map_err(|_| "Custom endpoint not configured. Add it in API Settings.".to_string())?;
+        let model_name = std::env::var("CUSTOM_MODEL")
+            .map_err(|_| "No model selected for custom endpoint. Configure it in API Settings.".to_string())?;
+        let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
+        let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
+        if image_data.is_some() {
+            return Err("Image attachments are not supported with custom/Ollama endpoints.".to_string());
+        }
+
+        let app_handle = app.clone();
+        let messages = vec![crate::llm::Message {
+            role: "user".to_string(),
+            content: full_prompt,
+        }];
+
+        println!("[⏱️ PERF] Calling custom endpoint ({}) model: {}", api_url, model_name);
+        let response = crate::llm::openai::send_message_streaming(
+            &api_key,
+            &model_name,
+            messages,
+            Some(4096),
+            None,
+            &api_url,
+            move |token| { app_handle.emit("stream-token", token).ok(); },
+        ).await.map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))?;
+        response.content
+
     } else if forced_backend.to_lowercase().contains("local") || forced_backend.ends_with(".gguf") {
         if image_data.is_some() {
             return Err("Image attachments are not supported with local models. Please switch to a cloud model (Claude, GPT-4o, or Grok) to use vision.".to_string());

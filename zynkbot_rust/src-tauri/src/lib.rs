@@ -460,6 +460,8 @@ Return ONLY valid JSON starting with {{:
         call_openai_for_memory_decision(&prompt).await?
     } else if backend.contains("xai") {
         call_xai_for_memory_decision(&prompt).await?
+    } else if backend == "custom" {
+        call_custom_for_memory_decision(&prompt).await?
     } else if let Some(sess) = local_session {
         // Paired-call path: use the session loaded for the main conversation call.
         // No second disk read — the model is already in memory.
@@ -584,6 +586,8 @@ Return the JSON now:"#,
         call_xai_for_memory_decision(&prompt).await?
     } else if backend.ends_with(".gguf") || backend == "local" {
         call_local_for_memory_decision(&prompt, backend, Some(MEMORY_DECISION_SCHEMA)).await?
+    } else if backend == "custom" {
+        call_custom_for_memory_decision(&prompt).await?
     } else {
         println!("[Memory Decision] Unknown backend '{}' - skipping memory decision", backend);
         return Ok((false, None));
@@ -697,6 +701,51 @@ async fn call_xai_for_memory_decision(prompt: &str) -> Result<String, String> {
         Ok(response) => Ok(response.content),
         Err(e) => Err(format!("xAI API error: {}", e))
     }
+}
+
+/// Call a custom OpenAI-compatible endpoint (Ollama, llama-server, etc.) for memory decision
+async fn call_custom_for_memory_decision(prompt: &str) -> Result<String, String> {
+    let base_url = std::env::var("CUSTOM_API_URL")
+        .map_err(|_| "Custom endpoint not configured".to_string())?;
+    let model = std::env::var("CUSTOM_MODEL")
+        .map_err(|_| "No custom model selected".to_string())?;
+    let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
+    let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
+    #[derive(serde::Serialize)]
+    struct Req { model: String, messages: Vec<crate::llm::Message>, max_tokens: Option<u32>, temperature: Option<f32> }
+
+    let req = Req {
+        model,
+        messages: vec![crate::llm::Message { role: "user".to_string(), content: prompt.to_string() }],
+        max_tokens: Some(4096),
+        temperature: Some(0.3),
+    };
+
+    let client = reqwest::Client::new();
+    let mut builder = client.post(&api_url).header("Content-Type", "application/json").json(&req);
+    if !api_key.is_empty() {
+        builder = builder.header("Authorization", format!("Bearer {}", api_key));
+    }
+
+    let response = builder.send().await
+        .map_err(|e| format!("Custom endpoint error: {}", e))?;
+    if !response.status().is_success() {
+        return Err(format!("Custom endpoint returned {}", response.status()));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Resp { choices: Vec<RespChoice> }
+    #[derive(serde::Deserialize)]
+    struct RespChoice { message: RespMsg }
+    #[derive(serde::Deserialize)]
+    struct RespMsg { content: String }
+
+    let resp: Resp = response.json().await
+        .map_err(|e| format!("Failed to parse custom endpoint response: {}", e))?;
+    resp.choices.first()
+        .map(|c| c.message.content.clone())
+        .ok_or_else(|| "No response from custom endpoint".to_string())
 }
 
 /// Call local GGUF model for memory decision
@@ -979,6 +1028,8 @@ Return the JSON now:"#,
         call_xai_for_memory_decision(&prompt).await?
     } else if backend.ends_with(".gguf") || backend == "local" {
         call_local_for_memory_decision(&prompt, backend, Some(MEMORY_DECISION_WITH_RELATIONSHIPS_SCHEMA)).await?
+    } else if backend == "custom" {
+        call_custom_for_memory_decision(&prompt).await?
     } else {
         println!("[Memory Decision] Unknown backend '{}' - skipping", backend);
         return Ok((false, None, Vec::new()));
@@ -2119,6 +2170,7 @@ pub fn run() {
             commands::models::get_api_keys,
             commands::models::set_api_key,
             commands::models::remove_api_key,
+            commands::models::fetch_custom_models,
             commands::chat::send_message_with_memory,
             commands::chat::run_ensemble,
             commands::memory::list_memories,

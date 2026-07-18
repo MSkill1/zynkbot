@@ -36,6 +36,15 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [showKeys, setShowKeys] = useState({});
   const [showCostGuide, setShowCostGuide] = useState(false);
 
+  // Custom endpoint state
+  const [customUrl, setCustomUrl] = useState("");
+  const [customApiKey, setCustomApiKey] = useState("");
+  const [customModel, setCustomModel] = useState("");
+  const [availableCustomModels, setAvailableCustomModels] = useState([]);
+  const [customStatus, setCustomStatus] = useState({ type: "idle", message: "" });
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [isSavingCustom, setIsSavingCustom] = useState(false);
+
   useEffect(() => {
     if (isOpen) {
       loadAPIKeys();
@@ -46,6 +55,9 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     try {
       const keys = await invoke('get_api_keys');
       setApiKeys(keys);
+      if (keys.CUSTOM_API_URL) setCustomUrl(keys.CUSTOM_API_URL);
+      if (keys.CUSTOM_API_KEY) setCustomApiKey(keys.CUSTOM_API_KEY);
+      if (keys.CUSTOM_MODEL) setCustomModel(keys.CUSTOM_MODEL);
     } catch (error) {
       console.error("Error loading API keys:", error);
     }
@@ -73,7 +85,6 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       setTempValue("");
       console.log(`✅ Saved ${providerKey}`);
 
-      // Notify parent to refresh models
       if (onKeysChanged) {
         onKeysChanged();
       }
@@ -104,13 +115,91 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
 
       console.log(`🗑️ Removed ${providerKey}`);
 
-      // Notify parent to refresh models
       if (onKeysChanged) {
         onKeysChanged();
       }
     } catch (error) {
       console.error(`Error removing ${providerKey}:`, error);
       alert(`Failed to remove API key: ${error}`);
+    }
+  };
+
+  const handleFetchCustomModels = async () => {
+    if (!customUrl.trim()) {
+      setCustomStatus({ type: "error", message: "Enter a base URL first (e.g. http://localhost:11434/v1)" });
+      return;
+    }
+    setIsFetchingModels(true);
+    setCustomStatus({ type: "idle", message: "" });
+    try {
+      const models = await invoke('fetch_custom_models', {
+        baseUrl: customUrl.trim(),
+        apiKey: customApiKey.trim()
+      });
+      setAvailableCustomModels(models);
+      if (models.length === 0) {
+        setCustomStatus({ type: "error", message: "Connected but no models found. Pull a model first (e.g. ollama pull llama3.1:8b)" });
+      } else {
+        setCustomStatus({ type: "success", message: `✓ Connected — ${models.length} model(s) available` });
+        if (!customModel || !models.includes(customModel)) {
+          setCustomModel(models[0]);
+        }
+      }
+    } catch (err) {
+      setCustomStatus({ type: "error", message: String(err) });
+      setAvailableCustomModels([]);
+    } finally {
+      setIsFetchingModels(false);
+    }
+  };
+
+  const handleSaveCustom = async () => {
+    if (!customUrl.trim()) {
+      setCustomStatus({ type: "error", message: "Base URL is required" });
+      return;
+    }
+    if (!customModel.trim()) {
+      setCustomStatus({ type: "error", message: "Select a model first" });
+      return;
+    }
+    setIsSavingCustom(true);
+    try {
+      await invoke('set_api_key', { key: 'CUSTOM_API_URL', value: customUrl.trim() });
+      if (customApiKey.trim()) {
+        await invoke('set_api_key', { key: 'CUSTOM_API_KEY', value: customApiKey.trim() });
+      } else {
+        await invoke('remove_api_key', { key: 'CUSTOM_API_KEY' });
+      }
+      await invoke('set_api_key', { key: 'CUSTOM_MODEL', value: customModel.trim() });
+      setApiKeys(prev => ({ ...prev, CUSTOM_API_URL: customUrl.trim(), CUSTOM_MODEL: customModel.trim() }));
+      setCustomStatus({ type: "success", message: "✓ Saved — select \"Custom / Ollama\" from the model picker" });
+      if (onKeysChanged) onKeysChanged();
+    } catch (err) {
+      setCustomStatus({ type: "error", message: `Failed to save: ${err}` });
+    } finally {
+      setIsSavingCustom(false);
+    }
+  };
+
+  const handleRemoveCustom = async () => {
+    if (!window.confirm("Remove custom endpoint configuration?")) return;
+    try {
+      await invoke('remove_api_key', { key: 'CUSTOM_API_URL' });
+      await invoke('remove_api_key', { key: 'CUSTOM_API_KEY' });
+      await invoke('remove_api_key', { key: 'CUSTOM_MODEL' });
+      setCustomUrl("");
+      setCustomApiKey("");
+      setCustomModel("");
+      setAvailableCustomModels([]);
+      setCustomStatus({ type: "idle", message: "" });
+      setApiKeys(prev => {
+        const u = { ...prev };
+        delete u.CUSTOM_API_URL; delete u.CUSTOM_API_KEY; delete u.CUSTOM_MODEL;
+        return u;
+      });
+      if (onKeysChanged) onKeysChanged();
+    } catch (err) {
+      alert(`Failed to remove: ${err}`);
     }
   };
 
@@ -123,6 +212,8 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const isConfigured = (providerKey) => {
     return apiKeys[providerKey] && apiKeys[providerKey].length > 0;
   };
+
+  const isCustomConfigured = () => apiKeys.CUSTOM_API_URL && apiKeys.CUSTOM_MODEL;
 
   if (!isOpen) return null;
 
@@ -253,11 +344,100 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
               )}
             </div>
           ))}
+
+          {/* Custom / Ollama section */}
+          <div className="api-key-item">
+            <div className="provider-header">
+              <div className="provider-info">
+                <span className="provider-name">Custom / Ollama</span>
+                <span className="provider-description">Any OpenAI-compatible server (Ollama, llama-server, LM Studio)</span>
+              </div>
+              <div className="provider-status">
+                {isCustomConfigured() ? (
+                  <span className="status-configured">✅ Configured</span>
+                ) : (
+                  <span className="status-missing">⚠️ Not set</span>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxWidth: '420px' }}>
+              <input
+                type="text"
+                className="key-input"
+                placeholder="http://localhost:11434/v1"
+                value={customUrl}
+                onChange={(e) => setCustomUrl(e.target.value)}
+              />
+              <input
+                type="text"
+                className="key-input"
+                placeholder="API key (leave blank for Ollama)"
+                value={customApiKey}
+                onChange={(e) => setCustomApiKey(e.target.value)}
+              />
+              <div style={{ fontSize: '0.78rem', color: '#9aa5c4', marginTop: '-4px' }}>
+                Ollama doesn't require an API key — leave it blank.
+                Other servers (LM Studio, vLLM) may require one.
+              </div>
+              <button
+                onClick={handleFetchCustomModels}
+                disabled={isFetchingModels || !customUrl.trim()}
+                className="btn-save"
+                style={{ alignSelf: 'flex-start' }}
+              >
+                {isFetchingModels ? "Connecting..." : "🔍 Fetch Models"}
+              </button>
+
+              {availableCustomModels.length > 0 && (
+                <select
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                  style={{
+                    padding: '8px', background: '#ffffff', color: '#000000',
+                    border: '1px solid #44475a', borderRadius: '4px', fontSize: '0.9rem',
+                    width: '100%'
+                  }}
+                >
+                  {availableCustomModels.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              )}
+
+              {customStatus.message && (
+                <div style={{
+                  fontSize: '0.85rem', padding: '6px 8px', borderRadius: '4px',
+                  background: customStatus.type === 'success' ? '#1a3a1a' : '#3a1a1a',
+                  color: customStatus.type === 'success' ? '#50fa7b' : '#ff5555',
+                  border: `1px solid ${customStatus.type === 'success' ? '#50fa7b44' : '#ff555544'}`
+                }}>
+                  {customStatus.message}
+                </div>
+              )}
+
+              <div className="key-actions">
+                <button
+                  onClick={handleSaveCustom}
+                  disabled={isSavingCustom || !customUrl.trim() || !customModel.trim()}
+                  className="btn-save"
+                >
+                  {isSavingCustom ? "Saving..." : "💾 Save"}
+                </button>
+                {isCustomConfigured() && (
+                  <button onClick={handleRemoveCustom} className="btn-delete">
+                    🗑️ Remove
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="api-key-note">
           <strong>Privacy Note:</strong> API keys are stored locally in your .env file.
           They are never sent to any server except the respective AI provider when you use that model.
+          Custom endpoint traffic goes directly to your server — no cloud involved.
         </div>
 
         <div className="modal-footer">
