@@ -2023,18 +2023,22 @@ impl ZynkSyncService {
                 self.record_tombstones(&new_remote_tombstones).await?;
             }
 
-            // 3. Propagate our tombstones to remote for memories remote still has
-            let to_tombstone_remotely: Vec<String> = local_tombstones.iter()
-                .filter(|h| remote_hashes_ts.contains(*h))
-                .cloned().collect();
-            if !to_tombstone_remotely.is_empty() {
-                println!("[ZynkSync] Propagating {} local tombstones to remote", to_tombstone_remotely.len());
-                for hash in &to_tombstone_remotely {
-                    let endpoint = format!("{}/api/zynksync/delete-by-hash", peer.url);
-                    let payload = serde_json::json!({ "content_hash": hash });
-                    let client = self.http_client.read().await.clone();
-                    let _ = client.post(&endpoint).json(&payload)
-                        .timeout(Duration::from_secs(10)).send().await;
+            // 3. Propagate our tombstones to remote for memories remote still has.
+            // Skipped on first sync: a freshly-paired device should never have its
+            // memories deleted by tombstones from our past history with other devices.
+            if !is_first_sync {
+                let to_tombstone_remotely: Vec<String> = local_tombstones.iter()
+                    .filter(|h| remote_hashes_ts.contains(*h))
+                    .cloned().collect();
+                if !to_tombstone_remotely.is_empty() {
+                    println!("[ZynkSync] Propagating {} local tombstones to remote", to_tombstone_remotely.len());
+                    for hash in &to_tombstone_remotely {
+                        let endpoint = format!("{}/api/zynksync/delete-by-hash", peer.url);
+                        let payload = serde_json::json!({ "content_hash": hash });
+                        let client = self.http_client.read().await.clone();
+                        let _ = client.post(&endpoint).json(&payload)
+                            .timeout(Duration::from_secs(10)).send().await;
+                    }
                 }
             }
         }
