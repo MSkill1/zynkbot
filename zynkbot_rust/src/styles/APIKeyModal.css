@@ -101,6 +101,7 @@
 
 .key-input {
   width: 100%;
+  box-sizing: border-box;
   padding: 10px 14px;
   background: #282a36;
   border: 2px solid #6272a4;

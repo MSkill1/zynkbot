@@ -332,7 +332,9 @@ PART 2 — your Zynkbot response follows on the next line.
 
     /// Determine if backend is an API model (not local .gguf)
     pub fn is_api_model(backend: &str) -> bool {
-        !backend.eq_ignore_ascii_case("local") && !backend.ends_with(".gguf")
+        !backend.eq_ignore_ascii_case("local")
+            && !backend.ends_with(".gguf")
+            && !backend.eq_ignore_ascii_case("custom")
     }
 }
 
@@ -395,6 +397,7 @@ mod tests {
         assert!(ConversationEngine::is_api_model("openai"));
         assert!(!ConversationEngine::is_api_model("local"));
         assert!(!ConversationEngine::is_api_model("model.gguf"));
+        assert!(!ConversationEngine::is_api_model("custom"));
     }
 
     /// Verify that only recalled + linked memories reach the prompt.

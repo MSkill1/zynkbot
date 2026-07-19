@@ -1055,7 +1055,7 @@ impl ZynkSyncService {
             "SELECT id, content, created_at, updated_at
              FROM memories
              WHERE user_id = ? AND is_syncable = 1
-             ORDER BY CASE WHEN COALESCE(updated_at, created_at) > created_at THEN COALESCE(updated_at, created_at) ELSE created_at END DESC"
+             ORDER BY datetime(COALESCE(updated_at, created_at)) DESC"
         )
         .bind(user_id)
         .fetch_all(&self.db_pool)
@@ -2098,12 +2098,17 @@ impl ZynkSyncService {
             }
 
             // Handle deletions (only on subsequent syncs, not first sync)
+            // Only delete from remote if WE explicitly tombstoned the hash.
+            // "Remote has it, we don't" is NOT evidence of deletion — the memory may simply
+            // not have synced to us yet. Tombstone propagation (step 3 above) already handles
+            // all user-initiated deletions correctly.
             if !is_first_sync {
-                // Find memories remote has that we don't (by content hash - deletions for remote)
-                let hashes_to_delete: Vec<String> = remote_hashes.difference(&local_hashes).cloned().collect();
+                let hashes_to_delete: Vec<String> = remote_hashes.difference(&local_hashes)
+                    .filter(|h| local_tombstones.contains(*h))
+                    .cloned().collect();
 
                 if !hashes_to_delete.is_empty() {
-                    println!("[ZynkSync] Remote has {} memories we don't - propagating deletion", hashes_to_delete.len());
+                    println!("[ZynkSync] Remote has {} tombstoned memories we deleted - propagating deletion", hashes_to_delete.len());
                     // Create hash->ID mapping for remote memories
                     let remote_hash_to_id: std::collections::HashMap<String, i32> = remote_inventory.content_hashes.iter()
                         .zip(remote_inventory.memory_ids.iter())
@@ -2181,12 +2186,17 @@ impl ZynkSyncService {
             }
 
             // Handle deletions (only on subsequent syncs, not first sync)
+            // Only delete locally if the REMOTE explicitly tombstoned the hash.
+            // "We have it, remote doesn't" is NOT evidence of deletion — the memory may simply
+            // not have synced to remote yet. Tombstone reconciliation (step 1 above) already
+            // applies all remote tombstones to our local store.
             if !is_first_sync {
-                // Find memories we have that remote doesn't (by content hash - deletions for us)
-                let hashes_to_delete: Vec<String> = local_hashes.difference(&remote_hashes).cloned().collect();
+                let hashes_to_delete: Vec<String> = local_hashes.difference(&remote_hashes)
+                    .filter(|h| remote_tombstones.contains(*h))
+                    .cloned().collect();
 
                 if !hashes_to_delete.is_empty() {
-                    println!("[ZynkSync] We have {} memories remote doesn't - deleting locally", hashes_to_delete.len());
+                    println!("[ZynkSync] We have {} remotely-tombstoned memories - deleting locally", hashes_to_delete.len());
                     // Create hash->ID mapping for local memories
                     let local_hash_to_id: std::collections::HashMap<String, i32> = local_inventory.content_hashes.iter()
                         .zip(local_inventory.memory_ids.iter())
@@ -2831,7 +2841,8 @@ impl ZynkSyncService {
             .route("/api/presence/goodbye", post(handle_goodbye))
             .route("/api/zynksync/pause", post(handle_pause))
             .route("/api/zynksync/resume", post(handle_resume))
-            // Ollama proxy: forwards /api/ollama/* to localhost:11434 for LAN inference
+            // Ollama: info endpoint (returns configured model) + proxy to localhost:11434
+            .route("/api/ollama/info", axum::routing::get(handle_ollama_info))
             .route("/api/ollama/*path", any(handle_ollama_proxy))
             .with_state(Arc::clone(&self));
 
@@ -3279,8 +3290,13 @@ async fn handle_introduce(
         .and_then(|v| v.as_str())
         .and_then(|b64| BASE64.decode(b64).ok());
 
-    // IP comes from the TCP connection — not from the request body (can't be spoofed)
-    let new_device_ip = addr.ip().to_string();
+    // Prefer the IP the introducer explicitly declared in the payload (it knows the new device's
+    // real address). Fall back to addr.ip() only for self-introductions where sender == new device.
+    let new_device_ip = request.get("new_device_ip")
+        .and_then(|v| v.as_str())
+        .filter(|ip| !ip.is_empty())
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|| addr.ip().to_string());
 
     // Reject introductions from devices we don't already trust
     let introducer_trusted: i64 = sqlx::query_scalar(
@@ -3433,6 +3449,8 @@ async fn handle_resume(
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
     check_sync_authorized(&service.db_pool, device_id).await?;
 
+    let was_running = service.is_auto_sync_enabled().await;
+
     {
         let mut enabled = service.auto_sync_enabled.write().await;
         *enabled = true;
@@ -3445,6 +3463,45 @@ async fn handle_resume(
             let _ = app.emit("zynksync-status-changed", serde_json::json!({"status": "running"}));
         }
     }
+
+    // If the auto-sync loop had already exited, restart it along with peers and client
+    if !was_running {
+        println!("[ZynkSync] Auto-sync loop was stopped — restarting via peer resume from {}", device_id);
+        let svc = Arc::clone(&service);
+        tokio::spawn(async move {
+            if let Err(e) = svc.load_devices().await {
+                eprintln!("[ZynkSync] Resume: failed to load devices: {}", e);
+            }
+            if let Err(e) = svc.rebuild_http_client().await {
+                eprintln!("[ZynkSync] Resume: failed to rebuild HTTP client: {}", e);
+            }
+            svc.start_auto_sync().await;
+        });
+    } else {
+        // Loop is running but may have stale peers; reload devices and do an immediate sync
+        let svc = Arc::clone(&service);
+        let resuming_peer = device_id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = svc.load_devices().await {
+                eprintln!("[ZynkSync] Resume: failed to reload devices: {}", e);
+                return;
+            }
+            if let Err(e) = svc.rebuild_http_client().await {
+                eprintln!("[ZynkSync] Resume: failed to rebuild HTTP client: {}", e);
+            }
+            // Immediate sync with the peer that just resumed
+            let user_id = match crate::user_identity::get_user_id() {
+                Ok(id) => id,
+                Err(e) => { eprintln!("[ZynkSync] Resume: failed to get user_id: {}", e); return; }
+            };
+            match svc.sync_bidirectional(&resuming_peer, &user_id).await {
+                Ok(r) => println!("[ZynkSync] ✓ Immediate post-resume sync with {}: sent={}, received={}",
+                    resuming_peer, r.memories_sent, r.memories_received),
+                Err(e) => eprintln!("[ZynkSync] ✗ Post-resume sync failed: {}", e),
+            }
+        });
+    }
+
     println!("[ZynkSync] ✅ Resumed by peer {}", device_id);
     Ok(Json(serde_json::json!({"success": true, "action": "resumed"})))
 }
@@ -4145,10 +4202,24 @@ async fn handle_zynklink_notify_unpaired(
 }
 
 // =============================================================================
-// Ollama Proxy — forwards /api/ollama/* to localhost:11434
-// Lets paired mobile devices use the desktop's Ollama instance over LAN
-// without exposing Ollama's port directly on the network.
+// Ollama endpoints
 // =============================================================================
+
+/// Returns the Ollama model currently configured on this device.
+/// Mobile devices query this to adopt the desktop's model in one tap.
+/// Includes device_id so the caller can detect accidental self-connections.
+async fn handle_ollama_info(
+    State(service): State<Arc<ZynkSyncService>>,
+) -> impl axum::response::IntoResponse {
+    let model = std::env::var("CUSTOM_MODEL").unwrap_or_default();
+    axum::Json(serde_json::json!({
+        "model": model,
+        "available": !model.is_empty(),
+        "device_id": service.device_id,
+    }))
+}
+
+// Proxy — forwards /api/ollama/* to localhost:11434 for LAN inference
 
 async fn handle_ollama_proxy(
     State(_service): State<Arc<ZynkSyncService>>,

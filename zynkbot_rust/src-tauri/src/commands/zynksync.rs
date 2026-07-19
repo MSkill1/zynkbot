@@ -2,6 +2,39 @@ use std::sync::Arc;
 use crate::zynksync::{PeerDevice, SyncResult};
 use tauri::Emitter;
 
+/// Delete zynk_devices entries whose device_ip matches the local device's own IP.
+/// These are corrupt rows created by the handle_introduce bug (addr.ip() used instead
+/// of the IP from the request body), causing devices to try to connect to themselves.
+pub async fn purge_self_referential_devices(pool: &sqlx::SqlitePool) {
+    use std::net::UdpSocket;
+    let local_ip = UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| { s.connect("8.8.8.8:80")?; Ok(s) })
+        .and_then(|s| s.local_addr())
+        .map(|a| a.ip().to_string())
+        .ok();
+
+    let Some(ip) = local_ip else {
+        println!("[ZynkSync] Could not determine local IP — skipping corruption check");
+        return;
+    };
+
+    match sqlx::query("DELETE FROM zynk_devices WHERE device_ip = ?")
+        .bind(&ip)
+        .execute(pool)
+        .await
+    {
+        Ok(r) if r.rows_affected() > 0 => {
+            println!(
+                "[ZynkSync] ✓ Purged {} corrupt device entry/entries (device_ip = {} = local IP). \
+                 Re-link those devices via ZynkLink to restore.",
+                r.rows_affected(), ip
+            );
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[ZynkSync] Warning: self-IP purge query failed: {}", e),
+    }
+}
+
 /// Start ZynkSync auto-sync loop (HTTP server already running from app launch)
 #[tauri::command]
 pub async fn start_zynksync(_sync_interval_secs: Option<u64>) -> Result<String, String> {
@@ -23,6 +56,8 @@ pub async fn start_zynksync(_sync_interval_secs: Option<u64>) -> Result<String, 
             }
         }
     };
+
+    purge_self_referential_devices(&service.get_db_pool()).await;
 
     if let Err(e) = service.load_devices().await {
         println!("[ZynkSync] ⚠️ Failed to load devices: {}", e);

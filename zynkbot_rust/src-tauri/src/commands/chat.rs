@@ -527,6 +527,7 @@ pub async fn send_message_with_memory(
                 Some(4096),
                 None,
                 "https://api.openai.com/v1/chat/completions",
+                false,
                 move |token| { app_handle.emit("stream-token", token).ok(); },
             ).await.map_err(|e| e.to_string())?;
             response.content
@@ -564,6 +565,7 @@ pub async fn send_message_with_memory(
                 Some(4096),
                 None,
                 "https://api.x.ai/v1/chat/completions",
+                false,
                 move |token| { app_handle.emit("stream-token", token).ok(); },
             ).await.map_err(|e| e.to_string())?;
             response.content
@@ -596,6 +598,7 @@ pub async fn send_message_with_memory(
             Some(4096),
             None,
             &api_url,
+            true, // custom/LAN endpoint — accept self-signed certs
             move |token| { app_handle.emit("stream-token", token).ok(); },
         ).await.map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))?;
         response.content

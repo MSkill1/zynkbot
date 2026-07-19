@@ -545,6 +545,10 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
                   <input
                     type="text"
                     inputMode="decimal"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck="false"
                     placeholder="192.168.0.100"
                     value={pairingIPPart}
                     onChange={(e) => { setPairingIPPart(e.target.value); setPairingInput(e.target.value + ':' + pairingNumPart); }}
@@ -559,6 +563,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
                   <input
                     type="text"
                     inputMode="numeric"
+                    autoComplete="off"
                     placeholder="Code (456789)"
                     value={pairingNumPart}
                     onChange={(e) => { setPairingNumPart(e.target.value); setPairingInput(pairingIPPart + ':' + e.target.value); }}

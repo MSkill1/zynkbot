@@ -1921,6 +1921,9 @@ async fn auto_start_http_server() -> Result<(), String> {
     if load_sync_state().await {
         println!("[ZynkSync] Restoring previous sync state (was enabled)...");
 
+        // Remove any corrupt device entries stored under this device's own IP
+        crate::commands::zynksync::purge_self_referential_devices(&service.get_db_pool()).await;
+
         // Load devices from database
         if let Err(e) = service.load_devices().await {
             println!("[ZynkSync] ⚠️ Failed to load devices: {}", e);
@@ -2171,6 +2174,8 @@ pub fn run() {
             commands::models::set_api_key,
             commands::models::remove_api_key,
             commands::models::fetch_custom_models,
+            commands::models::pull_ollama_model,
+            commands::models::get_peer_ollama_config,
             commands::chat::send_message_with_memory,
             commands::chat::run_ensemble,
             commands::memory::list_memories,
@@ -2269,6 +2274,7 @@ pub fn run() {
             commands::zynklink::download_to_knowledge_base,
             commands::zynklink::download_to_custom_location,
             commands::zynklink::cancel_zynklink_download,
+            commands::zynklink::get_linked_devices,
             // External file/folder opening + Knowledge Base
             commands::knowledge_base::open_external_file,
             commands::knowledge_base::open_external_folder,

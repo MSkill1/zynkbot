@@ -924,3 +924,64 @@ pub async fn download_to_custom_location(
 
     Ok(destination_path)
 }
+
+/// Lightweight struct for devices known via ZynkLink or ZynkSync pairing
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct LinkedDevice {
+    pub device_id: String,
+    pub device_name: String,
+    pub host: String,
+    pub port: u16,
+    pub sync_paired: bool,
+}
+
+/// Return all paired devices (ZynkLink or ZynkSync) that have a known IP.
+/// Used for the "Use Ollama on [PC]" quick-connect buttons.
+#[tauri::command]
+pub async fn get_linked_devices() -> Result<Vec<LinkedDevice>, String> {
+    let my_device_id = crate::user_identity::get_device_id()?;
+
+    let pool = {
+        let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+        match guard.as_ref() {
+            Some(service) => service.get_db_pool(),
+            None => {
+                drop(guard);
+                crate::db::create_pool().await
+                    .map_err(|e| format!("DB error: {}", e))?
+            }
+        }
+    };
+
+    let rows = sqlx::query(
+        "SELECT device_id, device_name, device_ip, port, COALESCE(sync_paired, 0) AS sync_paired
+         FROM zynk_devices
+         WHERE is_paired = 1
+           AND device_id != ?
+           AND device_ip IS NOT NULL
+         ORDER BY last_seen_at DESC"
+    )
+    .bind(&my_device_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Failed to query linked devices: {}", e))?;
+
+    let mut devices = Vec::new();
+    for row in rows {
+        use sqlx::Row;
+        let device_id: String = row.get("device_id");
+        let device_name: String = row.get("device_name");
+        let host: String = row.get("device_ip");
+        let port: i64 = row.get("port");
+        let sync_paired: i64 = row.get("sync_paired");
+        devices.push(LinkedDevice {
+            device_id,
+            device_name,
+            host,
+            port: port as u16,
+            sync_paired: sync_paired == 1,
+        });
+    }
+
+    Ok(devices)
+}

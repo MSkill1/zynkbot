@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ModelInfo {
@@ -306,4 +307,134 @@ pub async fn fetch_custom_models(base_url: String, api_key: String) -> Result<Ve
 
     println!("[Custom] Found {} model(s): {:?}", models.len(), models);
     Ok(models)
+}
+
+/// Query a paired desktop's /api/ollama/info to get its configured model name.
+/// Called from mobile when the user taps "Connect to Ollama on [PC]".
+#[tauri::command]
+pub async fn get_peer_ollama_config(host: String, port: u16) -> Result<String, String> {
+    let url = format!("https://{}:{}/api/ollama/info", host, port);
+
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client.get(&url).send().await
+        .map_err(|e| format!("Can't reach desktop ({}): {}", host, e))?;
+
+    let json: serde_json::Value = response.json().await
+        .map_err(|e| format!("Invalid response from desktop: {}", e))?;
+
+    // Detect self-connection: if the response comes from this device, the stored IP is wrong
+    let remote_device_id = json["device_id"].as_str().unwrap_or("");
+    if !remote_device_id.is_empty() {
+        if let Ok(my_id) = crate::user_identity::get_device_id() {
+            if remote_device_id == my_id {
+                return Err(format!(
+                    "This address ({}) points back to this device — the stored IP is incorrect. \
+                     Re-pair with ZynkSync to fix it.",
+                    host
+                ));
+            }
+        }
+    }
+
+    match json["model"].as_str() {
+        Some(m) if !m.is_empty() => Ok(m.to_string()),
+        _ => Err("Desktop has no Ollama model configured. Set one in the desktop's API settings first.".to_string()),
+    }
+}
+
+fn strip_ansi_codes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // consume ESC [ ... <final byte>
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for ch in chars.by_ref() {
+                    if ch.is_ascii_alphabetic() { break; }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Run `ollama pull <model_name>` and stream progress via "ollama-pull-progress" events
+#[tauri::command]
+pub async fn pull_ollama_model(app: tauri::AppHandle, model_name: String) -> Result<(), String> {
+    // Basic validation — allow alphanumeric, colon, dash, underscore, dot, slash
+    if model_name.is_empty()
+        || !model_name.chars().all(|c| c.is_alphanumeric() || ":.-_/".contains(c))
+    {
+        return Err(format!("Invalid model name: {}", model_name));
+    }
+
+    let _ = app.emit("ollama-pull-progress", format!("⬇ Pulling {}...\n", model_name));
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<String, String>>(64);
+
+    let name = model_name.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let mut child = match std::process::Command::new("ollama")
+            .args(["pull", &name])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx.blocking_send(Err(format!("Failed to start ollama: {}", e)));
+                return;
+            }
+        };
+
+        if let Some(stdout) = child.stdout.take() {
+            for line in BufReader::new(stdout).lines() {
+                match line {
+                    Ok(l) => {
+                        let clean = strip_ansi_codes(&l);
+                        if !clean.trim().is_empty() {
+                            let _ = tx.blocking_send(Ok(clean));
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+
+        match child.wait() {
+            Ok(status) if status.success() => {
+                let _ = tx.blocking_send(Ok(format!("✅ {} pulled successfully.", name)));
+            }
+            Ok(status) => {
+                let code = status.code().unwrap_or(-1);
+                let _ = tx.blocking_send(Err(format!("ollama pull exited with code {}", code)));
+            }
+            Err(e) => {
+                let _ = tx.blocking_send(Err(format!("Error waiting for ollama: {}", e)));
+            }
+        }
+    });
+
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            Ok(line) => {
+                let _ = app.emit("ollama-pull-progress", line);
+            }
+            Err(err) => {
+                let _ = app.emit("ollama-pull-progress", format!("❌ {}", err));
+                return Err(err);
+            }
+        }
+    }
+
+    Ok(())
 }

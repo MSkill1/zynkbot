@@ -149,12 +149,16 @@ pub async fn send_message_streaming<F>(
     max_tokens: Option<u32>,
     temperature: Option<f32>,
     api_url: &str,
+    accept_invalid_certs: bool,
     on_token: F,
 ) -> Result<LLMResponse, LLMError>
 where
     F: Fn(String),
 {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(accept_invalid_certs)
+        .build()
+        .unwrap_or_default();
 
     let request_body = OpenAIRequest {
         model: model.to_string(),

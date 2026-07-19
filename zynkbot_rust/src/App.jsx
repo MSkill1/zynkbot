@@ -1460,24 +1460,25 @@ export default function App() {
                 borderRadius: '6px',
                 fontSize: '0.8rem',
                 color: '#f8f8f2',
+                minWidth: 0,
               }}>
                 {attachedFile.isImage ? (
                   <img
                     src={`data:${attachedFile.mimeType};base64,${attachedFile.base64}`}
                     alt="preview"
-                    style={{ width: '32px', height: '32px', objectFit: 'cover', borderRadius: '4px' }}
+                    style={{ width: '32px', height: '32px', objectFit: 'cover', borderRadius: '4px', flexShrink: 0 }}
                   />
-                ) : <span>📎</span>}
-                <span style={{ fontWeight: 600 }}>{attachedFile.name}</span>
+                ) : <span style={{ flexShrink: 0 }}>📎</span>}
+                <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{attachedFile.name}</span>
                 {attachedFile.isImage && (
-                  <span style={{ color: '#bd93f9', fontSize: '0.75rem' }}>🖼️ Image — vision model required</span>
+                  <span style={{ color: '#bd93f9', fontSize: '0.75rem', flexShrink: 0, whiteSpace: 'nowrap' }}>🖼️ vision</span>
                 )}
                 {!attachedFile.isImage && attachedFile.size > 50000 && (
-                  <span style={{ color: '#ffb86c', fontSize: '0.75rem' }}>⚠️ Large file — uses significant context</span>
+                  <span style={{ color: '#ffb86c', fontSize: '0.75rem', flexShrink: 0, whiteSpace: 'nowrap' }}>⚠️ large</span>
                 )}
                 <button
                   onClick={() => setAttachedFile(null)}
-                  style={{ marginLeft: 'auto', background: 'none', border: 'none', color: '#ff5555', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0 2px' }}
+                  style={{ flexShrink: 0, marginLeft: 'auto', background: 'none', border: 'none', color: '#ff5555', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0 2px' }}
                   title="Remove attachment"
                 >×</button>
               </div>
