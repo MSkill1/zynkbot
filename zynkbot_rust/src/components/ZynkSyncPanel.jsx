@@ -73,6 +73,19 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
     }
   }, [loading]);
 
+  // Manual refresh: update peer list and trigger immediate sync
+  const handleRefresh = useCallback(async () => {
+    setMessage('Refreshing...');
+    await fetchPeers();
+    try {
+      await invoke('broadcast_sync_to_all_peers', { userId: userId || '' });
+      setMessage('✓ Refreshed');
+    } catch {
+      setMessage('✓ Refreshed (sync skipped — no active peers)');
+    }
+    setTimeout(() => setMessage(''), 2500);
+  }, [fetchPeers, userId]);
+
   // Sync memories bidirectionally with a specific peer
   const handleSyncToPeer = async (peer) => {
     setLoading(true);
@@ -396,10 +409,30 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
           {syncStatus === 'running' ? '⏸ Pause Syncing' : '▶ Resume Syncing'}
         </button>
         <button
+          onClick={handleRefresh}
+          disabled={loading}
+          style={{
+            flex: 0.7,
+            padding: '8px 12px',
+            background: '#6272a4',
+            color: '#f8f8f2',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: loading ? 'wait' : 'pointer',
+            fontSize: '0.85rem',
+            fontWeight: 'bold',
+            transition: 'all 0.2s',
+            opacity: loading ? 0.5 : 1
+          }}
+          title="Refresh device list and sync now"
+        >
+          🔄 Refresh
+        </button>
+        <button
           onClick={onOpenUserIdentity}
           style={{
-            flex: 1,
-            padding: '8px 16px',
+            flex: 0.7,
+            padding: '8px 12px',
             background: '#ff5555',
             color: '#f8f8f2',
             border: 'none',

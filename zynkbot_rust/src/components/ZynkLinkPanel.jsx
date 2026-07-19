@@ -53,6 +53,13 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
     }
   }, []);
 
+  const handleRefresh = useCallback(async () => {
+    setMessage('Refreshing...');
+    await Promise.all([fetchSharedDirectories(), fetchRemoteDirectories(), fetchLinkedUsers()]);
+    setMessage('✓ Refreshed');
+    setTimeout(() => setMessage(''), 2000);
+  }, [fetchSharedDirectories, fetchRemoteDirectories, fetchLinkedUsers]);
+
   const fetchUnreadCounts = useCallback(async () => {
     try {
       const data = await invoke('list_zynklink_pairings');
@@ -366,6 +373,50 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
           </ol>
         </div>
       </div>}
+
+      {/* Top control row */}
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+        <button
+          onClick={handleRefresh}
+          disabled={loading}
+          style={{
+            flex: 1,
+            padding: '8px 16px',
+            background: '#6272a4',
+            color: '#f8f8f2',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: loading ? 'wait' : 'pointer',
+            fontSize: '0.85rem',
+            fontWeight: 'bold',
+            transition: 'all 0.2s',
+            opacity: loading ? 0.5 : 1
+          }}
+          title="Refresh linked device list"
+        >
+          🔄 Refresh
+        </button>
+        <button
+          onClick={onOpenUserIdentity}
+          style={{
+            flex: 1,
+            padding: '8px 16px',
+            background: '#ff5555',
+            color: '#f8f8f2',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontSize: '0.85rem',
+            fontWeight: 'bold',
+            transition: 'all 0.2s'
+          }}
+          onMouseOver={(e) => e.target.style.background = '#ff6b6b'}
+          onMouseOut={(e) => e.target.style.background = '#ff5555'}
+          title="Manage your identity"
+        >
+          👤 Identity
+        </button>
+      </div>
 
       {/* This Device's Link Info (matches ZynkSync layout) */}
       <div style={{
