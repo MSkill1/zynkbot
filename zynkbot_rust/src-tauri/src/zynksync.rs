@@ -536,11 +536,13 @@ impl ZynkSyncService {
             println!("[ZynkSync] ⚠ Warning: Host did not provide user_id (identity won't be synced)");
         }
 
-        // Check if device is already added
+        // If device is already in the peers map, evict it first so re-pairing works cleanly
+        // (e.g. after a Remove that didn't fully propagate, or an IP/cert refresh).
         {
-            let peers_map = self.peers.read().await;
+            let mut peers_map = self.peers.write().await;
             if peers_map.contains_key(&device_id) {
-                return Err("Device already added".to_string());
+                println!("[ZynkSync] Device {} already known — evicting for re-pair", &device_id[..8.min(device_id.len())]);
+                peers_map.remove(&device_id);
             }
         }
 
