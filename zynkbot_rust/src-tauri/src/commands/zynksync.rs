@@ -170,9 +170,10 @@ pub async fn sync_to_peer(peer_id: String, user_id: Option<String>) -> Result<Sy
 /// Receive memories from a peer device
 #[tauri::command]
 pub async fn receive_sync_memories(memories: Vec<crate::zynksync::SyncMemory>) -> Result<usize, String> {
+    let local_user_id = crate::user_identity::get_user_id().unwrap_or_default();
     let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
     match global_service.as_ref() {
-        Some(service) => service.receive_from_peer(memories).await,
+        Some(service) => service.receive_from_peer(&local_user_id, memories).await,
         None => Err("ZynkSync not started".to_string()),
     }
 }

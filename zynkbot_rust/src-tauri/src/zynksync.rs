@@ -1056,10 +1056,9 @@ impl ZynkSyncService {
         let rows = sqlx::query_as::<_, (i32, String, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
             "SELECT id, content, created_at, updated_at
              FROM memories
-             WHERE user_id = ? AND is_syncable = 1
+             WHERE is_syncable = 1
              ORDER BY datetime(COALESCE(updated_at, created_at)) DESC"
         )
-        .bind(user_id)
         .fetch_all(&self.db_pool)
         .await
         .map_err(|e| format!("Failed to get local inventory: {}", e))?;
@@ -1100,7 +1099,7 @@ impl ZynkSyncService {
     async fn get_modified_memories(
         &self,
         peer_id: &str,
-        user_id: Option<&str>,
+        _user_id: Option<&str>,
     ) -> Result<Vec<SyncMemory>, String> {
         let last_sync_time = {
             let last_sync_map = self.last_sync.read().await;
@@ -1117,13 +1116,10 @@ impl ZynkSyncService {
                  FROM memories
                  WHERE is_syncable = 1
                    AND created_at > ?
-                   AND (? IS NULL OR user_id = ?)
                  ORDER BY created_at ASC
                  LIMIT 1000"
             )
             .bind(last_sync)
-            .bind(user_id)
-            .bind(user_id)
         } else {
             // Full sync: all syncable memories
             sqlx::query(
@@ -1133,12 +1129,9 @@ impl ZynkSyncService {
                         event_type, event_date, entities_detected, original_text
                  FROM memories
                  WHERE is_syncable = 1
-                   AND (? IS NULL OR user_id = ?)
                  ORDER BY created_at ASC
                  LIMIT 1000"
             )
-            .bind(user_id)
-            .bind(user_id)
         };
 
         let rows = query
@@ -1429,24 +1422,23 @@ impl ZynkSyncService {
         Ok(messages.len())
     }
 
-    /// Receive and store memories from a peer device
-    /// IMPORTANT: Preserves original user_id so identities stay consistent across devices
-    /// Also syncs relationships, mapping old memory IDs to new ones
-    pub async fn receive_from_peer(&self, memories: Vec<SyncMemory>) -> Result<usize, String> {
+    /// Receive and store memories from a peer device.
+    /// Memories are written under the local user_id so they are immediately visible
+    /// regardless of which user_id the sending device used.
+    pub async fn receive_from_peer(&self, local_user_id: &str, memories: Vec<SyncMemory>) -> Result<usize, String> {
         use std::collections::HashMap;
 
         let mut stored_count = 0;
         let mut id_mapping: HashMap<i32, i32> = HashMap::new();  // old_id -> new_id
 
-        println!("[ZynkSync] Receiving {} memories with relationships (preserving original user_ids)", memories.len());
+        println!("[ZynkSync] Receiving {} memories from peer (writing under local user_id)", memories.len());
 
         // PHASE 1: Store/update all memories and build ID mapping
         for memory in &memories {
-            // Check if memory already exists (by content AND user_id)
+            // Check if memory already exists by content hash (user_id-agnostic)
             let existing = sqlx::query_as::<_, (i32, chrono::DateTime<chrono::Utc>)>(
-                "SELECT id, created_at FROM memories WHERE user_id = ? AND content = ?"
+                "SELECT id, created_at FROM memories WHERE content = ?"
             )
-            .bind(&memory.user_id)
             .bind(&memory.content)
             .fetch_optional(&self.db_pool)
             .await
@@ -1458,7 +1450,7 @@ impl ZynkSyncService {
 
                 // Update if incoming is newer
                 if memory.created_at > existing_memory.1 {
-                    println!("[ZynkSync] Updating existing memory (user: {}, newer timestamp)", memory.user_id);
+                    println!("[ZynkSync] Updating existing memory (newer timestamp from peer)");
                     sqlx::query(
                         "UPDATE memories
                          SET title = ?, namespace = ?, created_at = ?, session_id = ?
@@ -1514,7 +1506,7 @@ impl ZynkSyncService {
                                  entities_detected = ?, original_text = ?
                              WHERE id = ?"
                         )
-                        .bind(&memory.user_id)
+                        .bind(local_user_id)
                         .bind(&memory.session_id)
                         .bind(&memory.content)
                         .bind(&memory.title)
@@ -1551,7 +1543,7 @@ impl ZynkSyncService {
                     continue;
                 }
 
-                // No conflict - insert with original ID
+                // No conflict - insert with original ID, local user_id
                 sqlx::query(
                     "INSERT INTO memories (id, user_id, session_id, content, title, source_type, created_at, updated_at,
                                           parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
@@ -1560,7 +1552,7 @@ impl ZynkSyncService {
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 )
                 .bind(memory.id)
-                .bind(&memory.user_id)
+                .bind(local_user_id)
                 .bind(&memory.session_id)
                 .bind(&memory.content)
                 .bind(&memory.title)
@@ -2184,7 +2176,7 @@ impl ZynkSyncService {
                 let memories: Vec<SyncMemory> = response.json().await
                     .map_err(|e| format!("Failed to parse memories: {}", e))?;
 
-                memories_received = self.receive_from_peer(memories).await?;
+                memories_received = self.receive_from_peer(user_id, memories).await?;
             }
 
             // Handle deletions (only on subsequent syncs, not first sync)
@@ -2940,7 +2932,8 @@ async fn handle_receive_sync(
     check_sync_authorized(&service.db_pool, device_id).await?;
 
     println!("[ZynkSync] Received {} memories from peer", memories.len());
-    let stored_count = service.receive_from_peer(memories).await
+    let local_user_id = user_identity::get_user_id().unwrap_or_default();
+    let stored_count = service.receive_from_peer(&local_user_id, memories).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
     Ok(Json(serde_json::json!({ "success": true, "stored": stored_count })))
