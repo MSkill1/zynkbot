@@ -480,8 +480,11 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
           <p style={{ fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '8px', lineHeight: '1.5' }}>
             Generate a pairing code to sync this device with another for memory synchronization (code expires in 10 minutes):
           </p>
-          <p style={{ fontSize: '0.82rem', color: '#ff5555', marginBottom: '10px', lineHeight: '1.5' }}>
-            ⚠️ <strong>Important:</strong> The device that <em>enters</em> this code will adopt this device's user identity. Its existing memories will be merged, with this device's data taking precedence where conflicts exist. Use the Memory Manager to clear memories first if you want a clean sync.
+          <p style={{ fontSize: '0.82rem', color: '#ff5555', marginBottom: '6px', lineHeight: '1.5' }}>
+            ⚠️ <strong>Important:</strong> The device that <em>enters</em> this code will adopt this device's identity. <strong>Whichever device has existing memories you care about should generate the code — not enter it.</strong>
+          </p>
+          <p style={{ fontSize: '0.82rem', color: '#9aa5c4', marginBottom: '10px', lineHeight: '1.5' }}>
+            💡 Want your memories backed up and accessible everywhere — even without a local network? A cloud backup subscription keeps your data safe and enables sync over the internet. (Coming soon.)
           </p>
           {pairingCode && localIp ? (
             <div>

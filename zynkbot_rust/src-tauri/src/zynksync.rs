@@ -1483,7 +1483,6 @@ impl ZynkSyncService {
                 .map_err(|e| format!("Failed to check ID conflict: {}", e))?;
 
                 if id_conflict > 0 {
-                    // ID conflict - fetch existing memory and compare timestamps
                     let existing = sqlx::query_as::<_, (i32, String, chrono::DateTime<chrono::Utc>)>(
                         "SELECT id, content, created_at FROM memories WHERE id = ?"
                     )
@@ -1492,19 +1491,19 @@ impl ZynkSyncService {
                     .await
                     .map_err(|e| format!("Failed to fetch conflicting memory: {}", e))?;
 
-                    if memory.created_at > existing.2 {
-                        // Incoming memory is newer - replace existing
-                        println!("[ZynkSync] ID conflict - incoming memory is NEWER, replacing existing ID {}", memory.id);
-
-                        sqlx::query(
-                            "UPDATE memories
-                             SET user_id = ?, session_id = ?, content = ?, title = ?, source_type = ?,
-                                 created_at = ?, updated_at = ?, parent_scroll_id = ?, chunk_index = ?,
-                                 namespace = ?, is_syncable = ?, is_shareable = ?,
-                                 embedding = ?, link_count = ?, is_ephemeral = ?, expires_at = ?,
-                                 sentiment_score = ?, sentiment_label = ?, event_type = ?, event_date = ?,
-                                 entities_detected = ?, original_text = ?
-                             WHERE id = ?"
+                    if existing.1 == memory.content {
+                        // Same content — true duplicate, keep whichever is newer
+                        id_mapping.insert(memory.id, existing.0);
+                    } else {
+                        // Different content — integer ID collision between two different memories.
+                        // Insert the incoming memory with a new auto-generated ID so neither is lost.
+                        println!("[ZynkSync] ID {} collision (different content) — inserting with new ID", memory.id);
+                        let result = sqlx::query(
+                            "INSERT INTO memories (user_id, session_id, content, title, source_type, created_at, updated_at,
+                                                   parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
+                                                   embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
+                                                   event_type, event_date, entities_detected, original_text)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                         )
                         .bind(local_user_id)
                         .bind(&memory.session_id)
@@ -1528,17 +1527,12 @@ impl ZynkSyncService {
                         .bind(memory.event_date)
                         .bind(memory.entities_detected.as_ref())
                         .bind(memory.original_text.as_deref())
-                        .bind(memory.id)
                         .execute(&self.db_pool)
                         .await
-                        .map_err(|e| format!("Failed to update conflicting memory: {}", e))?;
-
-                        id_mapping.insert(memory.id, memory.id);  // Same ID
+                        .map_err(|e| format!("Failed to insert ID-colliding memory: {}", e))?;
+                        let new_id = result.last_insert_rowid() as i32;
+                        id_mapping.insert(memory.id, new_id);
                         stored_count += 1;
-                    } else {
-                        // Existing memory is newer or same - keep it, just map the ID
-                        println!("[ZynkSync] ID conflict - existing memory is NEWER or SAME, keeping existing ID {}", memory.id);
-                        id_mapping.insert(memory.id, existing.0);
                     }
                     continue;
                 }
