@@ -712,7 +712,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
                   borderRadius: '4px',
                   marginBottom: '10px',
                   fontSize: '0.85rem',
-                  border: '2px solid #50fa7b'
+                  border: `2px solid ${peer.is_online ? '#50fa7b' : '#44475a'}`
                 }}
               >
                 {/* Device Header */}
@@ -721,11 +721,14 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
                     width: '10px',
                     height: '10px',
                     borderRadius: '50%',
-                    background: '#50fa7b',
+                    background: peer.is_online ? '#50fa7b' : '#6272a4',
                     flexShrink: 0
                   }} />
                   <div style={{ color: '#f8f8f2', fontWeight: 'bold', flex: 1 }}>
                     {peer.device_name}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
+                    {peer.is_online ? 'Online' : 'Offline'}
                   </div>
                 </div>
 

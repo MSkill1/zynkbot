@@ -47,6 +47,8 @@ pub struct PeerDevice {
     pub paired: bool,  // Whether this device is authorized to sync
     pub pairing_code: Option<String>,  // 6-digit code for pairing
     pub user_id: Option<String>,  // Host's user_id (for identity sync during pairing)
+    #[serde(default)]
+    pub is_online: bool,  // True if heartbeat received within the last 45 seconds
 }
 
 /// Represents a memory record for synchronization
@@ -195,6 +197,9 @@ pub struct ZynkSyncService {
     /// Failed pairing attempts per client IP — invalidate code after 5 misses
     failed_pairing_attempts: Arc<RwLock<HashMap<String, u32>>>,
 
+    /// In-memory last-heartbeat timestamps per peer device_id (not persisted)
+    peer_last_seen: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+
     /// This device's TLS certificate PEM (for HTTPS server)
     cert_pem: String,
 
@@ -229,6 +234,7 @@ impl ZynkSyncService {
             shutdown_tx: Arc::new(RwLock::new(None)),
             pairing_code: Arc::new(RwLock::new(None)),
             failed_pairing_attempts: Arc::new(RwLock::new(HashMap::new())),
+            peer_last_seen: Arc::new(RwLock::new(HashMap::new())),
             cert_pem,
             key_pem,
             cert_der,
@@ -374,6 +380,7 @@ impl ZynkSyncService {
                 paired: true,
                 pairing_code: None,
                 user_id: None,  // Not relevant when loading from database
+                is_online: false,
             };
 
             peers_map.insert(device_id, peer);
@@ -606,6 +613,7 @@ impl ZynkSyncService {
             paired: true,
             pairing_code: None,
             user_id: host_user_id,  // Include host's user_id for identity sync
+            is_online: false,
         };
 
         {
@@ -715,6 +723,7 @@ impl ZynkSyncService {
                                     paired: true,
                                     pairing_code: None,
                                     user_id: None,
+                                    is_online: false,
                                 });
                             }
                         }
@@ -789,10 +798,14 @@ impl ZynkSyncService {
         tx.commit().await
             .map_err(|e| format!("Failed to commit sync data removal: {}", e))?;
 
-        // Remove from in-memory peers map
+        // Remove from in-memory peers map and online-status map
         {
             let mut peers_map = self.peers.write().await;
             peers_map.remove(device_id);
+        }
+        {
+            let mut map = self.peer_last_seen.write().await;
+            map.remove(device_id);
         }
 
         println!("[ZynkSync] ✓ Cleared sync data for device {}", &device_id[..device_id.len().min(8)]);
@@ -2542,12 +2555,16 @@ impl ZynkSyncService {
                 let url = format!("https://{}:{}/api/presence/heartbeat", peer.host, peer.port);
                 let body = serde_json::json!({ "device_id": device_id });
                 let client = self.http_client.read().await.clone();
-                let _ = client
+                let result = client
                     .post(&url)
                     .json(&body)
                     .timeout(Duration::from_secs(5))
                     .send()
                     .await;
+                if result.is_ok() {
+                    let mut map = self.peer_last_seen.write().await;
+                    map.insert(peer.device_id.clone(), Utc::now());
+                }
             }
         }
     }
@@ -2711,7 +2728,14 @@ impl ZynkSyncService {
     /// Get list of peer devices
     pub async fn get_peers(&self) -> Vec<PeerDevice> {
         let peers_map = self.peers.read().await;
-        peers_map.values().cloned().collect()
+        let online_map = self.peer_last_seen.read().await;
+        let threshold = Utc::now() - chrono::Duration::seconds(45);
+        peers_map.values().map(|peer| {
+            let mut p = peer.clone();
+            p.is_online = online_map.get(&peer.device_id)
+                .map_or(false, |&t| t > threshold);
+            p
+        }).collect()
     }
 
     /// Public wrapper for get_local_inventory (for Tauri commands)
@@ -3043,6 +3067,7 @@ async fn handle_verify_pairing(
                 paired: true,
                 pairing_code: None,
                 user_id: None,  // Not relevant - this is the HOST adding the CLIENT
+                is_online: false,
             };
 
             // Store client device with its TLS cert for future pinned connections
@@ -3354,6 +3379,7 @@ async fn handle_introduce(
                 paired: true,
                 pairing_code: None,
                 user_id: None,
+                is_online: false,
             });
         }
         println!("[ZynkSync] ✓ Mesh-paired with introduced device: {}", new_device_name);
@@ -3386,6 +3412,11 @@ async fn handle_heartbeat(
     .await
     .map_err(|e| format!("Failed to update last_seen_at: {}", e))?;
 
+    {
+        let mut map = service.peer_last_seen.write().await;
+        map.insert(device_id.to_string(), Utc::now());
+    }
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -3405,6 +3436,11 @@ async fn handle_goodbye(
     .execute(&service.db_pool)
     .await
     .map_err(|e| format!("Failed to set offline: {}", e))?;
+
+    {
+        let mut map = service.peer_last_seen.write().await;
+        map.remove(device_id);
+    }
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
