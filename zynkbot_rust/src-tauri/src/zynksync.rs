@@ -808,6 +808,22 @@ impl ZynkSyncService {
             map.remove(device_id);
         }
 
+        // If no sync peers remain, tombstones serve no purpose — clear them so stale
+        // test-session tombstones don't interfere with the next fresh pairing.
+        let remaining_peers: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM zynk_devices WHERE sync_paired = 1"
+        )
+        .fetch_one(&self.db_pool)
+        .await
+        .unwrap_or(0);
+
+        if remaining_peers == 0 {
+            println!("[ZynkSync] No peers remain — clearing all tombstones for clean slate");
+            let _ = sqlx::query("DELETE FROM deleted_memory_hashes")
+                .execute(&self.db_pool)
+                .await;
+        }
+
         println!("[ZynkSync] ✓ Cleared sync data for device {}", &device_id[..device_id.len().min(8)]);
         Ok(())
     }
