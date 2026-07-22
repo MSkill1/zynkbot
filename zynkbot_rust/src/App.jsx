@@ -205,7 +205,7 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [searchKBEnabled, setSearchKBEnabled] = useState(false);
   const [kbLocked, setKbLocked] = useState(false);
-  const [attachedFile, setAttachedFile] = useState(null); // { name, content, size }
+  const [attachedFiles, setAttachedFiles] = useState([]); // [{ name, content, size, isImage, ... }]
   // Collapsible section states - all start collapsed
   const [showGettingStarted, setShowGettingStarted] = useState(false);
   const [showZynkSyncSection, setShowZynkSyncSection] = useState(false);
@@ -485,34 +485,39 @@ export default function App() {
   const MIME_TYPES = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp', bmp:'image/bmp' };
 
   const handleAttachFile = async () => {
-    const path = await openFileDialog({
-      multiple: false,
+    const result = await openFileDialog({
+      multiple: true,
       filters: [
         { name: 'Files', extensions: [...IMAGE_EXTENSIONS, 'txt','md','rs','js','jsx','ts','tsx','py','json','toml','yaml','yml','sh','css','html','c','cpp','h','go','java','rb','php','swift','kt'] }
       ]
     });
-    if (!path) return;
-    try {
-      // On Android, openFileDialog returns a content:// URI that Rust's fs::read can't open.
-      // Use the AndroidPaths bridge which reads via ContentResolver instead.
-      const name = window.AndroidPaths ? window.AndroidPaths.getFileName(path) : path.split('/').pop();
-      const ext = name.split('.').pop().toLowerCase();
-      if (IMAGE_EXTENSIONS.includes(ext)) {
-        const base64 = window.AndroidPaths
-          ? window.AndroidPaths.readFileBase64(path)
-          : await invoke('read_file_base64', { path });
-        if (!base64) throw new Error('Could not read image');
-        const mimeType = MIME_TYPES[ext] || 'image/jpeg';
-        setAttachedFile({ name, base64, mimeType, size: base64.length, isImage: true });
-      } else {
-        const content = window.AndroidPaths
-          ? window.AndroidPaths.readFileText(path)
-          : await invoke('read_text_file', { path });
-        setAttachedFile({ name, content, size: content.length, isImage: false });
+    if (!result) return;
+    const paths = Array.isArray(result) ? result : [result];
+    const newFiles = [];
+    for (const path of paths) {
+      try {
+        // On Android, openFileDialog returns a content:// URI that Rust's fs::read can't open.
+        // Use the AndroidPaths bridge which reads via ContentResolver instead.
+        const name = window.AndroidPaths ? window.AndroidPaths.getFileName(path) : path.split('/').pop();
+        const ext = name.split('.').pop().toLowerCase();
+        if (IMAGE_EXTENSIONS.includes(ext)) {
+          const base64 = window.AndroidPaths
+            ? window.AndroidPaths.readFileBase64(path)
+            : await invoke('read_file_base64', { path });
+          if (!base64) throw new Error('Could not read image');
+          const mimeType = MIME_TYPES[ext] || 'image/jpeg';
+          newFiles.push({ name, base64, mimeType, size: base64.length, isImage: true });
+        } else {
+          const content = window.AndroidPaths
+            ? window.AndroidPaths.readFileText(path)
+            : await invoke('read_text_file', { path });
+          newFiles.push({ name, content, size: content.length, isImage: false });
+        }
+      } catch (e) {
+        alert(`Could not read file: ${e}`);
       }
-    } catch (e) {
-      alert(`Could not read file: ${e}`);
     }
+    if (newFiles.length > 0) setAttachedFiles(prev => [...prev, ...newFiles]);
   };
 
   const handleCameraCapture = async () => {
@@ -525,7 +530,7 @@ export default function App() {
       });
       const name = path.split('/').pop();
       const base64 = await invoke('read_file_base64', { path });
-      setAttachedFile({ name, base64, mimeType: 'image/jpeg', size: base64.length, isImage: true });
+      setAttachedFiles(prev => [...prev, { name, base64, mimeType: 'image/jpeg', size: base64.length, isImage: true }]);
     } catch (e) {
       if (e !== 'cancelled') alert(`Camera error: ${e}`);
     }
@@ -554,15 +559,19 @@ export default function App() {
     let messageToSend = message;
     let userQuery = undefined;
     let imageData = undefined;
-    if (attachedFile) {
-      if (attachedFile.isImage) {
-        imageData = { base64: attachedFile.base64, mimeType: attachedFile.mimeType };
-        userQuery = message;
-      } else {
-        messageToSend = `[Attached file: ${attachedFile.name}]\n\`\`\`\n${attachedFile.content}\n\`\`\`\n\nUser question: ${message}`;
+    if (attachedFiles.length > 0) {
+      const textFiles = attachedFiles.filter(f => !f.isImage);
+      const imageFiles = attachedFiles.filter(f => f.isImage);
+      if (textFiles.length > 0) {
+        const textBlock = textFiles.map(f => `[Attached file: ${f.name}]\n\`\`\`\n${f.content}\n\`\`\``).join('\n\n');
+        messageToSend = `${textBlock}\n\nUser question: ${message}`;
         userQuery = message;
       }
-      setAttachedFile(null);
+      if (imageFiles.length > 0) {
+        imageData = { base64: imageFiles[0].base64, mimeType: imageFiles[0].mimeType };
+        userQuery = userQuery || message;
+      }
+      setAttachedFiles([]);
     }
 
     // NOTE: Contradiction checking has been moved to async background task in Rust backend
@@ -1449,40 +1458,44 @@ export default function App() {
               </div>
             )}
 
-            {/* Attached file chip */}
-            {attachedFile && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                marginTop: '8px',
-                padding: '6px 10px',
-                background: '#21222c',
-                border: `1px solid ${attachedFile.isImage ? '#bd93f9' : attachedFile.size > 50000 ? '#ffb86c' : '#50fa7b'}`,
-                borderRadius: '6px',
-                fontSize: '0.8rem',
-                color: '#f8f8f2',
-                minWidth: 0,
-              }}>
-                {attachedFile.isImage ? (
-                  <img
-                    src={`data:${attachedFile.mimeType};base64,${attachedFile.base64}`}
-                    alt="preview"
-                    style={{ width: '32px', height: '32px', objectFit: 'cover', borderRadius: '4px', flexShrink: 0 }}
-                  />
-                ) : <span style={{ flexShrink: 0 }}>📎</span>}
-                <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{attachedFile.name}</span>
-                {attachedFile.isImage && (
-                  <span style={{ color: '#bd93f9', fontSize: '0.75rem', flexShrink: 0, whiteSpace: 'nowrap' }}>🖼️ vision</span>
-                )}
-                {!attachedFile.isImage && attachedFile.size > 50000 && (
-                  <span style={{ color: '#ffb86c', fontSize: '0.75rem', flexShrink: 0, whiteSpace: 'nowrap' }}>⚠️ large</span>
-                )}
-                <button
-                  onClick={() => setAttachedFile(null)}
-                  style={{ flexShrink: 0, marginLeft: 'auto', background: 'none', border: 'none', color: '#ff5555', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0 2px' }}
-                  title="Remove attachment"
-                >×</button>
+            {/* Attached file chips */}
+            {attachedFiles.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                {attachedFiles.map((file, idx) => (
+                  <div key={idx} style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 10px',
+                    background: '#21222c',
+                    border: `1px solid ${file.isImage ? '#bd93f9' : file.size > 50000 ? '#ffb86c' : '#50fa7b'}`,
+                    borderRadius: '6px',
+                    fontSize: '0.8rem',
+                    color: '#f8f8f2',
+                    minWidth: 0,
+                    maxWidth: '100%',
+                  }}>
+                    {file.isImage ? (
+                      <img
+                        src={`data:${file.mimeType};base64,${file.base64}`}
+                        alt="preview"
+                        style={{ width: '32px', height: '32px', objectFit: 'cover', borderRadius: '4px', flexShrink: 0 }}
+                      />
+                    ) : <span style={{ flexShrink: 0 }}>📎</span>}
+                    <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{file.name}</span>
+                    {file.isImage && (
+                      <span style={{ color: '#bd93f9', fontSize: '0.75rem', flexShrink: 0, whiteSpace: 'nowrap' }}>🖼️ vision</span>
+                    )}
+                    {!file.isImage && file.size > 50000 && (
+                      <span style={{ color: '#ffb86c', fontSize: '0.75rem', flexShrink: 0, whiteSpace: 'nowrap' }}>⚠️ large</span>
+                    )}
+                    <button
+                      onClick={() => setAttachedFiles(prev => prev.filter((_, i) => i !== idx))}
+                      style={{ flexShrink: 0, marginLeft: 'auto', background: 'none', border: 'none', color: '#ff5555', cursor: 'pointer', fontSize: '1rem', lineHeight: 1, padding: '0 2px' }}
+                      title="Remove attachment"
+                    >×</button>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -1584,15 +1597,15 @@ export default function App() {
                   <button
                     onClick={handleAttachFile}
                     disabled={isLoading}
-                    title={attachedFile ? `Attached: ${attachedFile.name}` : "Attach a file or image"}
+                    title={attachedFiles.length > 0 ? `${attachedFiles.length} file${attachedFiles.length > 1 ? 's' : ''} attached` : "Attach files or images"}
                     style={{
                       height: '28px',
                       padding: '0 10px',
-                      background: attachedFile
+                      background: attachedFiles.length > 0
                         ? 'linear-gradient(135deg, #ffb86c 0%, #ff79c6 100%)'
                         : 'linear-gradient(135deg, #6272a4 0%, #44475a 100%)',
-                      color: attachedFile ? '#282a36' : '#f8f8f2',
-                      border: attachedFile ? '2px solid #ffb86c' : 'none',
+                      color: attachedFiles.length > 0 ? '#282a36' : '#f8f8f2',
+                      border: attachedFiles.length > 0 ? '2px solid #ffb86c' : 'none',
                       borderRadius: '6px',
                       cursor: isLoading ? 'not-allowed' : 'pointer',
                       fontWeight: 'bold',
@@ -1606,7 +1619,7 @@ export default function App() {
                     onMouseOver={(e) => !isLoading && (e.currentTarget.style.transform = 'translateY(-1px)')}
                     onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
                   >
-                    {attachedFile ? '📎 1 file' : '📎'}
+                    {attachedFiles.length > 0 ? `📎 ${attachedFiles.length} file${attachedFiles.length > 1 ? 's' : ''}` : '📎'}
                   </button>
 
                   {/* Camera button — Android only */}
