@@ -2046,8 +2046,21 @@ impl ZynkSyncService {
                 if !to_tombstone_remotely.is_empty() {
                     println!("[ZynkSync] Propagating {} local tombstones to remote", to_tombstone_remotely.len());
                     for hash in &to_tombstone_remotely {
+                        // Include the original deleted_at so the receiver can guard against
+                        // wiping memories that were recreated after the deletion event.
+                        let deleted_at: Option<String> = sqlx::query_scalar(
+                            "SELECT deleted_at FROM deleted_memory_hashes WHERE content_hash = ?"
+                        )
+                        .bind(hash)
+                        .fetch_optional(&self.db_pool)
+                        .await
+                        .unwrap_or(None);
+
                         let endpoint = format!("{}/api/zynksync/delete-by-hash", peer.url);
-                        let payload = serde_json::json!({ "content_hash": hash });
+                        let payload = serde_json::json!({
+                            "content_hash": hash,
+                            "deleted_at": deleted_at
+                        });
                         let client = self.http_client.read().await.clone();
                         let _ = client.post(&endpoint).json(&payload)
                             .timeout(Duration::from_secs(10)).send().await;
@@ -2644,6 +2657,14 @@ impl ZynkSyncService {
                             println!("[ZynkSync] ✓ Auto-synced with {} - sent: {}, received: {}",
                                 peer.device_name, result.memories_sent, result.memories_received);
                         }
+                        if result.memories_received > 0 {
+                            if let Ok(guard) = crate::APP_HANDLE.lock() {
+                                if let Some(app) = guard.as_ref() {
+                                    let _ = app.emit("zynksync-memories-updated",
+                                        serde_json::json!({ "count": result.memories_received }));
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         eprintln!("[ZynkSync] ✗ Auto-sync failed with {}: {}", peer.device_name, e);
@@ -2957,6 +2978,14 @@ async fn handle_receive_sync(
     let local_user_id = user_identity::get_user_id().unwrap_or_default();
     let stored_count = service.receive_from_peer(&local_user_id, memories).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+
+    if stored_count > 0 {
+        if let Ok(guard) = crate::APP_HANDLE.lock() {
+            if let Some(app) = guard.as_ref() {
+                let _ = app.emit("zynksync-memories-updated", serde_json::json!({ "count": stored_count }));
+            }
+        }
+    }
 
     Ok(Json(serde_json::json!({ "success": true, "stored": stored_count })))
 }
@@ -3747,38 +3776,53 @@ async fn handle_delete_by_hash(
 
     println!("[ZynkSync] Delete-by-hash request for hash: {}", content_hash);
 
-    // Record tombstone regardless of whether we have this memory — prevents future resurrection
-    let _ = sqlx::query(
-        "INSERT OR IGNORE INTO deleted_memory_hashes (content_hash) VALUES (?)"
-    )
-    .bind(content_hash)
-    .execute(&service.db_pool)
-    .await;
+    // Parse the tombstone's original deletion timestamp (sent by the peer).
+    // If absent, fall back to now — this means any matching memory will be deleted.
+    let tombstone_time: Option<DateTime<Utc>> = request.get("deleted_at")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<DateTime<Utc>>().ok());
 
-    let memory_id: Option<i32> = {
+    let memory_info: Option<(i32, DateTime<Utc>)> = {
         use sha2::{Digest, Sha256};
-        let rows: Vec<(i32, String)> = sqlx::query_as::<_, (i32, String)>(
-            "SELECT id, content FROM memories"
+        let rows: Vec<(i32, String, String)> = sqlx::query_as::<_, (i32, String, String)>(
+            "SELECT id, content, created_at FROM memories"
         )
         .fetch_all(&service.db_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to lookup memories: {}", e)}))))?;
         rows.into_iter()
-            .find(|(_, c)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
-            .map(|(id, _)| id)
+            .find(|(_, c, _)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
+            .map(|(id, _, created_at_str)| {
+                let created_at = created_at_str.parse::<DateTime<Utc>>().unwrap_or(DateTime::<Utc>::MIN_UTC);
+                (id, created_at)
+            })
     };
 
-    match memory_id {
-        Some(id) => {
-            println!("[ZynkSync] Found memory ID {} for hash {}", id, content_hash);
-            let result = sqlx::query("DELETE FROM memories WHERE id = ?")
-                .bind(id)
-                .execute(&service.db_pool)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to delete memory: {}", e)}))))?;
-            let deleted_count = result.rows_affected();
-            println!("[ZynkSync] Deleted {} memory(s)", deleted_count);
-            Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
+    match memory_info {
+        Some((id, created_at)) => {
+            // Only delete if the memory predates the tombstone.
+            // A memory created after the tombstone was recorded is an intentional recreation
+            // and should not be wiped by a stale deletion event.
+            let should_delete = tombstone_time.map_or(true, |ts| created_at <= ts);
+
+            if should_delete {
+                let _ = sqlx::query(
+                    "INSERT OR IGNORE INTO deleted_memory_hashes (content_hash) VALUES (?)"
+                ).bind(content_hash).execute(&service.db_pool).await;
+
+                let result = sqlx::query("DELETE FROM memories WHERE id = ?")
+                    .bind(id)
+                    .execute(&service.db_pool)
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to delete memory: {}", e)}))))?;
+                let deleted_count = result.rows_affected();
+                println!("[ZynkSync] Deleted {} memory(s) for hash {}", deleted_count, content_hash);
+                Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
+            } else {
+                println!("[ZynkSync] Skipping delete-by-hash: memory created_at {} is newer than tombstone deleted_at {:?}",
+                    created_at, tombstone_time);
+                Ok(Json(serde_json::json!({ "success": true, "deleted": 0, "skipped": "newer_than_tombstone" })))
+            }
         }
         None => {
             println!("[ZynkSync] No memory found with hash {}", content_hash);

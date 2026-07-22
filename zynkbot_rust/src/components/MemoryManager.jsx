@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import MemoryManagerModal from "./MemoryManagerModal";
 import "../styles/MemoryManager.css";
 
@@ -42,6 +43,15 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
 
   useEffect(() => {
     fetchMemories();
+  }, [fetchMemories]);
+
+  // Re-fetch whenever a peer pushes new memories to this device
+  useEffect(() => {
+    let unlisten;
+    listen('zynksync-memories-updated', () => {
+      fetchMemories();
+    }).then(fn => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
   }, [fetchMemories]);
 
   // Expose fetchMemories to parent component via ref
