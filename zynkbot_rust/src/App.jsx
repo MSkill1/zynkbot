@@ -1179,6 +1179,8 @@ export default function App() {
             setChatDevice(device);
             setCurrentDeviceId(deviceId);
           }}
+          onIdentityAdopted={(newUserId) => setUserId(newUserId)}
+          onMemoriesSynced={() => memoryManagerRef.current?.refresh()}
         />
           )}
         </div>

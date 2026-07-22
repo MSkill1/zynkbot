@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
-export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }) {
+export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, onIdentityAdopted, onMemoriesSynced }) {
   const [peers, setPeers] = useState([]);
   const [syncStatus, setSyncStatus] = useState('stopped');
   const [loading, setLoading] = useState(false);
@@ -80,11 +80,12 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
     try {
       await invoke('broadcast_sync_to_all_peers', { userId: userId || '' });
       setMessage('✓ Refreshed');
+      if (onMemoriesSynced) onMemoriesSynced();
     } catch {
       setMessage('✓ Refreshed (sync skipped — no active peers)');
     }
     setTimeout(() => setMessage(''), 2500);
-  }, [fetchPeers, userId]);
+  }, [fetchPeers, userId, onMemoriesSynced]);
 
   // Sync memories bidirectionally with a specific peer
   const handleSyncToPeer = async (peer) => {
@@ -110,6 +111,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
           if (convSent > 0) parts.push(`sent ${convSent} conversation messages`);
           setMessage(`✓ Synced with ${peer.device_name}: ${parts.join('; ')}`);
         }
+        if (onMemoriesSynced) onMemoriesSynced();
       } else {
         setMessage(`✓ Sync complete`);
       }
@@ -221,11 +223,9 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat }
 
           setMessage(`✓ Identity synced! Added device: ${peer.device_name}\n✓ This device is now part of the ZynkSync network\n✓ Memories will sync automatically`);
 
-          // Notify parent component to refresh UI with new user_id
-          if (onOpenUserIdentity) {
-            setTimeout(() => {
-              window.location.reload(); // Reload to refresh with new user_id
-            }, 2000);
+          // Update parent userId state in-place — no page reload needed
+          if (onIdentityAdopted) {
+            onIdentityAdopted(peer.user_id);
           }
         } catch (identityError) {
           console.error('[ZynkSync] Failed to sync identity:', identityError);
