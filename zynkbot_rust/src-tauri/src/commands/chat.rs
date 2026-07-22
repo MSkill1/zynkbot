@@ -18,7 +18,7 @@ pub async fn send_message_with_memory(
     skip_memory_storage: Option<bool>,
     _kb_enabled: Option<bool>,
     user_query: Option<String>,
-    image_data: Option<crate::llm::ImageAttachment>,
+    image_data: Option<Vec<crate::llm::ImageAttachment>>,
 ) -> Result<ReplyResponse, String> {
     use crate::conversation_engine::ConversationEngine;
 
@@ -456,13 +456,13 @@ pub async fn send_message_with_memory(
 
         let app_handle = app.clone();
 
-        if let Some(ref img) = image_data {
+        if let Some(ref imgs) = image_data {
             println!("[⏱️ PERF] Calling Anthropic API ({}) with vision streaming...", model_name);
             let response = crate::llm::anthropic::send_vision_streaming(
                 &api_key,
                 model_name,
                 &full_prompt,
-                img,
+                imgs,
                 None,
                 Some(4096),
                 move |token| { app_handle.emit("stream-token", token).ok(); },
@@ -495,13 +495,13 @@ pub async fn send_message_with_memory(
 
         let app_handle = app.clone();
 
-        if let Some(ref img) = image_data {
+        if let Some(ref imgs) = image_data {
             println!("[⏱️ PERF] Calling OpenAI API ({}) with vision streaming...", model_name);
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
                 model_name,
                 &full_prompt,
-                img,
+                imgs,
                 "https://api.openai.com/v1/chat/completions",
                 move |token| { app_handle.emit("stream-token", token).ok(); },
             ).await.map_err(|e| e.to_string())?;
@@ -540,13 +540,13 @@ pub async fn send_message_with_memory(
 
         let app_handle = app.clone();
 
-        if let Some(ref img) = image_data {
+        if let Some(ref imgs) = image_data {
             println!("[⏱️ PERF] Calling xAI API (grok-4.3) with vision streaming...");
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
                 "grok-4.3",
                 &full_prompt,
-                img,
+                imgs,
                 "https://api.x.ai/v1/chat/completions",
                 move |token| { app_handle.emit("stream-token", token).ok(); },
             ).await.map_err(|e| e.to_string())?;
@@ -1426,7 +1426,7 @@ pub async fn run_ensemble(
     containment_mode: String,
     kb_enabled: Option<bool>,
     user_query: Option<String>,
-    image_data: Option<crate::llm::ImageAttachment>,
+    image_data: Option<Vec<crate::llm::ImageAttachment>>,
 ) -> Result<serde_json::Value, String> {
     println!("[Ensemble] Running multi-model ensemble with {} models", models.len());
     println!("[Ensemble] Containment mode: {}", containment_mode);
@@ -1691,9 +1691,9 @@ pub async fn run_ensemble(
             let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
             if api_key.is_empty() {
                 Err("ANTHROPIC_API_KEY not set".to_string())
-            } else if let Some(ref img) = image_data {
+            } else if let Some(ref imgs) = image_data {
                 crate::llm::anthropic::send_vision_streaming(
-                    &api_key, ANTHROPIC_MODEL, &full_question, img, None, Some(4096), |_| {}
+                    &api_key, ANTHROPIC_MODEL, &full_question, imgs, None, Some(4096), |_| {}
                 ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {
                 let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
@@ -1704,9 +1704,9 @@ pub async fn run_ensemble(
             let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
             if api_key.is_empty() {
                 Err("OPENAI_API_KEY not set".to_string())
-            } else if let Some(ref img) = image_data {
+            } else if let Some(ref imgs) = image_data {
                 crate::llm::openai::send_vision_streaming(
-                    &api_key, "gpt-4o", &full_question, img,
+                    &api_key, "gpt-4o", &full_question, imgs,
                     "https://api.openai.com/v1/chat/completions", |_| {}
                 ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {
@@ -1718,9 +1718,9 @@ pub async fn run_ensemble(
             let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
             if api_key.is_empty() {
                 Err("XAI_API_KEY not set".to_string())
-            } else if let Some(ref img) = image_data {
+            } else if let Some(ref imgs) = image_data {
                 crate::llm::openai::send_vision_streaming(
-                    &api_key, "grok-4.3", &full_question, img,
+                    &api_key, "grok-4.3", &full_question, imgs,
                     "https://api.x.ai/v1/chat/completions", |_| {}
                 ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {

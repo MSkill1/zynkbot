@@ -568,7 +568,7 @@ export default function App() {
         userQuery = message;
       }
       if (imageFiles.length > 0) {
-        imageData = { base64: imageFiles[0].base64, mimeType: imageFiles[0].mimeType };
+        imageData = imageFiles.map(f => ({ base64: f.base64, mimeType: f.mimeType }));
         userQuery = userQuery || message;
       }
       setAttachedFiles([]);

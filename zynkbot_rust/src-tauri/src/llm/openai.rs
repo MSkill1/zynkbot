@@ -243,13 +243,13 @@ where
     })
 }
 
-/// Send a vision request (text + image) via OpenAI-compatible API with streaming.
+/// Send a vision request (text + one or more images) via OpenAI-compatible API with streaming.
 /// Used for both OpenAI (GPT-4o) and xAI (Grok Vision).
 pub async fn send_vision_streaming<F>(
     api_key: &str,
     model: &str,
     text: &str,
-    image: &super::ImageAttachment,
+    images: &[super::ImageAttachment],
     api_url: &str,
     on_token: F,
 ) -> Result<LLMResponse, LLMError>
@@ -258,25 +258,17 @@ where
 {
     let client = reqwest::Client::new();
 
+    let mut content_blocks: Vec<serde_json::Value> = images.iter().map(|img| serde_json::json!({
+        "type": "image_url",
+        "image_url": { "url": format!("data:{};base64,{}", img.mime_type, img.base64) }
+    })).collect();
+    content_blocks.push(serde_json::json!({ "type": "text", "text": text }));
+
     let body = serde_json::json!({
         "model": model,
         "stream": true,
         "max_tokens": 4096,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": format!("data:{};base64,{}", image.mime_type, image.base64)
-                    }
-                },
-                {
-                    "type": "text",
-                    "text": text
-                }
-            ]
-        }]
+        "messages": [{ "role": "user", "content": content_blocks }]
     });
 
     println!("[Rust OpenAI] Starting vision streaming request to: {}", model);

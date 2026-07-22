@@ -267,13 +267,13 @@ where
     })
 }
 
-/// Send a vision request (text + image) to Claude with streaming.
+/// Send a vision request (text + one or more images) to Claude with streaming.
 /// Builds the multipart content array required by Anthropic's vision API.
 pub async fn send_vision_streaming<F>(
     api_key: &str,
     model: &str,
     text: &str,
-    image: &super::ImageAttachment,
+    images: &[super::ImageAttachment],
     system_prompt: Option<String>,
     max_tokens: Option<u32>,
     on_token: F,
@@ -283,20 +283,16 @@ where
 {
     let client = reqwest::Client::new();
 
-    let content = serde_json::json!([
-        {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": image.mime_type,
-                "data": image.base64
-            }
-        },
-        {
-            "type": "text",
-            "text": text
+    let mut content_blocks: Vec<serde_json::Value> = images.iter().map(|img| serde_json::json!({
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": img.mime_type,
+            "data": img.base64
         }
-    ]);
+    })).collect();
+    content_blocks.push(serde_json::json!({ "type": "text", "text": text }));
+    let content = serde_json::Value::Array(content_blocks);
 
     let mut body = serde_json::json!({
         "model": model,
