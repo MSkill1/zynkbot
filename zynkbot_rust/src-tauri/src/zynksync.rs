@@ -448,6 +448,34 @@ impl ZynkSyncService {
             request_body["client_user_id"] = serde_json::json!(uid);
         }
 
+        // Send our existing peer list so the host can join our mesh too (bidirectional introduction)
+        let client_peers: Vec<serde_json::Value> = sqlx::query(
+            "SELECT device_id, device_name, device_ip, port, tls_cert_der FROM zynk_devices WHERE sync_paired = 1"
+        )
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| {
+            let dev_id: String = row.try_get("device_id").ok()?;
+            let dev_name: String = row.try_get("device_name").ok()?;
+            let ip: String = row.try_get("device_ip").ok()?;
+            let port_val: i32 = row.try_get("port").ok()?;
+            let cert: Option<Vec<u8>> = row.try_get("tls_cert_der").ok().flatten();
+            Some(serde_json::json!({
+                "device_id": dev_id,
+                "device_name": dev_name,
+                "ip": ip,
+                "port": port_val,
+                "cert_der": cert.map(|d| BASE64.encode(&d)),
+            }))
+        })
+        .collect();
+        if !client_peers.is_empty() {
+            request_body["client_peers"] = serde_json::json!(client_peers);
+            println!("[ZynkSync] Sending {} peer(s) to host for bidirectional mesh introduction", client_peers.len());
+        }
+
         // Use a TOFU client for the initial pairing request — the peer cert is not yet pinned.
         // The pairing code provides the authentication; the cert is pinned after this exchange.
         let tofu_client = reqwest::ClientBuilder::new()
@@ -925,6 +953,7 @@ impl ZynkSyncService {
         let local_device_id = self.device_id.clone();
         let removed_id = device_id.to_string();
         let http_client = self.http_client.read().await.clone();
+        let db_pool = self.db_pool.clone();
 
         tokio::spawn(async move {
             // Notify the removed device: "remove me (local) from your list"
@@ -937,7 +966,8 @@ impl ZynkSyncService {
                 }
             }
 
-            // Cascade: notify every other peer to also remove the departed device
+            // Cascade: notify every other peer to also remove the departed device.
+            // If a peer is offline, store the notification for retry on next heartbeat.
             for (peer_id, peer_ip) in &remaining_peers {
                 if peer_ip.is_empty() { continue; }
                 let url = format!("https://{}:57963/api/zynksync/notify-unsynced", peer_ip);
@@ -947,7 +977,14 @@ impl ZynkSyncService {
                 });
                 match http_client.post(&url).json(&payload).send().await {
                     Ok(_) => println!("[ZynkSync] ✓ Cascade-removed {} from peer {}", &removed_id[..8.min(removed_id.len())], &peer_id[..8.min(peer_id.len())]),
-                    Err(e) => println!("[ZynkSync] Note: peer {} offline during cascade remove: {}", &peer_id[..8.min(peer_id.len())], e),
+                    Err(e) => {
+                        println!("[ZynkSync] Peer {} offline during cascade remove — queuing for retry: {}", &peer_id[..8.min(peer_id.len())], e);
+                        sqlx::query(
+                            "INSERT OR IGNORE INTO zynk_pending_removals (target_peer_id, target_peer_ip, sender_device_id, cascade_device_id) VALUES (?, ?, ?, ?)"
+                        )
+                        .bind(peer_id).bind(peer_ip).bind(&local_device_id).bind(&removed_id)
+                        .execute(&db_pool).await.ok();
+                    }
                 }
             }
         });
@@ -2554,6 +2591,50 @@ impl ZynkSyncService {
         }
     }
 
+    /// Deliver any queued cascade-remove notifications for a peer that just came online.
+    async fn flush_pending_removals_for_peer(&self, peer_id: &str, peer_ip: &str) {
+        let pending = sqlx::query(
+            "SELECT id, sender_device_id, cascade_device_id FROM zynk_pending_removals WHERE target_peer_id = ?"
+        )
+        .bind(peer_id)
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap_or_default();
+
+        if pending.is_empty() { return; }
+        println!("[ZynkSync] Retrying {} queued removal(s) for peer {}", pending.len(), &peer_id[..8.min(peer_id.len())]);
+
+        let http_client = self.http_client.read().await.clone();
+        let mut delivered_ids: Vec<i64> = Vec::new();
+
+        for row in &pending {
+            let row_id: i64 = row.try_get("id").unwrap_or(0);
+            let sender_id: String = row.try_get("sender_device_id").unwrap_or_default();
+            let cascade_id: String = row.try_get("cascade_device_id").unwrap_or_default();
+
+            let url = format!("https://{}:57963/api/zynksync/notify-unsynced", peer_ip);
+            let payload = serde_json::json!({
+                "removed_device_id": sender_id,
+                "cascade_device_id": cascade_id,
+            });
+
+            match http_client.post(&url).json(&payload).send().await {
+                Ok(r) if r.status().is_success() => {
+                    println!("[ZynkSync] ✓ Delivered deferred cascade-remove to peer {}", &peer_id[..8.min(peer_id.len())]);
+                    delivered_ids.push(row_id);
+                }
+                _ => {} // Still unreachable — keep for next heartbeat
+            }
+        }
+
+        for id in delivered_ids {
+            sqlx::query("DELETE FROM zynk_pending_removals WHERE id = ?")
+                .bind(id)
+                .execute(&self.db_pool)
+                .await.ok();
+        }
+    }
+
     /// Send a heartbeat ping to all paired peers
     pub async fn start_heartbeat_loop(self: Arc<Self>) {
         let mut interval_timer = interval(Duration::from_secs(15));
@@ -2582,8 +2663,12 @@ impl ZynkSyncService {
                     .send()
                     .await;
                 if result.is_ok() {
-                    let mut map = self.peer_last_seen.write().await;
-                    map.insert(peer.device_id.clone(), Utc::now());
+                    {
+                        let mut map = self.peer_last_seen.write().await;
+                        map.insert(peer.device_id.clone(), Utc::now());
+                    }
+                    // Deliver any cascade-remove notifications that failed when peer was offline
+                    self.flush_pending_removals_for_peer(&peer.device_id, &peer.host).await;
                 }
             }
         }
@@ -3202,6 +3287,71 @@ async fn handle_verify_pairing(
                 println!("[ZynkSync] ⚠ Warning: Host user_id not available - security validation skipped");
             }
 
+            // REVERSE MESH: Pre-trust peers the client already knows so the host joins their mesh too.
+            // We do this synchronously so these peers appear in the mesh_peers response and the
+            // background task can introduce the host to them with the right trust chain.
+            let client_peers_vec: Vec<serde_json::Value> = request
+                .get("client_peers")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+
+            if !client_peers_vec.is_empty() {
+                println!("[ZynkSync] Client sent {} peer(s) — pre-trusting for reverse mesh", client_peers_vec.len());
+                for peer_val in &client_peers_vec {
+                    let peer_id = match peer_val.get("device_id").and_then(|v| v.as_str()) {
+                        Some(id) => id.to_string(),
+                        None => continue,
+                    };
+                    if peer_id == service.device_id { continue; }
+                    let peer_name = peer_val.get("device_name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let peer_ip = match peer_val.get("ip").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                        Some(ip) => ip.to_string(),
+                        None => continue,
+                    };
+                    let peer_cert: Option<Vec<u8>> = peer_val.get("cert_der")
+                        .and_then(|v| v.as_str())
+                        .and_then(|b64| BASE64.decode(b64).ok());
+
+                    sqlx::query(
+                        "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, is_paired, sync_paired, tls_cert_der, last_seen_at, created_at)
+                         VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)
+                         ON CONFLICT (device_id) DO UPDATE
+                         SET device_name = excluded.device_name,
+                             device_ip = excluded.device_ip,
+                             sync_paired = 1,
+                             tls_cert_der = excluded.tls_cert_der,
+                             last_seen_at = excluded.last_seen_at"
+                    )
+                    .bind(&peer_id).bind(&peer_name).bind(&peer_ip)
+                    .bind(57963i32).bind(peer_cert.as_deref())
+                    .bind(Utc::now()).bind(Utc::now())
+                    .execute(&service.db_pool).await.ok();
+
+                    {
+                        let mut map = service.peers.write().await;
+                        if !map.contains_key(&peer_id) {
+                            map.insert(peer_id.clone(), PeerDevice {
+                                device_id: peer_id.clone(),
+                                device_name: peer_name.clone(),
+                                host: peer_ip.clone(),
+                                port: 57963,
+                                url: format!("https://{}:57963", peer_ip),
+                                last_seen: Utc::now(),
+                                paired: true,
+                                pairing_code: None,
+                                user_id: None,
+                                is_online: false,
+                            });
+                        }
+                    }
+                    println!("[ZynkSync] Pre-trusted client's peer: {} ({})", peer_name, &peer_id[..8.min(peer_id.len())]);
+                }
+                if let Err(e) = service.rebuild_http_client().await {
+                    println!("[TLS] Warning: could not rebuild HTTP client after reverse mesh pre-trust: {}", e);
+                }
+            }
+
             // Collect existing peers to include in response (mesh pairing)
             let mesh_peers: Vec<serde_json::Value> = {
                 let rows = sqlx::query(
@@ -3235,7 +3385,11 @@ async fn handle_verify_pairing(
                 println!("[ZynkSync] Sending {} peer(s) to new device for mesh pairing", mesh_peers.len());
             }
 
-            // Notify existing peers about the new device in the background (best-effort)
+            // Notify existing peers about the new device in the background (best-effort).
+            // Phase 1: introduce host to client's pre-existing peers (bidirectional mesh).
+            // Phase 2: notify all known peers (including client's old peers) about the new client.
+            // Running phase 1 before phase 2 ensures that by the time we tell C about B,
+            // C already trusts the host and can accept the introduction.
             {
                 let svc = Arc::clone(&service);
                 let new_id = client_device_id.to_string();
@@ -3243,7 +3397,40 @@ async fn handle_verify_pairing(
                 let new_ip = client_ip.clone();
                 let new_cert_b64 = client_cert_der.as_ref().map(|d| BASE64.encode(d)).unwrap_or_default();
                 let new_uid = client_user_id.map(|s| s.to_string());
+                let client_peers_for_spawn = client_peers_vec.clone();
                 tokio::spawn(async move {
+                    // Phase 1: introduce host to each of the client's pre-existing peers.
+                    // The client (new device) is the vouching introducer — it knows both parties.
+                    // We omit new_device_ip so the receiving peer falls back to addr.ip(),
+                    // which is the host's IP (we are the sender and the introduced device).
+                    if !client_peers_for_spawn.is_empty() {
+                        let host_cert_b64 = BASE64.encode(&svc.cert_der);
+                        for peer_val in &client_peers_for_spawn {
+                            let peer_ip = match peer_val.get("ip").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                                Some(ip) => ip.to_string(),
+                                None => continue,
+                            };
+                            let url = format!("https://{}:57963/api/zynksync/introduce", peer_ip);
+                            let payload = serde_json::json!({
+                                "new_device_id": svc.device_id,
+                                "new_device_name": svc.device_name,
+                                "new_device_cert_der": host_cert_b64,
+                                "introducer_device_id": new_id,
+                                // no new_device_ip — addr.ip() on receiver will be the host's IP
+                            });
+                            let http_client2 = svc.http_client.read().await.clone();
+                            match http_client2.post(&url).json(&payload).send().await {
+                                Ok(r) if r.status().is_success() =>
+                                    println!("[ZynkSync] ✓ Host introduced itself to client's peer at {}", peer_ip),
+                                Ok(r) =>
+                                    println!("[ZynkSync] Host self-intro to client's peer at {} returned {}", peer_ip, r.status()),
+                                Err(e) =>
+                                    println!("[ZynkSync] Client's peer at {} offline during host self-intro: {}", peer_ip, e),
+                            }
+                        }
+                    }
+
+                    // Phase 2: notify all known peers (now including client's old peers) about the new client.
                     let http_client = svc.http_client.read().await.clone();
                     let peers: Vec<PeerDevice> = {
                         let map = svc.peers.read().await;
