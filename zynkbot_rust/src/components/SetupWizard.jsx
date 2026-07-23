@@ -223,6 +223,14 @@ export default function SetupWizard({ onComplete }) {
           </div>
         ))}
 
+        <div style={{ margin: '16px 0', padding: '12px 14px', background: '#1a1a2e', borderRadius: '8px', border: '1px solid #2a2a4a' }}>
+          <div style={{ color: '#aaa', fontSize: '13px', marginBottom: '4px' }}>
+            <strong style={{ color: '#ccc' }}>Prefer Ollama?</strong> Ollama is free, open-source, and gives you access to hundreds of models.
+            Install it from <strong style={{ color: '#7c5cbf' }}>ollama.com</strong> before or after setup — once running, configure it in{' '}
+            <strong style={{ color: '#ccc' }}>⚙ Settings → API Keys</strong>.
+          </div>
+        </div>
+
         <div>
           <button style={S.btn} onClick={() => startLLMs(selected)}>
             {selected.length > 0 ? `Download ${selected.length} model${selected.length > 1 ? 's' : ''}` : 'Skip — use API key instead'}

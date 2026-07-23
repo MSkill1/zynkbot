@@ -644,15 +644,6 @@ impl ZynkSyncService {
                         .and_then(|b64| BASE64.decode(b64).ok());
 
                     // Skip devices we already know
-                    let already_paired: i64 = sqlx::query_scalar(
-                        "SELECT COUNT(*) FROM zynk_devices WHERE device_id = ? AND sync_paired = 1"
-                    )
-                    .bind(peer_id)
-                    .fetch_one(&self.db_pool)
-                    .await
-                    .unwrap_or(0);
-                    if already_paired > 0 { continue; }
-
                     sqlx::query(
                         "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, is_paired, sync_paired, tls_cert_der, last_seen_at, created_at)
                          VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?)
