@@ -180,20 +180,38 @@ class MainActivity : TauriActivity() {
 
         @JavascriptInterface
         fun openShareFolder() {
-            zynkShareDir().mkdirs()
+            val dir = zynkShareDir().also { it.mkdirs() }
             runOnUiThread {
+                // Try to open directly at the Zynkbot subfolder via Downloads provider "raw:" URI
+                var opened = false
                 try {
-                    val intent = Intent("android.intent.action.VIEW_DOWNLOADS")
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    val uri = DocumentsContract.buildDocumentUri(
+                        "com.android.providers.downloads.documents",
+                        "raw:${dir.absolutePath}"
+                    )
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "vnd.android.document/directory")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
                     startActivity(intent)
-                } catch (_: Exception) {
+                    opened = true
+                } catch (_: Exception) {}
+
+                if (!opened) {
+                    // Fallback: open Downloads root
                     try {
-                        val intent = packageManager.getLaunchIntentForPackage("com.google.android.apps.nbu.files")
-                            ?: packageManager.getLaunchIntentForPackage("com.android.documentsui")
-                            ?: Intent(Intent.ACTION_VIEW).apply { type = "resource/folder" }
+                        val intent = Intent("android.intent.action.VIEW_DOWNLOADS")
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         startActivity(intent)
-                    } catch (_: Exception) {}
+                    } catch (_: Exception) {
+                        try {
+                            val intent = packageManager.getLaunchIntentForPackage("com.google.android.apps.nbu.files")
+                                ?: packageManager.getLaunchIntentForPackage("com.android.documentsui")
+                                ?: Intent(Intent.ACTION_VIEW).apply { type = "resource/folder" }
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                        } catch (_: Exception) {}
+                    }
                 }
             }
         }
