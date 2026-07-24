@@ -235,6 +235,39 @@ pub async fn remove_zynksync_device(device_id: String) -> Result<(), String> {
     }
 }
 
+/// Leave the sync network and stamp local memories with a fresh user_id.
+/// Returns the new user_id so the frontend can update its state.
+#[tauri::command]
+pub async fn unsync_and_reset_identity() -> Result<String, String> {
+    let old_user_id = crate::user_identity::get_user_id()
+        .map_err(|e| format!("Failed to get identity: {}", e))?;
+
+    {
+        let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
+        if let Some(service) = global_service.as_ref() {
+            service.remove_device("").await?;
+        }
+    }
+
+    let new_user_id = uuid::Uuid::new_v4().to_string();
+
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Database connection failed: {}", e))?;
+    sqlx::query("UPDATE memories SET user_id = ? WHERE user_id = ?")
+        .bind(&new_user_id)
+        .bind(&old_user_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to re-stamp memories: {}", e))?;
+
+    crate::user_identity::set_user_id(&new_user_id)
+        .map_err(|e| format!("Failed to set new identity: {}", e))?;
+
+    println!("[ZynkSync] ✓ Left network — new user_id: {}…", &new_user_id[..8]);
+    Ok(new_user_id)
+}
+
 /// Get this device's pairing code for sharing
 #[tauri::command]
 pub async fn get_zynksync_pairing_code() -> Result<String, String> {

@@ -92,14 +92,13 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
     setLoading(true);
     setMessage('Leaving sync network...');
     try {
-      // Pass any peer id — the backend now ignores it and leaves the whole network
-      const anyPeerId = peers.length > 0 ? peers[0].device_id : 'leave';
-      await invoke('remove_zynksync_device', { deviceId: anyPeerId });
+      const newUserId = await invoke('unsync_and_reset_identity');
       setPeers([]);
       setPairingCode('');
       setLocalIp('');
       setShowAddDevice(false);
       setMessage('✓ Left the sync network. Your memories are safe on this device.');
+      if (onIdentityAdopted) onIdentityAdopted(newUserId);
     } catch (error) {
       setMessage('✗ Failed to unsync: ' + error);
     } finally {
@@ -161,13 +160,12 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
 
       if (peer.user_id && peer.user_id !== userId) {
         const confirmed = window.confirm(
-          `⚠️ IDENTITY SYNC WARNING\n\n` +
+          `⚠️ IDENTITY SYNC\n\n` +
           `Joining this network will:\n` +
-          `• Clear ALL memories on THIS device\n` +
-          `• Change your User ID to match the host device\n` +
-          `• Start syncing with the host's memories\n\n` +
+          `• Migrate your memories to match the host's identity\n` +
+          `• Start syncing with all devices on the network\n\n` +
           `Host: ${peer.device_name}\n\n` +
-          `This cannot be undone. Continue?`
+          `Continue?`
         );
         if (!confirmed) {
           setMessage('✗ Pairing cancelled');
