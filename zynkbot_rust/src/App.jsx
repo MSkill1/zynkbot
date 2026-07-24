@@ -877,7 +877,7 @@ export default function App() {
         <div>
           <h1>Zynkbot</h1>
           <p style={{margin: '5px 0', fontSize: '0.95rem', color: '#8be9fd'}}>
-            Open Beta v0.9: Privacy-first AI companion with transparent editable memory, cross-device sync, filesharing and chat, RAG knowledge base, ensemble response, experimental snap-in development platform & distributed compute. Desktop version (Windows, Linux). Community feedback needed before v1.0 release and mobile app development.
+            Open Beta v0.9: Privacy-first AI companion with transparent editable memory, cross-device sync, filesharing and chat, RAG knowledge base, ensemble response, experimental snap-in development platform & distributed compute. Available on Windows, Linux, and Android.
           </p>
         </div>
         <div className="header-buttons">
