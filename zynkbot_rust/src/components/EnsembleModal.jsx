@@ -515,14 +515,16 @@ export default function EnsembleModal({
                     </button>
                   </div>
                 </div>
-                <VoiceButton
-                  onTranscript={(text) => setQuestion(text)}
-                  disabled={isLoading}
-                  style={{
-                    minWidth: '45px',
-                    minHeight: '45px'
-                  }}
-                />
+                {!window.AndroidPaths && (
+                  <VoiceButton
+                    onTranscript={(text) => setQuestion(text)}
+                    disabled={isLoading}
+                    style={{
+                      minWidth: '45px',
+                      minHeight: '45px'
+                    }}
+                  />
+                )}
               </div>
             </div>
 
