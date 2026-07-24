@@ -584,8 +584,11 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
           marginBottom: '20px',
           border: '1px solid #44475a'
         }}>
-          <div style={{ color: '#ffb86c', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: '10px' }}>
+          <div style={{ color: '#ffb86c', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: '6px' }}>
             🔗 Linked Devices ({linkedUsers.length})
+          </div>
+          <div style={{ color: '#ff5555', fontSize: '0.8rem', marginBottom: '10px' }}>
+            Android devices are identified as "Android-XXXX" where XXXX is the last 4 digits of their device ID.
           </div>
           {linkedUsers.map(user => (
             <div

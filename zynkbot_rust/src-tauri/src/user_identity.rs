@@ -210,7 +210,7 @@ pub fn get_device_name() -> String {
         .unwrap_or_default();
     if raw.is_empty() || raw == "localhost" {
         let device_id = get_device_id().unwrap_or_else(|_| "00000000-0000-0000-0000-000000000000".to_string());
-        let suffix = &device_id[device_id.len().saturating_sub(8)..device_id.len().saturating_sub(4)];
+        let suffix = &device_id[device_id.len().saturating_sub(4)..];
         format!("Android-{}", suffix.to_uppercase())
     } else {
         raw
