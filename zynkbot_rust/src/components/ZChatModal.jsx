@@ -15,6 +15,7 @@ export default function ZChatModal({
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [showEmoticons, setShowEmoticons] = useState(false);
+  const [clearActive, setClearActive] = useState(false);
   const messagesEndRef = useRef(null);
 
   // Standard emoji
@@ -178,14 +179,20 @@ export default function ZChatModal({
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               onClick={handleClearHistory}
+              onMouseDown={() => setClearActive(true)}
+              onMouseUp={() => setClearActive(false)}
+              onMouseLeave={() => setClearActive(false)}
+              onTouchStart={() => setClearActive(true)}
+              onTouchEnd={() => setClearActive(false)}
               style={{
-                background: '#44475a',
-                color: '#9aa5c4',
+                background: clearActive ? '#6272a4' : '#44475a',
+                color: clearActive ? '#f8f8f2' : '#9aa5c4',
                 border: 'none',
                 borderRadius: '4px',
                 padding: '6px 12px',
                 cursor: 'pointer',
-                fontSize: '0.85rem'
+                fontSize: '0.85rem',
+                transition: 'background 0.1s, color 0.1s'
               }}
               title="Clear chat history"
             >

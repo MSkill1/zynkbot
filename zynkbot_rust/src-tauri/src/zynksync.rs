@@ -4277,15 +4277,6 @@ async fn handle_zynklink_files(
 
     println!("[ZynkLink] File list request for share_id: {}", share_id);
 
-    // Rescan the directory before listing so newly added files always appear.
-    // All file types are indexed; KB-format filtering happens on the client side.
-    let _ = crate::zynklink::scan_directory(
-        &service.db_pool,
-        &service.device_id,
-        share_id,
-        None,
-    ).await;
-
     // List files in the shared directory
     let response = crate::zynklink::list_files(
         &service.db_pool,

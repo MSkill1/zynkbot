@@ -246,7 +246,9 @@ pub async fn list_remote_directories(
     })
 }
 
-/// Scan a directory and index all files
+/// Scan a directory and index all files.
+/// Collects all file records into memory first, then atomically clears and
+/// replaces the manifest — so a failed scan never leaves the manifest empty.
 pub async fn scan_directory(
     pool: &SqlitePool,
     device_id: &str,
@@ -267,20 +269,36 @@ pub async fn scan_directory(
 
     let share = share.ok_or_else(|| "Share not found or not owned by this device".to_string())?;
 
-    // Clear existing file entries
+    let base_path = PathBuf::from(&share.local_path);
+    let max = max_files.unwrap_or(1000);
+
+    // Collect all files into memory first; if this fails, the existing manifest is untouched.
+    let mut collected: Vec<(String, i64, DateTime<Utc>)> = Vec::new();
+    collect_files_recursive(&base_path, &base_path, &mut collected, max)
+        .await
+        .map_err(|e| format!("Failed to scan directory: {}", e))?;
+
+    let files_indexed = collected.len();
+
+    // Scan succeeded — now atomically replace the manifest.
     sqlx::query("DELETE FROM zynk_file_manifest WHERE shared_directory_id = ?")
         .bind(share_id)
         .execute(pool)
         .await
         .map_err(|e| format!("Failed to clear file entries: {}", e))?;
 
-    // Scan directory recursively
-    let base_path = PathBuf::from(&share.local_path);
-    let mut files_indexed = 0;
-    let max = max_files.unwrap_or(1000);
-
-    if let Err(e) = scan_directory_recursive(pool, share_id, &base_path, &base_path, &mut files_indexed, max).await {
-        return Err(format!("Failed to scan directory: {}", e));
+    for (relative_path, file_size, last_modified) in collected {
+        sqlx::query(
+            "INSERT INTO zynk_file_manifest (shared_directory_id, relative_path, file_size, last_modified, indexed_at)
+             VALUES (?, ?, ?, ?, datetime('now'))"
+        )
+        .bind(share_id)
+        .bind(&relative_path)
+        .bind(file_size)
+        .bind(last_modified)
+        .execute(pool)
+        .await
+        .map_err(|e| format!("Failed to insert file record: {}", e))?;
     }
 
     Ok(serde_json::json!({
@@ -289,16 +307,15 @@ pub async fn scan_directory(
     }))
 }
 
-/// Recursively scan directory helper
-async fn scan_directory_recursive(
-    pool: &SqlitePool,
-    share_id: i32,
+/// Recursively collect file metadata into `out`; returns Err if the root directory
+/// cannot be read (caller decides whether to abort or ignore).
+async fn collect_files_recursive(
     base_path: &Path,
     current_path: &Path,
-    files_indexed: &mut usize,
+    out: &mut Vec<(String, i64, DateTime<Utc>)>,
     max_files: usize,
 ) -> Result<(), String> {
-    if *files_indexed >= max_files {
+    if out.len() >= max_files {
         return Ok(());
     }
 
@@ -307,18 +324,17 @@ async fn scan_directory_recursive(
         .map_err(|e| format!("Failed to read directory: {}", e))?;
 
     while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
-        if *files_indexed >= max_files {
+        if out.len() >= max_files {
             break;
         }
 
         let path = entry.path();
         let metadata = match fs::metadata(&path).await {
             Ok(m) => m,
-            Err(_) => continue, // Skip files we can't read
+            Err(_) => continue,
         };
 
         if metadata.is_file() {
-            // Get relative path
             let relative_path = path.strip_prefix(base_path)
                 .map_err(|e| e.to_string())?
                 .to_string_lossy()
@@ -331,28 +347,9 @@ async fn scan_directory_recursive(
                 .map(|d| DateTime::<Utc>::from_timestamp(d.as_secs() as i64, 0).unwrap_or_default())
                 .unwrap_or_else(Utc::now);
 
-            // Upsert file record — rescans should refresh size/mtime, not crash on the
-            // existing (shared_directory_id, relative_path) UNIQUE constraint.
-            sqlx::query(
-                "INSERT INTO zynk_file_manifest (shared_directory_id, relative_path, file_size, last_modified, indexed_at)
-                 VALUES (?, ?, ?, ?, datetime('now'))
-                 ON CONFLICT(shared_directory_id, relative_path) DO UPDATE SET
-                     file_size = excluded.file_size,
-                     last_modified = excluded.last_modified,
-                     indexed_at = datetime('now')"
-            )
-            .bind(share_id)
-            .bind(&relative_path)
-            .bind(file_size)
-            .bind(last_modified)
-            .execute(pool)
-            .await
-            .map_err(|e| format!("Failed to insert file record: {}", e))?;
-
-            *files_indexed += 1;
+            out.push((relative_path, file_size, last_modified));
         } else if metadata.is_dir() {
-            // Recurse into subdirectory (Box::pin required for async recursion)
-            Box::pin(scan_directory_recursive(pool, share_id, base_path, &path, files_indexed, max_files)).await?;
+            Box::pin(collect_files_recursive(base_path, &path, out, max_files)).await?;
         }
     }
 
@@ -760,7 +757,8 @@ pub async fn deliver_zchat_to_peer(
     use crate::zchat;
     use uuid::Uuid;
 
-    // Get the paired device's IP address
+    // Get the paired device's IP address — must match BOTH current and target device IDs
+    // so messages are never misrouted when a device has multiple ZynkLink pairings.
     let device_info = sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT
             CASE WHEN device1_id = ? THEN device2_id ELSE device1_id END as paired_device_id,
@@ -768,6 +766,7 @@ pub async fn deliver_zchat_to_peer(
          FROM zynklink_pairings zp
          LEFT JOIN zynk_devices zd ON (CASE WHEN device1_id = ? THEN device2_id ELSE device1_id END) = zd.device_id
          WHERE (user1_id = ? OR user2_id = ?)
+           AND (device1_id = ? OR device2_id = ?)
            AND (device1_id = ? OR device2_id = ?)
            AND is_active = 1"
     )
@@ -777,6 +776,8 @@ pub async fn deliver_zchat_to_peer(
     .bind(current_user_id)
     .bind(current_device_id)
     .bind(current_device_id)
+    .bind(to_device_id)
+    .bind(to_device_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| format!("Failed to get paired device info: {}", e))?;
