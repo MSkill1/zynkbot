@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { open as openFolderDialog } from '@tauri-apps/plugin-dialog';
 import ZChatModal from './ZChatModal';
 import ZynkFileBrowserModal from './ZynkFileBrowserModal';
 
@@ -21,7 +20,6 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [chatDevice, setChatDevice] = useState(null); // Track which device chat is open for
   const [localDeviceId, setLocalDeviceId] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({}); // Map of device_id -> unread count
-  const [isMobile] = useState(() => window.innerWidth <= 768);
   const [showEnterCodeInput, setShowEnterCodeInput] = useState(false); // Toggle for enter code input
   const isAndroid = !!window.AndroidPaths;
   const [androidShareDir, setAndroidShareDir] = useState('');

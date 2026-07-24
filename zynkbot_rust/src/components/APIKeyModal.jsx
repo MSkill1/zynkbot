@@ -69,6 +69,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     if (isOpen) {
       loadAPIKeys();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   // Refresh keys when a peer pushes one to this device
@@ -78,6 +79,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       .then(fn => { unlisten = fn; })
       .catch(() => {});
     return () => { if (typeof unlisten === 'function') unlisten(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadAPIKeys = async () => {

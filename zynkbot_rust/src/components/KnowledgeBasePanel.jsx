@@ -2,8 +2,6 @@ import React, { useState, useEffect } from "react";
 import { invoke } from '@tauri-apps/api/core';
 import "../styles/KnowledgeBasePanel.css";
 
-const isMobile = () => window.innerWidth <= 768;
-
 export default function KnowledgeBasePanel({ userId, onManageDocuments }) {
   const [kbFolderPath, setKbFolderPath] = useState("");
   const [isLoading, setIsLoading] = useState(true);
