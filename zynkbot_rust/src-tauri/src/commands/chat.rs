@@ -1728,6 +1728,18 @@ pub async fn run_ensemble(
                 crate::llm::xai::send_message(&api_key, XAI_MODEL, messages, Some(4096), None)
                     .await.map(|r| r.content).map_err(|e| e.to_string())
             }
+        } else if model_backend.to_lowercase() == "custom" {
+            // Custom / Ollama — OpenAI-compatible endpoint
+            let base_url = std::env::var("CUSTOM_API_URL")
+                .map_err(|_| "Custom endpoint not configured. Add it in API Settings.".to_string())?;
+            let model_name = std::env::var("CUSTOM_MODEL")
+                .map_err(|_| "No model selected for custom endpoint.".to_string())?;
+            let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
+            let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+            let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
+            crate::llm::openai::send_message_streaming(
+                &api_key, &model_name, messages, Some(2048), None, &api_url, true, |_| {}
+            ).await.map(|r| r.content).map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))
         } else {
             // Local model - use llama.cpp
             if image_data.is_some() {
@@ -1785,8 +1797,16 @@ pub async fn run_ensemble(
         .filter(|r| r["success"].as_bool().unwrap_or(false))
         .collect();
 
+    if successful_responses.is_empty() {
+        return Err("All models failed to respond. Check your API keys and connections.".to_string());
+    }
     if successful_responses.len() < 2 {
-        return Err("Not enough successful responses for ensemble".to_string());
+        // Only 1 model responded — log which ones failed and continue with synthesis
+        let failed: Vec<&str> = individual_responses.iter()
+            .filter(|r| !r["success"].as_bool().unwrap_or(false))
+            .map(|r| r["model"].as_str().unwrap_or("unknown"))
+            .collect();
+        println!("[Ensemble] Warning: only 1 model succeeded. Failed: {:?}. Proceeding with single response.", failed);
     }
 
     // Phase 2: Synthesis - Coordinator combines all responses
