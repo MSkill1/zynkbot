@@ -286,6 +286,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   }, [syncStatus, autoRefresh, fetchPeers]);
 
   const isRunning = syncStatus === 'running';
+  const isAndroid = !!window.AndroidPaths;
 
   return (
     <div style={{
@@ -297,14 +298,14 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
     }}>
 
       {/* 4-Button Control Row */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
+      <div style={{ display: 'flex', flexWrap: isAndroid ? 'wrap' : 'nowrap', gap: '8px', marginBottom: '15px' }}>
 
         {/* Pause / Sync Now */}
         <button
           onClick={isRunning ? handlePause : handleSyncNow}
           disabled={loading}
           style={{
-            flex: 1,
+            flex: isAndroid ? '1 1 calc(50% - 4px)' : 1,
             padding: '8px 10px',
             background: isRunning ? '#ffb86c' : '#50fa7b',
             color: '#282a36',
@@ -325,7 +326,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           onClick={handleRefresh}
           disabled={loading}
           style={{
-            flex: 1,
+            flex: isAndroid ? '1 1 calc(50% - 4px)' : 1,
             padding: '8px 10px',
             background: '#6272a4',
             color: '#f8f8f2',
@@ -346,7 +347,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           onClick={handleUnsync}
           disabled={loading || peers.length === 0}
           style={{
-            flex: 1,
+            flex: isAndroid ? '1 1 calc(50% - 4px)' : 1,
             padding: '8px 10px',
             background: peers.length > 0 ? '#ff5555' : '#3a2a2a',
             color: peers.length > 0 ? '#f8f8f2' : '#6272a4',
@@ -366,7 +367,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
         <button
           onClick={onOpenUserIdentity}
           style={{
-            flex: 1,
+            flex: isAndroid ? '1 1 calc(50% - 4px)' : 1,
             padding: '8px 10px',
             background: '#bd93f9',
             color: '#282a36',

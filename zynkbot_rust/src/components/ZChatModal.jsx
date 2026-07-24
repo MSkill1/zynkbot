@@ -10,6 +10,7 @@ export default function ZChatModal({
   device,
   currentDeviceId
 }) {
+  const isAndroid = !!window.AndroidPaths;
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -305,72 +306,97 @@ export default function ZChatModal({
         )}
 
         {/* Input Area */}
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
-          <button
-            onClick={() => setShowEmoticons(!showEmoticons)}
-            style={{
-              padding: '10px',
-              background: '#44475a',
-              color: '#f8f8f2',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '1.2rem',
-              minWidth: '45px',
-              height: '45px'
-            }}
-            title="Toggle emoticons"
-          >
-            😊
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+            <button
+              onClick={() => setShowEmoticons(!showEmoticons)}
+              style={{
+                padding: '10px',
+                background: '#44475a',
+                color: '#f8f8f2',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '1.2rem',
+                minWidth: '45px',
+                height: '45px'
+              }}
+              title="Toggle emoticons"
+            >
+              😊
+            </button>
 
-          <VoiceButton
-            onTranscript={(text) => setInput(text)}
-            disabled={isSending}
-            style={{
-              minWidth: '45px',
-              minHeight: '45px',
-              height: '45px'
-            }}
-          />
+            <VoiceButton
+              onTranscript={(text) => setInput(text)}
+              disabled={isSending}
+              style={{
+                minWidth: '45px',
+                minHeight: '45px',
+                height: '45px'
+              }}
+            />
 
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Type a message..."
-            disabled={isSending}
-            style={{
-              flex: 1,
-              padding: '12px',
-              background: '#282a36',
-              border: '1px solid #44475a',
-              borderRadius: '6px',
-              color: '#f8f8f2',
-              fontSize: '0.95rem',
-              outline: 'none'
-            }}
-          />
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Type a message..."
+              disabled={isSending}
+              style={{
+                flex: 1,
+                padding: '12px',
+                background: '#282a36',
+                border: '1px solid #44475a',
+                borderRadius: '6px',
+                color: '#f8f8f2',
+                fontSize: '0.95rem',
+                outline: 'none'
+              }}
+            />
 
-          <button
-            onClick={handleSend}
-            disabled={isSending || !input.trim()}
-            style={{
-              padding: '12px 20px',
-              background: isSending || !input.trim() ? '#44475a' : '#50fa7b',
-              color: isSending || !input.trim() ? '#6272a4' : '#282a36',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: isSending || !input.trim() ? 'not-allowed' : 'pointer',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              minWidth: '80px',
-              height: '45px'
-            }}
-          >
-            {isSending ? '...' : 'Send'}
-          </button>
+            {!isAndroid && (
+              <button
+                onClick={handleSend}
+                disabled={isSending || !input.trim()}
+                style={{
+                  padding: '12px 20px',
+                  background: isSending || !input.trim() ? '#44475a' : '#50fa7b',
+                  color: isSending || !input.trim() ? '#6272a4' : '#282a36',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: isSending || !input.trim() ? 'not-allowed' : 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '0.95rem',
+                  minWidth: '80px',
+                  height: '45px'
+                }}
+              >
+                {isSending ? '...' : 'Send'}
+              </button>
+            )}
+          </div>
+
+          {isAndroid && (
+            <button
+              onClick={handleSend}
+              disabled={isSending || !input.trim()}
+              style={{
+                width: '100%',
+                padding: '12px',
+                background: isSending || !input.trim() ? '#44475a' : '#50fa7b',
+                color: isSending || !input.trim() ? '#6272a4' : '#282a36',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: isSending || !input.trim() ? 'not-allowed' : 'pointer',
+                fontWeight: 'bold',
+                fontSize: '0.95rem',
+                height: '45px'
+              }}
+            >
+              {isSending ? '...' : '➤ Send'}
+            </button>
+          )}
         </div>
       </div>
     </div>,
