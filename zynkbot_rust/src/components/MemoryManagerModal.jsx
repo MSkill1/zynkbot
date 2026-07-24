@@ -660,7 +660,12 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                           <>
                             <div
                               style={{ color: '#8be9fd', fontWeight: '600', fontSize: '0.85rem', marginBottom: '4px', cursor: 'pointer' }}
-                              onClick={() => setSelectedMemory(rel.related_memory)}
+                              onClick={async () => {
+                                try {
+                                  const full = await invoke('get_memory', { memoryId: rel.related_memory.id });
+                                  if (full) { setSelectedMemory(full); fetchRelationships(full.id); }
+                                } catch { setSelectedMemory(rel.related_memory); }
+                              }}
                             >{rel.related_memory.title || 'Untitled'}</div>
                             <div style={{ color: '#a0a0a0', fontSize: '0.8rem', lineHeight: '1.4' }}>
                               {rel.related_memory.content.substring(0, 80)}…
@@ -1100,9 +1105,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                                     cursor: 'pointer',
                                     textDecoration: 'underline'
                                   }}
-                                  onClick={() => {
-                                    // Navigate to the related memory
-                                    setSelectedMemory(rel.related_memory);
+                                  onClick={async () => {
+                                    try {
+                                      const full = await invoke('get_memory', { memoryId: rel.related_memory.id });
+                                      if (full) { setSelectedMemory(full); fetchRelationships(full.id); }
+                                    } catch { setSelectedMemory(rel.related_memory); }
                                   }}
                                   title="Click to view this memory"
                                 >
