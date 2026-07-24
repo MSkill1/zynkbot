@@ -397,10 +397,10 @@ body.modal-open .conversation-history {
     gap: 8px !important;
   }
 
-  /* Full-width 2x2 grid, taller touch targets */
+  /* Full-width 1x2 grid on mobile — Voice/Send hidden, so only Ensemble+Clear in one row */
   .chat-button-grid {
     grid-template-columns: 1fr 1fr !important;
-    grid-template-rows: 48px 48px !important;
+    grid-template-rows: 48px !important;
     width: 100% !important;
   }
 

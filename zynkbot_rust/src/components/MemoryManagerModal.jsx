@@ -482,9 +482,27 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               </div>
             </div>
 
-            {/* Count */}
-            <div style={{ padding: '8px 16px', flexShrink: 0 }}>
-              <span style={{ color: '#8be9fd', fontWeight: 'bold', fontSize: '0.9rem' }}>Memories ({filteredMemories.length})</span>
+            {/* Count row + Graph + Delete buttons */}
+            <div style={{ padding: '8px 16px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ color: '#8be9fd', fontWeight: 'bold', fontSize: '0.9rem', flex: 1 }}>
+                Memories ({filteredMemories.length})
+              </span>
+              <button
+                onClick={() => setShowGraphModal(true)}
+                style={{ padding: '5px 12px', background: '#bd93f9', color: '#282a36', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.8rem', cursor: 'pointer' }}
+              >🔗 Graph</button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={selectedMemoryIds.length === 0}
+                style={{
+                  padding: '5px 12px',
+                  background: selectedMemoryIds.length > 0 ? '#ff5555' : '#3a2a2a',
+                  color: selectedMemoryIds.length > 0 ? '#fff' : '#6272a4',
+                  border: 'none', borderRadius: '6px', fontWeight: 'bold',
+                  fontSize: '0.8rem',
+                  cursor: selectedMemoryIds.length > 0 ? 'pointer' : 'default'
+                }}
+              >🗑️{selectedMemoryIds.length > 0 ? ` (${selectedMemoryIds.length})` : ''}</button>
             </div>
 
             {/* Scrollable list */}
@@ -497,18 +515,25 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 </div>
               ) : (
                 filteredMemories.map((mem) => (
-                  <div key={mem.id} style={{ background: '#1e1f29', border: '1px solid #44475a', borderRadius: '8px', padding: '12px', marginBottom: '10px' }}>
-                    {/* Badge + date */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <span style={{ background: '#bd93f9', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold' }}>
+                  <div key={mem.id} style={{ background: '#1e1f29', border: `1px solid ${selectedMemoryIds.includes(mem.id) ? '#ff5555' : '#44475a'}`, borderRadius: '8px', padding: '12px', marginBottom: '10px' }}>
+                    {/* Badge + date + checkbox */}
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px', gap: '8px' }}>
+                      <span style={{ background: '#bd93f9', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', flexShrink: 0 }}>
                         {mem.namespace.toUpperCase()}
                       </span>
-                      <span style={{ color: '#6272a4', fontSize: '0.75rem' }}>
+                      <span style={{ color: '#6272a4', fontSize: '0.75rem', flex: 1 }}>
                         {new Date(mem.created_at).toLocaleDateString()}
                       </span>
+                      <input
+                        type="checkbox"
+                        checked={selectedMemoryIds.includes(mem.id)}
+                        onChange={() => toggleMemorySelection(mem.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ width: '20px', height: '20px', cursor: 'pointer', flexShrink: 0, accentColor: '#ff5555' }}
+                      />
                     </div>
                     {/* Title + preview — tap to open detail */}
-                    <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer', marginBottom: '10px' }}>
+                    <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
                       {mem.title && (
                         <div style={{ color: '#8be9fd', fontWeight: '600', fontSize: '0.95rem', marginBottom: '4px' }}>
                           {mem.title}
@@ -517,21 +542,6 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       <div style={{ color: '#a0a0a0', fontSize: '0.85rem', lineHeight: '1.4' }}>
                         {mem.content.substring(0, 100)}{mem.content.length > 100 ? '…' : ''}
                       </div>
-                    </div>
-                    {/* Action buttons */}
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        onClick={() => { setSelectedMemory(mem); handleStartEdit(mem); }}
-                        style={{ flex: 1, height: '42px', background: '#8be9fd', color: '#282a36', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.85rem', cursor: 'pointer' }}
-                      >✏️ Edit</button>
-                      <button
-                        onClick={() => { setSelectedMemory(mem); setShowGraphModal(true); }}
-                        style={{ flex: 1, height: '42px', background: '#bd93f9', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.85rem', cursor: 'pointer' }}
-                      >🔗 Graph</button>
-                      <button
-                        onClick={() => handleDelete(mem.id)}
-                        style={{ width: '42px', height: '42px', background: '#ff5555', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '1.1rem', cursor: 'pointer', flexShrink: 0 }}
-                      >🗑️</button>
                     </div>
                   </div>
                 ))
@@ -673,11 +683,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         )}
 
         {/* Graph modal */}
-        {showGraphModal && selectedMemory && (
+        {showGraphModal && (
           <MemoryGraphModal
             isOpen={showGraphModal}
             onClose={() => setShowGraphModal(false)}
-            memoryId={selectedMemory.id}
+            memoryId={selectedMemory?.id}
             userId={userId}
             onNavigate={async (newMemoryId) => {
               try {

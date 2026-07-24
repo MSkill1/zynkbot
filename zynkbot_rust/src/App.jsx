@@ -1657,7 +1657,7 @@ export default function App() {
               <div className="chat-button-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: isMobile ? '85px' : '85px 85px',
-                gridTemplateRows: isMobile ? '42px 42px' : '42px 42px',
+                gridTemplateRows: isMobile ? '42px' : '42px 42px',
                 gap: '10px'
               }}>
                 {/* Top Left: Voice (hidden on mobile — Android keyboard handles dictation) */}
