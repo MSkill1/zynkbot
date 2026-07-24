@@ -401,8 +401,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
           style={{
             flex: 1,
             padding: '8px 16px',
-            background: '#ff5555',
-            color: '#f8f8f2',
+            background: '#bd93f9',
+            color: '#282a36',
             border: 'none',
             borderRadius: '4px',
             cursor: 'pointer',
@@ -410,8 +410,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             fontWeight: 'bold',
             transition: 'all 0.2s'
           }}
-          onMouseOver={(e) => e.target.style.background = '#ff6b6b'}
-          onMouseOut={(e) => e.target.style.background = '#ff5555'}
+          onMouseOver={(e) => e.target.style.background = '#a97ff5'}
+          onMouseOut={(e) => e.target.style.background = '#bd93f9'}
           title="Manage your identity"
         >
           👤 Identity
