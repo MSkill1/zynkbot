@@ -277,6 +277,12 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-wrap: wrap;
+}
+
+.kb-doc-meta span,
+.kb-file-meta span {
+  white-space: nowrap;
 }
 
 .kb-separator {
@@ -396,6 +402,27 @@
 }
 
 /* Responsive */
+/* kb-action-btn: alias for kb-action-button used in JSX */
+.kb-action-btn {
+  background: #44475a;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  line-height: 1;
+}
+
+.kb-action-btn:hover:not(:disabled) {
+  background: #565a6e;
+  transform: scale(1.1);
+}
+
+.kb-delete-btn:hover:not(:disabled) {
+  background: #ff5555;
+}
+
 @media (max-width: 768px) {
   .kb-manager-modal {
     width: 95%;
@@ -410,11 +437,19 @@
     padding: 16px;
   }
 
-  .kb-doc-main,
-  .kb-file-main {
+  /* Stack the whole card vertically on mobile */
+  .kb-document-item,
+  .kb-file-item {
     flex-direction: column;
     align-items: flex-start;
-    gap: 8px;
+  }
+
+  .kb-doc-main,
+  .kb-file-main {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
   }
 
   .kb-doc-actions {
