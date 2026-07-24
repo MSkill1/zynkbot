@@ -269,6 +269,44 @@ pub async fn remove_api_key(key: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Push an API key to all active sync peers over the existing cert-pinned channel.
+#[tauri::command]
+pub async fn propagate_api_key(key: String, value: String) -> Result<serde_json::Value, String> {
+    let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+    let service = guard.as_ref().ok_or("ZynkSync not running — start sync first")?;
+
+    let targets: Vec<(String, String)> = service.get_peers().await
+        .into_iter()
+        .filter(|p| p.paired && !p.host.is_empty())
+        .map(|p| (p.device_id.clone(), p.host.clone()))
+        .collect();
+
+    let http_client = service.get_http_client().await;
+    let payload = serde_json::json!({ "key": &key, "value": &value });
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+
+    for (device_id, host) in &targets {
+        let url = format!("https://{}:57963/api/zynksync/push-api-key", host);
+        match http_client.post(&url).json(&payload).send().await {
+            Ok(r) if r.status().is_success() => {
+                println!("[ZynkSync] ✓ API key {} pushed to {}…", key, &device_id[..8.min(device_id.len())]);
+                succeeded += 1;
+            }
+            Ok(r) => {
+                println!("[ZynkSync] ✗ Push {} to {}… returned {}", key, &device_id[..8.min(device_id.len())], r.status());
+                failed += 1;
+            }
+            Err(e) => {
+                println!("[ZynkSync] ✗ Push {} to {}… failed: {}", key, &device_id[..8.min(device_id.len())], e);
+                failed += 1;
+            }
+        }
+    }
+
+    Ok(serde_json::json!({ "succeeded": succeeded, "failed": failed, "total": targets.len() }))
+}
+
 /// Fetch the list of models from a custom OpenAI-compatible endpoint (Ollama, llama-server, etc.)
 #[tauri::command]
 pub async fn fetch_custom_models(base_url: String, api_key: String) -> Result<Vec<String>, String> {

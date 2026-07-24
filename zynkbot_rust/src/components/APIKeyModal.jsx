@@ -71,6 +71,15 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     }
   }, [isOpen]);
 
+  // Refresh keys when a peer pushes one to this device
+  useEffect(() => {
+    let unlisten;
+    listen('api-keys-updated', () => { loadAPIKeys(); })
+      .then(fn => { unlisten = fn; })
+      .catch(() => {});
+    return () => { if (typeof unlisten === 'function') unlisten(); };
+  }, []);
+
   const loadAPIKeys = async () => {
     try {
       const keys = await invoke('get_api_keys');
@@ -145,23 +154,35 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     }
 
     setIsSaving(true);
+    const savedValue = tempValue.trim();
     try {
-      await invoke('set_api_key', {
-        key: providerKey,
-        value: tempValue.trim()
-      });
+      await invoke('set_api_key', { key: providerKey, value: savedValue });
 
-      setApiKeys(prev => ({
-        ...prev,
-        [providerKey]: tempValue.trim()
-      }));
-
+      setApiKeys(prev => ({ ...prev, [providerKey]: savedValue }));
       setEditingKey(null);
       setTempValue("");
       console.log(`✅ Saved ${providerKey}`);
 
-      if (onKeysChanged) {
-        onKeysChanged();
+      if (onKeysChanged) onKeysChanged();
+
+      // Offer to propagate to sync peers
+      try {
+        const peers = await invoke('get_zynksync_peers');
+        const onlinePeers = (peers || []).filter(p => p.is_online);
+        if (onlinePeers.length > 0) {
+          const confirmed = window.confirm(
+            `Send this key to your ${onlinePeers.length} other device${onlinePeers.length > 1 ? 's' : ''}?\n\n` +
+            `Your API key travels encrypted, peer-to-peer, directly between your devices. ` +
+            `It does not touch the internet.`
+          );
+          if (confirmed) {
+            const result = await invoke('propagate_api_key', { key: providerKey, value: savedValue });
+            console.log(`[API Key] Propagated: ${result.succeeded}/${result.total} devices`);
+          }
+        }
+      } catch (e) {
+        // Propagation is best-effort — don't surface errors to user
+        console.debug('[API Key] Propagation skipped:', e);
       }
     } catch (error) {
       console.error(`Error saving ${providerKey}:`, error);

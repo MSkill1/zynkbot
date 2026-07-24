@@ -242,12 +242,12 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
     }
   };
 
-  const handleUnlinkUser = async (linkedUserId) => {
+  const handleUnlinkUser = async (linkedDeviceId) => {
     setLoading(true);
     setMessage('');
     try {
-      await invoke('revoke_zynklink_pairing', { linkedUserId });
-      setMessage(`✓ Unlinked from user`);
+      await invoke('revoke_zynklink_pairing', { linkedDeviceId });
+      setMessage(`✓ Unlinked from device`);
       fetchLinkedUsers();
       fetchRemoteDirectories();
     } catch (error) {
@@ -656,7 +656,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                 </button>
 
                 <button
-                  onClick={() => handleUnlinkUser(user.user_id)}
+                  onClick={() => handleUnlinkUser(user.device_id)}
                   disabled={loading}
                   style={{
                     padding: '6px 14px',

@@ -89,6 +89,7 @@ pub async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device
     struct VerifyResponse {
         user_id: String,
         device_id: String,
+        device_name: Option<String>,
     }
 
     let verify_data: VerifyResponse = response
@@ -178,14 +179,16 @@ pub async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device
     .map_err(|e| format!("Failed to ensure local device entry: {}", e))?;
 
     println!("[ZynkLink] Device B: Ensuring remote device is registered with IP {}...", creator_device_ip);
+    let remote_name = verify_data.device_name.clone()
+        .unwrap_or_else(|| format!("Remote Device {}", &verify_data.device_id[..8.min(verify_data.device_id.len())]));
     sqlx::query(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
          VALUES (?, ?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, owner_user_id = ?, last_seen_at = datetime('now')"
+         SET device_ip = ?, owner_user_id = ?, device_name = COALESCE(NULLIF(excluded.device_name, ''), device_name), last_seen_at = datetime('now')"
     )
     .bind(&verify_data.device_id)
-    .bind(&format!("Remote Device {}", &verify_data.device_id[..8]))
+    .bind(&remote_name)
     .bind(creator_device_ip)
     .bind(&verify_data.user_id)
     .bind(creator_device_ip)
@@ -205,7 +208,7 @@ pub async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device
     sqlx::query(
         "INSERT INTO zynklink_pairings (user1_id, user2_id, device1_id, device2_id, is_active)
          VALUES (?, ?, ?, ?, 1)
-         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = 1, linked_at = datetime('now')"
+         ON CONFLICT (device1_id, device2_id) DO UPDATE SET is_active = 1, linked_at = datetime('now')"
     )
     .bind(&user1_id)
     .bind(&user2_id)
@@ -253,8 +256,7 @@ pub async fn list_zynklink_pairings() -> Result<serde_json::Value, String> {
 /// device row itself is only deleted if both `is_paired` and `sync_paired` are clear.
 /// Use the ZynkSync unsync flow to tear down memory sync independently.
 #[tauri::command]
-pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_user_id: String) -> Result<serde_json::Value, String> {
-    let user_id = crate::user_identity::get_user_id()?;
+pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_device_id: String) -> Result<serde_json::Value, String> {
     let local_device_id = crate::user_identity::get_device_id()?;
 
     // Grab the running sync service — it owns the peer-notification path and the
@@ -268,21 +270,23 @@ pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_user_id: Stri
     };
     let pool = service.get_db_pool();
 
-    // Resolve the peer device_id from the pairing before we tear it down.
-    let peer = sqlx::query_as::<_, (String, String)>(
-        "SELECT device1_id, device2_id FROM zynklink_pairings
-         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
+    // Confirm the pairing exists before tearing it down.
+    let exists = sqlx::query_as::<_, (i64,)>(
+        "SELECT COUNT(*) FROM zynklink_pairings
+         WHERE (device1_id = ? AND device2_id = ?) OR (device1_id = ? AND device2_id = ?)"
     )
-    .bind(&user_id).bind(&linked_user_id)
-    .bind(&linked_user_id).bind(&user_id)
-    .fetch_optional(&pool)
+    .bind(&local_device_id).bind(&linked_device_id)
+    .bind(&linked_device_id).bind(&local_device_id)
+    .fetch_one(&pool)
     .await
-    .map_err(|e| format!("Failed to look up pairing: {}", e))?;
+    .map(|(n,)| n)
+    .unwrap_or(0);
 
-    let peer_device_id = match peer {
-        Some((d1, d2)) => if d1 == local_device_id { d2 } else { d1 },
-        None => return Err("No active pairing found with this user".to_string()),
-    };
+    if exists == 0 {
+        return Err("No active pairing found with this device".to_string());
+    }
+
+    let peer_device_id = linked_device_id.clone();
 
     // Grab peer IP before clearing (clear_link_data may delete the device row)
     let peer_ip = sqlx::query_as::<_, (Option<String>,)>(
@@ -301,10 +305,10 @@ pub async fn revoke_zynklink_pairing(app: tauri::AppHandle, linked_user_id: Stri
     // Notify peer to do the same — fire-and-forget
     if let Some(ip) = peer_ip {
         let http_client = service.get_http_client().await;
-        let notify_user_id = user_id.clone();
+        let my_device_id = local_device_id.clone();
         tokio::spawn(async move {
             let url = format!("https://{}:57963/api/zynklink/notify-unpaired", ip);
-            let payload = serde_json::json!({ "unlinked_user_id": notify_user_id });
+            let payload = serde_json::json!({ "unlinked_device_id": my_device_id });
             match http_client.post(&url).json(&payload).send().await {
                 Ok(_) => println!("[ZynkLink] ✓ Notified peer of unlink"),
                 Err(e) => println!("[ZynkLink] Note: could not notify peer of unlink (offline?): {}", e),
@@ -412,13 +416,13 @@ pub async fn list_remote_directories() -> Result<serde_json::Value, String> {
             zd.device_ip
          FROM zynklink_pairings zp
          LEFT JOIN zynk_devices zd ON (CASE WHEN device1_id = ? THEN device2_id ELSE device1_id END) = zd.device_id
-         WHERE (user1_id = ? OR user2_id = ?) AND is_active = 1"
+         WHERE (device1_id = ? OR device2_id = ?) AND is_active = 1"
     )
     .bind(&device_id)
     .bind(&user_id)
     .bind(&device_id)
-    .bind(&user_id)
-    .bind(&user_id)
+    .bind(&device_id)
+    .bind(&device_id)
     .fetch_all(&pool)
     .await
     .map_err(|e| format!("Failed to get paired devices: {}", e))?;

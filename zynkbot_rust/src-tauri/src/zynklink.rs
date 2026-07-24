@@ -535,7 +535,7 @@ pub async fn accept_zynklink_code(
     sqlx::query(
         "INSERT INTO zynklink_pairings (user1_id, user2_id, device1_id, device2_id, is_active)
          VALUES (?, ?, ?, ?, true)
-         ON CONFLICT (user1_id, user2_id) DO UPDATE SET is_active = true, linked_at = datetime('now')"
+         ON CONFLICT (device1_id, device2_id) DO UPDATE SET is_active = true, linked_at = datetime('now')"
     )
     .bind(&user1_id)
     .bind(&user2_id)
@@ -567,14 +567,14 @@ pub async fn list_zynklink_pairings(
             zd.last_seen_at
          FROM zynklink_pairings zp
          LEFT JOIN zynk_devices zd ON (CASE WHEN device1_id = ? THEN device2_id ELSE device1_id END) = zd.device_id
-         WHERE (user1_id = ? OR user2_id = ?) AND is_active = 1
+         WHERE (device1_id = ? OR device2_id = ?) AND is_active = 1
          ORDER BY zp.linked_at DESC"
     )
     .bind(user_id)
     .bind(device_id)
     .bind(device_id)
-    .bind(user_id)
-    .bind(user_id)
+    .bind(device_id)
+    .bind(device_id)
     .fetch_all(pool)
     .await
     .map_err(|e| format!("Failed to fetch ZynkLink pairings: {}", e))?;

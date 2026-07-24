@@ -2947,6 +2947,7 @@ impl ZynkSyncService {
             .route("/api/zynksync/conversations/receive", post(handle_receive_conversations))
             .route("/api/presence/heartbeat", post(handle_heartbeat))
             .route("/api/presence/goodbye", post(handle_goodbye))
+            .route("/api/zynksync/push-api-key", post(handle_push_api_key))
             .route("/api/zynksync/pause", post(handle_pause))
             .route("/api/zynksync/resume", post(handle_resume))
             // Ollama: info endpoint (returns configured model) + proxy to localhost:11434
@@ -4019,10 +4020,12 @@ async fn handle_zynklink_verify_code(
 
     println!("[ZynkLink] Verifying code: {}", code);
 
-    // Query database to verify the ZynkLink code
-    let result = sqlx::query_as::<_, (String, String)>(
-        "SELECT creator_user_id, creator_device_id FROM zynklink_codes
-         WHERE code = ? AND expires_at > datetime('now') AND is_active = 1"
+    // Query database to verify the ZynkLink code, also fetch device_name via join
+    let result = sqlx::query_as::<_, (String, String, Option<String>)>(
+        "SELECT lc.creator_user_id, lc.creator_device_id, zd.device_name
+         FROM zynklink_codes lc
+         LEFT JOIN zynk_devices zd ON zd.device_id = lc.creator_device_id
+         WHERE lc.code = ? AND lc.expires_at > datetime('now') AND lc.is_active = 1"
     )
     .bind(code)
     .fetch_optional(&service.db_pool)
@@ -4034,7 +4037,8 @@ async fn handle_zynklink_verify_code(
             println!("[ZynkLink] Code verified for user: {}", record.0);
             Ok(Json(serde_json::json!({
                 "user_id": record.0,
-                "device_id": record.1
+                "device_id": record.1,
+                "device_name": record.2
             })))
         }
         None => {
@@ -4403,43 +4407,23 @@ async fn handle_zynklink_notify_unpaired(
     State(service): State<Arc<ZynkSyncService>>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<axum::Json<serde_json::Value>, String> {
-    let unlinked_user_id = payload.get("unlinked_user_id")
+    let unlinked_device_id = payload.get("unlinked_device_id")
         .and_then(|v| v.as_str())
-        .ok_or("Missing unlinked_user_id")?;
-
-    let local_user_id = crate::user_identity::get_user_id()
-        .map_err(|e| format!("Failed to get local user ID: {}", e))?;
-    let local_device_id = crate::user_identity::get_device_id().unwrap_or_default();
-
-    // Resolve the peer's device_id before we clear (clear_link_data removes the pairing row)
-    let device_ids = sqlx::query_as::<_, (String, String)>(
-        "SELECT device1_id, device2_id FROM zynklink_pairings
-         WHERE ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
-    )
-    .bind(&local_user_id).bind(unlinked_user_id)
-    .bind(unlinked_user_id).bind(&local_user_id)
-    .fetch_optional(&service.db_pool)
-    .await
-    .ok()
-    .flatten();
-
-    let peer_device_id = device_ids.as_ref().map(|(d1, d2)| {
-        if d1 == &local_device_id { d2.clone() } else { d1.clone() }
-    });
+        // fall back to legacy field name for older clients
+        .or_else(|| payload.get("unlinked_user_id").and_then(|v| v.as_str()))
+        .ok_or("Missing unlinked_device_id")?;
 
     // Delegate full ZynkLink cleanup to clear_link_data — preserves ZynkSync if active
-    if let Some(ref peer_id) = peer_device_id {
-        match service.clear_link_data(peer_id).await {
-            Ok(_) => println!("[ZynkLink] ✓ Remote unlink: cleared link data for peer {}", &peer_id[..peer_id.len().min(8)]),
-            Err(e) => println!("[ZynkLink] Note: clear_link_data on notify-unpaired failed (non-fatal): {}", e),
-        }
+    match service.clear_link_data(unlinked_device_id).await {
+        Ok(_) => println!("[ZynkLink] ✓ Remote unlink: cleared link data for peer {}", &unlinked_device_id[..unlinked_device_id.len().min(8)]),
+        Err(e) => println!("[ZynkLink] Note: clear_link_data on notify-unpaired failed (non-fatal): {}", e),
     }
 
     if let Ok(guard) = crate::APP_HANDLE.lock() {
         if let Some(app) = guard.as_ref() {
             let _ = app.emit("zynklink-pairing-updated", serde_json::json!({
                 "unlinked": true,
-                "remote_user_id": unlinked_user_id
+                "remote_device_id": unlinked_device_id
             }));
         }
     }
@@ -4463,6 +4447,54 @@ async fn handle_ollama_info(
         "available": !model.is_empty(),
         "device_id": service.device_id,
     }))
+}
+
+async fn handle_push_api_key(
+    State(service): State<Arc<ZynkSyncService>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<axum::Json<serde_json::Value>, String> {
+    let key = payload.get("key").and_then(|v| v.as_str()).ok_or("Missing key")?;
+    let value = payload.get("value").and_then(|v| v.as_str()).ok_or("Missing value")?;
+
+    // Only accept from trusted sync peers
+    let sender_ip = addr.ip().to_string();
+    let peers = service.peers.read().await;
+    let trusted = peers.values().any(|p| p.host == sender_ip && p.paired);
+    drop(peers);
+    if !trusted {
+        return Err(format!("Untrusted sender: {}", sender_ip));
+    }
+
+    // Allowlist — never let a peer set arbitrary env vars
+    const ALLOWED: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY",
+                                "CUSTOM_API_URL", "CUSTOM_API_KEY", "CUSTOM_MODEL"];
+    if !ALLOWED.contains(&key) {
+        return Err(format!("Key '{}' is not propagatable", key));
+    }
+
+    let env_path = crate::db::get_app_data_dir().join(".env");
+    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let prefix = format!("{}=", key);
+    let mut found = false;
+    for line in &mut lines {
+        if line.starts_with(&prefix) { *line = format!("{}={}", key, value); found = true; break; }
+    }
+    if !found { lines.push(format!("{}={}", key, value)); }
+    std::fs::write(&env_path, lines.join("\n"))
+        .map_err(|e| format!("Failed to write .env: {}", e))?;
+    std::env::set_var(key, value);
+
+    println!("[ZynkSync] ✓ Received API key push for {} from {}", key, sender_ip);
+
+    if let Ok(guard) = crate::APP_HANDLE.lock() {
+        if let Some(app) = guard.as_ref() {
+            let _ = app.emit("api-keys-updated", serde_json::json!({ "key": key }));
+        }
+    }
+
+    Ok(axum::Json(serde_json::json!({ "success": true })))
 }
 
 // Proxy — forwards /api/ollama/* to localhost:11434 for LAN inference
