@@ -15,116 +15,99 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   const [pairingNumPart, setPairingNumPart] = useState('');
   const [showAddDevice, setShowAddDevice] = useState(false);
 
-  // Fetch peers from Rust backend
   const fetchPeers = useCallback(async () => {
     try {
       const peers = await invoke('get_zynksync_peers');
       setPeers(peers || []);
     } catch (error) {
       console.error('[ZynkSync] Failed to fetch peers:', error);
-      // Don't show error message on every poll - only on user actions
     }
   }, []);
 
-  // Start ZynkSync service
-  const startZynkSync = useCallback(async () => {
-    if (loading) return; // Prevent concurrent calls
-    setLoading(true);
-    try {
-      setMessage('Resuming ZynkSync...');
-      const result = await invoke('start_zynksync', {
-        syncIntervalSecs: 60  // Sync every 60 seconds
-      });
-      setSyncStatus('running');
-      setMessage('✓ ZynkSync resumed — syncing with devices');
-      console.log('[ZynkSync] Service started:', result);
-
-      // Start polling for peers
-      if (autoRefresh) {
-        fetchPeers();
-      }
-    } catch (error) {
-      console.error('[ZynkSync] Failed to start:', error);
-      setMessage('✗ Failed to start ZynkSync: ' + error);
-      setSyncStatus('stopped');
-    } finally {
-      setLoading(false);
-    }
-  }, [loading, autoRefresh, fetchPeers]);
-
-  // Stop ZynkSync service
-  const stopZynkSync = useCallback(async () => {
-    if (loading) return; // Prevent concurrent calls
+  // Pause auto-sync
+  const handlePause = useCallback(async () => {
+    if (loading) return;
     setLoading(true);
     try {
       setMessage('Pausing ZynkSync...');
       await invoke('stop_zynksync');
       setSyncStatus('stopped');
-      setMessage('✓ ZynkSync paused');
-      setPeers([]);
+      setMessage('ZynkSync paused. Press Sync Now to sync immediately and resume.');
       setPairingCode('');
       setLocalIp('');
       setShowAddDevice(false);
     } catch (error) {
-      console.error('[ZynkSync] Failed to stop:', error);
-      setMessage('✗ Failed to stop ZynkSync: ' + error);
+      setMessage('✗ Failed to pause: ' + error);
     } finally {
       setLoading(false);
     }
   }, [loading]);
 
-  // Manual refresh: update peer list and trigger immediate sync
+  // Sync now: trigger immediate sync and resume auto-sync if paused
+  const handleSyncNow = useCallback(async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      setMessage('Syncing...');
+      // Start/resume the service if it was paused
+      if (syncStatus !== 'running') {
+        await invoke('start_zynksync', { syncIntervalSecs: 60 });
+        setSyncStatus('running');
+      }
+      await fetchPeers();
+      try {
+        const results = await invoke('broadcast_sync_to_all_peers', { userId: userId || '' });
+        const total = results.reduce((s, r) => s + (r.memories_sent || 0) + (r.memories_received || 0), 0);
+        setMessage(total > 0 ? `✓ Synced — ${total} memories exchanged` : '✓ All devices already in sync');
+        if (onMemoriesSynced) onMemoriesSynced();
+      } catch {
+        setMessage('✓ Resumed — no active peers to sync with yet');
+      }
+    } catch (error) {
+      setMessage('✗ Sync failed: ' + error);
+    } finally {
+      setLoading(false);
+      setTimeout(() => setMessage(''), 3000);
+    }
+  }, [loading, syncStatus, fetchPeers, userId, onMemoriesSynced]);
+
+  // Refresh peer list (no sync)
   const handleRefresh = useCallback(async () => {
     setMessage('Refreshing...');
     await fetchPeers();
-    try {
-      await invoke('broadcast_sync_to_all_peers', { userId: userId || '' });
-      setMessage('✓ Refreshed');
-      if (onMemoriesSynced) onMemoriesSynced();
-    } catch {
-      setMessage('✓ Refreshed (sync skipped — no active peers)');
-    }
-    setTimeout(() => setMessage(''), 2500);
-  }, [fetchPeers, userId, onMemoriesSynced]);
+    setMessage('✓ Refreshed');
+    setTimeout(() => setMessage(''), 2000);
+  }, [fetchPeers]);
 
-  // Sync memories bidirectionally with a specific peer
-  const handleSyncToPeer = async (peer) => {
+  // Leave the entire sync network
+  const handleUnsync = useCallback(async () => {
+    if (!window.confirm(
+      'Leave the sync network?\n\n' +
+      'This device will disconnect from all other devices. ' +
+      'Your memories stay on this device — nothing is deleted. ' +
+      'Other devices will also remove this device from their lists.\n\n' +
+      'You can re-join the network at any time by entering a pairing code.'
+    )) return;
+
     setLoading(true);
-    setMessage('');
+    setMessage('Leaving sync network...');
     try {
-      const results = await invoke('broadcast_sync_to_all_peers', {
-        userId: userId || ''
-      });
-
-      const result = results.find(r => r.peer_device_id === peer.device_id) || results[0];
-      if (result && !result.success) {
-        setMessage(`✗ Sync failed: ${result.error || 'Unknown error'}`);
-      } else if (result) {
-        const memSent = result.memories_sent || 0;
-        const memReceived = result.memories_received || 0;
-        const convSent = result.conversations_sent || 0;
-        if (memSent === 0 && memReceived === 0 && convSent === 0) {
-          setMessage(`✓ Already in sync with ${peer.device_name}`);
-        } else {
-          const parts = [];
-          if (memSent > 0 || memReceived > 0) parts.push(`sent ${memSent}, received ${memReceived} memories`);
-          if (convSent > 0) parts.push(`sent ${convSent} conversation messages`);
-          setMessage(`✓ Synced with ${peer.device_name}: ${parts.join('; ')}`);
-        }
-        if (onMemoriesSynced) onMemoriesSynced();
-      } else {
-        setMessage(`✓ Sync complete`);
-      }
-      console.log('[ZynkSync] Sync result:', results);
+      // Pass any peer id — the backend now ignores it and leaves the whole network
+      const anyPeerId = peers.length > 0 ? peers[0].device_id : 'leave';
+      await invoke('remove_zynksync_device', { deviceId: anyPeerId });
+      setPeers([]);
+      setPairingCode('');
+      setLocalIp('');
+      setShowAddDevice(false);
+      setMessage('✓ Left the sync network. Your memories are safe on this device.');
     } catch (error) {
-      console.error('[ZynkSync] Sync failed:', error);
-      setMessage(`✗ Sync failed: ${error}`);
+      setMessage('✗ Failed to unsync: ' + error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [loading, peers]);
 
-  // Get pairing code and IP address for this device
+  // Get pairing code and IP
   const handleGetPairingCode = async () => {
     try {
       const [code, ip] = await Promise.all([
@@ -133,37 +116,31 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       ]);
       setPairingCode(code);
       setLocalIp(ip);
-      setMessage('✓ Pairing info ready - share the IP and code with another device');
+      setMessage('✓ Share the IP:code below with the other device');
     } catch (error) {
-      console.error('[ZynkSync] Failed to get pairing info:', error);
       setMessage(`✗ Failed to get pairing info: ${error}`);
     }
   };
 
-  // Copy pairing info to clipboard
   const handleCopyPairingInfo = () => {
     if (pairingCode && localIp) {
-      const pairingInfo = `${localIp}:${pairingCode}`;
-      navigator.clipboard.writeText(pairingInfo);
-      setMessage('✓ IP:Code copied to clipboard!');
+      navigator.clipboard.writeText(`${localIp}:${pairingCode}`);
+      setMessage('✓ IP:Code copied to clipboard');
     }
   };
 
-  // Add a device manually
+  // Add a device by entering a pairing code
   const handleAddDevice = async () => {
     const input = pairingInput.trim();
     if (!input) {
       setMessage('✗ Please enter the pairing code in IP:code format');
       return;
     }
-
-    // Parse IP:code format
     const parts = input.split(':');
     if (parts.length !== 2) {
       setMessage('✗ Invalid format. Use IP:code (e.g., 192.168.0.100:456789)');
       return;
     }
-
     const [deviceIp, code] = parts;
     if (!deviceIp.trim() || !code.trim()) {
       setMessage('✗ Both IP and code are required');
@@ -182,58 +159,38 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
         pairingCode: code.trim()
       });
 
-      // Check if host returned a user_id (for identity sync)
       if (peer.user_id && peer.user_id !== userId) {
-        // Host has a different user_id - show warning dialog
-        const warningMessage =
-          `⚠️  IDENTITY SYNC WARNING ⚠️\n\n` +
-          `You are about to join this device to a ZynkSync network.\n\n` +
-          `This will:\n` +
+        const confirmed = window.confirm(
+          `⚠️ IDENTITY SYNC WARNING\n\n` +
+          `Joining this network will:\n` +
           `• Clear ALL memories on THIS device\n` +
           `• Change your User ID to match the host device\n` +
           `• Start syncing with the host's memories\n\n` +
-          `Host Device: ${peer.device_name}\n` +
-          `Host User ID: ${peer.user_id}\n\n` +
-          `This action CANNOT be undone!\n\n` +
-          `Do you want to continue?`;
-
-        if (!window.confirm(warningMessage)) {
-          setMessage('✗ Pairing cancelled - identity not changed');
+          `Host: ${peer.device_name}\n\n` +
+          `This cannot be undone. Continue?`
+        );
+        if (!confirmed) {
+          setMessage('✗ Pairing cancelled');
           setPairingInput('');
           setShowAddDevice(false);
           setLoading(false);
           return;
         }
-
-        // User confirmed - migrate memories to new identity
         setMessage('⏳ Migrating memories to host identity...');
-
         try {
-          // Step 1: Migrate all local memories to the new user_id
-          // This preserves memories so they can sync with the new identity
           const migratedCount = await invoke('migrate_user_memories', {
             oldUserId: userId,
             newUserId: peer.user_id
           });
-          console.log('[ZynkSync] Migrated', migratedCount, 'memories to new user_id');
-
-          // Step 2: Update local identity to match host
+          console.log('[ZynkSync] Migrated', migratedCount, 'memories');
           await invoke('set_user_identity', { userId: peer.user_id });
-          console.log('[ZynkSync] Adopted host user_id:', peer.user_id);
-
-          setMessage(`✓ Identity synced! Added device: ${peer.device_name}\n✓ This device is now part of the ZynkSync network\n✓ Memories will sync automatically`);
-
-          // Update parent userId state in-place — no page reload needed
-          if (onIdentityAdopted) {
-            onIdentityAdopted(peer.user_id);
-          }
+          setMessage(`✓ Joined network — syncing with ${peer.device_name}`);
+          if (onIdentityAdopted) onIdentityAdopted(peer.user_id);
         } catch (identityError) {
-          console.error('[ZynkSync] Failed to sync identity:', identityError);
-          setMessage(`✗ Failed to sync identity: ${identityError}\nPairing succeeded but identity not changed.`);
+          setMessage(`✗ Identity sync failed: ${identityError}`);
         }
       } else {
-        // No identity sync needed - just normal pairing
-        setMessage(`✓ Added device: ${peer.device_name}`);
+        setMessage(`✓ Joined network — syncing with ${peer.device_name}`);
       }
 
       setPairingInput('');
@@ -242,113 +199,67 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       setShowAddDevice(false);
       fetchPeers();
     } catch (error) {
-      console.error('[ZynkSync] Failed to add device:', error);
-      setMessage(`✗ Failed to add device: ${error}`);
+      setMessage(`✗ Failed to join: ${error}`);
     } finally {
       setLoading(false);
     }
   };
 
-  // Remove a device
-  const handleRemoveDevice = async (peer) => {
-    if (!window.confirm(`Remove device ${peer.device_name}?`)) {
-      return;
-    }
-
-    setLoading(true);
-    setMessage('');
-    try {
-      await invoke('remove_zynksync_device', {
-        deviceId: peer.device_id
-      });
-
-      setMessage(`✓ Removed device: ${peer.device_name}`);
-      fetchPeers();
-    } catch (error) {
-      console.error('[ZynkSync] Failed to remove device:', error);
-      setMessage(`✗ Failed to remove device: ${error}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Check ZynkSync status on component mount — auto-start if peers exist
+  // Check status on mount — auto-start if peers exist
   useEffect(() => {
     const checkServiceStatus = async () => {
       try {
         const isRunning = await invoke('get_zynksync_status');
         if (isRunning) {
           setSyncStatus('running');
-          setMessage('✓ ZynkSync is running');
           fetchPeers();
         } else {
-          // Auto-start if we have known peers from a previous session
           const existingPeers = await invoke('get_zynksync_peers');
           if (existingPeers && existingPeers.length > 0) {
             await invoke('start_zynksync', { syncIntervalSecs: 60 });
             setSyncStatus('running');
-            setMessage('✓ ZynkSync resumed automatically');
             fetchPeers();
           } else {
             setSyncStatus('stopped');
-            setMessage('ZynkSync paused. Click "Resume Syncing" to start.');
           }
         }
       } catch (error) {
         console.error('[ZynkSync] Failed to check status:', error);
         setSyncStatus('stopped');
-        setMessage('Click "Resume Syncing" to begin syncing with your devices.');
       }
     };
-
     checkServiceStatus();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Cleanup on unmount
-    return () => {
-      // Don't stop the service on unmount - let it keep running
-      // The user can explicitly stop it via the button
-    };
-  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Listen for pairing warnings from backend
+  // Listen for pairing warnings
   useEffect(() => {
     let unlisten;
-
-    const setupListener = async () => {
+    const setup = async () => {
       unlisten = await listen('zynksync://warning', (event) => {
         const warning = event.payload;
-        console.log('[ZynkSync] Received warning event:', warning);
-
-        if (warning && warning.message) {
-          // Display warning as a message in the UI
-          const emoji = warning.severity === 'high' ? '⚠️' : 'ℹ️';
-          setMessage(`${emoji} ${warning.message}`);
+        if (warning?.message) {
+          setMessage(`${warning.severity === 'high' ? '⚠️' : 'ℹ️'} ${warning.message}`);
         }
       });
     };
-
-    setupListener();
-
-    return () => {
-      if (typeof unlisten === 'function') {
-        unlisten();
-      }
-    };
+    setup();
+    return () => { if (typeof unlisten === 'function') unlisten(); };
   }, []);
 
-  // Listen for remote-initiated unsync and refresh the peer list immediately
+  // Listen for remote unsync
   useEffect(() => {
     let unlisten;
     const setup = async () => {
       unlisten = await listen('zynksync-device-removed', () => {
         fetchPeers();
-        setMessage('✓ A device unsynced remotely — peer list updated.');
+        setMessage('✓ A device left the network — peer list updated.');
       });
     };
     setup();
     return () => { if (typeof unlisten === 'function') unlisten(); };
   }, [fetchPeers]);
 
+  // Listen for remote pause/resume
   useEffect(() => {
     let unlisten;
     const setup = async () => {
@@ -356,7 +267,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
         const { status } = event.payload;
         if (status === 'paused') {
           setSyncStatus('stopped');
-          setMessage('ZynkSync paused by another device. Click "Resume Syncing" to start.');
+          setMessage('ZynkSync paused by another device. Press Sync Now to resume.');
         } else if (status === 'running') {
           setSyncStatus('running');
           setMessage('✓ ZynkSync resumed by another device.');
@@ -368,16 +279,15 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
     return () => { if (typeof unlisten === 'function') unlisten(); };
   }, [fetchPeers]);
 
-  // Auto-refresh peers every 30 seconds when service is running
+  // Auto-refresh peer list every 30s when running
   useEffect(() => {
     if (syncStatus === 'running' && autoRefresh) {
-      const interval = setInterval(() => {
-        fetchPeers();
-      }, 30000);  // 30 seconds
-
+      const interval = setInterval(fetchPeers, 30000);
       return () => clearInterval(interval);
     }
   }, [syncStatus, autoRefresh, fetchPeers]);
+
+  const isRunning = syncStatus === 'running';
 
   return (
     <div style={{
@@ -387,64 +297,88 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       padding: '15px',
       marginBottom: '20px'
     }}>
-      {/* Control Buttons */}
-      <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
+
+      {/* 4-Button Control Row */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '15px' }}>
+
+        {/* Pause / Sync Now */}
         <button
-          onClick={syncStatus === 'running' ? stopZynkSync : startZynkSync}
+          onClick={isRunning ? handlePause : handleSyncNow}
           disabled={loading}
           style={{
             flex: 1,
-            padding: '8px 16px',
-            background: syncStatus === 'running' ? '#ffb86c' : '#50fa7b',
+            padding: '8px 10px',
+            background: isRunning ? '#ffb86c' : '#50fa7b',
             color: '#282a36',
             border: 'none',
             borderRadius: '4px',
             cursor: loading ? 'wait' : 'pointer',
-            fontSize: '0.85rem',
+            fontSize: '0.82rem',
             fontWeight: 'bold',
-            transition: 'all 0.2s',
             opacity: loading ? 0.5 : 1
           }}
+          title={isRunning ? 'Pause auto-sync' : 'Sync now and resume auto-sync'}
         >
-          {syncStatus === 'running' ? '⏸ Pause Syncing' : '▶ Resume Syncing'}
+          {isRunning ? '⏸ Pause' : '▶ Sync Now'}
         </button>
+
+        {/* Refresh */}
         <button
           onClick={handleRefresh}
           disabled={loading}
           style={{
-            flex: 0.7,
-            padding: '8px 12px',
+            flex: 1,
+            padding: '8px 10px',
             background: '#6272a4',
             color: '#f8f8f2',
             border: 'none',
             borderRadius: '4px',
             cursor: loading ? 'wait' : 'pointer',
-            fontSize: '0.85rem',
+            fontSize: '0.82rem',
             fontWeight: 'bold',
-            transition: 'all 0.2s',
             opacity: loading ? 0.5 : 1
           }}
-          title="Refresh device list and sync now"
+          title="Refresh peer list"
         >
           🔄 Refresh
         </button>
+
+        {/* Unsync */}
+        <button
+          onClick={handleUnsync}
+          disabled={loading || peers.length === 0}
+          style={{
+            flex: 1,
+            padding: '8px 10px',
+            background: peers.length > 0 ? '#ff5555' : '#3a2a2a',
+            color: peers.length > 0 ? '#f8f8f2' : '#6272a4',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: (loading || peers.length === 0) ? 'default' : 'pointer',
+            fontSize: '0.82rem',
+            fontWeight: 'bold',
+            opacity: loading ? 0.5 : 1
+          }}
+          title="Leave the sync network"
+        >
+          ⏏ Unsync
+        </button>
+
+        {/* Identity */}
         <button
           onClick={onOpenUserIdentity}
           style={{
-            flex: 0.7,
-            padding: '8px 12px',
-            background: '#ff5555',
-            color: '#f8f8f2',
+            flex: 1,
+            padding: '8px 10px',
+            background: '#bd93f9',
+            color: '#282a36',
             border: 'none',
             borderRadius: '4px',
             cursor: 'pointer',
-            fontSize: '0.85rem',
-            fontWeight: 'bold',
-            transition: 'all 0.2s'
+            fontSize: '0.82rem',
+            fontWeight: 'bold'
           }}
-          onMouseOver={(e) => e.target.style.background = '#ff6b6b'}
-          onMouseOut={(e) => e.target.style.background = '#ff5555'}
-          title="Manage your identity and sync codes"
+          title="Manage your identity"
         >
           👤 Identity
         </button>
@@ -453,20 +387,20 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       {/* Status Badge */}
       <div style={{
         display: 'inline-block',
-        padding: '6px 12px',
-        background: syncStatus === 'running' ? '#1e3a1e' : '#3a1e1e',
-        border: `1px solid ${syncStatus === 'running' ? '#50fa7b' : '#ff5555'}`,
+        padding: '5px 10px',
+        background: isRunning ? '#1e3a1e' : '#2a2a1e',
+        border: `1px solid ${isRunning ? '#50fa7b' : '#ffb86c'}`,
         borderRadius: '4px',
-        fontSize: '0.8rem',
+        fontSize: '0.78rem',
         fontWeight: 'bold',
-        color: syncStatus === 'running' ? '#50fa7b' : '#ff5555',
+        color: isRunning ? '#50fa7b' : '#ffb86c',
         marginBottom: '15px'
       }}>
-        {syncStatus === 'running' ? '● Service Running' : '○ Service Stopped'}
+        {isRunning ? '● Syncing automatically' : '○ Paused — press Sync Now to resume'}
       </div>
 
-      {/* Pairing Info Section */}
-      {syncStatus === 'running' && (
+      {/* Pairing: Generate Code */}
+      {isRunning && (
         <div style={{
           marginBottom: '15px',
           padding: '12px',
@@ -474,33 +408,30 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           borderRadius: '6px',
           border: '1px solid #44475a'
         }}>
-          <div style={{ color: '#ffb86c', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: '10px' }}>
-            🔑 Generate Code (Current Device)
+          <div style={{ color: '#ffb86c', fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '8px' }}>
+            🔑 Generate Code
           </div>
-          <p style={{ fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '8px', lineHeight: '1.5' }}>
-            Generate a pairing code to sync this device with another for memory synchronization (code expires in 10 minutes):
+          <p style={{ fontSize: '0.82rem', color: '#9aa5c4', marginBottom: '6px', lineHeight: '1.5' }}>
+            Any device can generate a code. The device that <em>enters</em> the code joins the existing network.
+            Code expires in 10 minutes.
           </p>
-          <p style={{ fontSize: '0.82rem', color: '#ff5555', marginBottom: '6px', lineHeight: '1.5' }}>
-            ⚠️ <strong>Important:</strong> The device that <em>enters</em> this code will adopt this device's identity. <strong>Whichever device has existing memories you care about should generate the code — not enter it.</strong>
-          </p>
-          <p style={{ fontSize: '0.82rem', color: '#9aa5c4', marginBottom: '10px', lineHeight: '1.5' }}>
-            💡 Want your memories backed up and accessible everywhere — even without a local network? A cloud backup subscription keeps your data safe and enables sync over the internet. (Coming soon.)
+          <p style={{ fontSize: '0.8rem', color: '#ff5555', marginBottom: '10px', lineHeight: '1.5' }}>
+            ⚠️ <strong>Tip:</strong> The device with existing memories you care about should generate the code, not enter it.
           </p>
           {pairingCode && localIp ? (
             <div>
               <div style={{
-                padding: '15px',
+                padding: '14px',
                 background: '#282a36',
                 borderRadius: '4px',
                 fontFamily: 'monospace',
-                fontSize: '1.3rem',
+                fontSize: '1.2rem',
                 color: '#50fa7b',
                 textAlign: 'center',
                 letterSpacing: '2px',
                 border: '2px solid #50fa7b',
                 marginBottom: '10px',
-                wordBreak: 'break-all',
-                overflowWrap: 'break-word'
+                wordBreak: 'break-all'
               }}>
                 {localIp}:{pairingCode}
               </div>
@@ -508,7 +439,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                 onClick={handleCopyPairingInfo}
                 style={{
                   width: '100%',
-                  padding: '10px 16px',
+                  padding: '9px',
                   background: '#50fa7b',
                   color: '#282a36',
                   border: 'none',
@@ -525,25 +456,25 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
             <button
               onClick={handleGetPairingCode}
               style={{
-                padding: '8px 16px',
+                width: '100%',
+                padding: '9px',
                 background: '#50fa7b',
                 color: '#282a36',
                 border: 'none',
                 borderRadius: '4px',
                 cursor: 'pointer',
                 fontWeight: 'bold',
-                fontSize: '0.9rem',
-                width: '100%'
+                fontSize: '0.88rem'
               }}
             >
-              🔑 Generate Code (For New Device)
+              🔑 Generate Code
             </button>
           )}
         </div>
       )}
 
-      {/* Add Device Section */}
-      {syncStatus === 'running' && (
+      {/* Enter Code from Another Device */}
+      {isRunning && (
         <div style={{
           marginBottom: '15px',
           padding: '12px',
@@ -552,102 +483,89 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           border: '1px solid #44475a'
         }}>
           <div style={{ color: '#ffb86c', fontWeight: 'bold', marginBottom: '8px', fontSize: '0.9rem' }}>
-            ➕ Add Device
+            ➕ Enter Code from Another Device
           </div>
           {!showAddDevice ? (
             <button
               onClick={() => setShowAddDevice(true)}
               style={{
-                padding: '8px 16px',
+                width: '100%',
+                padding: '8px',
                 background: '#ffb86c',
                 color: '#282a36',
                 border: 'none',
                 borderRadius: '4px',
                 cursor: 'pointer',
                 fontSize: '0.85rem',
-                fontWeight: 'bold',
-                width: '100%'
+                fontWeight: 'bold'
               }}
             >
-              ➕ Enter Code From Other Device
+              ➕ Enter IP:Code
             </button>
           ) : (
             <div>
-              <div style={{ fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '8px' }}>
-                Enter the IP:code from the other device to sync with it:
+              <div style={{ fontSize: '0.82rem', color: '#9aa5c4', marginBottom: '8px' }}>
+                Enter the IP:code shown on the other device:
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck="false"
-                    placeholder="192.168.0.100"
-                    value={pairingIPPart}
-                    onChange={(e) => { setPairingIPPart(e.target.value); setPairingInput(e.target.value + ':' + pairingNumPart); }}
-                    disabled={loading}
-                    style={{
-                      width: '100%', boxSizing: 'border-box',
-                      padding: '12px', background: '#282a36',
-                      border: '1px solid #44475a', borderRadius: '4px',
-                      color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
-                    }}
-                  />
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    placeholder="Code (456789)"
-                    value={pairingNumPart}
-                    onChange={(e) => { setPairingNumPart(e.target.value); setPairingInput(pairingIPPart + ':' + e.target.value); }}
-                    onKeyPress={(e) => { if (e.key === 'Enter' && !loading) handleAddDevice(); }}
-                    disabled={loading}
-                    style={{
-                      width: '100%', boxSizing: 'border-box',
-                      padding: '12px', background: '#282a36',
-                      border: '1px solid #44475a', borderRadius: '4px',
-                      color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
-                    }}
-                  />
-                </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck="false"
+                  placeholder="192.168.0.100"
+                  value={pairingIPPart}
+                  onChange={(e) => { setPairingIPPart(e.target.value); setPairingInput(e.target.value + ':' + pairingNumPart); }}
+                  disabled={loading}
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    padding: '11px', background: '#282a36',
+                    border: '1px solid #44475a', borderRadius: '4px',
+                    color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
+                  }}
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="6-digit code"
+                  value={pairingNumPart}
+                  onChange={(e) => { setPairingNumPart(e.target.value); setPairingInput(pairingIPPart + ':' + e.target.value); }}
+                  onKeyPress={(e) => { if (e.key === 'Enter' && !loading) handleAddDevice(); }}
+                  disabled={loading}
+                  style={{
+                    width: '100%', boxSizing: 'border-box',
+                    padding: '11px', background: '#282a36',
+                    border: '1px solid #44475a', borderRadius: '4px',
+                    color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
+                  }}
+                />
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <button
                     onClick={handleAddDevice}
                     disabled={loading}
                     style={{
-                      flex: 1,
-                      padding: '8px 16px',
-                      background: '#50fa7b',
-                      color: '#282a36',
-                      border: 'none',
-                      borderRadius: '4px',
+                      flex: 1, padding: '8px',
+                      background: '#50fa7b', color: '#282a36',
+                      border: 'none', borderRadius: '4px',
                       cursor: loading ? 'wait' : 'pointer',
-                      fontSize: '0.85rem',
-                      fontWeight: 'bold',
+                      fontSize: '0.85rem', fontWeight: 'bold',
                       opacity: loading ? 0.5 : 1
                     }}
                   >
-                    ➕ Add Device
+                    ➕ Join Network
                   </button>
                   <button
-                    onClick={() => {
-                      setShowAddDevice(false);
-                      setPairingInput('');
-                    }}
+                    onClick={() => { setShowAddDevice(false); setPairingInput(''); setPairingIPPart(''); setPairingNumPart(''); }}
                     disabled={loading}
                     style={{
-                      flex: 1,
-                      padding: '8px 16px',
-                      background: '#44475a',
-                      color: '#f8f8f2',
-                      border: 'none',
-                      borderRadius: '4px',
+                      flex: 1, padding: '8px',
+                      background: '#44475a', color: '#f8f8f2',
+                      border: 'none', borderRadius: '4px',
                       cursor: loading ? 'wait' : 'pointer',
-                      fontSize: '0.85rem',
-                      fontWeight: 'bold',
+                      fontSize: '0.85rem', fontWeight: 'bold',
                       opacity: loading ? 0.5 : 1
                     }}
                   >
@@ -660,45 +578,36 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
         </div>
       )}
 
-      {/* Devices */}
+      {/* Synced Devices List */}
       <div style={{ marginBottom: '15px' }}>
         <div style={{ color: '#ffb86c', fontWeight: 'bold', marginBottom: '8px', fontSize: '0.9rem' }}>
-          📡 Devices ({peers.length})
+          📡 Synced Devices ({peers.length})
         </div>
 
-        {syncStatus === 'stopped' ? (
+        {!isRunning ? (
           <div style={{
-            background: '#1e1f29',
-            padding: '15px',
-            borderRadius: '6px',
-            fontSize: '0.85rem',
-            color: '#9aa5c4',
-            lineHeight: '1.6'
+            background: '#1e1f29', padding: '14px', borderRadius: '6px',
+            fontSize: '0.85rem', color: '#9aa5c4', lineHeight: '1.6'
           }}>
-            Start ZynkSync to begin syncing with your other devices.
+            Press <strong style={{ color: '#50fa7b' }}>Sync Now</strong> to resume syncing with your devices.
           </div>
         ) : peers.length === 0 ? (
           <div style={{
-            background: '#1e1f29',
-            padding: '15px',
-            borderRadius: '6px',
-            fontSize: '0.85rem',
-            lineHeight: '1.6'
+            background: '#1e1f29', padding: '14px', borderRadius: '6px',
+            fontSize: '0.85rem', lineHeight: '1.6'
           }}>
-            <div style={{ color: '#8be9fd', marginBottom: '8px' }}>
-              No devices added yet.
+            <div style={{ color: '#8be9fd', marginBottom: '8px' }}>No devices connected yet.</div>
+            <div style={{ color: '#9aa5c4', marginBottom: '4px' }}>
+              <strong>To join devices into a sync network:</strong>
             </div>
-            <div style={{ color: '#9aa5c4', marginBottom: '5px' }}>
-              <strong>To sync devices:</strong>
-            </div>
-            <ol style={{ color: '#9aa5c4', marginLeft: '20px', marginTop: '0', marginBottom: '10px' }}>
-              <li>Start ZynkSync on both devices</li>
-              <li>On the device with existing data: Generate a 6-digit code</li>
-              <li>On the other device: Enter the IP:code from step 2</li>
-              <li>Devices will sync automatically every 60 seconds</li>
+            <ol style={{ color: '#9aa5c4', marginLeft: '18px', marginTop: '4px', marginBottom: '10px' }}>
+              <li>On the device with existing memories: Generate a code above</li>
+              <li>On the other device: enter that IP:code here</li>
+              <li>Repeat for each device you want in the network</li>
             </ol>
-            <div style={{ color: '#9aa5c4', fontSize: '0.8rem', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #44475a' }}>
-              <strong style={{ color: '#ff5555' }}>To break sync:</strong> Use the Identity button to generate a new user ID. The de-synced device becomes a new user with its own Zynkbot (retaining memories from when it was linked). Use Memory Manager for a completely fresh start.
+            <div style={{ color: '#6272a4', fontSize: '0.78rem', borderTop: '1px solid #44475a', paddingTop: '8px' }}>
+              All devices on the same network share the same memory pool and sync automatically.
+              Press <strong>Unsync</strong> above to leave the network at any time.
             </div>
           </div>
         ) : (
@@ -710,76 +619,25 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                   background: '#1e1f29',
                   padding: '12px',
                   borderRadius: '4px',
-                  marginBottom: '10px',
+                  marginBottom: '8px',
                   fontSize: '0.85rem',
                   border: `2px solid ${peer.is_online ? '#50fa7b' : '#44475a'}`
                 }}
               >
-                {/* Device Header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{
-                    width: '10px',
-                    height: '10px',
-                    borderRadius: '50%',
-                    background: peer.is_online ? '#50fa7b' : '#6272a4',
-                    flexShrink: 0
+                    width: '9px', height: '9px', borderRadius: '50%', flexShrink: 0,
+                    background: peer.is_online ? '#50fa7b' : '#6272a4'
                   }} />
                   <div style={{ color: '#f8f8f2', fontWeight: 'bold', flex: 1 }}>
                     {peer.device_name}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
+                  <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
                     {peer.is_online ? 'Online' : 'Offline'}
                   </div>
                 </div>
-
-                {/* Device Info */}
-                <div style={{ color: '#9aa5c4', fontSize: '0.75rem', marginBottom: '10px' }}>
-                  <div>ID: {peer.device_id?.slice(0, 16)}...</div>
-                  <div>Host: {peer.host}</div>
-                  <div>Port: {peer.port}</div>
-                  <div>URL: {peer.url}</div>
-                </div>
-
-                {/* Action Buttons */}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    onClick={() => handleSyncToPeer(peer)}
-                    disabled={loading}
-                    style={{
-                      flex: 1,
-                      padding: '8px',
-                      background: '#50fa7b',
-                      color: '#282a36',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: loading ? 'wait' : 'pointer',
-                      fontSize: '0.85rem',
-                      fontWeight: 'bold',
-                      opacity: loading ? 0.5 : 1
-                    }}
-                    title="Sync memories to this device now"
-                  >
-                    🔄 Sync Now
-                  </button>
-                  <button
-                    onClick={() => handleRemoveDevice(peer)}
-                    disabled={loading}
-                    style={{
-                      flex: 1,
-                      padding: '8px',
-                      background: '#ff5555',
-                      color: '#f8f8f2',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: loading ? 'wait' : 'pointer',
-                      fontSize: '0.85rem',
-                      fontWeight: 'bold',
-                      opacity: loading ? 0.5 : 1
-                    }}
-                    title="Remove this device"
-                  >
-                    ❌ Remove
-                  </button>
+                <div style={{ color: '#6272a4', fontSize: '0.72rem', marginTop: '5px', paddingLeft: '17px' }}>
+                  {peer.host}
                 </div>
               </div>
             ))}
@@ -787,22 +645,21 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
         )}
       </div>
 
-      {/* Message Display */}
+      {/* Message */}
       {message && (
         <div style={{
           marginTop: '10px',
           padding: '10px',
-          background: message.includes('✓') ? '#1e3a1e' : '#3a1e1e',
-          border: `1px solid ${message.includes('✓') ? '#50fa7b' : '#ff5555'}`,
+          background: message.includes('✓') ? '#1e3a1e' : message.includes('⏳') ? '#1e1f29' : '#3a1e1e',
+          border: `1px solid ${message.includes('✓') ? '#50fa7b' : message.includes('⏳') ? '#6272a4' : '#ff5555'}`,
           borderRadius: '4px',
-          color: message.includes('✓') ? '#50fa7b' : '#ff5555',
+          color: message.includes('✓') ? '#50fa7b' : message.includes('⏳') ? '#9aa5c4' : '#ff5555',
           fontSize: '0.85rem',
           whiteSpace: 'pre-line'
         }}>
           {message}
         </div>
       )}
-
     </div>
   );
 }

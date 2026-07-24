@@ -924,67 +924,46 @@ impl ZynkSyncService {
         Ok(())
     }
 
-    /// Remove a device and notify the peer to do the same (fire-and-forget).
-    /// Also broadcasts a cascade-remove to all other mesh peers so the removed
-    /// device disappears from the entire network, not just this device's list.
-    pub async fn remove_device(&self, device_id: &str) -> Result<(), String> {
-        // Grab the removed peer's IP before the transaction deletes its row
-        let peer_ip = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
+    /// Leave the sync network entirely: notify all peers to remove this device,
+    /// then clear all local peer data. The device_id parameter is ignored —
+    /// pressing Unsync always departs the full mesh, not just one connection.
+    pub async fn remove_device(&self, _device_id: &str) -> Result<(), String> {
+        // Collect ALL sync-paired peers before clearing anything
+        let all_peers: Vec<(String, String, String)> = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT device_id, device_name, device_ip FROM zynk_devices WHERE sync_paired = 1"
         )
-        .bind(device_id)
-        .fetch_optional(&self.db_pool)
-        .await
-        .ok()
-        .flatten()
-        .and_then(|r| r.0);
-
-        // Collect remaining peers BEFORE deleting, for cascade broadcast
-        let remaining_peers: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
-            "SELECT device_id, device_ip FROM zynk_devices WHERE sync_paired = 1 AND device_id != ?"
-        )
-        .bind(device_id)
         .fetch_all(&self.db_pool)
         .await
         .unwrap_or_default();
 
-        self.clear_sync_data_db_only(device_id).await?;
+        if all_peers.is_empty() {
+            println!("[ZynkSync] remove_device: no peers — nothing to do");
+            return Ok(());
+        }
+
+        println!("[ZynkSync] Leaving sync network — notifying {} peer(s)", all_peers.len());
+
+        // Clear ALL peers from local DB and in-memory maps
+        for (peer_id, _, _) in &all_peers {
+            self.clear_sync_data_db_only(peer_id).await.ok();
+        }
 
         let local_device_id = self.device_id.clone();
-        let removed_id = device_id.to_string();
         let http_client = self.http_client.read().await.clone();
-        let db_pool = self.db_pool.clone();
 
         tokio::spawn(async move {
-            // Notify the removed device: "remove me (local) from your list"
-            if let Some(ip) = peer_ip {
-                let url = format!("https://{}:57963/api/zynksync/notify-unsynced", ip);
-                let payload = serde_json::json!({ "removed_device_id": local_device_id });
-                match http_client.post(&url).json(&payload).send().await {
-                    Ok(_) => println!("[ZynkSync] ✓ Notified removed peer of unsync"),
-                    Err(e) => println!("[ZynkSync] Note: removed peer offline during unsync: {}", e),
-                }
-            }
-
-            // Cascade: notify every other peer to also remove the departed device.
-            // If a peer is offline, store the notification for retry on next heartbeat.
-            for (peer_id, peer_ip) in &remaining_peers {
+            // Tell every peer: "remove me from your list"
+            let payload = serde_json::json!({ "removed_device_id": local_device_id });
+            for (peer_id, peer_name, peer_ip) in &all_peers {
                 if peer_ip.is_empty() { continue; }
                 let url = format!("https://{}:57963/api/zynksync/notify-unsynced", peer_ip);
-                let payload = serde_json::json!({
-                    "removed_device_id": local_device_id,  // sender identity
-                    "cascade_device_id": removed_id,        // device to actually remove
-                });
                 match http_client.post(&url).json(&payload).send().await {
-                    Ok(_) => println!("[ZynkSync] ✓ Cascade-removed {} from peer {}", &removed_id[..8.min(removed_id.len())], &peer_id[..8.min(peer_id.len())]),
-                    Err(e) => {
-                        println!("[ZynkSync] Peer {} offline during cascade remove — queuing for retry: {}", &peer_id[..8.min(peer_id.len())], e);
-                        sqlx::query(
-                            "INSERT OR IGNORE INTO zynk_pending_removals (target_peer_id, target_peer_ip, sender_device_id, cascade_device_id) VALUES (?, ?, ?, ?)"
-                        )
-                        .bind(peer_id).bind(peer_ip).bind(&local_device_id).bind(&removed_id)
-                        .execute(&db_pool).await.ok();
-                    }
+                    Ok(r) if r.status().is_success() =>
+                        println!("[ZynkSync] ✓ {} acknowledged our network departure", peer_name),
+                    Ok(r) =>
+                        println!("[ZynkSync] {} returned {} on unsync", peer_name, r.status()),
+                    Err(e) =>
+                        println!("[ZynkSync] {} offline during unsync (they will see us gone next heartbeat): {}", &peer_id[..8.min(peer_id.len())], e),
                 }
             }
         });
