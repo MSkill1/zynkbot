@@ -104,7 +104,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
     } finally {
       setLoading(false);
     }
-  }, [loading, peers, onIdentityAdopted]);
+  }, [onIdentityAdopted]);
 
   // Get pairing code and IP
   const handleGetPairingCode = async () => {
