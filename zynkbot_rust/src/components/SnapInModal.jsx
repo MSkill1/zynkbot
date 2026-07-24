@@ -252,6 +252,7 @@ export default function SnapInModal({ isOpen, onClose, userId }) {
                   style={{
                     width: '100%',
                     padding: '10px',
+                    boxSizing: 'border-box',
                     background: '#44475a',
                     border: '1px solid #6272a4',
                     borderRadius: '6px',
@@ -276,6 +277,7 @@ export default function SnapInModal({ isOpen, onClose, userId }) {
                   style={{
                     width: '100%',
                     padding: '10px',
+                    boxSizing: 'border-box',
                     background: '#44475a',
                     border: '1px solid #6272a4',
                     borderRadius: '6px',
@@ -297,6 +299,7 @@ export default function SnapInModal({ isOpen, onClose, userId }) {
                   style={{
                     width: '100%',
                     padding: '12px',
+                    boxSizing: 'border-box',
                     background: '#44475a',
                     border: '1px solid #6272a4',
                     borderRadius: '6px',
