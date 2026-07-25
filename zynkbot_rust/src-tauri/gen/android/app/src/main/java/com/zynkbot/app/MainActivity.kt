@@ -35,6 +35,13 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    private val requestWriteStoragePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) ensureShareDir()
+        // If denied, zynkShareDir() will throw when sharing features are used
+    }
+
     private val requestStoragePermission = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ ->
@@ -274,7 +281,16 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        ensureShareDir()
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED) {
+                ensureShareDir()
+            } else {
+                requestWriteStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        } else {
+            ensureShareDir()
+        }
         requestNotificationPermissionIfNeeded()
         startSyncService()
     }
