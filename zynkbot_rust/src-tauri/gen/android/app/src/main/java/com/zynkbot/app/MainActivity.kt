@@ -141,9 +141,11 @@ class MainActivity : TauriActivity() {
     inner class ZynkbotPathsBridge {
         @JavascriptInterface
         fun getShareDir(): String {
-            val dir = zynkShareDir()
-            dir.mkdirs()
-            return dir.absolutePath
+            return try {
+                val dir = zynkShareDir()
+                dir.mkdirs()
+                dir.absolutePath
+            } catch (e: Exception) { "" }
         }
 
         @JavascriptInterface
@@ -184,7 +186,8 @@ class MainActivity : TauriActivity() {
 
         @JavascriptInterface
         fun openShareFolder() {
-            val dir = zynkShareDir().also { it.mkdirs() }
+            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val dir = File(downloads, "ZynkbotShare").also { it.mkdirs() }
             runOnUiThread {
                 var opened = false
 
