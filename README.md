@@ -333,6 +333,8 @@ You can connect to any of these cloud providers. Your memory database stays loca
 - **Anthropic** (Claude Sonnet, Claude Haiku) — [Get API key](https://platform.claude.com/)
 - **xAI** (Grok) — [Get API key](https://console.x.ai/)
 
+Wondering what API keys actually cost? → [Honest cost estimates](API_COSTS.md)
+
 **Configure:** Settings → API Keys
 
 <table>
