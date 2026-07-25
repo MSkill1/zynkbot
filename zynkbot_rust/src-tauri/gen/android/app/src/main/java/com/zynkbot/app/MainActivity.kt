@@ -281,11 +281,11 @@ class MainActivity : TauriActivity() {
 
     private fun zynkShareDir(): File {
         val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val preferred = File(downloads, "Zynkbot")
-        if (preferred.mkdirs() || preferred.exists()) return preferred
-        val fallback = File(getExternalFilesDir(null) ?: filesDir, "ZynkbotShare")
-        fallback.mkdirs()
-        return fallback
+        val dir = File(downloads, "ZynkbotShare")
+        if (!dir.mkdirs() && !dir.exists()) {
+            error("Could not create ZynkbotShare in Downloads — check storage permissions")
+        }
+        return dir
     }
 
     private fun ensureShareDir() {
