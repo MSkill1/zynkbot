@@ -126,7 +126,8 @@ pub async fn link_with_zynklink_code(app: tauri::AppHandle, code: String, device
             "code": code,
             "acceptor_user_id": user_id,
             "acceptor_device_id": device_id,
-            "acceptor_device_ip": local_ip
+            "acceptor_device_ip": local_ip,
+            "acceptor_device_name": crate::user_identity::get_device_name()
         }))
         .send()
         .await

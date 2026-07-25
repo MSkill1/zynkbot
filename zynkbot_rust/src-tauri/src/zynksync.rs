@@ -4133,8 +4133,14 @@ async fn handle_zynklink_accept_code(
     let acceptor_device_ip = request.get("acceptor_device_ip")
         .and_then(|ip| ip.as_str());
 
-    println!("[ZynkLink] Accept code request: {} from user: {}..., IP: {:?}",
-             code, &acceptor_user_id[..8], acceptor_device_ip);
+    let acceptor_device_name = request.get("acceptor_device_name")
+        .and_then(|n| n.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("Remote Device {}", &acceptor_device_id[..8.min(acceptor_device_id.len())]));
+
+    println!("[ZynkLink] Accept code request: {} from user: {}..., IP: {:?}, name: {}",
+             code, &acceptor_user_id[..8], acceptor_device_ip, acceptor_device_name);
 
     // Ensure acceptor's device exists in zynk_devices (required for foreign key constraint)
     println!("[ZynkLink] Device A: Ensuring acceptor's device is registered...");
@@ -4142,10 +4148,10 @@ async fn handle_zynklink_accept_code(
         "INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
          VALUES (?, ?, ?, ?, true, 57963, datetime('now'), datetime('now'))
          ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, owner_user_id = ?, last_seen_at = datetime('now')"
+         SET device_ip = ?, owner_user_id = ?, device_name = excluded.device_name, last_seen_at = datetime('now')"
     )
     .bind(acceptor_device_id)
-    .bind(&format!("Remote Device {}", &acceptor_device_id[..8]))
+    .bind(&acceptor_device_name)
     .bind(acceptor_device_ip)
     .bind(acceptor_user_id)
     .bind(acceptor_device_ip)
