@@ -207,8 +207,9 @@ class MainActivity : TauriActivity() {
                     } catch (_: Exception) {}
                 }
 
-                // All versions (API 21+): external storage provider with primary:Download/ZynkbotShare
-                if (!opened) {
+                // Android 10+: external storage provider fallback
+                // (Skipped on API <= 28 because documentsui on those versions crashes on this URI format)
+                if (!opened && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     try {
                         val uri = DocumentsContract.buildDocumentUri(
                             "com.android.externalstorage.documents",
