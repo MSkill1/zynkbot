@@ -116,6 +116,23 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-016 — Memory extraction produces "kitchen sink" summaries
+**Status:** Open  
+**Affected:** Memory quality overall  
+**Description:** When the user says something focused and short (e.g., "I am using a VPN but I want to use a VPN with X, I don't trust it"), the extraction LLM sometimes pulls in unrelated context from earlier in the conversation and produces a single memory containing many unrelated facts (dictation habits, gaming usernames, device names, and the actual new fact all in one memory). This dilutes the memory's embedding across topics, weakens semantic search accuracy, and — as a downstream effect — prevents the relationship-detection pipeline from finding thematic links because low similarity scores filter the memory out of candidate pairs before the LLM classifier ever sees them.  
+**Example:** Memory 346 (mentions dictation, iPhone 13, OnePlus 12R, Clash of Clans, VPN) had cosine similarity 0.22 with memory 347 (focused on ProtonVPN configuration) — well below the candidate-pair threshold. The two obviously belong linked but never got classified.  
+**Fix target:** Tighten the extraction prompt to keep extracted content close to the current turn's actual new information; explicitly discourage re-stating already-stored facts.
+
+---
+
+### KI-017 — Memory extraction duplicates already-stored facts
+**Status:** Open  
+**Affected:** Memory quality; contributes to KI-016  
+**Description:** The extraction step includes previously stored facts in the output of a new memory rather than treating them as already-known context. Example: memory 346's nearest neighbor is memory 341 at cosine similarity 0.81 — because 346 re-states most of 341 (dictation, iPhone 13, Clash of Clans) alongside the new VPN fact. Near-duplicate memories inflate the DB, weaken retrieval precision, and cause link-detection to waste time on redundant candidates.  
+**Fix target:** Extraction prompt should treat retrieved memories as "already known, do not restate — only capture what's new in this turn."
+
+---
+
 ### KI-015 — Android scoped storage blocks scan of files created by other apps
 **Status:** Workaround in place (MANAGE_EXTERNAL_STORAGE permission); proper fix planned  
 **Affected:** Android 11+ devices (API 30+) using ZynkLink file sharing  
