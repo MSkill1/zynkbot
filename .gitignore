@@ -27,6 +27,9 @@ zynkbot_rust/src-tauri/models/
 *.pem
 *.crt
 certificates/
+*.jks
+*.keystore
+keystore.properties
 
 # Zynkbot runtime state files
 .zynk_device_id
