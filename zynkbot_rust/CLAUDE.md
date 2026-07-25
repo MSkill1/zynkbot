@@ -4,12 +4,12 @@
 
 `src-tauri/gen/android/` is committed to git and contains hand-edited files:
 
-- `app/src/main/java/com/zynkbot/app/MainActivity.kt` — foreground service startup,
+- `app/src/main/java/ai/containai/zynkbot/MainActivity.kt` — foreground service startup,
   ZynkbotPathsBridge (getShareDir / openShareFolder), FolderPickerBridge
-- `app/src/main/java/com/zynkbot/app/SyncForegroundService.kt` — foreground service
+- `app/src/main/java/ai/containai/zynkbot/SyncForegroundService.kt` — foreground service
   with API-version-conditional startForeground()
-- `app/src/main/AndroidManifest.xml` — trimmed permissions (no MANAGE_EXTERNAL_STORAGE,
-  no requestLegacyExternalStorage)
+- `app/src/main/AndroidManifest.xml` — permissions including MANAGE_EXTERNAL_STORAGE and
+  WRITE_EXTERNAL_STORAGE (maxSdkVersion=29)
 
 Running `tauri android init` again will overwrite these files with Tauri's defaults,
 breaking the foreground service, the ZynkbotShare folder, and the permission setup.
