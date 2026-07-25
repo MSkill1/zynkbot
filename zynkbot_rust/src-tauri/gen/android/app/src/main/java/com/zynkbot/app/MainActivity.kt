@@ -186,36 +186,50 @@ class MainActivity : TauriActivity() {
         fun openShareFolder() {
             val dir = zynkShareDir().also { it.mkdirs() }
             runOnUiThread {
-                // Try to open directly at the Zynkbot subfolder via Downloads provider "raw:" URI
                 var opened = false
-                try {
-                    val uri = DocumentsContract.buildDocumentUri(
-                        "com.android.providers.downloads.documents",
-                        "raw:${dir.absolutePath}"
-                    )
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, "vnd.android.document/directory")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    startActivity(intent)
-                    opened = true
-                } catch (_: Exception) {}
 
-                if (!opened) {
-                    // Fallback: open Downloads root
+                // Android 10+: raw: URI via Downloads provider
+                if (!opened && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     try {
-                        val intent = Intent("android.intent.action.VIEW_DOWNLOADS")
+                        val uri = DocumentsContract.buildDocumentUri(
+                            "com.android.providers.downloads.documents",
+                            "raw:${dir.absolutePath}"
+                        )
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "vnd.android.document/directory")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(intent)
+                        opened = true
+                    } catch (_: Exception) {}
+                }
+
+                // All versions (API 21+): external storage provider with primary:Download/ZynkbotShare
+                if (!opened) {
+                    try {
+                        val uri = DocumentsContract.buildDocumentUri(
+                            "com.android.externalstorage.documents",
+                            "primary:Download/ZynkbotShare"
+                        )
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "vnd.android.document/directory")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(intent)
+                        opened = true
+                    } catch (_: Exception) {}
+                }
+
+                // Fallback: launch a file manager app
+                if (!opened) {
+                    try {
+                        val intent = packageManager.getLaunchIntentForPackage("com.sec.android.app.myfiles")
+                            ?: packageManager.getLaunchIntentForPackage("com.google.android.apps.nbu.files")
+                            ?: packageManager.getLaunchIntentForPackage("com.android.documentsui")
+                            ?: Intent(Intent.ACTION_VIEW).apply { type = "resource/folder" }
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         startActivity(intent)
-                    } catch (_: Exception) {
-                        try {
-                            val intent = packageManager.getLaunchIntentForPackage("com.google.android.apps.nbu.files")
-                                ?: packageManager.getLaunchIntentForPackage("com.android.documentsui")
-                                ?: Intent(Intent.ACTION_VIEW).apply { type = "resource/folder" }
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            startActivity(intent)
-                        } catch (_: Exception) {}
-                    }
+                    } catch (_: Exception) {}
                 }
             }
         }
