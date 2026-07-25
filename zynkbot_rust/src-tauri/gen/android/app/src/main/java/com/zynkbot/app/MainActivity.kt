@@ -20,6 +20,10 @@ import java.lang.ref.WeakReference
 
 class MainActivity : TauriActivity() {
 
+    companion object {
+        private const val REQ_WRITE_STORAGE = 100
+    }
+
     private var webViewRef: WeakReference<WebView>? = null
     private var cameraOutputPath: String? = null
 
@@ -33,13 +37,6 @@ class MainActivity : TauriActivity() {
             wv.post { wv.evaluateJavascript(
                 "window.__camReject&&window.__camReject('Camera permission denied');window.__camResolve=null;window.__camReject=null;", null) }
         }
-    }
-
-    private val requestWriteStoragePermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) ensureShareDir()
-        // If denied, zynkShareDir() will throw when sharing features are used
     }
 
     private val requestStoragePermission = registerForActivityResult(
@@ -281,18 +278,23 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                == PackageManager.PERMISSION_GRANTED) {
-                ensureShareDir()
-            } else {
-                requestWriteStoragePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), REQ_WRITE_STORAGE)
         } else {
             ensureShareDir()
         }
         requestNotificationPermissionIfNeeded()
         startSyncService()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_WRITE_STORAGE &&
+            grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            ensureShareDir()
+        }
     }
 
     private fun zynkShareDir(): File {
