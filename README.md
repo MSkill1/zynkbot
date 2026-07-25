@@ -22,6 +22,8 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 
 **Current Status**: v0.9.0 released (Rust/Tauri desktop, Windows and Linux). Mobile (Android, iOS) in active development via Tauri Mobile.
 
+*Zynkbot has been in private development since 2024. This public repository was re-rooted in June 2026 because the original git history contained personal information — the commit history here reflects only the period since open-sourcing.*
+
 ---
 
 ## Contents
