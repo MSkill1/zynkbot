@@ -452,6 +452,29 @@ sudo firewall-cmd --reload
 
 ---
 
+### Android: files placed in ZynkbotShare don't appear on other devices
+
+**Problem:** You add a file to `Downloads/ZynkbotShare/` on your Android phone (via Chrome, Files, screenshot, etc.), tap Rescan in the ZynkLink panel, and it reports "0 file(s) indexed" — or peers browsing your share see an empty list.
+
+**Cause:** Android 11+ enforces "scoped storage." By default, Zynkbot can only see files it created itself. Files added to the folder by other apps are hidden from Zynkbot's directory scan by Android's kernel, even though they physically exist in the folder.
+
+**Solution — grant "All files access":**
+
+Zynkbot requests this permission automatically on first launch. If you dismissed the settings screen without granting it, re-enable it manually:
+
+1. Long-press the Zynkbot icon on your home screen → **App info**
+2. Tap **Permissions** → **All files access** (or navigate: Settings → Apps → Zynkbot → Permissions → All files access)
+3. Toggle **Allow access to manage all files** ON
+4. Return to Zynkbot, open ZynkLink, tap **Rescan** on the ZynkbotShare row
+
+After granting the permission, files created by any app in ZynkbotShare become visible to Zynkbot's scan and to peers browsing your share.
+
+**Notes:**
+- This is only required on Android 11 and newer. Android 8–10 devices use a different permission (WRITE_EXTERNAL_STORAGE) that's granted through a standard runtime prompt on first launch.
+- A future Zynkbot version will replace this permission with Android's Storage Access Framework, which uses a per-folder consent flow instead of blanket file access. See KNOWN_ISSUES.md → KI-015.
+
+---
+
 ## Performance Issues
 
 ### Slow response times with local models

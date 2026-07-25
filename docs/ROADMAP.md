@@ -182,6 +182,14 @@ Early groundwork for the developer platform. Full SDK public release is v3.0; v1
 
 ### ZynkLink Enhancements
 
+- **Android Storage Access Framework (SAF) migration** *(Play Store blocker)* — The current Android build relies on the `MANAGE_EXTERNAL_STORAGE` permission to see files placed in `Downloads/ZynkbotShare/` by other apps. That permission is heavily restricted by Google Play — most apps are denied unless they fit a narrow set of use cases (file managers, backups, antivirus). To ship on Play Store, Zynkbot must either (a) get approved for `MANAGE_EXTERNAL_STORAGE` under the "sync/backup" use case, or (b) migrate to SAF, which is Google's blessed API for accessing user-chosen folders without broad file-system permissions. Path (b) is preferred because it's more likely to pass review.
+
+  **Architecture change required:** Introduce a `ShareSource` trait in Rust with two implementations — one that uses `tokio::fs` directly (desktop, older Android, Zynkbot-owned folders) and one that talks to a Kotlin bridge (Android 11+ SAF-granted folders). All existing call sites in `scan_directory`, `handle_zynklink_download`, and the peer-download writer switch from direct `tokio::fs` calls to the trait. Kotlin gains bridge methods for enumerating a granted folder via `DocumentFile` and for streaming file bytes to/from Rust via app-private staging. First-launch flow gains a SAF folder-picker prompt on Android 11+.
+
+  **Scope estimate:** ~200-300 lines of new Rust (trait + impls + wiring), ~150 lines of new Kotlin (grant + list + bidirectional byte streaming), ~50 lines of JS changes. Realistic effort: 2-3 focused days including cross-device testing on Android 8, Android 11+, desktop, and mixed setups. Should be done on its own branch.
+
+  **Interim state:** `MANAGE_EXTERNAL_STORAGE` is declared in the manifest and requested at first launch. This works for GitHub-distributed builds and is documented in KNOWN_ISSUES.md as KI-015. Must be swapped for SAF before any Play Store submission.
+
 - **Federated Knowledge Base Query** *(post-Android-launch)* — Allow a paired user to query another user's KB *in place*, without documents ever transferring. User A sends a question to paired User B's device; B's Zynkbot runs local RAG retrieval against B's own KB and returns only the top-k relevant passages. Source documents never leave B's device.
 
   **Use case:** Small teams and collaborators where one person maintains a reference library (a lawyer's case files, a lab's papers, a team's docs) and others need to query it without receiving wholesale copies. "Query my documents without possessing my documents" — a posture the cloud providers structurally cannot offer.
