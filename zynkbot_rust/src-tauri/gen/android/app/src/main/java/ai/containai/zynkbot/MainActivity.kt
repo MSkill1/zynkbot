@@ -1,4 +1,4 @@
-package com.zynkbot.app
+package ai.containai.zynkbot
 
 import android.Manifest
 import android.content.Intent

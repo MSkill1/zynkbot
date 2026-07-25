@@ -4,12 +4,12 @@ use std::path::PathBuf;
 pub fn get_app_data_dir() -> PathBuf {
     #[cfg(target_os = "android")]
     {
-        // On Android, HOME is set to the app's data dir (e.g. /data/data/com.zynkbot.app).
+        // On Android, HOME is set to the app's data dir (e.g. /data/data/ai.containai.zynkbot).
         // The writable files directory is $HOME/files/. dirs::data_local_dir() returns
         // a read-only system path on Android, so we bypass it entirely.
         let base = std::env::var("HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/data/data/com.zynkbot.app"));
+            .unwrap_or_else(|_| PathBuf::from("/data/data/ai.containai.zynkbot"));
         let path = base.join("files").join("zynkbot");
         std::fs::create_dir_all(&path).ok();
         return path;

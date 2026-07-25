@@ -1,4 +1,4 @@
-package com.zynkbot.app
+package ai.containai.zynkbot
 
 import android.app.Notification
 import android.app.NotificationChannel
