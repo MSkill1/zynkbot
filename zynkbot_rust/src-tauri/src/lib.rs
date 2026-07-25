@@ -2241,6 +2241,7 @@ pub fn run() {
             commands::zynksync::unpair_device,
             commands::zynksync::add_zynksync_device,
             commands::zynksync::remove_zynksync_device,
+            commands::zynksync::expel_zynksync_device,
             commands::zynksync::unsync_and_reset_identity,
             commands::zynksync::get_zynksync_pairing_code,
             commands::zynksync::check_sync_status_with_peers,

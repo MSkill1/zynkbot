@@ -106,6 +106,23 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
     }
   }, [onIdentityAdopted]);
 
+  const handleExpelDevice = useCallback(async (deviceId, deviceName) => {
+    if (!window.confirm(
+      `Remove "${deviceName}" from the network?\n\n` +
+      'This device will be removed from all other devices in the network. ' +
+      'If the device is online it will also be notified.\n\n' +
+      'It can rejoin at any time by entering a new pairing code.'
+    )) return;
+
+    try {
+      await invoke('expel_zynksync_device', { deviceId });
+      setPeers(prev => prev.filter(p => p.device_id !== deviceId));
+      setMessage(`✓ Removed ${deviceName} from the network.`);
+    } catch (error) {
+      setMessage(`✗ Failed to remove ${deviceName}: ` + error);
+    }
+  }, []);
+
   // Get pairing code and IP
   const handleGetPairingCode = async () => {
     try {
@@ -634,6 +651,23 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                   <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
                     {peer.is_online ? 'Online' : 'Offline'}
                   </div>
+                  <button
+                    onClick={() => handleExpelDevice(peer.device_id, peer.device_name)}
+                    title={`Remove ${peer.device_name} from the network`}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#6272a4',
+                      cursor: 'pointer',
+                      fontSize: '0.85rem',
+                      padding: '2px 5px',
+                      borderRadius: '3px',
+                      lineHeight: 1,
+                      flexShrink: 0
+                    }}
+                    onMouseOver={e => e.currentTarget.style.color = '#ff5555'}
+                    onMouseOut={e => e.currentTarget.style.color = '#6272a4'}
+                  >✕</button>
                 </div>
                 <div style={{ color: '#6272a4', fontSize: '0.72rem', marginTop: '5px', paddingLeft: '17px' }}>
                   {peer.host}

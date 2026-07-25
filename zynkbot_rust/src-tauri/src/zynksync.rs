@@ -927,6 +927,71 @@ impl ZynkSyncService {
     /// Leave the sync network entirely: notify all peers to remove this device,
     /// then clear all local peer data. The device_id parameter is ignored —
     /// pressing Unsync always departs the full mesh, not just one connection.
+    /// Remove a specific remote device from this device and all other peers in the mesh.
+    /// Used when an admin device wants to expel a ghost or unwanted peer.
+    pub async fn expel_device(&self, target_device_id: &str) -> Result<(), String> {
+        // Get the target's IP before clearing it
+        let target_ip: Option<String> = sqlx::query_as::<_, (String,)>(
+            "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
+        )
+        .bind(target_device_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|(ip,)| ip);
+
+        // Collect all OTHER sync-paired peers (everyone except the target)
+        let other_peers: Vec<(String, String, String)> = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT device_id, device_name, device_ip FROM zynk_devices WHERE sync_paired = 1 AND device_id != ?"
+        )
+        .bind(target_device_id)
+        .fetch_all(&self.db_pool)
+        .await
+        .unwrap_or_default();
+
+        println!("[ZynkSync] Expelling device {} — notifying {} other peer(s)",
+            &target_device_id[..8.min(target_device_id.len())], other_peers.len());
+
+        // Remove target from local DB immediately
+        self.clear_sync_data_db_only(target_device_id).await.ok();
+
+        let local_device_id = self.device_id.clone();
+        let target_id = target_device_id.to_string();
+        let http_client = self.http_client.read().await.clone();
+
+        tokio::spawn(async move {
+            // Tell every other peer to remove the target via cascade field
+            let cascade_payload = serde_json::json!({
+                "removed_device_id": local_device_id,
+                "cascade_device_id": target_id
+            });
+            for (_, peer_name, peer_ip) in &other_peers {
+                if peer_ip.is_empty() { continue; }
+                let url = format!("https://{}:57963/api/zynksync/notify-unsynced", peer_ip);
+                match http_client.post(&url).json(&cascade_payload).send().await {
+                    Ok(r) if r.status().is_success() =>
+                        println!("[ZynkSync] ✓ {} will remove expelled device", peer_name),
+                    Ok(r) =>
+                        println!("[ZynkSync] {} returned {} on expel cascade", peer_name, r.status()),
+                    Err(_) =>
+                        println!("[ZynkSync] {} offline — expelled device will be gone when they reconnect", peer_name),
+                }
+            }
+
+            // Best-effort: notify the expelled device itself so its UI clears
+            if let Some(ip) = target_ip {
+                if !ip.is_empty() {
+                    let url = format!("https://{}:57963/api/zynksync/notify-unsynced", ip);
+                    let self_payload = serde_json::json!({ "removed_device_id": local_device_id });
+                    let _ = http_client.post(&url).json(&self_payload).send().await;
+                }
+            }
+        });
+
+        Ok(())
+    }
+
     pub async fn remove_device(&self, _device_id: &str) -> Result<(), String> {
         // Collect ALL sync-paired peers before clearing anything
         let all_peers: Vec<(String, String, String)> = sqlx::query_as::<_, (String, String, String)>(

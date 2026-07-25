@@ -225,6 +225,19 @@ pub async fn add_zynksync_device(host_ip: String, pairing_code: String) -> Resul
     Ok(peer)
 }
 
+/// Expel a remote device from this device and all other peers in the mesh.
+#[tauri::command]
+pub async fn expel_zynksync_device(device_id: String) -> Result<serde_json::Value, String> {
+    let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
+    match global_service.as_ref() {
+        Some(service) => {
+            service.expel_device(&device_id).await?;
+            Ok(serde_json::json!({ "success": true }))
+        }
+        None => Err("ZynkSync not started".to_string()),
+    }
+}
+
 /// Remove a manually added device
 #[tauri::command]
 pub async fn remove_zynksync_device(device_id: String) -> Result<(), String> {
