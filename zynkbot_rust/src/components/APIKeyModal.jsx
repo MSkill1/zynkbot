@@ -585,6 +585,19 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                   Ollama doesn't require an API key — leave it blank.
                   Other servers (LM Studio, vLLM) may require one.
                 </div>
+                <div style={{ fontSize: '0.78rem', color: '#6272a4', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <span>Quick copy:</span>
+                  <span
+                    onClick={() => setCustomUrl("http://localhost:11434/v1")}
+                    style={{ color: '#8be9fd', cursor: 'pointer', fontFamily: 'monospace' }}
+                    title="Click to use"
+                  >Ollama → http://localhost:11434/v1</span>
+                  <span
+                    onClick={() => setCustomUrl("http://localhost:1234/v1")}
+                    style={{ color: '#8be9fd', cursor: 'pointer', fontFamily: 'monospace' }}
+                    title="Click to use"
+                  >LM Studio → http://localhost:1234/v1</span>
+                </div>
                 <button
                   onClick={handleFetchCustomModels}
                   disabled={isFetchingModels || !customUrl.trim()}
