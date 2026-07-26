@@ -22,6 +22,8 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 
 **Current Status**: v0.9.2 released (Rust/Tauri desktop, Windows and Linux; Android beta). iOS planned.
 
+Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same backend — memory system, local ML stack, and encrypted device sync — runs natively on Android and desktop without modification. It connects to Claude, GPT-4, or Grok through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required; most users pay $5–15/month in API costs instead of $20/month per provider. Local GGUF models are also supported for fully offline, zero-cost use.
+
 *Zynkbot has been in private development since 2024. This public repository was re-rooted in June 2026 because the original git history contained personal information — the commit history here reflects only the period since open-sourcing.*
 
 ---
