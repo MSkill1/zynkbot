@@ -20,7 +20,7 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 
 <img src="assets/main.png" alt="Zynkbot main interface" width="800">
 
-**Current Status**: v0.9.0 released (Rust/Tauri desktop, Windows and Linux). Mobile (Android, iOS) in active development via Tauri Mobile.
+**Current Status**: v0.9.2 released (Rust/Tauri desktop, Windows and Linux; Android beta). iOS planned.
 
 *Zynkbot has been in private development since 2024. This public repository was re-rooted in June 2026 because the original git history contained personal information — the commit history here reflects only the period since open-sourcing.*
 
@@ -93,8 +93,8 @@ Pre-built binaries are available for Linux and Windows — no compilation or dev
 
 | Platform | Package |
 |---|---|
-| Linux | `Zynkbot_0.9.0_amd64.deb` |
-| Windows | `Zynkbot_0.9.0_x64-setup.exe` |
+| Linux | `Zynkbot_0.9.2_amd64.deb` |
+| Windows | `Zynkbot_0.9.2_x64-setup.exe` |
 
 A first-run setup wizard automatically downloads all required AI models on first launch.
 

@@ -1,5 +1,7 @@
 # Android Development Plan
 
+> **Status (July 2026):** Phase 1 is complete on the `android-phase1` branch. API-model chat, the full local ML stack (embeddings, NER, safety classifier), ZynkSync, ZynkLink, and ZChat are all functional on Android. The remainder of this document is the original implementation plan — preserved for context. See `ROADMAP.md` for Phase 2 (on-device LLM inference, SAF migration).
+
 ## Strategy: Two-Phase Approach
 
 ### Phase 1 — API + Local Supporting Models (Early Access)

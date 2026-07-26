@@ -452,7 +452,7 @@ Zynkbot uses Candle framework for all machine learning:
 
 - ✅ **No Python runtime** - Pure Rust, no Python dependency at any stage
 - ✅ **Fast startup** - 2-3 seconds on modern hardware
-- ✅ **Cross-platform** - Windows, Linux, macOS (untested), iOS/Android (planned)
+- ✅ **Cross-platform** - Windows, Linux, macOS (untested), Android (Phase 1 beta); iOS planned
 
 **ML stack:** Embeddings, safety classification, and NER all use Candle — pure Rust, no C++. Local GGUF chat model inference uses llama-cpp-2, which compiles C++ at build time. End users installing a pre-built binary need neither Python nor a C++ compiler.
 

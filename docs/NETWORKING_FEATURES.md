@@ -139,7 +139,7 @@ Zynkbot networking requires only a shared local network — and a mobile hotspot
 
 The 6-digit code (10-minute expiry) handles security so no additional setup is needed.
 
-**Current platform support:** Desktop and laptop (Windows and Linux). Android support is planned — once available, two phones can pair over a hotspot with no other hardware required.
+**Current platform support:** Desktop (Windows and Linux) and Android (Phase 1 beta). All three features — ZynkSync, ZynkLink, and ZChat — are functional on Android. iOS is planned. Two phones can pair over a hotspot with no other hardware required.
 
 
 ### Use Cases

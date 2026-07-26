@@ -33,8 +33,8 @@ Sign with debug keystore:
 
 ## ZynkbotShare folder (Android)
 
-Files shared via ZynkLink on Android live in `Downloads/Zynkbot/`
-(`/storage/emulated/0/Download/Zynkbot/`). The app creates this at launch via
+Files shared via ZynkLink on Android live in `Downloads/ZynkbotShare/`
+(`/storage/emulated/0/Download/ZynkbotShare/`). The app creates this at launch via
 `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOWNLOADS)` — no storage
 permissions needed for files the app creates there. Files placed there by other apps
 (e.g. system Files app) may not be readable via raw File API on Android 11+ due to
