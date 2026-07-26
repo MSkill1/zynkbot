@@ -4,7 +4,7 @@
 
 *By [ContainAI](https://containai.ai) – Building ethical AI infrastructure*
 
-Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same backend — memory system, local ML stack, and encrypted device sync — runs natively on Android and desktop without modification. It connects to Claude, GPT-4, or Grok through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required; most users pay $5–15/month in API costs instead of $20/month per provider. Local GGUF models are also supported for fully offline, zero-cost use.
+Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same backend — memory system, local ML stack, and encrypted device sync — runs natively on Android and desktop without modification. It connects to Claude, GPT-4o, or Grok through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required — for typical conversational use, expect an estimated $5–15/month in API costs, versus $20/month per provider for subscription apps ([cost breakdown](API_COSTS.md)). Local GGUF models are also supported for fully offline, zero-cost use.
 
 **Current Status**: [![GitHub Release](https://img.shields.io/github/v/release/MSkill1/zynkbot?label=latest)](https://github.com/MSkill1/zynkbot/releases/latest) — desktop (Windows, Linux) + Android beta. iOS planned.
 
@@ -574,8 +574,8 @@ Copyright (c) 2024-2026 Matthew Skillman / ContainAI
 ---
 
 **Status**: Feature-complete v0.9, open beta (July 2026)
-**Platform**: Windows 10+, Linux (Ubuntu 22.04+, Arch, Fedora)
-**Mobile**: Android and iOS support planned via Tauri Mobile
+**Platform**: Windows 10+, Linux (Ubuntu 22.04+, Arch, Fedora), Android
+**Mobile**: Android beta available (see Releases); iOS planned
 **Organization**: [ContainAI](https://containai.ai) – Ethical AI infrastructure
 **Created**: 2024-2026
 **Maintained**: Matthew Skillman
