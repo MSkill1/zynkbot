@@ -4,6 +4,12 @@
 
 *By [ContainAI](https://containai.ai) – Building ethical AI infrastructure*
 
+Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same backend — memory system, local ML stack, and encrypted device sync — runs natively on Android and desktop without modification. It connects to Claude, GPT-4, or Grok through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required; most users pay $5–15/month in API costs instead of $20/month per provider. Local GGUF models are also supported for fully offline, zero-cost use.
+
+**Current Status**: v0.9.2 released (Rust/Tauri desktop, Windows and Linux; Android beta). iOS planned.
+
+<img src="assets/main.png" alt="Zynkbot main interface" width="800">
+
 Most tools that remember things for you either store facts (notes, journals) or store conversations (AI assistants). Zynkbot does something different: it builds a structured, relational memory of not just *what* you've thought and decided, but *how* your understanding changed over time — which beliefs shifted, which ideas connected, where new information contradicted the old. It's closer in spirit to Obsidian or Roam than to a chatbot, but where those hold static notes, Zynkbot maintains a living memory graph that tracks the evolution of your own thinking.
 
 There's no account to create. No email verification, no periodic login codes, no password resets — you install it and run it, the way software used to work. That's possible because there's no company in the middle: every memory Zynkbot builds lives in a database on your own device, and nothing leaves it unless you choose.
@@ -17,12 +23,6 @@ Zynkbot also runs a networking layer entirely on your local network. ZynkSync ke
 And because the entire stack is offline-first — no cloud dependency, no subscription, no internet required — the same infrastructure that protects one person's memory also works where connectivity can't be assumed: field work, disaster response, resource-limited regions. A snap-in architecture customizes the platform for specific domains — healthcare, legal, research, enterprise — on the same local-first foundation. **[→ Digital resilience documentation](docs/DIGITAL_RESILIENCE.md)**
 
 **[→ See how these features work in practice](docs/case_studies/)**
-
-<img src="assets/main.png" alt="Zynkbot main interface" width="800">
-
-**Current Status**: v0.9.2 released (Rust/Tauri desktop, Windows and Linux; Android beta). iOS planned.
-
-Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same backend — memory system, local ML stack, and encrypted device sync — runs natively on Android and desktop without modification. It connects to Claude, GPT-4, or Grok through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required; most users pay $5–15/month in API costs instead of $20/month per provider. Local GGUF models are also supported for fully offline, zero-cost use.
 
 *Zynkbot has been in private development since 2024. This public repository was re-rooted in June 2026 because the original git history contained personal information — the commit history here reflects only the period since open-sourcing.*
 
