@@ -330,6 +330,14 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 - No API key needed — runs completely offline
 - CPU works; NVIDIA GPU with CUDA gives 10–100x faster responses (automatically configured by the installer if you have the CUDA toolkit — see [GPU Acceleration](#gpu-acceleration) below)
 
+**Ollama & OpenAI-compatible servers (Free, local):**
+
+[Ollama](https://ollama.com) runs open-source models locally with no API key or subscription. Install it, pull a model, and point Zynkbot at `http://localhost:11434`. LM Studio and llama-server work the same way.
+
+**Android bonus:** if your phone is paired with your desktop via ZynkSync, it can route chat requests through your desktop's Ollama over your home network — no separate setup required. Tap "Connect to Ollama on [PC]" in the Android API settings.
+
+**[→ Ollama Setup Guide](docs/OLLAMA_GUIDE.md)**
+
 **API Models (Optional):**
 
 You can connect to any of these cloud providers. Your memory database stays local — only the conversation prompt is sent. Additional API LLMs coming soon.
