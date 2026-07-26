@@ -332,7 +332,7 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 
 **Ollama & OpenAI-compatible servers (Free, local):**
 
-[Ollama](https://ollama.com) runs open-source models locally with no API key or subscription. Install it, pull a model, and point Zynkbot at `http://localhost:11434`. LM Studio and llama-server work the same way.
+[Ollama](https://ollama.com) runs open-source models locally with no API key or subscription. Install it, pull a model, and point Zynkbot at `http://localhost:11434/v1`. LM Studio and llama-server work the same way.
 
 **Android bonus:** if your phone is paired with your desktop via ZynkSync, it can route chat requests through your desktop's Ollama over your home network — no separate setup required. Tap "Connect to Ollama on [PC]" in the Android API settings.
 

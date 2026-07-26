@@ -33,9 +33,9 @@ GPU acceleration (NVIDIA CUDA) is automatically used by Ollama when available �
 
 1. Open **Settings → API Keys**
 2. Scroll to **Custom / Ollama**
-3. Enter the URL: `http://localhost:11434`
+3. Enter the URL: `http://localhost:11434/v1`
 4. Leave the API key field blank — Ollama doesn't require one
-5. Click **Test Connection** — Zynkbot will list available models
+5. Click **Fetch Models** — Zynkbot will list available models
 6. Select your model from the model picker
 
 To pull a new model without leaving Zynkbot: type the model name in the pull field and click **Pull**. This runs `ollama pull <name>` in the background and streams progress.
@@ -64,9 +64,9 @@ Zynkbot's custom endpoint works with any server that implements the OpenAI chat 
 
 | Server | Default URL |
 |---|---|
-| Ollama | `http://localhost:11434` |
-| LM Studio | `http://localhost:1234` |
-| llama-server (llama.cpp) | `http://localhost:8080` |
+| Ollama | `http://localhost:11434/v1` |
+| LM Studio | `http://localhost:1234/v1` |
+| llama-server (llama.cpp) | `http://localhost:8080/v1` |
 
 Enter the URL in Settings → API Keys → Custom / Ollama. Leave the API key blank unless your server requires one.
 
