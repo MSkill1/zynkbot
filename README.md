@@ -89,18 +89,21 @@ v1.0 and mobile development depend on what we learn in this phase. If you have a
 
 ### Quick Install (Recommended)
 
-Pre-built binaries are available for Linux and Windows — no compilation or developer tools required.
+Pre-built binaries are available for Android, Linux, and Windows — no compilation required.
 
 **[Download from GitHub Releases →](https://github.com/MSkill1/zynkbot/releases/latest)**
 
 | Platform | Package |
 |---|---|
+| Android | `Zynkbot_0.9.2.apk` |
 | Linux | `Zynkbot_0.9.2_amd64.deb` |
 | Windows | `Zynkbot_0.9.2_x64-setup.exe` |
 
-A first-run setup wizard automatically downloads all required AI models on first launch.
+**Android:** Download the APK and tap to install. Android will prompt you to allow installation from unknown sources — this is a one-time prompt per device.
 
-> ⚠️ **Local models are CPU-only in pre-built binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected.
+Once Zynkbot is on both your phone and desktop, open Settings → ZynkSync on each device and pair them. After that, your memory stays in sync automatically whenever both devices are on the same network.
+
+> ⚠️ **Local models are CPU-only in pre-built desktop binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected. Android uses API models only in Phase 1.
 
 ### Developer Install (from source)
 

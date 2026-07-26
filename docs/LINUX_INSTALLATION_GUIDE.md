@@ -9,7 +9,7 @@
 No compilation required. Download and install the `.deb` package:
 
 ```bash
-sudo dpkg -i Zynkbot_0.9.0_amd64.deb
+sudo dpkg -i Zynkbot_0.9.2_amd64.deb
 ```
 
 **[Download from GitHub Releases →](https://github.com/MSkill1/zynkbot/releases/latest)**
@@ -224,6 +224,7 @@ Get keys from:
 3. 🎯 Complete onboarding ("Get to Know You" button)
 4. 📚 Add documents to Knowledge Base (optional)
 5. 💬 Start chatting — try "What can you do?"
+6. 📱 **Pair your Android phone** — install `Zynkbot_0.9.2.apk` on your phone, then open Settings → ZynkSync on both devices to pair them. Your memory syncs automatically whenever both devices are on the same network.
 
 ---
 
