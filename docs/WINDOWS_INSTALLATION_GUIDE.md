@@ -8,7 +8,7 @@
 
 No compilation or build tools required. Download and run the installer:
 
-**[Download Zynkbot_0.9.2_x64-setup.exe →](https://github.com/MSkill1/zynkbot/releases/latest)**
+**[Download latest Zynkbot installer →](https://github.com/MSkill1/zynkbot/releases/latest)**
 
 A first-run setup wizard handles all model downloads automatically.
 
@@ -420,6 +420,6 @@ After installation:
 3. 🎯 Complete onboarding ("Get to Know You" button)
 4. 📚 Add documents to Knowledge Base (optional)
 5. 💬 Start chatting!
-6. 📱 **Pair your Android phone** — install `Zynkbot_0.9.2.apk` on your phone, then open Settings → ZynkSync on both devices to pair them. Your memory syncs automatically whenever both devices are on the same network.
+6. 📱 **Pair your Android phone** — install the Zynkbot APK on your phone, then open Settings → ZynkSync on both devices to pair them. Your memory syncs automatically whenever both devices are on the same network.
 
 **Welcome to Zynkbot!** 🎉

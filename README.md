@@ -6,7 +6,7 @@
 
 Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same backend — memory system, local ML stack, and encrypted device sync — runs natively on Android and desktop without modification. It connects to Claude, GPT-4, or Grok through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required; most users pay $5–15/month in API costs instead of $20/month per provider. Local GGUF models are also supported for fully offline, zero-cost use.
 
-**Current Status**: v0.9.2 released (Rust/Tauri desktop, Windows and Linux; Android beta). iOS planned.
+**Current Status**: [![GitHub Release](https://img.shields.io/github/v/release/MSkill1/zynkbot?label=latest)](https://github.com/MSkill1/zynkbot/releases/latest) — desktop (Windows, Linux) + Android beta. iOS planned.
 
 <img src="assets/main.png" alt="Zynkbot main interface" width="800">
 
@@ -95,9 +95,9 @@ Pre-built binaries are available for Android, Linux, and Windows — no compilat
 
 | Platform | Package |
 |---|---|
-| Android | `Zynkbot_0.9.2.apk` |
-| Linux | `Zynkbot_0.9.2_amd64.deb` |
-| Windows | `Zynkbot_0.9.2_x64-setup.exe` |
+| Android | `.apk` (universal — arm64 + x86_64) |
+| Linux | `.deb` (amd64), `.AppImage`, or `.rpm` |
+| Windows | `.exe` installer or `.msi` |
 
 **Android:** Download the APK and tap to install. Android will prompt you to allow installation from unknown sources — this is a one-time prompt per device.
 
