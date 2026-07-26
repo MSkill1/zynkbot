@@ -10,6 +10,38 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
+## [0.9.2] — 2026-07-25 — Android Phase 1
+
+### Highlights
+- Android beta — full-featured app (API models + local ML stack) for Android phones and tablets
+- Cross-device sync now works between Android and desktop over encrypted LAN
+- Production release signing wired in; APK available on the GitHub release page
+
+### Android
+- App identifier set to `ai.containai.zynkbot` (matches Play Console draft)
+- Full local ML stack runs on Android via Candle (embeddings, NER, safety classifier)
+- ZynkSync, ZynkLink file sharing, and ZChat all functional on Android
+- `MANAGE_EXTERNAL_STORAGE` requested at launch on Android 11+ for ZynkbotShare folder visibility
+- `WRITE_EXTERNAL_STORAGE` requested on Android ≤ 9 (API 28)
+- Foreground service starts correctly on Android 8 (API 26) with version-conditional notification channel
+- `ZynkbotShare` folder created at `Downloads/ZynkbotShare/` on first launch
+
+### Bug Fixes
+- Fixed ZynkLink pairing showing "Remote Device XXXXXXXX" — acceptor now sends its device name during handshake
+- Fixed tablet startup crash caused by permission request flow in `onCreate`
+- Fixed Open in Files app crashing on Android 8 (external storage URI format invalid below API 29)
+- Fixed `getShareDir()` and `openShareFolder()` crashing the app when called before storage permission granted
+
+### UI
+- Per-device expel button (×) in ZynkSync Synced Devices list — removes a device and notifies peers
+- ZynkSync pairing code display no longer wraps mid-code on narrow screens
+
+### Internal
+- Release APK signed with production RSA-4096 keystore; signing config loaded from `keystore.properties` (gitignored)
+- Repo-wide `.gitignore` patterns for `*.jks`, `*.keystore`, `keystore.properties`
+
+---
+
 ## [0.9.0] — 2026-07-13 — First Public Release
 
 First public release of Zynkbot as an open source project.
