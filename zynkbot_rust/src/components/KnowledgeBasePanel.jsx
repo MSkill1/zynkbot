@@ -101,7 +101,7 @@ export default function KnowledgeBasePanel({ userId, onManageDocuments }) {
             <strong>How it works:</strong> Place plain text files in your KB folder, then click "Knowledge Base Manager" to index them.
             To search your documents, click the 📚 KB button in the message input area, then send your question.
             Zynkbot will search for relevant content using semantic similarity.
-            (PDF and DOCX support coming soon)
+            (DOCX support coming soon)
           </p>
           <p className="help-examples">
             <strong>Examples:</strong> Tourist guides, API documentation, research papers, course materials, technical specifications

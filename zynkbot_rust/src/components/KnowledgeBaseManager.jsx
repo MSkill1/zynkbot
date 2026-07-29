@@ -502,7 +502,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
               </p>
               <p className="kb-help-text">
                 Place documents in the KB folder and click "Index" to make them searchable.
-                Supported formats: TXT, MD, JSON, and code files. (PDF support coming soon)
+                Supported formats: TXT, MD, JSON, PDF, and code files.
               </p>
             </div>
           </>

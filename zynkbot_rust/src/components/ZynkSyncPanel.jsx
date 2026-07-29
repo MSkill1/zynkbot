@@ -446,11 +446,15 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                 textAlign: 'center',
                 letterSpacing: '2px',
                 border: '2px solid #50fa7b',
-                marginBottom: '10px',
+                marginBottom: '4px',
                 whiteSpace: 'nowrap',
                 overflowX: 'auto'
               }}>
                 {localIp}:{pairingCode}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: '#6272a4', marginBottom: '10px', padding: '0 4px' }}>
+                <span>← IP address</span>
+                <span>6-digit code →</span>
               </div>
               <button
                 onClick={handleCopyPairingInfo}
@@ -522,9 +526,10 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           ) : (
             <div>
               <div style={{ fontSize: '0.82rem', color: '#9aa5c4', marginBottom: '8px' }}>
-                Enter the IP:code shown on the other device:
+                Enter the IP address and 6-digit code shown on the other device — they're displayed together as <span style={{ fontFamily: 'monospace', color: '#50fa7b' }}>192.168.x.x:123456</span>. Enter each part in its own box below.
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' }}>
+                <div style={{ fontSize: '0.75rem', color: '#6272a4' }}>IP address (the numbers before the colon)</div>
                 <input
                   type="text"
                   inputMode="decimal"
@@ -543,11 +548,12 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                     color: '#f8f8f2', fontSize: '1rem', fontFamily: 'monospace'
                   }}
                 />
+                <div style={{ fontSize: '0.75rem', color: '#6272a4' }}>6-digit code (the numbers after the colon)</div>
                 <input
                   type="text"
                   inputMode="numeric"
                   autoComplete="off"
-                  placeholder="6-digit code"
+                  placeholder="123456"
                   value={pairingNumPart}
                   onChange={(e) => { setPairingNumPart(e.target.value); setPairingInput(pairingIPPart + ':' + e.target.value); }}
                   onKeyPress={(e) => { if (e.key === 'Enter' && !loading) handleAddDevice(); }}

@@ -167,8 +167,20 @@ pub async fn update_memory(
 
     match result {
         Ok(r) => {
+            let updated = r.rows_affected() > 0;
             println!("[Rust] Updated {} row(s)", r.rows_affected());
-            Ok(r.rows_affected() > 0)
+            if updated {
+                let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
+                if let Some(service) = zynksync_service.as_ref() {
+                    if service.is_auto_sync_enabled().await {
+                        match service.propagate_memory_update(memory_id, title, content, namespace).await {
+                            Ok(count) => println!("[Rust] ✓ Memory update synced to {} device(s)", count),
+                            Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to sync memory update: {}", e),
+                        }
+                    }
+                }
+            }
+            Ok(updated)
         }
         Err(e) => Err(format!("Failed to update memory: {}", e)),
     }

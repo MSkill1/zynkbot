@@ -2598,6 +2598,66 @@ impl ZynkSyncService {
         Ok(success_count)
     }
 
+    /// Propagate a memory edit to all paired devices.
+    pub async fn propagate_memory_update(
+        &self,
+        memory_id: i32,
+        title: Option<String>,
+        content: Option<String>,
+        namespace: Option<String>,
+    ) -> Result<usize, String> {
+        println!("[ZynkSync] Propagating memory update for ID {} to paired devices", memory_id);
+
+        let peers = {
+            let peers_map = self.peers.read().await;
+            peers_map.values()
+                .filter(|p| p.paired)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        if peers.is_empty() {
+            println!("[ZynkSync] No paired devices to propagate update to");
+            return Ok(0);
+        }
+
+        let total_peers = peers.len();
+        let mut success_count = 0;
+        let payload = serde_json::json!({
+            "memory_id": memory_id,
+            "title": title,
+            "content": content,
+            "namespace": namespace,
+        });
+
+        for peer in peers {
+            let endpoint = format!("{}/api/zynksync/update-memory", peer.url);
+            let client = self.http_client.read().await.clone();
+            match client
+                .post(&endpoint)
+                .json(&payload)
+                .timeout(Duration::from_secs(15))
+                .send()
+                .await
+            {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        success_count += 1;
+                        println!("[ZynkSync] ✓ Memory update synced to {}", peer.device_name);
+                    } else {
+                        eprintln!("[ZynkSync] ✗ Failed to sync update to {}: status {}", peer.device_name, response.status());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[ZynkSync] ✗ Failed to reach {}: {}", peer.device_name, e);
+                }
+            }
+        }
+
+        println!("[ZynkSync] ✓ Memory update propagated to {}/{} devices", success_count, total_peers);
+        Ok(success_count)
+    }
+
     /// Start background task for periodic message delivery retry
     pub async fn start_message_delivery_loop(self: Arc<Self>) {
         println!("[ZChat] Starting message delivery loop (interval: 30s)");
@@ -2998,6 +3058,7 @@ impl ZynkSyncService {
             .route("/api/zynksync/inventory", post(handle_get_inventory))
             .route("/api/zynksync/delete", post(handle_delete_memories))
             .route("/api/zynksync/delete-by-hash", post(handle_delete_by_hash))
+            .route("/api/zynksync/update-memory", post(handle_update_memory))
             .route("/api/zynksync/fetch", post(handle_fetch_memories))
             // ZynkLink endpoints for file sharing
             .route("/api/zynklink/verify-code", post(handle_zynklink_verify_code))
@@ -3977,6 +4038,13 @@ async fn handle_delete_memories(
     let deleted_count = service.delete_memories_by_ids(&ids).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
+    if deleted_count > 0 {
+        if let Ok(guard) = crate::APP_HANDLE.lock() {
+            if let Some(app) = guard.as_ref() {
+                let _ = app.emit("zynksync-memories-updated", serde_json::json!({ "count": deleted_count }));
+            }
+        }
+    }
     Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
 }
 
@@ -4056,6 +4124,13 @@ async fn handle_delete_by_hash(
                     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to delete memory: {}", e)}))))?;
                 let deleted_count = result.rows_affected();
                 println!("[ZynkSync] Deleted {} memory(s) for hash {}", deleted_count, content_hash);
+                if deleted_count > 0 {
+                    if let Ok(guard) = crate::APP_HANDLE.lock() {
+                        if let Some(app) = guard.as_ref() {
+                            let _ = app.emit("zynksync-memories-updated", serde_json::json!({ "count": deleted_count }));
+                        }
+                    }
+                }
                 Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
             } else {
                 println!("[ZynkSync] Skipping delete-by-hash: memory created_at {} is newer than tombstone deleted_at {:?}",
@@ -4067,6 +4142,95 @@ async fn handle_delete_by_hash(
             println!("[ZynkSync] No memory found with hash {}", content_hash);
             Ok(Json(serde_json::json!({ "success": true, "deleted": 0 })))
         }
+    }
+}
+
+/// Axum handler for receiving a memory edit propagated from a paired device.
+async fn handle_update_memory(
+    State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
+
+    let memory_id: i32 = request.get("memory_id")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32)
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing memory_id"}))))?;
+
+    let title: Option<String> = request.get("title").and_then(|v| v.as_str()).map(String::from);
+    let content: Option<String> = request.get("content").and_then(|v| v.as_str()).map(String::from);
+    let namespace: Option<String> = request.get("namespace").and_then(|v| v.as_str()).map(String::from);
+
+    println!("[ZynkSync] Received memory update for ID: {}", memory_id);
+
+    let embedding_vec: Option<Vec<u8>> = if let Some(ref new_content) = content {
+        let content_clone = new_content.clone();
+        match tokio::task::spawn_blocking(move || {
+            crate::llm::local_embeddings::generate_local_embedding(&content_clone)
+        }).await {
+            Ok(Ok(embedding)) => Some(embedding.iter().flat_map(|f| f.to_le_bytes()).collect()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let result = if let Some(emb) = embedding_vec {
+        sqlx::query(
+            "UPDATE memories
+             SET title = COALESCE(?, title),
+                 content = COALESCE(?, content),
+                 original_text = COALESCE(?, original_text),
+                 namespace = COALESCE(?, namespace),
+                 embedding = ?,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?"
+        )
+        .bind(title.as_deref())
+        .bind(content.as_deref())
+        .bind(content.as_deref())
+        .bind(namespace.as_deref())
+        .bind(&emb)
+        .bind(memory_id)
+        .execute(&service.db_pool)
+        .await
+    } else {
+        sqlx::query(
+            "UPDATE memories
+             SET title = COALESCE(?, title),
+                 content = COALESCE(?, content),
+                 original_text = COALESCE(?, original_text),
+                 namespace = COALESCE(?, namespace),
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?"
+        )
+        .bind(title.as_deref())
+        .bind(content.as_deref())
+        .bind(content.as_deref())
+        .bind(namespace.as_deref())
+        .bind(memory_id)
+        .execute(&service.db_pool)
+        .await
+    };
+
+    match result {
+        Ok(r) => {
+            let updated = r.rows_affected();
+            println!("[ZynkSync] Updated {} row(s) for memory ID {}", updated, memory_id);
+            if updated > 0 {
+                if let Ok(guard) = crate::APP_HANDLE.lock() {
+                    if let Some(app) = guard.as_ref() {
+                        let _ = app.emit("zynksync-memories-updated", serde_json::json!({ "count": updated }));
+                    }
+                }
+            }
+            Ok(Json(serde_json::json!({ "success": true, "updated": updated })))
+        }
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to update memory: {}", e)}))))
     }
 }
 
