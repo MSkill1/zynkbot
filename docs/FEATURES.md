@@ -337,6 +337,8 @@ Attach images to any message when using a vision-capable cloud model.
 2. Select an image file
 3. A thumbnail preview appears — type your question and send
 
+**On Android:** tap 📎 to attach an image from your gallery, or use the camera icon to take a photo directly. Vision works with any supported API model (Claude, GPT-4o, Grok). Local GGUF models (desktop only) do not support vision.
+
 ---
 
 ## Advanced Features

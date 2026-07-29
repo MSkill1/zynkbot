@@ -44,7 +44,7 @@ To pull a new model without leaving Zynkbot: type the model name in the pull fie
 
 ## Android — Use Your Desktop's Ollama
 
-When your Android phone is paired with your desktop via ZynkSync, the desktop acts as an Ollama proxy over your home network. Your phone sends chat requests to the desktop, the desktop queries its local Ollama, and the response streams back — no cloud involved.
+When your Android phone is paired with your desktop via ZynkSync, the desktop acts as an Ollama proxy over your home network. Your phone sends chat requests to the desktop, the desktop queries its local Ollama, and the response streams back — no cloud involved. Android cannot run Ollama locally in Phase 1 — this proxy is the only way to use Ollama on Android. ZynkSync must be paired and running on the desktop for this to work; if the desktop shows as offline in ZynkSync, the connection will fail.
 
 ### Setup
 

@@ -28,7 +28,7 @@ Zynkbot is a **privacy-first conversational AI system** with persistent semantic
 - **Local-First AI**: All core ML operations run on-device using pure Rust frameworks (Candle)
 - **Semantic Memory**: SQLite with in-process vector similarity search (Candle)
 - **Hybrid Search**: Entity-based (BERT NER) + semantic embeddings for intelligent memory recall
-- **Cross-Platform**: Native desktop app for Windows, Linux, and macOS via Tauri
+- **Cross-Platform**: Desktop (Windows, Linux) and Android via Tauri. The same Rust backend — memory system, SQLite, ZynkSync, ML stack — compiles to both targets unchanged. The React frontend runs inside Tauri's WebView on both platforms. Android Phase 1 uses API models only; local GGUF inference is Phase 2.
 - **Device Sync**: ZynkSync, ZynkLink, ZChat for device-to-device capabilities
 - **Hybrid LLM Support**: Local GGUF models (llama.cpp) + API backends (OpenAI, Anthropic, xAI)
 

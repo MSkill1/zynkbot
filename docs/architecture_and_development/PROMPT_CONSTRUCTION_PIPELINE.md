@@ -78,7 +78,7 @@ ASSISTANT: [response]
 ...
 ```
 
-The limit difference exists because API models have large context windows and local models are slow and memory-constrained.
+The limit difference exists because API models have large context windows and local models are slow and memory-constrained. On Android, local GGUF inference is not available in Phase 1 — the app always uses API-model limits. If your Android device is on the same local network as a desktop running Ollama and paired via ZynkSync, you can use that desktop as an Ollama proxy; when on mobile data or away from the desktop, only cloud API models are available.
 
 ---
 

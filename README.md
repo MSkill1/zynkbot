@@ -203,9 +203,9 @@ zynkbot/
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│            Tauri Desktop App (Native Window)          │
+│      Zynkbot — Desktop (Windows/Linux) + Android      │
 │  ┌────────────────────────────────────────────────┐   │
-│  │  React Frontend                                │   │
+│  │  React Frontend (Tauri WebView)                │   │
 │  │  • Chat Interface + Web Search                 │   │
 │  │  • Memory Manager + Conversation History       │   │
 │  │  • Settings / Containment Mode Selector        │   │
@@ -230,8 +230,10 @@ zynkbot/
 │  │  Local database + vector search (memory store)  │  │
 │  ├─────────────────────────────────────────────────┤  │
 │  │  LLM Backend (configurable, switchable)         │  │
-│  │  ├─ Local .gguf models  (fully offline)         │  │ ← Privacy-first
-│  │  └─ OpenAI / Anthropic / xAI  (opt-in)          │  │
+│  │  ├─ Local .gguf models  (desktop — fully offline│  │ ← Privacy-first
+│  │  ├─ Ollama / LM Studio  (desktop; Android via   │  │
+│  │  │                       LAN proxy over ZynkSync│  │
+│  │  └─ OpenAI / Anthropic / xAI  (opt-in API)      │  │
 │  ├─────────────────────────────────────────────────┤  │
 │  │  Post-Response Memory Pipeline  (background)    │  │
 │  │  └─ LLM evaluates message, decides what to      │  │

@@ -66,9 +66,11 @@ Suggested positioning: **"Early Access — API models now, on-device models comi
 
 ---
 
-## Open Questions
+## Open Questions — Resolved in Phase 1
 
-1. **Embedding model size on mobile** — all-MiniLM-L6-v2 is ~22MB. Acceptable to bundle in the APK or download on first launch?
-2. **ZynkSync on mobile** — mobile devices change IPs frequently; pairing flow may need adjustment for mobile network conditions.
-3. **Background sync** — Android restricts background processes; ZynkSync interval sync needs WorkManager or equivalent.
-4. **App distribution** — Google Play Store vs. sideload APK for Early Access.
+1. ✅ **Embedding model size on mobile** — ~22MB bundled in the APK; acceptable.
+2. ✅ **ZynkSync on mobile** — Works. Memory sync, including edits and deletes, propagates between Android and desktop devices in real time.
+3. ✅ **Background sync** — Handled via a foreground service (`SyncForegroundService.kt`); keeps the sync loop alive while the app is backgrounded.
+4. ✅ **App distribution** — APK sideload for Phase 1 Early Access; Google Play Store planned for Phase 2.
+
+See `ROADMAP.md` for Phase 2 open questions (on-device LLM inference, SAF folder picker).
