@@ -16,7 +16,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [codeIPPart, setCodeIPPart] = useState('');
   const [codeNumPart, setCodeNumPart] = useState('');
   const [linkedUsers, setLinkedUsers] = useState([]);
-  const [generatedCode, setGeneratedCode] = useState(null);
+  const [generatedIP, setGeneratedIP] = useState(null);
+  const [generatedNumCode, setGeneratedNumCode] = useState(null);
   const [chatDevice, setChatDevice] = useState(null); // Track which device chat is open for
   const [localDeviceId, setLocalDeviceId] = useState('');
   const [unreadCounts, setUnreadCounts] = useState({}); // Map of device_id -> unread count
@@ -195,8 +196,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
       const result = await invoke('generate_zynklink_code');
       console.log('[ZynkLink] Code generated:', result.code, 'Local IP:', localIp);
 
-      const fullCode = `${localIp}:${result.code}`;
-      setGeneratedCode(fullCode);
+      setGeneratedIP(localIp);
+      setGeneratedNumCode(result.code);
       setMessage(`✓ ZynkLink code generated! Share this with the other device.`);
     } catch (error) {
       console.error('[ZynkLink] Failed to generate code:', error);
@@ -448,21 +449,58 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
         >
           🔗 Generate Code (For New Device)
         </button>
-        {generatedCode && (
-          <div style={{
-            padding: '15px',
-            background: '#282a36',
-            borderRadius: '4px',
-            fontFamily: 'monospace',
-            fontSize: '1.3rem',
-            color: '#50fa7b',
-            textAlign: 'center',
-            letterSpacing: '2px',
-            border: '2px solid #50fa7b',
-            whiteSpace: 'nowrap',
-            overflowX: 'auto'
-          }}>
-            {generatedCode}
+        {generatedIP && generatedNumCode && (
+          <div>
+            <div style={{ marginBottom: '4px' }}>
+              <div style={{ fontSize: '0.75rem', color: '#6272a4', marginBottom: '2px' }}>IP address</div>
+              <div style={{
+                padding: '10px 14px',
+                background: '#282a36',
+                borderRadius: '4px',
+                fontFamily: 'monospace',
+                fontSize: '1.15rem',
+                color: '#50fa7b',
+                textAlign: 'center',
+                letterSpacing: '2px',
+                border: '2px solid #50fa7b',
+                whiteSpace: 'nowrap',
+                overflowX: 'auto'
+              }}>
+                {generatedIP}
+              </div>
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <div style={{ fontSize: '0.75rem', color: '#6272a4', marginBottom: '2px' }}>6-digit code</div>
+              <div style={{
+                padding: '10px 14px',
+                background: '#282a36',
+                borderRadius: '4px',
+                fontFamily: 'monospace',
+                fontSize: '1.15rem',
+                color: '#50fa7b',
+                textAlign: 'center',
+                letterSpacing: '4px',
+                border: '2px solid #50fa7b'
+              }}>
+                {generatedNumCode}
+              </div>
+            </div>
+            <button
+              onClick={() => { navigator.clipboard.writeText(`${generatedIP}:${generatedNumCode}`); setMessage('✓ IP Address + Code copied to clipboard'); }}
+              style={{
+                width: '100%',
+                padding: '9px',
+                background: '#50fa7b',
+                color: '#282a36',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                fontWeight: 'bold'
+              }}
+            >
+              📋 Copy IP Address + Code
+            </button>
           </div>
         )}
       </div>
@@ -501,32 +539,38 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
         ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={codeIPPart}
-              onChange={(e) => { setCodeIPPart(e.target.value); setCodeToAccept(e.target.value + ':' + codeNumPart); }}
-              placeholder="192.168.0.100"
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '10px', background: '#282a36',
-                border: '1px solid #44475a', borderRadius: '4px',
-                color: '#f8f8f2', fontSize: '0.9rem', fontFamily: 'monospace'
-              }}
-            />
-            <input
-              type="text"
-              inputMode="numeric"
-              value={codeNumPart}
-              onChange={(e) => { setCodeNumPart(e.target.value); setCodeToAccept(codeIPPart + ':' + e.target.value); }}
-              placeholder="Code (456789)"
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '10px', background: '#282a36',
-                border: '1px solid #44475a', borderRadius: '4px',
-                color: '#f8f8f2', fontSize: '0.9rem', fontFamily: 'monospace'
-              }}
-            />
+            <div>
+              <div style={{ fontSize: '0.75rem', color: '#6272a4', marginBottom: '2px' }}>IP address (the numbers before the colon)</div>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={codeIPPart}
+                onChange={(e) => { setCodeIPPart(e.target.value); setCodeToAccept(e.target.value + ':' + codeNumPart); }}
+                placeholder="192.168.0.100"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '10px', background: '#282a36',
+                  border: '1px solid #44475a', borderRadius: '4px',
+                  color: '#f8f8f2', fontSize: '0.9rem', fontFamily: 'monospace'
+                }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: '#6272a4', marginBottom: '2px' }}>6-digit code (the numbers after the colon)</div>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={codeNumPart}
+                onChange={(e) => { setCodeNumPart(e.target.value); setCodeToAccept(codeIPPart + ':' + e.target.value); }}
+                placeholder="123456"
+                style={{
+                  width: '100%', boxSizing: 'border-box',
+                  padding: '10px', background: '#282a36',
+                  border: '1px solid #44475a', borderRadius: '4px',
+                  color: '#f8f8f2', fontSize: '0.9rem', fontFamily: 'monospace'
+                }}
+              />
+            </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
