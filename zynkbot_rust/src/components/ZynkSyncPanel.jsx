@@ -436,25 +436,39 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           </p>
           {pairingCode && localIp ? (
             <div>
-              <div style={{
-                padding: '14px',
-                background: '#282a36',
-                borderRadius: '4px',
-                fontFamily: 'monospace',
-                fontSize: '1.2rem',
-                color: '#50fa7b',
-                textAlign: 'center',
-                letterSpacing: '2px',
-                border: '2px solid #50fa7b',
-                marginBottom: '4px',
-                whiteSpace: 'nowrap',
-                overflowX: 'auto'
-              }}>
-                {localIp}:{pairingCode}
+              <div style={{ marginBottom: '4px' }}>
+                <div style={{ fontSize: '0.75rem', color: '#6272a4', marginBottom: '2px' }}>IP address</div>
+                <div style={{
+                  padding: '10px 14px',
+                  background: '#282a36',
+                  borderRadius: '4px',
+                  fontFamily: 'monospace',
+                  fontSize: '1.15rem',
+                  color: '#50fa7b',
+                  textAlign: 'center',
+                  letterSpacing: '2px',
+                  border: '2px solid #50fa7b',
+                  whiteSpace: 'nowrap',
+                  overflowX: 'auto'
+                }}>
+                  {localIp}
+                </div>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: '#6272a4', marginBottom: '10px', padding: '0 4px' }}>
-                <span>← IP address</span>
-                <span>6-digit code →</span>
+              <div style={{ marginBottom: '10px' }}>
+                <div style={{ fontSize: '0.75rem', color: '#6272a4', marginBottom: '2px' }}>6-digit code</div>
+                <div style={{
+                  padding: '10px 14px',
+                  background: '#282a36',
+                  borderRadius: '4px',
+                  fontFamily: 'monospace',
+                  fontSize: '1.15rem',
+                  color: '#50fa7b',
+                  textAlign: 'center',
+                  letterSpacing: '4px',
+                  border: '2px solid #50fa7b'
+                }}>
+                  {pairingCode}
+                </div>
               </div>
               <button
                 onClick={handleCopyPairingInfo}
@@ -470,7 +484,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                   fontWeight: 'bold'
                 }}
               >
-                📋 Copy IP:Code
+                📋 Copy IP Address + Code
               </button>
             </div>
           ) : (
