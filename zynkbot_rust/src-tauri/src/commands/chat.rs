@@ -1802,8 +1802,6 @@ pub async fn run_ensemble(
 
     // Phase 1: Get responses from all models (direct API calls - no memory storage, no web search capability)
     println!("[Ensemble] Phase 1: Collecting responses from {} models", models.len());
-    let mut individual_responses = Vec::new();
-
     // Build complete prompt with context + question + search results
     let mut full_question = String::new();
 
@@ -1822,127 +1820,120 @@ pub async fn run_ensemble(
     // Add the actual question
     full_question.push_str(&format!("Question: {}", message));
 
-    // Call each model directly (no send_message_with_memory complexity)
-    for model_backend in &models {
-        println!("[Ensemble] Querying model: {}", model_backend);
+    // Call all models in parallel
+    let model_futures: Vec<_> = models.iter().map(|model_backend| {
+        let model_backend = model_backend.clone();
+        let full_question = full_question.clone();
+        let anthropic_model = anthropic_model.clone();
+        let openai_model = openai_model.clone();
+        let xai_model = xai_model.clone();
+        let mistral_model = mistral_model.clone();
+        let image_data = image_data.clone();
 
-        let response_result = if model_backend.to_lowercase().contains("anthropic") {
-            let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
-            if api_key.is_empty() {
-                Err("ANTHROPIC_API_KEY not set".to_string())
-            } else if let Some(ref imgs) = image_data {
-                crate::llm::anthropic::send_vision_streaming(
-                    &api_key, &anthropic_model, &full_question, imgs, None, Some(4096), |_| {}
-                ).await.map(|r| r.content).map_err(|e| e.to_string())
-            } else {
-                let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-                crate::llm::anthropic::send_message(&api_key, &anthropic_model, messages, None, Some(4096), None)
-                    .await.map(|r| r.content).map_err(|e| e.to_string())
-            }
-        } else if model_backend.to_lowercase().contains("openai") || model_backend.to_lowercase().contains("gpt") {
-            let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
-            if api_key.is_empty() {
-                Err("OPENAI_API_KEY not set".to_string())
-            } else if let Some(ref imgs) = image_data {
-                crate::llm::openai::send_vision_streaming(
-                    &api_key, &openai_model, &full_question, imgs,
-                    "https://api.openai.com/v1/chat/completions", |_| {}
-                ).await.map(|r| r.content).map_err(|e| e.to_string())
-            } else {
-                let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-                crate::llm::openai::send_message(&api_key, &openai_model, messages, Some(4096), None)
-                    .await.map(|r| r.content).map_err(|e| e.to_string())
-            }
-        } else if model_backend.to_lowercase().contains("xai") || model_backend.to_lowercase().contains("grok") {
-            let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
-            if api_key.is_empty() {
-                Err("XAI_API_KEY not set".to_string())
-            } else if let Some(ref imgs) = image_data {
-                crate::llm::openai::send_vision_streaming(
-                    &api_key, &xai_model, &full_question, imgs,
-                    "https://api.x.ai/v1/chat/completions", |_| {}
-                ).await.map(|r| r.content).map_err(|e| e.to_string())
-            } else {
-                let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-                crate::llm::xai::send_message(&api_key, &xai_model, messages, Some(4096), None)
-                    .await.map(|r| r.content).map_err(|e| e.to_string())
-            }
-        } else if model_backend.to_lowercase().contains("mistral") {
-            let api_key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
-            if api_key.is_empty() {
-                Err("MISTRAL_API_KEY not set".to_string())
-            } else if let Some(ref imgs) = image_data {
-                crate::llm::openai::send_vision_streaming(
-                    &api_key, &mistral_model, &full_question, imgs,
-                    "https://api.mistral.ai/v1/chat/completions", |_| {}
-                ).await.map(|r| r.content).map_err(|e| e.to_string())
-            } else {
-                let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-                crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(4096), None, "https://api.mistral.ai/v1/chat/completions", false, |_| {})
-                    .await.map(|r| r.content).map_err(|e| e.to_string())
-            }
-        } else if model_backend.to_lowercase() == "custom" {
-            // Custom / Ollama — OpenAI-compatible endpoint
-            let base_url = std::env::var("CUSTOM_API_URL")
-                .map_err(|_| "Custom endpoint not configured. Add it in API Settings.".to_string())?;
-            let model_name = std::env::var("CUSTOM_MODEL")
-                .map_err(|_| "No model selected for custom endpoint.".to_string())?;
-            let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
-            let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-            let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-            crate::llm::openai::send_message_streaming(
-                &api_key, &model_name, messages, Some(2048), None, &api_url, true, |_| {}
-            ).await.map(|r| r.content).map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))
-        } else {
-            // Local model - use llama.cpp
-            if image_data.is_some() {
-                return Err("Image attachments are not supported with local models.".to_string());
-            }
-            if !std::path::Path::new(model_backend).exists() {
-                Err(format!("Local model file not found: {}", model_backend))
-            } else {
-                let model_path = model_backend.clone();
-                let question = full_question.clone();
+        async move {
+            println!("[Ensemble] Querying model: {}", model_backend);
+            let result: Result<String, String> = async {
+                if model_backend.to_lowercase().contains("anthropic") {
+                    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+                    if api_key.is_empty() { return Err("ANTHROPIC_API_KEY not set".to_string()); }
+                    if let Some(ref imgs) = image_data {
+                        crate::llm::anthropic::send_vision_streaming(
+                            &api_key, &anthropic_model, &full_question, imgs, None, Some(4096), |_| {}
+                        ).await.map(|r| r.content).map_err(|e| e.to_string())
+                    } else {
+                        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
+                        crate::llm::anthropic::send_message(&api_key, &anthropic_model, messages, None, Some(4096), None)
+                            .await.map(|r| r.content).map_err(|e| e.to_string())
+                    }
+                } else if model_backend.to_lowercase().contains("openai") || model_backend.to_lowercase().contains("gpt") {
+                    let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+                    if api_key.is_empty() { return Err("OPENAI_API_KEY not set".to_string()); }
+                    if let Some(ref imgs) = image_data {
+                        crate::llm::openai::send_vision_streaming(
+                            &api_key, &openai_model, &full_question, imgs,
+                            "https://api.openai.com/v1/chat/completions", |_| {}
+                        ).await.map(|r| r.content).map_err(|e| e.to_string())
+                    } else {
+                        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
+                        crate::llm::openai::send_message(&api_key, &openai_model, messages, Some(4096), None)
+                            .await.map(|r| r.content).map_err(|e| e.to_string())
+                    }
+                } else if model_backend.to_lowercase().contains("xai") || model_backend.to_lowercase().contains("grok") {
+                    let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
+                    if api_key.is_empty() { return Err("XAI_API_KEY not set".to_string()); }
+                    if let Some(ref imgs) = image_data {
+                        crate::llm::openai::send_vision_streaming(
+                            &api_key, &xai_model, &full_question, imgs,
+                            "https://api.x.ai/v1/chat/completions", |_| {}
+                        ).await.map(|r| r.content).map_err(|e| e.to_string())
+                    } else {
+                        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
+                        crate::llm::xai::send_message(&api_key, &xai_model, messages, Some(4096), None)
+                            .await.map(|r| r.content).map_err(|e| e.to_string())
+                    }
+                } else if model_backend.to_lowercase().contains("mistral") {
+                    let api_key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
+                    if api_key.is_empty() { return Err("MISTRAL_API_KEY not set".to_string()); }
+                    if let Some(ref imgs) = image_data {
+                        crate::llm::openai::send_vision_streaming(
+                            &api_key, &mistral_model, &full_question, imgs,
+                            "https://api.mistral.ai/v1/chat/completions", |_| {}
+                        ).await.map(|r| r.content).map_err(|e| e.to_string())
+                    } else {
+                        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
+                        crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(4096), None, "https://api.mistral.ai/v1/chat/completions", false, |_| {})
+                            .await.map(|r| r.content).map_err(|e| e.to_string())
+                    }
+                } else if model_backend.to_lowercase() == "custom" {
+                    let base_url = std::env::var("CUSTOM_API_URL")
+                        .map_err(|_| "Custom endpoint not configured. Add it in API Settings.".to_string())?;
+                    let model_name = std::env::var("CUSTOM_MODEL")
+                        .map_err(|_| "No model selected for custom endpoint.".to_string())?;
+                    let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
+                    let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+                    let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
+                    crate::llm::openai::send_message_streaming(
+                        &api_key, &model_name, messages, Some(2048), None, &api_url, true, |_| {}
+                    ).await.map(|r| r.content).map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))
+                } else {
+                    if image_data.is_some() {
+                        return Err("Image attachments are not supported with local models.".to_string());
+                    }
+                    if !std::path::Path::new(&model_backend).exists() {
+                        return Err(format!("Local model file not found: {}", model_backend));
+                    }
+                    let model_path = model_backend.clone();
+                    let question = full_question.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        let messages = vec![crate::llm::Message { role: "user".to_string(), content: question }];
+                        crate::llm::local_models::generate_with_local_model(&model_path, messages, Some(512), None)
+                    }).await.map_err(|e| format!("Local model task failed: {}", e))?;
+                    result.map(|r| r.content).map_err(|e| e.to_string())
+                }
+            }.await;
+            (model_backend, result)
+        }
+    }).collect();
 
-                // Call local model in blocking task (CPU-bound inference)
-                let result = tokio::task::spawn_blocking(move || {
-                    let messages = vec![crate::llm::Message {
-                        role: "user".to_string(),
-                        content: question,
-                    }];
+    let phase1_results = futures::future::join_all(model_futures).await;
 
-                    crate::llm::local_models::generate_with_local_model(
-                        &model_path,
-                        messages,
-                        Some(512),  // Reasonable token limit for ensemble responses
-                        None,       // Default temperature
-                    )
-                })
-                .await
-                .map_err(|e| format!("Local model task failed: {}", e))?;
-
-                result.map(|r| r.content).map_err(|e| e.to_string())
-            }
-        };
-
-        match response_result {
-            Ok(response) => {
-                individual_responses.push(serde_json::json!({
-                    "model": model_backend,
-                    "response": response,
-                    "success": true
-                }));
-            }
+    let individual_responses: Vec<serde_json::Value> = phase1_results.into_iter().map(|(model, result)| {
+        match result {
+            Ok(response) => serde_json::json!({
+                "model": model,
+                "response": response,
+                "success": true
+            }),
             Err(e) => {
-                println!("[Ensemble] Model {} failed: {}", model_backend, e);
-                individual_responses.push(serde_json::json!({
-                    "model": model_backend,
+                println!("[Ensemble] Model {} failed: {}", model, e);
+                serde_json::json!({
+                    "model": model,
                     "response": format!("Error: {}", e),
                     "success": false
-                }));
+                })
             }
         }
-    }
+    }).collect();
 
     // Filter successful responses
     let successful_responses: Vec<&serde_json::Value> = individual_responses

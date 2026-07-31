@@ -66,6 +66,11 @@ export default function EnsembleModal({
     }
   };
 
+  const hasCustomSelected = selectedModels.includes('custom');
+  const hasLocalSelected = selectedModels.some(id =>
+    availableModels.find(m => m.id === id)?.type === 'local'
+  );
+
   const handleModelToggle = (modelId) => {
     setSelectedModels(prev =>
       prev.includes(modelId)
@@ -354,37 +359,61 @@ export default function EnsembleModal({
                   To use local models in ensemble now, build the developer version from source.
                 </div>
               )}
+              {(hasCustomSelected || hasLocalSelected) && (
+                <div style={{
+                  padding: '8px 12px',
+                  marginBottom: '8px',
+                  background: '#21222c',
+                  border: '1px solid #ffb86c',
+                  borderRadius: '6px',
+                  color: '#ffb86c',
+                  fontSize: '0.82rem',
+                  lineHeight: '1.4'
+                }}>
+                  ⚠️ <strong>Custom/Ollama and local models share your GPU.</strong> Select one or the other — not both — to avoid CUDA conflicts.
+                </div>
+              )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {availableModels.map(model => {
                   const isLocalInProd = process.env.NODE_ENV === 'production' && model.type === 'local';
+                  const isCustomConflict = model.id === 'custom' && hasLocalSelected;
+                  const isLocalConflict = model.type === 'local' && hasCustomSelected;
+                  const isDisabled = isLocalInProd || isCustomConflict || isLocalConflict;
+                  const conflictReason = isCustomConflict
+                    ? 'Deselect your local model first — both use the GPU and will conflict'
+                    : isLocalConflict
+                    ? 'Deselect Custom/Ollama first — both use the GPU and will conflict'
+                    : isLocalInProd
+                    ? 'Local models require the CUDA build. Build the developer version to use local models.'
+                    : undefined;
                   return (
                     <label
                       key={model.id}
-                      title={isLocalInProd ? 'Local models require the CUDA build (coming soon). Build the developer version now to use CUDA-optimized local models.' : undefined}
+                      title={conflictReason}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
                         padding: '10px',
-                        background: isLocalInProd ? '#1a1b26' : selectedModels.includes(model.id) ? '#44475a' : '#282a36',
-                        border: `2px solid ${isLocalInProd ? '#44475a' : selectedModels.includes(model.id) ? '#8be9fd' : '#44475a'}`,
+                        background: isDisabled ? '#1a1b26' : selectedModels.includes(model.id) ? '#44475a' : '#282a36',
+                        border: `2px solid ${isDisabled ? '#44475a' : selectedModels.includes(model.id) ? '#8be9fd' : '#44475a'}`,
                         borderRadius: '6px',
-                        cursor: isLocalInProd ? 'not-allowed' : 'pointer',
-                        opacity: isLocalInProd ? 0.5 : 1,
+                        cursor: isDisabled ? 'not-allowed' : 'pointer',
+                        opacity: isDisabled ? 0.4 : 1,
                         transition: 'all 0.2s'
                       }}
                     >
                       <input
                         type="checkbox"
                         checked={selectedModels.includes(model.id)}
-                        onChange={() => handleModelToggle(model.id)}
-                        disabled={isLocalInProd}
-                        style={{ marginRight: '10px', cursor: isLocalInProd ? 'not-allowed' : 'pointer' }}
+                        onChange={() => !isDisabled && handleModelToggle(model.id)}
+                        disabled={isDisabled}
+                        style={{ marginRight: '10px', cursor: isDisabled ? 'not-allowed' : 'pointer' }}
                       />
-                      <span style={{ color: isLocalInProd ? '#6272a4' : '#f8f8f2', fontWeight: selectedModels.includes(model.id) ? 'bold' : 'normal' }}>
+                      <span style={{ color: isDisabled ? '#6272a4' : '#f8f8f2', fontWeight: selectedModels.includes(model.id) ? 'bold' : 'normal' }}>
                         {model.name}
                       </span>
                       <span style={{ marginLeft: 'auto', color: '#9aa5c4', fontSize: '0.85rem' }}>
-                        {isLocalInProd ? '🔒 CUDA required' : model.type === 'local' ? '🔒 Local' : '☁️ API'}
+                        {isLocalInProd ? '🔒 CUDA required' : (isCustomConflict || isLocalConflict) ? '⚠️ GPU conflict' : model.type === 'local' ? '🔒 Local' : '☁️ API'}
                       </span>
                     </label>
                   );
