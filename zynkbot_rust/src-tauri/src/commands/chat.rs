@@ -1544,14 +1544,21 @@ pub async fn run_ensemble(
         println!("[Ensemble] Memory search failed: {}", e);
         Vec::new()
     });
+    // Apply a higher similarity threshold for ensemble to reduce noise
+    let recalled_memories: Vec<_> = recalled_memories.into_iter()
+        .filter(|m| m.similarity.unwrap_or(0.0) >= 0.50)
+        .collect();
+    println!("[Ensemble] {} memories above 0.50 threshold", recalled_memories.len());
+
     // Build context string from memories
     let mut context = String::new();
 
     if !recalled_memories.is_empty() {
-        context.push_str("\n\n[RELEVANT CONTEXT FROM YOUR MEMORIES]\n");
-        for (idx, mem) in recalled_memories.iter().enumerate() {
-            context.push_str(&format!("{}. {}\n", idx + 1, mem.content));
+        context.push_str("\n\n[BACKGROUND CONTEXT]\nThe following facts about the user may be relevant. Use this as silent background to inform your answer. Do not enumerate, list, or explicitly reference these items unless directly asked.\n\n");
+        for mem in recalled_memories.iter() {
+            context.push_str(&format!("- {}\n", mem.content));
         }
+        context.push_str("[END BACKGROUND CONTEXT]\n");
     }
 
     // KB context (if enabled)
