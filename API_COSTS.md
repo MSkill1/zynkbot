@@ -6,7 +6,7 @@
 
 Zynkbot uses a **bring-your-own-key** model — instead of paying $20/month per
 provider, you pay per use. For most people this is significantly cheaper, and
-you get all three providers in one app with your memory staying local.
+you get all four providers in one app with your memory staying local.
 
 ## Estimated monthly cost by usage pattern
 
@@ -21,7 +21,7 @@ you get all three providers in one app with your memory staying local.
 > users usually win with APIs.
 
 **Comparison:** Two subscription apps (Claude + ChatGPT) = **$40/month**, two
-separate memories, no Grok. Zynkbot moderate use ≈ **$5–15/month**, all three
+separate memories, no Grok, no Mistral. Zynkbot moderate use ≈ **$5–15/month**, all four
 providers, one memory graph on your device.
 
 ## What one exchange actually costs

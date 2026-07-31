@@ -35,13 +35,14 @@ Zynkbot routes conversations to one of four backends based on the model selected
 
 ### API Models
 
-All three API backends use streaming responses.
+All four API backends use streaming responses.
 
 | Backend | Source file | Model(s) |
 |---------|-------------|----------|
 | Anthropic | `llm/anthropic.rs` | `claude-sonnet-4-6` (default), `claude-haiku-4-5-20251001`, `claude-opus-4-7` |
 | OpenAI | `llm/openai.rs` | `gpt-4o-mini` |
 | xAI (Grok) | `llm/xai.rs` | `grok-3` (default), `grok-2-vision-1212` (vision) |
+| Mistral | `llm/openai.rs` | `mistral-large-latest` (default), `mistral-small-latest`, `open-mistral-nemo` |
 
 xAI uses the OpenAI-compatible streaming implementation (`openai::send_message_streaming`) pointed at `https://api.x.ai/v1/chat/completions`.
 

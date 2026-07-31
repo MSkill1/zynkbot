@@ -1,6 +1,6 @@
 # Zynkbot Development Roadmap
 
-**Last Updated:** May 2026
+**Last Updated:** July 2026
 **Current Version:** v0.9 (Desktop Production-Ready)
 
 This roadmap outlines planned features and enhancements. Timelines are estimates and subject to change based on community feedback and development priorities.
@@ -57,7 +57,23 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ---
 
-## v1.1 - Android + SDK Foundation + Companion Enhancements (Q3 2026)
+## v1.1 - ZynkSync & ZynkLink Modularization (Q4 2026)
+
+**Focus:** Refactor the sync and linking layers into clean, composable internal modules before adding Android-native inference, Parenting Mode, or SDK surface area
+
+ZynkSync and ZynkLink are currently tightly coupled to the desktop context. Before expanding to mobile-native local inference, Parenting Mode, or the public SDK, these layers need stable internal interface contracts — otherwise each new platform inherits the same coupling. This is a prerequisite milestone, not a feature release.
+
+### Modularization Scope
+- **ZynkSync module** — Extract sync protocol, conflict resolution, and namespace filtering into a standalone internal crate with a defined API; decouple from desktop-specific file paths and UI hooks
+- **ZynkLink module** — Separate file-sharing transport, peer discovery, and permissions model; formalize the `ShareSource` trait that abstracts over desktop direct-fs and Android SAF (prerequisite for Play Store compliance)
+- **Interface contracts** — Document the stable boundary each module exposes; these become the base the SDK Foundation builds on
+- **Test coverage** — Unit and integration tests against extracted modules to catch regressions before mobile and SDK surface the same code paths
+
+**Leads to:** v1.2 track — either local instance on Android, Parenting Mode, or SDK Foundation. Direction will be finalized based on community feedback and resource availability after v1.1 ships.
+
+---
+
+## v1.2 - Android + SDK Foundation + Companion Enhancements (Q4 2026)
 
 **Focus:** Three co-primary tracks: Android launch, SDK Foundation groundwork, and companion/networking depth
 
@@ -233,7 +249,7 @@ Voice transcription is implemented (`useVoiceInput.js`, `whisper.rs`, `transcrib
 
 ---
 
-## v1.2 - Advanced Containment Modes (Q4 2026)
+## v1.3 - Advanced Containment Modes (Q1 2027)
 
 **Focus:** Production-ready containment for specialized use cases
 
@@ -258,7 +274,7 @@ Voice transcription is implemented (`useVoiceInput.js`, `whisper.rs`, `transcrib
 
 ---
 
-## v1.3 - ContainAI Services (Q1 2027)
+## v1.4 - ContainAI Services (Q2 2027)
 
 **Focus:** Opt-in cloud services for users who want them, without compromising the local-first architecture
 

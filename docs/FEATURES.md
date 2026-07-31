@@ -147,7 +147,7 @@ Zynkbot supports multiple LLM backends with mid-conversation switching via the U
 - Memories persist across all backends
 - API backends send prompts to third parties (memory stays local)
 
-**Note on API providers:** The three cloud API providers (OpenAI, Anthropic, xAI/Grok) are currently hard-coded. Adding additional providers (Gemini, Mistral API, etc.) is straightforward — each requires a small adapter implementing the shared LLM trait.
+**Note on API providers:** The four cloud API providers (OpenAI, Anthropic, xAI/Grok, Mistral) are currently hard-coded. Adding additional providers (Gemini, etc.) is straightforward — each requires a small adapter implementing the shared LLM trait.
 
 ---
 
@@ -330,7 +330,7 @@ Attach images to any message when using a vision-capable cloud model.
 
 **Supported formats:** JPG, JPEG, PNG, GIF, WebP, BMP
 
-**Supported models:** Anthropic Claude, OpenAI GPT-4o, xAI Grok. Local GGUF models do not support vision.
+**Supported models:** Anthropic Claude, OpenAI GPT-4o, xAI Grok. Mistral and local GGUF models do not support vision.
 
 **How to use:**
 1. Click the 📎 attach button in the chat input
