@@ -3,6 +3,46 @@ use crate::ReplyResponse;
 use crate::Memory;
 use tauri::Emitter;
 
+fn get_best_available_backend() -> Option<String> {
+    let custom_url = std::env::var("CUSTOM_API_URL").unwrap_or_default();
+    let custom_model = std::env::var("CUSTOM_MODEL").unwrap_or_default();
+    if !custom_url.is_empty() && !custom_model.is_empty() {
+        return Some("custom".to_string());
+    }
+    let models_dir = crate::db::get_models_dir().join("user");
+    if let Ok(entries) = std::fs::read_dir(&models_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && path.extension().map(|e| e.eq_ignore_ascii_case("gguf")).unwrap_or(false)
+            {
+                return Some(path.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn format_api_error(backend: &str, raw: &str) -> String {
+    let provider = if backend.contains("anthropic") || backend.contains("claude") { "Anthropic" }
+        else if backend.contains("openai") || backend.contains("gpt") { "OpenAI" }
+        else if backend.contains("xai") || backend.contains("grok") { "xAI" }
+        else if backend.contains("mistral") { "Mistral" }
+        else { "the provider" };
+
+    if raw.contains("401") || raw.contains("nauthorized") || raw.contains("invalid_api_key") || raw.contains("invalid api key") {
+        format!("❌ {} rejected the API key. Check your key in Settings → API Keys.", provider)
+    } else if raw.contains("403") || raw.contains("model_not_found") || raw.contains("not have access") || raw.contains("does not have") {
+        format!("❌ Your {} account doesn't have access to this model. Try selecting a different model in Settings → API Keys.", provider)
+    } else if raw.contains("429") || raw.contains("rate_limit") || raw.contains("quota") {
+        format!("❌ {} rate limit reached. Wait a moment and try again.", provider)
+    } else if raw.contains("connect") || raw.contains("timeout") || raw.contains("dns") || raw.contains("network") {
+        format!("❌ Can't reach {}. Check your internet connection.", provider)
+    } else {
+        format!("❌ {} error: {}", provider, raw)
+    }
+}
+
 /// No Flask dependency - handles everything in Rust
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -38,6 +78,37 @@ pub async fn send_message_with_memory(
     if containment_mode.to_lowercase() == "child" {
         println!("[RUST] 🧒 Child mode detected - forcing OpenAI backend");
         forced_backend = "openai".to_string();
+    }
+
+    // If the selected backend has no key, fall back to custom endpoint or local model
+    if containment_mode.to_lowercase() != "child" {
+        let has_key = match forced_backend.as_str() {
+            b if b.contains("anthropic") || b.contains("claude") => {
+                !std::env::var("ANTHROPIC_API_KEY").unwrap_or_default().is_empty()
+            }
+            b if b.contains("openai") || b.contains("gpt") => {
+                !std::env::var("OPENAI_API_KEY").unwrap_or_default().is_empty()
+            }
+            b if b.contains("xai") || b.contains("grok") => {
+                !std::env::var("XAI_API_KEY").unwrap_or_default().is_empty()
+            }
+            b if b.contains("mistral") => {
+                !std::env::var("MISTRAL_API_KEY").unwrap_or_default().is_empty()
+            }
+            _ => true, // local / custom — assume present until actually tried
+        };
+
+        if !has_key {
+            println!("[RUST] ⚠️ No API key for '{}' — checking fallbacks", forced_backend);
+            if let Some(fallback) = get_best_available_backend() {
+                println!("[RUST] 🔄 Falling back to: {}", fallback);
+                forced_backend = fallback;
+            } else {
+                return Err(
+                    "No API key is configured for this provider, and no local models or custom endpoint are available. Add an API key in Settings → API Keys.".to_string()
+                );
+            }
+        }
     }
 
     // When a file is attached, `message` contains the full dump (file content + question).
@@ -478,7 +549,7 @@ pub async fn send_message_with_memory(
                 Some(4096),
                 None,
                 move |token| { app_handle.emit("stream-token", token).ok(); },
-            ).await.map_err(|e| e.to_string())?;
+            ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
         }
 
@@ -527,7 +598,7 @@ pub async fn send_message_with_memory(
                 "https://api.openai.com/v1/chat/completions",
                 false,
                 move |token| { app_handle.emit("stream-token", token).ok(); },
-            ).await.map_err(|e| e.to_string())?;
+            ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
         }
 
@@ -567,7 +638,7 @@ pub async fn send_message_with_memory(
                 "https://api.x.ai/v1/chat/completions",
                 false,
                 move |token| { app_handle.emit("stream-token", token).ok(); },
-            ).await.map_err(|e| e.to_string())?;
+            ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
         }
 
@@ -605,7 +676,7 @@ pub async fn send_message_with_memory(
                 "https://api.mistral.ai/v1/chat/completions",
                 false,
                 move |token| { app_handle.emit("stream-token", token).ok(); },
-            ).await.map_err(|e| e.to_string())?;
+            ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
         }
 
@@ -1466,6 +1537,12 @@ pub async fn run_ensemble(
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
 ) -> Result<serde_json::Value, String> {
+    println!("\n╔══════════════════════════════════════════════════════════════╗");
+    println!("║  🔀 ENSEMBLE REQUEST                                         ║");
+    println!("╚══════════════════════════════════════════════════════════════╝");
+    println!("▶ {}", message);
+    println!("  Models: {}", models.join(", "));
+    println!();
     println!("[Ensemble] Running multi-model ensemble with {} models", models.len());
     println!("[Ensemble] Containment mode: {}", containment_mode);
 
@@ -1937,9 +2014,8 @@ pub async fn run_ensemble(
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
         let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
-        let response = crate::llm::anthropic::send_message(&api_key, &anthropic_model, messages, None, Some(4096), None)
-            .await.map_err(|e| e.to_string())?;
-        response.content
+        crate::llm::anthropic::send_message_streaming(&api_key, &anthropic_model, messages, None, Some(4096), None, |_| {})
+            .await.map_err(|e| e.to_string())?.content
     } else if coordinator_model.to_lowercase().contains("xai") || coordinator_model.to_lowercase().contains("grok") {
         let api_key = std::env::var("XAI_API_KEY")
             .map_err(|_| "XAI_API_KEY not set".to_string())?;
