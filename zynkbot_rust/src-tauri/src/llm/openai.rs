@@ -13,7 +13,7 @@ struct OpenAIRequest {
     model: String,
     messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<u32>,
+    max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,7 +86,7 @@ pub async fn send_message(
     let request_body = OpenAIRequest {
         model: model.to_string(),
         messages,
-        max_tokens,
+        max_completion_tokens: max_tokens,
         temperature,
         stream: None,
     };
@@ -163,7 +163,7 @@ where
     let request_body = OpenAIRequest {
         model: model.to_string(),
         messages,
-        max_tokens,
+        max_completion_tokens: max_tokens,
         temperature,
         stream: Some(true),
     };
@@ -267,7 +267,7 @@ where
     let body = serde_json::json!({
         "model": model,
         "stream": true,
-        "max_tokens": 4096,
+        "max_completion_tokens": 4096,
         "messages": [{ "role": "user", "content": content_blocks }]
     });
 

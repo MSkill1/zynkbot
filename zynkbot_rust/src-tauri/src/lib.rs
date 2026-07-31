@@ -584,6 +584,8 @@ Return the JSON now:"#,
         call_openai_for_memory_decision(&prompt).await?
     } else if backend.contains("xai") {
         call_xai_for_memory_decision(&prompt).await?
+    } else if backend.contains("mistral") {
+        call_mistral_for_memory_decision(&prompt).await?
     } else if backend.ends_with(".gguf") || backend == "local" {
         call_local_for_memory_decision(&prompt, backend, Some(MEMORY_DECISION_SCHEMA)).await?
     } else if backend == "custom" {
@@ -700,6 +702,36 @@ async fn call_xai_for_memory_decision(prompt: &str) -> Result<String, String> {
     ).await {
         Ok(response) => Ok(response.content),
         Err(e) => Err(format!("xAI API error: {}", e))
+    }
+}
+
+/// Call Mistral for memory decision (OpenAI-compatible format, different endpoint)
+async fn call_mistral_for_memory_decision(prompt: &str) -> Result<String, String> {
+    use crate::llm::openai;
+    use crate::llm::Message;
+
+    let api_key = std::env::var("MISTRAL_API_KEY")
+        .map_err(|_| "MISTRAL_API_KEY not set".to_string())?;
+    let model = std::env::var("MISTRAL_MODEL")
+        .unwrap_or_else(|_| "mistral-small-latest".to_string());
+
+    let messages = vec![Message {
+        role: "user".to_string(),
+        content: prompt.to_string(),
+    }];
+
+    match openai::send_message_streaming(
+        &api_key,
+        &model,
+        messages,
+        Some(4096),
+        Some(0.3),
+        "https://api.mistral.ai/v1/chat/completions",
+        false,
+        |_| {},
+    ).await {
+        Ok(response) => Ok(response.content),
+        Err(e) => Err(format!("Mistral API error: {}", e))
     }
 }
 
@@ -1026,6 +1058,8 @@ Return the JSON now:"#,
         call_openai_for_memory_decision(&prompt).await?
     } else if backend.contains("xai") {
         call_xai_for_memory_decision(&prompt).await?
+    } else if backend.contains("mistral") {
+        call_mistral_for_memory_decision(&prompt).await?
     } else if backend.ends_with(".gguf") || backend == "local" {
         call_local_for_memory_decision(&prompt, backend, Some(MEMORY_DECISION_WITH_RELATIONSHIPS_SCHEMA)).await?
     } else if backend == "custom" {

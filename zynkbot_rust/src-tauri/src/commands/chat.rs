@@ -1477,16 +1477,23 @@ pub async fn run_ensemble(
     // - Includes: memory context, KB context, web search
     // - Excludes: containment checks (UI blocks child mode), memory storage, relationship detection
 
-    // Canonical API model names — update here to change across all ensemble phases
-    const ANTHROPIC_MODEL: &str = "claude-sonnet-4-6";
-    const OPENAI_MODEL: &str = "gpt-4o";
-    const XAI_MODEL: &str = "grok-4.3";
+    // Model names read from user preferences (set in API Settings)
+    let anthropic_model = std::env::var("ANTHROPIC_MODEL")
+        .unwrap_or_else(|_| "claude-sonnet-5".to_string());
+    let openai_model = std::env::var("OPENAI_MODEL")
+        .unwrap_or_else(|_| "gpt-5.5".to_string());
+    let xai_model = std::env::var("XAI_MODEL")
+        .unwrap_or_else(|_| "grok-4.5".to_string());
+    let mistral_model = std::env::var("MISTRAL_MODEL")
+        .unwrap_or_else(|_| "mistral-large-latest".to_string());
 
-    // Determine coordinator model upfront: Anthropic > xAI > OpenAI > first local model
+    // Determine coordinator model upfront: Anthropic > xAI > OpenAI > Mistral > custom > first local model
     let coordinator_model = models.iter()
         .find(|m| m.to_lowercase().contains("anthropic"))
         .or_else(|| models.iter().find(|m| m.to_lowercase().contains("xai") || m.to_lowercase().contains("grok")))
         .or_else(|| models.iter().find(|m| m.to_lowercase().contains("openai") || m.to_lowercase().contains("gpt")))
+        .or_else(|| models.iter().find(|m| m.to_lowercase().contains("mistral")))
+        .or_else(|| models.iter().find(|m| m.to_lowercase() == "custom"))
         .unwrap_or(&models[0])
         .clone();
 
@@ -1612,31 +1619,41 @@ pub async fn run_ensemble(
     let needs_search = if coordinator_model.to_lowercase().contains("anthropic") {
         let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
         if !api_key.is_empty() {
-            let messages = vec![crate::llm::Message {
-                role: "user".to_string(),
-                content: assessment_full_prompt.clone(),
-            }];
-            crate::llm::anthropic::send_message(&api_key, ANTHROPIC_MODEL, messages, None, Some(256), None)
-                .await
-                .map(|r| r.content)
-                .ok()
-        } else {
-            None
-        }
-    } else if coordinator_model.to_lowercase().contains("openai") {
+            let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
+            crate::llm::anthropic::send_message(&api_key, &anthropic_model, messages, None, Some(256), None)
+                .await.map(|r| r.content).ok()
+        } else { None }
+    } else if coordinator_model.to_lowercase().contains("openai") || coordinator_model.to_lowercase().contains("gpt") {
         let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
         if !api_key.is_empty() {
-            let messages = vec![crate::llm::Message {
-                role: "user".to_string(),
-                content: assessment_full_prompt.clone(),
-            }];
-            crate::llm::openai::send_message(&api_key, OPENAI_MODEL, messages, Some(256), None)
-                .await
-                .map(|r| r.content)
-                .ok()
-        } else {
-            None
-        }
+            let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
+            crate::llm::openai::send_message(&api_key, &openai_model, messages, Some(256), None)
+                .await.map(|r| r.content).ok()
+        } else { None }
+    } else if coordinator_model.to_lowercase().contains("xai") || coordinator_model.to_lowercase().contains("grok") {
+        let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
+        if !api_key.is_empty() {
+            let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
+            crate::llm::xai::send_message(&api_key, &xai_model, messages, Some(256), None)
+                .await.map(|r| r.content).ok()
+        } else { None }
+    } else if coordinator_model.to_lowercase().contains("mistral") {
+        let api_key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
+        if !api_key.is_empty() {
+            let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
+            crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(256), None, "https://api.mistral.ai/v1/chat/completions", false, |_| {})
+                .await.map(|r| r.content).ok()
+        } else { None }
+    } else if coordinator_model.to_lowercase() == "custom" {
+        let base_url = std::env::var("CUSTOM_API_URL").unwrap_or_default();
+        let model_name = std::env::var("CUSTOM_MODEL").unwrap_or_default();
+        let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
+        if !base_url.is_empty() && !model_name.is_empty() {
+            let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+            let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
+            crate::llm::openai::send_message_streaming(&api_key, &model_name, messages, Some(256), None, &api_url, true, |_| {})
+                .await.map(|r| r.content).ok()
+        } else { None }
     } else {
         None
     };
@@ -1731,11 +1748,11 @@ pub async fn run_ensemble(
                 Err("ANTHROPIC_API_KEY not set".to_string())
             } else if let Some(ref imgs) = image_data {
                 crate::llm::anthropic::send_vision_streaming(
-                    &api_key, ANTHROPIC_MODEL, &full_question, imgs, None, Some(4096), |_| {}
+                    &api_key, &anthropic_model, &full_question, imgs, None, Some(4096), |_| {}
                 ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {
                 let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-                crate::llm::anthropic::send_message(&api_key, ANTHROPIC_MODEL, messages, None, Some(4096), None)
+                crate::llm::anthropic::send_message(&api_key, &anthropic_model, messages, None, Some(4096), None)
                     .await.map(|r| r.content).map_err(|e| e.to_string())
             }
         } else if model_backend.to_lowercase().contains("openai") || model_backend.to_lowercase().contains("gpt") {
@@ -1744,12 +1761,12 @@ pub async fn run_ensemble(
                 Err("OPENAI_API_KEY not set".to_string())
             } else if let Some(ref imgs) = image_data {
                 crate::llm::openai::send_vision_streaming(
-                    &api_key, "gpt-4o", &full_question, imgs,
+                    &api_key, &openai_model, &full_question, imgs,
                     "https://api.openai.com/v1/chat/completions", |_| {}
                 ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {
                 let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-                crate::llm::openai::send_message(&api_key, OPENAI_MODEL, messages, Some(4096), None)
+                crate::llm::openai::send_message(&api_key, &openai_model, messages, Some(4096), None)
                     .await.map(|r| r.content).map_err(|e| e.to_string())
             }
         } else if model_backend.to_lowercase().contains("xai") || model_backend.to_lowercase().contains("grok") {
@@ -1758,12 +1775,26 @@ pub async fn run_ensemble(
                 Err("XAI_API_KEY not set".to_string())
             } else if let Some(ref imgs) = image_data {
                 crate::llm::openai::send_vision_streaming(
-                    &api_key, "grok-4.3", &full_question, imgs,
+                    &api_key, &xai_model, &full_question, imgs,
                     "https://api.x.ai/v1/chat/completions", |_| {}
                 ).await.map(|r| r.content).map_err(|e| e.to_string())
             } else {
                 let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-                crate::llm::xai::send_message(&api_key, XAI_MODEL, messages, Some(4096), None)
+                crate::llm::xai::send_message(&api_key, &xai_model, messages, Some(4096), None)
+                    .await.map(|r| r.content).map_err(|e| e.to_string())
+            }
+        } else if model_backend.to_lowercase().contains("mistral") {
+            let api_key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
+            if api_key.is_empty() {
+                Err("MISTRAL_API_KEY not set".to_string())
+            } else if let Some(ref imgs) = image_data {
+                crate::llm::openai::send_vision_streaming(
+                    &api_key, &mistral_model, &full_question, imgs,
+                    "https://api.mistral.ai/v1/chat/completions", |_| {}
+                ).await.map(|r| r.content).map_err(|e| e.to_string())
+            } else {
+                let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
+                crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(4096), None, "https://api.mistral.ai/v1/chat/completions", false, |_| {})
                     .await.map(|r| r.content).map_err(|e| e.to_string())
             }
         } else if model_backend.to_lowercase() == "custom" {
@@ -1898,39 +1929,40 @@ pub async fn run_ensemble(
     let reply_text = if coordinator_model.to_lowercase().contains("anthropic") {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
-        let model_name = ANTHROPIC_MODEL;
-        let messages = vec![crate::llm::Message {
-            role: "user".to_string(),
-            content: full_prompt,
-        }];
-        let response = crate::llm::anthropic::send_message(&api_key, model_name, messages, None, Some(4096), None)
-            .await
-            .map_err(|e| e.to_string())?;
+        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
+        let response = crate::llm::anthropic::send_message(&api_key, &anthropic_model, messages, None, Some(4096), None)
+            .await.map_err(|e| e.to_string())?;
         response.content
     } else if coordinator_model.to_lowercase().contains("xai") || coordinator_model.to_lowercase().contains("grok") {
         let api_key = std::env::var("XAI_API_KEY")
             .map_err(|_| "XAI_API_KEY not set".to_string())?;
-        let model_name = XAI_MODEL;
-        let messages = vec![crate::llm::Message {
-            role: "user".to_string(),
-            content: full_prompt,
-        }];
-        let response = crate::llm::xai::send_message(&api_key, model_name, messages, Some(4096), None)
-            .await
-            .map_err(|e| e.to_string())?;
+        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
+        let response = crate::llm::xai::send_message(&api_key, &xai_model, messages, Some(4096), None)
+            .await.map_err(|e| e.to_string())?;
         response.content
     } else if coordinator_model.to_lowercase().contains("openai") || coordinator_model.to_lowercase().contains("gpt") {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| "OPENAI_API_KEY not set".to_string())?;
-        let model_name = OPENAI_MODEL;
-        let messages = vec![crate::llm::Message {
-            role: "user".to_string(),
-            content: full_prompt,
-        }];
-        let response = crate::llm::openai::send_message(&api_key, model_name, messages, Some(4096), None)
-            .await
-            .map_err(|e| e.to_string())?;
+        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
+        let response = crate::llm::openai::send_message(&api_key, &openai_model, messages, Some(4096), None)
+            .await.map_err(|e| e.to_string())?;
         response.content
+    } else if coordinator_model.to_lowercase().contains("mistral") {
+        let api_key = std::env::var("MISTRAL_API_KEY")
+            .map_err(|_| "MISTRAL_API_KEY not set".to_string())?;
+        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
+        crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(4096), None, "https://api.mistral.ai/v1/chat/completions", false, |_| {})
+            .await.map_err(|e| e.to_string())?.content
+    } else if coordinator_model.to_lowercase() == "custom" {
+        let base_url = std::env::var("CUSTOM_API_URL")
+            .map_err(|_| "Custom endpoint not configured".to_string())?;
+        let model_name = std::env::var("CUSTOM_MODEL")
+            .map_err(|_| "No model selected for custom endpoint".to_string())?;
+        let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
+        let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+        let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
+        crate::llm::openai::send_message_streaming(&api_key, &model_name, messages, Some(4096), None, &api_url, true, |_| {})
+            .await.map_err(|e| e.to_string())?.content
     } else {
         // Local model coordinator — enables fully offline ensemble
         println!("[Ensemble] Using local model as coordinator: {}", coordinator_model);

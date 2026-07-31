@@ -1371,17 +1371,17 @@ export default function App() {
                   title="Start a new conversation"
                   style={{
                     padding: '5px 14px',
-                    background: 'rgba(80,250,123,0.15)',
-                    color: '#50fa7b',
-                    border: '1px solid rgba(80,250,123,0.4)',
+                    background: 'rgba(98,114,164,0.25)',
+                    color: '#8be9fd',
+                    border: '1px solid #6272a4',
                     borderRadius: '6px',
                     cursor: 'pointer',
                     fontSize: '0.8rem',
                     fontWeight: '600',
                     transition: 'all 0.2s',
                   }}
-                  onMouseOver={(e) => { e.target.style.background = 'rgba(80,250,123,0.3)'; }}
-                  onMouseOut={(e) => { e.target.style.background = 'rgba(80,250,123,0.15)'; }}
+                  onMouseOver={(e) => { e.target.style.background = 'rgba(98,114,164,0.45)'; }}
+                  onMouseOut={(e) => { e.target.style.background = 'rgba(98,114,164,0.25)'; }}
                 >
                   ✏️ New
                 </button>
