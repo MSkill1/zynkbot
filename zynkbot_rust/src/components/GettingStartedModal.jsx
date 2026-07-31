@@ -31,7 +31,7 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
             </div>
             <div style={{ flex: '1', minWidth: '200px', background: '#21222c', borderRadius: '8px', padding: '12px', borderLeft: '3px solid #8be9fd' }}>
               <strong style={{ color: '#8be9fd' }}>⚡ API key (pay-per-use)</strong>
-              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Connect Claude, GPT, or Grok via API key for fast, capable responses. Most users spend $2–15/month.</p>
+              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Connect Claude, GPT, Grok, or Mistral via API key for fast, capable responses. Most users spend $2–15/month.</p>
             </div>
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -137,14 +137,14 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
 
             <div className="feature-item">
               <strong>🎭 Model Switching</strong>
-              <p>Change AI models on the fly. Try Anthropic Claude, OpenAI GPT, Grok, or add your own local .gguf models.
+              <p>Change AI models on the fly. Try Anthropic Claude, OpenAI GPT, Grok, Mistral, or add your own local .gguf models.
               Your memories persist across all models.</p>
             </div>
 
             <div className="feature-item">
               <strong>🤝 Ensemble Mode</strong>
               <p>Click the <strong>Ensemble</strong> button to query multiple models simultaneously.
-              Get a synthesized answer combining Claude, GPT, and local models. Reduces hallucinations
+              Get a synthesized answer combining Claude, GPT, Grok, Mistral, and local models. Reduces hallucinations
               and improves clarity by cross-validating responses from different AI systems.</p>
             </div>
 

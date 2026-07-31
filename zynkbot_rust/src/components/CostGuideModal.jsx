@@ -27,7 +27,7 @@ export default function CostGuideModal({ isOpen, onClose }) {
 
         <h3 style={{ color: '#8be9fd', marginBottom: '10px' }}>The short version</h3>
         <p style={{ color: '#ececec', lineHeight: 1.6, marginBottom: '16px' }}>
-          Zynkbot uses a <strong>bring-your-own-key</strong> model — instead of paying $20/month per provider, you pay per use. For most people this is significantly cheaper, and you get all three providers in one app with your memory staying local.
+          Zynkbot uses a <strong>bring-your-own-key</strong> model — instead of paying $20/month per provider, you pay per use. For most people this is significantly cheaper, and you get all four providers in one app with your memory staying local.
         </p>
 
         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '20px', fontSize: '0.9rem' }}>
@@ -55,8 +55,8 @@ export default function CostGuideModal({ isOpen, onClose }) {
         </div>
 
         <p style={{ color: '#ececec', lineHeight: 1.6, marginBottom: '6px' }}>
-          <strong style={{ color: '#8be9fd' }}>Comparison:</strong> Two subscription apps (Claude + ChatGPT) = <strong>$40/month</strong>, two separate memories, no Grok.<br />
-          Zynkbot moderate use ≈ <strong style={{ color: '#50fa7b' }}>$5–15/month</strong>, all three providers, one memory graph on your device.
+          <strong style={{ color: '#8be9fd' }}>Comparison:</strong> Two subscription apps (Claude + ChatGPT) = <strong>$40/month</strong>, two separate memories, no Grok, no Mistral.<br />
+          Zynkbot moderate use ≈ <strong style={{ color: '#50fa7b' }}>$5–15/month</strong>, all four providers, one memory graph on your device.
         </p>
 
         <h3 style={{ color: '#8be9fd', marginTop: '24px', marginBottom: '10px' }}>What one exchange actually costs</h3>

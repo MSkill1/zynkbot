@@ -155,7 +155,7 @@ export default function SetupWizard({ onComplete }) {
 
         {isMobile ? (
           <p style={{ ...S.body, marginBottom: 0 }}>
-            Add an API key (Anthropic, OpenAI, or xAI) after setup via{' '}
+            Add an API key (Anthropic, OpenAI, xAI, or Mistral) after setup via{' '}
             <strong style={{ color: '#ccc' }}>⚙ Settings → API Keys</strong>. Local models are not supported on Android.
           </p>
         ) : (
@@ -163,7 +163,7 @@ export default function SetupWizard({ onComplete }) {
             <div style={S.label}>Optional — local LLM for offline chat</div>
             <p style={{ ...S.body, marginBottom: 0 }}>
               Choose one or more on the next screen (4.7–5.0GB each), or skip and connect
-              an API key (OpenAI, Anthropic, xAI) instead. Local models work without internet;
+              an API key (OpenAI, Anthropic, xAI, or Mistral) instead. Local models work without internet;
               API models require a connection. You can add local models at any time from Settings.
             </p>
           </>
