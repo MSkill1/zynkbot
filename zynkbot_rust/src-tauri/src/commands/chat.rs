@@ -446,13 +446,9 @@ pub async fn send_message_with_memory(
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
 
-        let model_name = if forced_backend.contains("haiku") {
-            "claude-haiku-4-5-20251001"
-        } else if forced_backend.contains("opus") {
-            "claude-opus-4-7"
-        } else {
-            "claude-sonnet-4-6"
-        };
+        let model_name_owned = std::env::var("ANTHROPIC_MODEL")
+            .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+        let model_name = model_name_owned.as_str();
 
         let app_handle = app.clone();
 
@@ -491,7 +487,9 @@ pub async fn send_message_with_memory(
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| "OPENAI_API_KEY not set".to_string())?;
 
-        let model_name = if image_data.is_some() { "gpt-4o" } else { "gpt-4o-mini" };
+        let openai_model_owned = std::env::var("OPENAI_MODEL")
+            .unwrap_or_else(|_| "gpt-4o".to_string());
+        let model_name = openai_model_owned.as_str();
 
         let app_handle = app.clone();
 
@@ -538,13 +536,16 @@ pub async fn send_message_with_memory(
         let api_key = std::env::var("XAI_API_KEY")
             .map_err(|_| "XAI_API_KEY not set. Get your API key from https://console.x.ai/".to_string())?;
 
+        let xai_model_owned = std::env::var("XAI_MODEL")
+            .unwrap_or_else(|_| "grok-4.5".to_string());
+        let xai_model = xai_model_owned.as_str();
         let app_handle = app.clone();
 
         if let Some(ref imgs) = image_data {
-            println!("[⏱️ PERF] Calling xAI API (grok-4.3) with vision streaming...");
+            println!("[⏱️ PERF] Calling xAI API ({}) with vision streaming...", xai_model);
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
-                "grok-4.3",
+                xai_model,
                 &full_prompt,
                 imgs,
                 "https://api.x.ai/v1/chat/completions",
@@ -552,19 +553,56 @@ pub async fn send_message_with_memory(
             ).await.map_err(|e| e.to_string())?;
             response.content
         } else {
-            let model_name = "grok-4.3";
-            println!("[⏱️ PERF] Calling xAI API ({}) with streaming...", model_name);
+            println!("[⏱️ PERF] Calling xAI API ({}) with streaming...", xai_model);
             let messages = vec![crate::llm::Message {
                 role: "user".to_string(),
                 content: full_prompt,
             }];
             let response = crate::llm::openai::send_message_streaming(
                 &api_key,
-                model_name,
+                xai_model,
                 messages,
                 Some(4096),
                 None,
                 "https://api.x.ai/v1/chat/completions",
+                false,
+                move |token| { app_handle.emit("stream-token", token).ok(); },
+            ).await.map_err(|e| e.to_string())?;
+            response.content
+        }
+
+    } else if forced_backend.to_lowercase().contains("mistral") {
+        let api_key = std::env::var("MISTRAL_API_KEY")
+            .map_err(|_| "MISTRAL_API_KEY not set".to_string())?;
+        let mistral_model_owned = std::env::var("MISTRAL_MODEL")
+            .unwrap_or_else(|_| "mistral-large-latest".to_string());
+        let mistral_model = mistral_model_owned.as_str();
+        let app_handle = app.clone();
+
+        if let Some(ref imgs) = image_data {
+            println!("[⏱️ PERF] Calling Mistral API ({}) with vision streaming...", mistral_model);
+            let response = crate::llm::openai::send_vision_streaming(
+                &api_key,
+                mistral_model,
+                &full_prompt,
+                imgs,
+                "https://api.mistral.ai/v1/chat/completions",
+                move |token| { app_handle.emit("stream-token", token).ok(); },
+            ).await.map_err(|e| e.to_string())?;
+            response.content
+        } else {
+            println!("[⏱️ PERF] Calling Mistral API ({}) with streaming...", mistral_model);
+            let messages = vec![crate::llm::Message {
+                role: "user".to_string(),
+                content: full_prompt,
+            }];
+            let response = crate::llm::openai::send_message_streaming(
+                &api_key,
+                mistral_model,
+                messages,
+                Some(4096),
+                None,
+                "https://api.mistral.ai/v1/chat/completions",
                 false,
                 move |token| { app_handle.emit("stream-token", token).ok(); },
             ).await.map_err(|e| e.to_string())?;

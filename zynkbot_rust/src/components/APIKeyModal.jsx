@@ -18,24 +18,67 @@ const PROVIDERS = [
   {
     name: "Anthropic (Claude)",
     key: "ANTHROPIC_API_KEY",
+    modelKey: "ANTHROPIC_MODEL",
     placeholder: "sk-ant-...",
     link: "https://console.anthropic.com/settings/keys",
-    description: "Claude 3.5 Sonnet/Haiku/Opus"
+    description: "Claude models",
+    models: [
+      { id: "claude-fable-5", label: "Claude Fable 5" },
+      { id: "claude-opus-5", label: "Claude Opus 5" },
+      { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
+      { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (default)" },
+      { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+    ],
+    defaultModel: "claude-sonnet-4-6",
   },
   {
     name: "OpenAI (GPT)",
     key: "OPENAI_API_KEY",
+    modelKey: "OPENAI_MODEL",
     placeholder: "sk-...",
     link: "https://platform.openai.com/api-keys",
-    description: "GPT-4o, GPT-4o-mini"
+    description: "GPT and o-series models",
+    models: [
+      { id: "gpt-4o", label: "GPT-4o (default)" },
+      { id: "gpt-4o-mini", label: "GPT-4o mini" },
+      { id: "o4-mini", label: "o4-mini" },
+      { id: "o3", label: "o3" },
+      { id: "o1-pro", label: "o1-pro" },
+    ],
+    defaultModel: "gpt-4o",
   },
   {
     name: "xAI (Grok)",
     key: "XAI_API_KEY",
+    modelKey: "XAI_MODEL",
     placeholder: "xai-...",
     link: "https://console.x.ai/",
-    description: "Grok (X Premium+ required)"
-  }
+    description: "Grok models",
+    models: [
+      { id: "grok-4.5", label: "Grok 4.5 (default)" },
+      { id: "grok-4.3", label: "Grok 4.3" },
+      { id: "grok-4.20-0309-reasoning", label: "Grok 4.20 Reasoning" },
+      { id: "grok-4.20-0309-non-reasoning", label: "Grok 4.20 Non-Reasoning" },
+    ],
+    defaultModel: "grok-4.5",
+  },
+  {
+    name: "Mistral",
+    key: "MISTRAL_API_KEY",
+    modelKey: "MISTRAL_MODEL",
+    placeholder: "...",
+    link: "https://console.mistral.ai/api-keys",
+    description: "Mistral and Codestral models",
+    models: [
+      { id: "mistral-large-latest", label: "Mistral Large (default)" },
+      { id: "mistral-small-latest", label: "Mistral Small" },
+      { id: "codestral-latest", label: "Codestral" },
+      { id: "open-mistral-nemo", label: "Mistral Nemo" },
+      { id: "pixtral-large-latest", label: "Pixtral Large (vision)" },
+    ],
+    defaultModel: "mistral-large-latest",
+  },
 ];
 
 export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
@@ -45,6 +88,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [isSaving, setIsSaving] = useState(false);
   const [showKeys, setShowKeys] = useState({});
   const [showCostGuide, setShowCostGuide] = useState(false);
+  const [modelSelections, setModelSelections] = useState({});
 
   // Custom endpoint state
   const [customUrl, setCustomUrl] = useState("");
@@ -89,6 +133,14 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       if (keys.CUSTOM_API_URL) setCustomUrl(keys.CUSTOM_API_URL);
       if (keys.CUSTOM_API_KEY) setCustomApiKey(keys.CUSTOM_API_KEY);
       if (keys.CUSTOM_MODEL) setCustomModel(keys.CUSTOM_MODEL);
+
+      const selections = {};
+      for (const p of PROVIDERS) {
+        if (p.modelKey) {
+          selections[p.modelKey] = keys[p.modelKey] || p.defaultModel;
+        }
+      }
+      setModelSelections(selections);
 
       // Pre-fill Ollama default URL on desktop if nothing configured yet
       if (!keys.CUSTOM_API_URL && !isAndroid) {
@@ -219,6 +271,15 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     } catch (error) {
       console.error(`Error removing ${providerKey}:`, error);
       alert(`Failed to remove API key: ${error}`);
+    }
+  };
+
+  const handleModelSelect = async (modelKey, value) => {
+    setModelSelections(prev => ({ ...prev, [modelKey]: value }));
+    try {
+      await invoke('set_api_key', { key: modelKey, value });
+    } catch (e) {
+      console.error('Failed to save model preference:', e);
     }
   };
 
@@ -490,6 +551,27 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                       </button>
                     </div>
                   )}
+                </div>
+              )}
+
+              {provider.models && (
+                <div style={{ marginTop: '10px' }}>
+                  <div style={{ fontSize: '0.78rem', color: '#9aa5c4', marginBottom: '4px' }}>
+                    Available models — your API key unlocks all of these. Select your default:
+                  </div>
+                  <select
+                    value={modelSelections[provider.modelKey] || provider.defaultModel}
+                    onChange={(e) => handleModelSelect(provider.modelKey, e.target.value)}
+                    style={{
+                      padding: '6px 8px', background: '#ffffff', color: '#000000',
+                      border: '1px solid #44475a', borderRadius: '4px', fontSize: '0.85rem',
+                      width: '100%', maxWidth: '320px'
+                    }}
+                  >
+                    {provider.models.map(m => (
+                      <option key={m.id} value={m.id}>{m.label}</option>
+                    ))}
+                  </select>
                 </div>
               )}
             </div>

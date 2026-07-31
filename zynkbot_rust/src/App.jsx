@@ -1365,27 +1365,48 @@ export default function App() {
           <div>
             <div style={{marginBottom: '15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
               <h2 style={{margin: 0, color: '#8be9fd'}}>Conversation</h2>
-              <button
-                onClick={() => setShowConversationHistory(true)}
-                disabled={containmentMode === 'hipaa'}
-                title={containmentMode === 'hipaa' ? 'Conversation history is disabled in HIPAA mode' : 'Browse past conversations'}
-                style={{
-                  padding: '5px 14px',
-                  background: containmentMode === 'hipaa' ? '#44475a' : 'rgba(98,114,164,0.25)',
-                  color: containmentMode === 'hipaa' ? '#6272a4' : '#8be9fd',
-                  border: '1px solid ' + (containmentMode === 'hipaa' ? '#44475a' : '#6272a4'),
-                  borderRadius: '6px',
-                  cursor: containmentMode === 'hipaa' ? 'not-allowed' : 'pointer',
-                  fontSize: '0.8rem',
-                  fontWeight: '600',
-                  opacity: containmentMode === 'hipaa' ? 0.5 : 1,
-                  transition: 'all 0.2s',
-                }}
-                onMouseOver={(e) => { if (containmentMode !== 'hipaa') { e.target.style.background = 'rgba(98,114,164,0.45)'; } }}
-                onMouseOut={(e) => { if (containmentMode !== 'hipaa') { e.target.style.background = 'rgba(98,114,164,0.25)'; } }}
-              >
-                History
-              </button>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  onClick={handleClearConversation}
+                  title="Start a new conversation"
+                  style={{
+                    padding: '5px 14px',
+                    background: 'rgba(80,250,123,0.15)',
+                    color: '#50fa7b',
+                    border: '1px solid rgba(80,250,123,0.4)',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.8rem',
+                    fontWeight: '600',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseOver={(e) => { e.target.style.background = 'rgba(80,250,123,0.3)'; }}
+                  onMouseOut={(e) => { e.target.style.background = 'rgba(80,250,123,0.15)'; }}
+                >
+                  ✏️ New
+                </button>
+                <button
+                  onClick={() => setShowConversationHistory(true)}
+                  disabled={containmentMode === 'hipaa'}
+                  title={containmentMode === 'hipaa' ? 'Conversation history is disabled in HIPAA mode' : 'Browse past conversations'}
+                  style={{
+                    padding: '5px 14px',
+                    background: containmentMode === 'hipaa' ? '#44475a' : 'rgba(98,114,164,0.25)',
+                    color: containmentMode === 'hipaa' ? '#6272a4' : '#8be9fd',
+                    border: '1px solid ' + (containmentMode === 'hipaa' ? '#44475a' : '#6272a4'),
+                    borderRadius: '6px',
+                    cursor: containmentMode === 'hipaa' ? 'not-allowed' : 'pointer',
+                    fontSize: '0.8rem',
+                    fontWeight: '600',
+                    opacity: containmentMode === 'hipaa' ? 0.5 : 1,
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseOver={(e) => { if (containmentMode !== 'hipaa') { e.target.style.background = 'rgba(98,114,164,0.45)'; } }}
+                  onMouseOut={(e) => { if (containmentMode !== 'hipaa') { e.target.style.background = 'rgba(98,114,164,0.25)'; } }}
+                >
+                  History
+                </button>
+              </div>
             </div>
             {availableModels.length === 0 && (
               <div style={{

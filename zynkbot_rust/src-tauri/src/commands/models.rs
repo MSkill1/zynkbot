@@ -38,6 +38,14 @@ pub async fn get_models() -> Result<Vec<ModelInfo>, String> {
         });
     }
 
+    if std::env::var("MISTRAL_API_KEY").is_ok() {
+        models.push(ModelInfo {
+            id: "mistral".to_string(),
+            name: "Mistral".to_string(),
+            model_type: "api".to_string(),
+        });
+    }
+
     if std::env::var("CUSTOM_API_URL").is_ok() {
         let model_name = std::env::var("CUSTOM_MODEL")
             .unwrap_or_else(|_| "custom model".to_string());
@@ -198,6 +206,21 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
     }
     if let Ok(model) = std::env::var("CUSTOM_MODEL") {
         keys.insert("CUSTOM_MODEL".to_string(), serde_json::json!(model));
+    }
+    if let Ok(model) = std::env::var("ANTHROPIC_MODEL") {
+        keys.insert("ANTHROPIC_MODEL".to_string(), serde_json::json!(model));
+    }
+    if let Ok(model) = std::env::var("OPENAI_MODEL") {
+        keys.insert("OPENAI_MODEL".to_string(), serde_json::json!(model));
+    }
+    if let Ok(model) = std::env::var("XAI_MODEL") {
+        keys.insert("XAI_MODEL".to_string(), serde_json::json!(model));
+    }
+    if let Ok(key) = std::env::var("MISTRAL_API_KEY") {
+        keys.insert("MISTRAL_API_KEY".to_string(), serde_json::json!(key));
+    }
+    if let Ok(model) = std::env::var("MISTRAL_MODEL") {
+        keys.insert("MISTRAL_MODEL".to_string(), serde_json::json!(model));
     }
     Ok(serde_json::json!(keys))
 }
