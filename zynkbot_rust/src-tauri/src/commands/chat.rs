@@ -447,7 +447,7 @@ pub async fn send_message_with_memory(
             .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
 
         let model_name_owned = std::env::var("ANTHROPIC_MODEL")
-            .unwrap_or_else(|_| "claude-sonnet-4-6".to_string());
+            .unwrap_or_else(|_| "claude-sonnet-5".to_string());
         let model_name = model_name_owned.as_str();
 
         let app_handle = app.clone();
@@ -488,7 +488,7 @@ pub async fn send_message_with_memory(
             .map_err(|_| "OPENAI_API_KEY not set".to_string())?;
 
         let openai_model_owned = std::env::var("OPENAI_MODEL")
-            .unwrap_or_else(|_| "gpt-4o".to_string());
+            .unwrap_or_else(|_| "gpt-5.5".to_string());
         let model_name = openai_model_owned.as_str();
 
         let app_handle = app.clone();
