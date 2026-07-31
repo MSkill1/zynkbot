@@ -927,6 +927,36 @@ pub async fn download_to_custom_location(
         }));
     }
 
+    // If the destination landed inside one of this device's shared folders,
+    // rescan that share so the file becomes visible to remote peers browsing it.
+    // A failure here does not fail the download — the file is already on disk.
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let local_shares: Vec<(i32, String)> = sqlx::query_as(
+        "SELECT id, local_path FROM zynk_linked_directories WHERE device_id = ?"
+    )
+    .bind(&local_device_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+
+    let dest_canonical = std::fs::canonicalize(&destination_path)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&destination_path));
+
+    for (share_id_local, share_local_path) in local_shares {
+        let share_canonical = match std::fs::canonicalize(&share_local_path) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if dest_canonical.starts_with(&share_canonical) {
+            println!("[ZynkLink] Post-download rescan of share {} ({})", share_id_local, share_local_path);
+            if let Err(e) = zynklink::scan_directory(&pool, &local_device_id, share_id_local, None).await {
+                eprintln!("[ZynkLink] Post-download rescan failed (non-fatal): {}", e);
+            }
+        }
+    }
+
     Ok(destination_path)
 }
 

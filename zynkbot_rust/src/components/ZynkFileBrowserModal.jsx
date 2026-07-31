@@ -67,7 +67,7 @@ function formatBytes(bytes) {
   return `${(bytes / 1073741824).toFixed(2)} GB`;
 }
 
-function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave, shareId, deviceId }) {
+function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave, shareId, deviceId, isOwnShare }) {
   const isExpanded = expandedFolders.has(name);
   const childKeys = Object.keys(node.children);
 
@@ -92,6 +92,7 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
               onSave={onSave}
               shareId={shareId}
               deviceId={deviceId}
+              isOwnShare={isOwnShare}
             />
           ))}
           {node.files.map((file, idx) => {
@@ -103,24 +104,26 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
                 {file.file_size > 0 && (
                   <span className="zfb-file-size">{formatBytes(file.file_size)}</span>
                 )}
-                <div className="zfb-file-actions">
-                  {isKBCompatible(filename) && (
+                {!isOwnShare && (
+                  <div className="zfb-file-actions">
+                    {isKBCompatible(filename) && (
+                      <button
+                        className="zfb-btn-kb"
+                        onClick={() => onKB(shareId, file.relative_path, deviceId)}
+                        title="Download to Knowledge Base"
+                      >
+                        → KB
+                      </button>
+                    )}
                     <button
-                      className="zfb-btn-kb"
-                      onClick={() => onKB(shareId, file.relative_path, deviceId)}
-                      title="Download to Knowledge Base"
+                      className="zfb-btn-save"
+                      onClick={() => onSave(shareId, file.relative_path, deviceId)}
+                      title="Save to custom location"
                     >
-                      → KB
+                      Save…
                     </button>
-                  )}
-                  <button
-                    className="zfb-btn-save"
-                    onClick={() => onSave(shareId, file.relative_path, deviceId)}
-                    title="Save to custom location"
-                  >
-                    Save…
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -353,6 +356,21 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     }
   };
 
+  // Refresh for own share: rescan filesystem into the manifest, then reload the list.
+  // For remote shares, plain loadFiles is enough (the HTTP call fetches whatever the
+  // remote device's manifest currently has).
+  const handleRefreshOwn = async () => {
+    try {
+      setMessage('Rescanning…');
+      await invoke('scan_shared_directory', { shareId, maxFiles: 1000 });
+      await loadFiles();
+      setMessage('');
+    } catch (e) {
+      setMessage('✗ ' + e);
+      setTimeout(() => setMessage(''), 4000);
+    }
+  };
+
   if (!isOpen) return null;
 
   const isOwnShare = deviceId === localDeviceId;
@@ -375,10 +393,14 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                 <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleAddFile}>
                   + Add Files
                 </button>
-                <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={loadFiles} disabled={loading}>
+                <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleRefreshOwn} disabled={loading}>
                   🔄 Refresh
                 </button>
               </div>
+            ) : isOwnShare ? (
+              <button className="zfb-refresh-btn" onClick={handleRefreshOwn} disabled={loading} title="Refresh">
+                🔄 Refresh
+              </button>
             ) : (
               <button className="zfb-refresh-btn" onClick={loadFiles} disabled={loading} title="Refresh">
                 🔄 Refresh
@@ -411,12 +433,14 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                     {file.file_size > 0 && (
                       <span className="zfb-file-size">{formatBytes(file.file_size)}</span>
                     )}
-                    <div className="zfb-file-actions">
-                      {isKBCompatible(filename) && (
-                        <button className="zfb-btn-kb" onClick={() => handleKB(shareId, file.relative_path, deviceId)} title="Download to Knowledge Base">→ KB</button>
-                      )}
-                      <button className="zfb-btn-save" onClick={() => handleSave(shareId, file.relative_path, deviceId)} title="Save to custom location">Save…</button>
-                    </div>
+                    {!isOwnShare && (
+                      <div className="zfb-file-actions">
+                        {isKBCompatible(filename) && (
+                          <button className="zfb-btn-kb" onClick={() => handleKB(shareId, file.relative_path, deviceId)} title="Download to Knowledge Base">→ KB</button>
+                        )}
+                        <button className="zfb-btn-save" onClick={() => handleSave(shareId, file.relative_path, deviceId)} title="Save to custom location">Save…</button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -433,6 +457,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                   onSave={handleSave}
                   shareId={shareId}
                   deviceId={deviceId}
+                  isOwnShare={isOwnShare}
                 />
               ))}
             </div>

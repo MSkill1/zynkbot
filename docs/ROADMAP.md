@@ -21,6 +21,20 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - **Weak local models may store questions as memories** — The memory gating decision (`should_remember`) is entirely LLM-driven. Strong models (Anthropic Claude, dolphin 8B) correctly return `should_remember=false` for pure questions. Weaker models sometimes return `should_remember=true` for queries like "What's my name?", storing the question itself as a memory. Potential fix: add a lightweight pre-filter that detects obvious pure-question messages before the LLM call, avoiding model-quality dependency for this case.
 
 ### Core Improvements
+
+- **Write-time memory consolidation** *(ships before v1.1 modularization — quick fix, high impact)* — Multi-turn conversations on a single topic currently produce many near-duplicate memories with dense `similar_to` cross-links. Real example: a single cooking session generated 12 memories, most re-phrasings of "I want to use up the leftover chicken." Threshold tuning is patchwork — no static bar handles both "three distinct facts in one message" and "twelve rephrasings across a session" correctly.
+
+  **The fix — extend the existing relationship detection call:** Memory storage already makes a second LLM call for relationship classification. That call receives the top-K semantically similar existing memories along with the new candidate. Widen its JSON contract from a single classification to a three-way decision:
+  1. **Fresh fact** → store as new memory (current behavior)
+  2. **Rephrasing** of an existing memory → skip storing (or overwrite existing text if the new phrasing is clearer)
+  3. **Elaboration** of an existing memory → store, but auto-link with the `elaborates` relationship (schema plumbing already exists — see commit `84136f4`, currently dormant)
+
+  **Cost:** Zero new API calls. Same prompt structure, extended output schema. Rust-side JSON parser adapts to the new response shape; storage code branches on the decision.
+
+  **Tradeoff:** Aggressive merging loses "different angle" nuance ("I care about not wasting food" vs "I like using leftover chicken" could be distinct signals). Start conservative — favor `elaborates` over hard-skip — and observe.
+
+  **Optional follow-up (v1.0 or v1.1):** Session-end consolidation pass. When a conversation closes (or on a timer), run one LLM call over memories created in the last N minutes: "Are any of these redundant with each other? Merge if so." Catches within-session redundancy the write-time check missed. One API call per session, only if new memories were added.
+
 - ~~**PDF support in Knowledge Base**~~ ✅
 - **Word document (.docx) support in Knowledge Base** — index .docx files the same way PDFs are handled; extract text content for RAG search
 - ~~End-to-end encryption for ZynkLink, ZynkSync, and ZChat (LAN traffic)~~ ✅
