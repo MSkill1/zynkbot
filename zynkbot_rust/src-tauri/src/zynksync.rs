@@ -2547,6 +2547,16 @@ impl ZynkSyncService {
         self.record_tombstones(&[content_hash.clone()]).await
             .unwrap_or_else(|e| eprintln!("[ZynkSync] Failed to record tombstone: {}", e));
 
+        // Fetch the tombstone's deleted_at so peers can guard against wiping
+        // memories that were recreated after this deletion event.
+        let deleted_at: Option<String> = sqlx::query_scalar(
+            "SELECT deleted_at FROM deleted_memory_hashes WHERE content_hash = ?"
+        )
+        .bind(&content_hash)
+        .fetch_optional(&self.db_pool)
+        .await
+        .unwrap_or(None);
+
         // Get all paired peers
         let peers = {
             let peers_map = self.peers.read().await;
@@ -2564,11 +2574,14 @@ impl ZynkSyncService {
         let total_peers = peers.len();
         let mut success_count = 0;
 
-        // Send deletion request to each peer (using content hash for portable lookup)
+        // Send deletion request to each peer (using content hash for portable lookup).
+        // Include the tombstone's deleted_at so the receiver can skip wiping memories
+        // that were recreated after this deletion event.
         for peer in peers {
             let endpoint = format!("{}/api/zynksync/delete-by-hash", peer.url);
             let payload = serde_json::json!({
-                "content_hash": content_hash
+                "content_hash": content_hash,
+                "deleted_at": deleted_at
             });
 
             let client = self.http_client.read().await.clone();
