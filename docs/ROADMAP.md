@@ -1,6 +1,6 @@
 # Zynkbot Development Roadmap
 
-**Last Updated:** July 2026
+**Last Updated:** August 2026
 **Current Version:** v0.9 (Desktop Production-Ready)
 
 This roadmap outlines planned features and enhancements. Timelines are estimates and subject to change based on community feedback and development priorities.
@@ -498,6 +498,33 @@ Hash chain integrity layer on top of the v1.0 conversation history tables. The b
 - **Multimodal Models** — Local CLIP for image embeddings, image memory retrieval, visual QA
 - **Hallucination Detection** — Confidence scoring, source verification
 - **Explainable AI** — Step-by-step reasoning display
+
+#### Epistemic Humility / Refuse-on-Contradiction
+
+**Status:** Research spike, not scheduled. Post-1.0.
+
+**Concept:** Add a reasoning-integrity layer that detects when a query or its supporting memory context is internally contradictory, or when the available evidence is insufficient, and responds with a structured "I can't answer this confidently — here's the conflict / here's what's missing" instead of collapsing into a hallucinated answer. The goal is a model that knows when *not* to answer.
+
+**Why it fits:** Zynkbot already has the two primitives this needs:
+- **Contradiction detection** over the memory graph — already identifies when facts conflict.
+- **Ensemble mode** — independently-trained models disagreeing is already a usable uncertainty signal.
+
+This feature would combine those into an explicit epistemic gate: before generating, check whether the prompt + retrieved memory context contains unresolved contradictions or low-confidence/high-disagreement signals; if so, surface the conflict for the user rather than answering over it.
+
+**Possible mechanics (to be designed):**
+- Run the check on the prompt + retrieved memory-graph context at generation time.
+- On detected contradiction or insufficient evidence, short-circuit to a structured response ("this conflicts with X in your memory" / "not enough stored context to answer this well").
+- Optionally tag the relevant memory nodes/edges with an uncertainty score and surface high-uncertainty nodes in the contradiction-resolution UI; use user resolutions to improve future stability.
+- Optionally modulate strictness by containment mode (e.g. stricter refusal in higher-assurance modes).
+
+**Constraints / requirements:**
+- Must be built from Zynkbot's own primitives in pure Rust — no external runtime, must work on mobile (no Python sidecar).
+- Must be validated before shipping: demonstrate it catches a class of hallucination or overconfident answer that the existing contradiction-detection + ensemble path misses. If it doesn't measurably improve on what's already there, it doesn't ship.
+- Fully first-principles / own-implementation, so it stays license-clean and commercializable under the existing dual license.
+
+**Why deferred:** Non-blocking, post-launch, and needs measurement before it's worth building. The hard part is evaluation (what does it actually improve?), not the code.
+
+**Effort:** Research spike first, then implement only if the eval shows real benefit. The spike must define a concrete failure class before writing any code — e.g., "user asks a question where their memory graph contains a direct contradiction and the model currently answers confidently rather than flagging it" — and assemble a test set of those cases. Without a clear eval target going in, the spike can't produce a meaningful verdict.
 
 ### Personal Ethics Layer
 - **Custom Constraint Flags** — User-defined guardrails ("don't help me lie unless in Sovereign Mode")
