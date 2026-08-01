@@ -507,6 +507,33 @@ Hash chain integrity layer on top of the v1.0 conversation history tables. The b
 - **Homomorphic Encryption** — Search encrypted memories without decrypting (research phase)
 - **Federated Learning** — Collaborative model improvement without data sharing
 
+### Secure Vault (Passwords & Financial Info)
+
+A local-first, LAN-synced credential and financial-info vault built on top of Zynkbot's existing architecture. Positioned as an alternative to Proton Pass, 1Password, and Bitwarden — but with **no third-party servers involved at any layer**. If your Zynkbot devices sync to each other over your own LAN, your passwords sync too. There's no account, no cloud, no vendor that could be compelled or breached.
+
+**Why this fits Zynkbot's story:**
+- The infrastructure is already in place: encrypted SQLite storage, TLS-secured LAN sync, ED25519 device pairing (planned v1.2)
+- The philosophical stance ("your data never leaves your devices") already matches the ideal password-manager posture
+- Memory-system integration means you could ask "what's my Amazon login?" naturally, with auth gating — something no existing manager offers
+
+**What makes this hard (not the same complexity as adding a Snap-in):**
+- **Separate encryption subsystem.** Vaults require master-password derivation (Argon2id), per-entry authenticated encryption (AES-256-GCM or XChaCha20-Poly1305), memory-locked secret handling in Rust (`zeroize` crate), secure clipboard clearing, screen-record protection. Cryptographic mistakes are unforgivable in this domain — the bar is much higher than "another memory type."
+- **New threat model.** Today Zynkbot trusts the device. A vault means assuming the device might be compromised while unlocked — biometric locks, session timeouts, panic-wipe, autolock on window blur, per-entry re-auth for high-value items (financial data).
+- **Autofill integration.** Android requires Autofill Framework or Accessibility Service integration. iOS requires the AutoFill Credential Provider extension. Desktop requires browser extensions. Each platform is a separate implementation with review-process implications.
+- **Regulatory surface.** Storing card numbers touches PCI-DSS considerations if ever distributed commercially. Passwords alone are lower stakes but still subject to breach-notification laws in some jurisdictions.
+- **Cross-device consistency guarantees.** Sync conflicts on a memory are annoying; sync conflicts on a password are dangerous (which version is the current one?). Requires strict last-writer-wins with vector clocks or CRDTs, not the memory system's semantic-merge approach.
+
+**Scope (if pursued):**
+- Master password + biometric unlock (platform-specific hooks)
+- Encrypted vault DB separate from memory DB — different keys, different lifecycle
+- Password entries, credit-card entries, secure notes, TOTP generator, form-fill metadata
+- Auto-lock policies (timeout, blur, panic-shortcut)
+- Autofill on each platform (staged: desktop first, Android second, iOS last)
+- Emergency access (Shamir secret sharing to trusted contacts?)
+- Export/import in 1Password/Bitwarden/KeePass formats
+
+**Why deferred:** Far future. Warrants a dedicated security audit and a separate design document before any code is written. Should not be attempted before v2.0 at the earliest — the core memory system and cross-device story need to be rock solid first, since vault sync is unforgiving of the bugs a memory system can tolerate.
+
 ---
 
 ## Platform Expansion
