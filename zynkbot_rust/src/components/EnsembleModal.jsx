@@ -375,7 +375,7 @@ export default function EnsembleModal({
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {availableModels.map(model => {
-                  const isLocalInProd = process.env.NODE_ENV === 'production' && model.type === 'local';
+                  const isLocalInProd = !!window.AndroidPaths && model.type === 'local';
                   const isCustomConflict = model.id === 'custom' && hasLocalSelected;
                   const isLocalConflict = model.type === 'local' && hasCustomSelected;
                   const isDisabled = isLocalInProd || isCustomConflict || isLocalConflict;
@@ -384,7 +384,7 @@ export default function EnsembleModal({
                     : isLocalConflict
                     ? 'Deselect Custom/Ollama first — both use the GPU and will conflict'
                     : isLocalInProd
-                    ? 'Local models require the CUDA build. Build the developer version to use local models.'
+                    ? 'Local GGUF models are not supported on Android.'
                     : undefined;
                   return (
                     <label
@@ -413,7 +413,7 @@ export default function EnsembleModal({
                         {model.name}
                       </span>
                       <span style={{ marginLeft: 'auto', color: '#9aa5c4', fontSize: '0.85rem' }}>
-                        {isLocalInProd ? '🔒 CUDA required' : (isCustomConflict || isLocalConflict) ? '⚠️ GPU conflict' : model.type === 'local' ? '🔒 Local' : '☁️ API'}
+                        {isLocalInProd ? '🔒 Android' : (isCustomConflict || isLocalConflict) ? '⚠️ GPU conflict' : model.type === 'local' ? '🔒 Local' : '☁️ API'}
                       </span>
                     </label>
                   );

@@ -636,6 +636,8 @@ async fn call_anthropic_for_memory_decision(prompt: &str) -> Result<String, Stri
 
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
+    let model = std::env::var("ANTHROPIC_MODEL")
+        .unwrap_or_else(|_| "claude-sonnet-5".to_string());
 
     let messages = vec![Message {
         role: "user".to_string(),
@@ -644,11 +646,11 @@ async fn call_anthropic_for_memory_decision(prompt: &str) -> Result<String, Stri
 
     match anthropic::send_message(
         &api_key,
-        "claude-haiku-4-5-20251001",  // Fast, cheap model for decisions
+        &model,
         messages,
         None,
-        Some(4096),  // Match main conversation limit - handles large recalled memories
-        Some(0.3),  // Low temperature for consistency
+        Some(4096),
+        Some(0.3),
     ).await {
         Ok(response) => Ok(response.content),
         Err(e) => Err(format!("Anthropic API error: {}", e))
@@ -668,11 +670,14 @@ async fn call_openai_for_memory_decision(prompt: &str) -> Result<String, String>
         content: prompt.to_string(),
     }];
 
+    let model = std::env::var("OPENAI_MODEL")
+        .unwrap_or_else(|_| "gpt-5.5".to_string());
+
     match openai::send_message(
         &api_key,
-        "gpt-4o-mini",
+        &model,
         messages,
-        Some(4096),  // Match main conversation limit
+        Some(4096),
         Some(0.3),
     ).await {
         Ok(response) => Ok(response.content),
@@ -693,11 +698,14 @@ async fn call_xai_for_memory_decision(prompt: &str) -> Result<String, String> {
         content: prompt.to_string(),
     }];
 
+    let model = std::env::var("XAI_MODEL")
+        .unwrap_or_else(|_| "grok-4.5".to_string());
+
     match xai::send_message(
         &api_key,
-        "grok-4.3",
+        &model,
         messages,
-        Some(4096),  // Match main conversation limit
+        Some(4096),
         Some(0.3),
     ).await {
         Ok(response) => Ok(response.content),
