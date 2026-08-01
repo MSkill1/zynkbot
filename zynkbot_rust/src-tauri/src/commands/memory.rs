@@ -896,6 +896,15 @@ pub async fn resolve_conflict(
         "memoryB" => {
             println!("[Rust] Resolution: Keep NEW memory, delete OLD #{}", existing_memory_id);
 
+            // Get content hash BEFORE deletion so we can propagate to peers
+            let old_content: Option<String> = sqlx::query_scalar(
+                "SELECT content FROM memories WHERE id = ?"
+            )
+            .bind(existing_memory_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None);
+
             let result = sqlx::query("DELETE FROM memories WHERE id = ?")
                 .bind(existing_memory_id)
                 .execute(&pool)
@@ -903,7 +912,24 @@ pub async fn resolve_conflict(
                 .map_err(|e| format!("Failed to delete existing memory: {}", e))?;
 
             println!("[Rust] ✅ Deleted {} row(s) - old memory discarded", result.rows_affected());
-            println!("[Rust] ⚠️ Deletion will sync on next auto-sync cycle (immediate propagation not yet implemented in resolve_conflict)");
+
+            // Propagate deletion to paired peers via ZynkSync
+            if result.rows_affected() > 0 {
+                if let Some(content) = old_content {
+                    use sha2::{Digest, Sha256};
+                    let content_hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+                    let service = {
+                        let g = crate::ZYNKSYNC_SERVICE.lock().await;
+                        g.as_ref().cloned()
+                    };
+                    if let Some(service) = service {
+                        match service.propagate_deletion_by_hash(content_hash).await {
+                            Ok(count) => println!("[Rust] ✅ Deletion propagated to {} peer(s)", count),
+                            Err(e) => eprintln!("[Rust] ⚠️ Failed to propagate deletion: {}", e),
+                        }
+                    }
+                }
+            }
         }
         "both" => {
             println!("[Rust] Resolution: Keep BOTH memories with explanation");
