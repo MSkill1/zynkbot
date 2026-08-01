@@ -650,7 +650,7 @@ async fn call_anthropic_for_memory_decision(prompt: &str) -> Result<String, Stri
         messages,
         None,
         Some(4096),
-        Some(0.3),
+        None,
     ).await {
         Ok(response) => Ok(response.content),
         Err(e) => Err(format!("Anthropic API error: {}", e))
@@ -678,7 +678,7 @@ async fn call_openai_for_memory_decision(prompt: &str) -> Result<String, String>
         &model,
         messages,
         Some(4096),
-        Some(0.3),
+        None,
     ).await {
         Ok(response) => Ok(response.content),
         Err(e) => Err(format!("OpenAI API error: {}", e))
@@ -706,7 +706,7 @@ async fn call_xai_for_memory_decision(prompt: &str) -> Result<String, String> {
         &model,
         messages,
         Some(4096),
-        Some(0.3),
+        None,
     ).await {
         Ok(response) => Ok(response.content),
         Err(e) => Err(format!("xAI API error: {}", e))
@@ -733,7 +733,7 @@ async fn call_mistral_for_memory_decision(prompt: &str) -> Result<String, String
         &model,
         messages,
         Some(4096),
-        Some(0.3),
+        None,
         "https://api.mistral.ai/v1/chat/completions",
         false,
         |_| {},
