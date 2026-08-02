@@ -2218,6 +2218,7 @@ pub fn run() {
             commands::models::propagate_api_key,
             commands::models::fetch_custom_models,
             commands::models::pull_ollama_model,
+            commands::models::stop_ollama_model,
             commands::models::get_peer_ollama_config,
             commands::chat::send_message_with_memory,
             commands::chat::run_ensemble,
