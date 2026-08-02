@@ -26,9 +26,11 @@ use axum::{
     Json,
     extract::{State, ConnectInfo, Request},
     http::StatusCode,
+    middleware::Next,
     response::{Response, IntoResponse},
     body::Body,
 };
+use crate::tls::{PeerCertDer, VerifiedDevice};
 use std::net::SocketAddr;
 use sha2::{Sha256, Digest};
 use crate::zchat;
@@ -271,7 +273,17 @@ impl ZynkSyncService {
         }
         println!("[TLS] rebuild_http_client: {} peer cert(s) in DB, {} pinned", cert_count, pinned_ders.len());
 
-        let tls_config = crate::tls::build_pinned_client_config(pinned_ders);
+        let tls_config = match crate::tls::build_pinned_client_config_with_cert(
+            pinned_ders.clone(),
+            &self.cert_pem,
+            &self.key_pem,
+        ) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("[TLS] Failed to build client config with cert: {}, falling back to no-cert", e);
+                crate::tls::build_pinned_client_config(pinned_ders)
+            }
+        };
         let client = reqwest::ClientBuilder::new()
             .use_preconfigured_tls(tls_config)
             .timeout(std::time::Duration::from_secs(30))
@@ -3059,7 +3071,17 @@ impl ZynkSyncService {
         // NOTE: Port cleanup is now handled in lib.rs start_zynksync() before creating the service
         // Self::cleanup_port_57963();
 
-        // Create Axum router with device-to-device endpoints
+        // push-api-key has its own sub-router with cert requirement enforced by middleware
+        let push_key_route = Router::new()
+            .route("/api/zynksync/push-api-key", post(handle_push_api_key))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&self),
+                require_verified_device,
+            ))
+            .with_state(Arc::clone(&self));
+
+        // All other routes — open to any TLS peer; inject_verified_device populates
+        // VerifiedDevice extension when peer cert matches a DB record.
         let app = Router::new()
             .route("/api/zynksync/receive", post(handle_receive_sync))
             .route("/api/zynksync/info", axum::routing::get(handle_device_info))
@@ -3067,13 +3089,11 @@ impl ZynkSyncService {
             .route("/api/zchat/deliver", post(handle_zchat_deliver))
             .route("/api/identity/verify-sync-code", post(handle_verify_sync_code))
             .route("/api/identity/consume-sync-code", post(handle_consume_sync_code))
-            // New endpoints for bidirectional "active device wins" sync
             .route("/api/zynksync/inventory", post(handle_get_inventory))
             .route("/api/zynksync/delete", post(handle_delete_memories))
             .route("/api/zynksync/delete-by-hash", post(handle_delete_by_hash))
             .route("/api/zynksync/update-memory", post(handle_update_memory))
             .route("/api/zynksync/fetch", post(handle_fetch_memories))
-            // ZynkLink endpoints for file sharing
             .route("/api/zynklink/verify-code", post(handle_zynklink_verify_code))
             .route("/api/zynklink/accept-code", post(handle_zynklink_accept_code))
             .route("/api/zynklink/directories", post(handle_zynklink_directories))
@@ -3086,17 +3106,21 @@ impl ZynkSyncService {
             .route("/api/zynksync/conversations/receive", post(handle_receive_conversations))
             .route("/api/presence/heartbeat", post(handle_heartbeat))
             .route("/api/presence/goodbye", post(handle_goodbye))
-            .route("/api/zynksync/push-api-key", post(handle_push_api_key))
             .route("/api/zynksync/pause", post(handle_pause))
             .route("/api/zynksync/resume", post(handle_resume))
-            // Ollama: info endpoint (returns configured model) + proxy to localhost:11434
             .route("/api/ollama/info", axum::routing::get(handle_ollama_info))
             .route("/api/ollama/*path", any(handle_ollama_proxy))
+            .merge(push_key_route)
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&self),
+                inject_verified_device,
+            ))
             .with_state(Arc::clone(&self));
 
-        // Build TLS config from this device's certificate
-        let server_config = crate::tls::build_server_config(&self.cert_pem, &self.key_pem)
-            .map_err(|e| format!("Failed to build TLS config: {}", e))?;
+        // Build TLS config with optional client certificate request (mTLS)
+        let server_config = crate::tls::build_server_config_with_optional_client_auth(
+            &self.cert_pem, &self.key_pem,
+        ).map_err(|e| format!("Failed to build TLS config: {}", e))?;
         let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
         // Bind TCP listener on fixed port 57963
@@ -3145,14 +3169,25 @@ impl ZynkSyncService {
                                     return;
                                 }
                             };
+                            // Extract client cert DER presented during mTLS handshake (may be None)
+                            let peer_cert_der: Option<PeerCertDer> = tls_stream
+                                .get_ref()
+                                .1
+                                .peer_certificates()
+                                .and_then(|certs| certs.first())
+                                .map(|c| PeerCertDer(c.as_ref().to_vec()));
                             let io = TokioIo::new(tls_stream);
                             let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut router = router.clone();
+                                let peer_cert_der = peer_cert_der.clone();
                                 async move {
                                     let (parts, body) = req.into_parts();
                                     let body = axum::body::Body::new(body);
                                     let mut req = hyper::Request::from_parts(parts, body);
                                     req.extensions_mut().insert(ConnectInfo(peer_addr));
+                                    if let Some(cert) = peer_cert_der {
+                                        req.extensions_mut().insert(cert);
+                                    }
                                     use tower::Service;
                                     router.call(req).await
                                 }
@@ -3172,6 +3207,49 @@ impl ZynkSyncService {
 
         Ok(port)
     }
+}
+
+/// Middleware: looks up the PeerCertDer extension (set by accept loop from mTLS handshake)
+/// against zynk_devices.tls_cert_der. On a match, injects a VerifiedDevice extension so
+/// downstream middleware and handlers have cryptographic proof of device identity.
+async fn inject_verified_device(
+    State(service): State<Arc<ZynkSyncService>>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    if let Some(peer_cert) = req.extensions().get::<PeerCertDer>().cloned() {
+        let result = sqlx::query(
+            "SELECT device_id, device_name FROM zynk_devices \
+             WHERE tls_cert_der = ? AND sync_paired = 1 LIMIT 1"
+        )
+        .bind(&peer_cert.0)
+        .fetch_optional(&service.db_pool)
+        .await;
+
+        if let Ok(Some(row)) = result {
+            let device_id: String = row.try_get("device_id").unwrap_or_default();
+            let device_name: String = row.try_get("device_name").unwrap_or_default();
+            if !device_id.is_empty() {
+                req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
+            }
+        }
+    }
+    next.run(req).await
+}
+
+/// Middleware: rejects requests that lack a VerifiedDevice extension (i.e. the peer did not
+/// present a cert that matches a paired device). Used on sensitive routes like push-api-key.
+async fn require_verified_device(
+    req: Request,
+    next: Next,
+) -> Response {
+    if req.extensions().get::<VerifiedDevice>().is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "mTLS device verification required" })),
+        ).into_response();
+    }
+    next.run(req).await
 }
 
 /// Axum handler for receiving sync memories from a peer
@@ -4691,23 +4769,31 @@ async fn handle_ollama_info(
 async fn handle_push_api_key(
     State(service): State<Arc<ZynkSyncService>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    axum::Extension(verified): axum::Extension<VerifiedDevice>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<axum::Json<serde_json::Value>, String> {
     let key = payload.get("key").and_then(|v| v.as_str()).ok_or("Missing key")?;
     let value = payload.get("value").and_then(|v| v.as_str()).ok_or("Missing value")?;
 
-    // Only accept from trusted sync peers
+    // Device identity is now verified by mTLS cert (require_verified_device middleware ran).
+    // Keep IP check as defence-in-depth.
     let sender_ip = addr.ip().to_string();
     let peers = service.peers.read().await;
     let trusted = peers.values().any(|p| p.host == sender_ip && p.paired);
     drop(peers);
     if !trusted {
-        return Err(format!("Untrusted sender: {}", sender_ip));
+        return Err(format!("Untrusted sender IP {}, verified device: {}", sender_ip, verified.device_id));
     }
 
     // Allowlist — never let a peer set arbitrary env vars
-    const ALLOWED: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY",
-                                "CUSTOM_API_URL", "CUSTOM_API_KEY", "CUSTOM_MODEL"];
+    const ALLOWED: &[&str] = &[
+        "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+        "OPENAI_API_KEY",    "OPENAI_MODEL",
+        "XAI_API_KEY",       "XAI_MODEL",
+        "MISTRAL_API_KEY",   "MISTRAL_MODEL",
+        "CUSTOM_API_URL",    "CUSTOM_API_KEY", "CUSTOM_MODEL",
+        "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+    ];
     if !ALLOWED.contains(&key) {
         return Err(format!("Key '{}' is not propagatable", key));
     }
@@ -4725,7 +4811,7 @@ async fn handle_push_api_key(
         .map_err(|e| format!("Failed to write .env: {}", e))?;
     std::env::set_var(key, value);
 
-    println!("[ZynkSync] ✓ Received API key push for {} from {}", key, sender_ip);
+    println!("[ZynkSync] ✓ Received API key push for {} from {} ({})", key, verified.device_name, sender_ip);
 
     if let Ok(guard) = crate::APP_HANDLE.lock() {
         if let Some(app) = guard.as_ref() {

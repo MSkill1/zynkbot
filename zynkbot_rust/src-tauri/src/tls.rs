@@ -4,12 +4,25 @@ use std::sync::Arc;
 use sha2::{Sha256, Digest};
 use tokio_rustls::rustls;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
+use rustls::{DigitallySignedStruct, DistinguishedName, Error as TlsError, SignatureScheme};
 
 const CERT_PEM_FILE: &str = "zynkbot_tls_cert.pem";
 const KEY_PEM_FILE:  &str = "zynkbot_tls_key.pem";
 const CERT_DER_FILE: &str = "zynkbot_tls_cert.der";
+
+/// Newtype carrying the raw DER bytes of the client's TLS certificate, injected
+/// as a request extension by the accept loop when a client presents one.
+#[derive(Clone, Debug)]
+pub struct PeerCertDer(pub Vec<u8>);
+
+/// Injected by verify_device_middleware when the peer's cert matches a paired device in the DB.
+#[derive(Clone, Debug)]
+pub struct VerifiedDevice {
+    pub device_id: String,
+    pub device_name: String,
+}
 
 /// Load or generate this device's self-signed TLS certificate.
 /// Returns (cert_pem, key_pem, cert_der).
@@ -83,6 +96,38 @@ pub fn build_server_config(cert_pem: &str, key_pem: &str) -> Result<rustls::Serv
         .with_no_client_auth()
         .with_single_cert(cert_chain, key)
         .map_err(|e| format!("Failed to build TLS ServerConfig: {}", e))
+}
+
+/// Build a rustls ServerConfig that requests (but does not require) a client certificate.
+/// The accept loop extracts the presented cert and injects it as a `PeerCertDer` extension
+/// so middleware can verify device identity against the DB.
+pub fn build_server_config_with_optional_client_auth(
+    cert_pem: &str,
+    key_pem: &str,
+) -> Result<rustls::ServerConfig, String> {
+    use rustls_pemfile::{certs, private_key};
+    use std::io::BufReader;
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let cert_chain: Vec<rustls::pki_types::CertificateDer<'static>> = {
+        let mut reader = BufReader::new(cert_pem.as_bytes());
+        certs(&mut reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to parse cert PEM: {}", e))?
+    };
+
+    let key = {
+        let mut reader = BufReader::new(key_pem.as_bytes());
+        private_key(&mut reader)
+            .map_err(|e| format!("Failed to parse key PEM: {}", e))?
+            .ok_or_else(|| "No private key found in PEM".to_string())?
+    };
+
+    let verifier = Arc::new(OptionalClientCertVerifier);
+    rustls::ServerConfig::builder()
+        .with_client_cert_verifier(verifier)
+        .with_single_cert(cert_chain, key)
+        .map_err(|e| format!("Failed to build TLS ServerConfig with optional client auth: {}", e))
 }
 
 /// SHA-256 fingerprint of a cert DER — shown during pairing for user verification.
@@ -160,6 +205,70 @@ impl ServerCertVerifier for PinnedCertVerifier {
     }
 }
 
+/// ClientCertVerifier that accepts any presented certificate without rejecting it.
+/// We capture the cert in the accept loop and verify device identity against the DB
+/// in middleware — the TLS layer just needs to not reject the cert at handshake time.
+/// Setting client_auth_mandatory to false allows legacy clients (no cert) to connect.
+#[derive(Debug)]
+pub struct OptionalClientCertVerifier;
+
+impl ClientCertVerifier for OptionalClientCertVerifier {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        false
+    }
+
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        &[]
+    }
+
+    fn verify_client_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
+    ) -> Result<ClientCertVerified, TlsError> {
+        Ok(ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
 /// Build a reqwest ClientConfig that uses pinned-cert verification.
 /// Call this from rebuild_http_client instead of add_root_certificate.
 pub fn build_pinned_client_config(pinned_ders: Vec<Vec<u8>>) -> rustls::ClientConfig {
@@ -169,4 +278,38 @@ pub fn build_pinned_client_config(pinned_ders: Vec<Vec<u8>>) -> rustls::ClientCo
         .dangerous()
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth()
+}
+
+/// Build a reqwest ClientConfig with pinned-cert verification AND a client certificate.
+/// This presents our own device cert during the TLS handshake so the server can verify
+/// our identity by cert rather than trusting the x-device-id header alone.
+pub fn build_pinned_client_config_with_cert(
+    pinned_ders: Vec<Vec<u8>>,
+    cert_pem: &str,
+    key_pem: &str,
+) -> Result<rustls::ClientConfig, String> {
+    use rustls_pemfile::{certs, private_key};
+    use std::io::BufReader;
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let cert_chain: Vec<rustls::pki_types::CertificateDer<'static>> = {
+        let mut reader = BufReader::new(cert_pem.as_bytes());
+        certs(&mut reader)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to parse client cert PEM: {}", e))?
+    };
+
+    let key = {
+        let mut reader = BufReader::new(key_pem.as_bytes());
+        private_key(&mut reader)
+            .map_err(|e| format!("Failed to parse client key PEM: {}", e))?
+            .ok_or_else(|| "No private key found in client key PEM".to_string())?
+    };
+
+    let verifier = Arc::new(PinnedCertVerifier { pinned_cert_ders: pinned_ders });
+    rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_client_auth_cert(cert_chain, key)
+        .map_err(|e| format!("Failed to build TLS ClientConfig with client cert: {}", e))
 }
