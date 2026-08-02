@@ -488,8 +488,12 @@ impl ZynkSyncService {
             println!("[ZynkSync] Sending {} peer(s) to host for bidirectional mesh introduction", client_peers.len());
         }
 
-        // Use a TOFU client for the initial pairing request — the peer cert is not yet pinned.
-        // The pairing code provides the authentication; the cert is pinned after this exchange.
+        // TOFU (Trust On First Use): accept any cert for the initial pairing request.
+        // The peer cert cannot be pinned before pairing completes — that's a chicken-and-egg
+        // problem inherent to first contact. Security here comes from the 6-digit pairing code,
+        // which the user verifies out-of-band. After pairing, the cert is stored in zynk_devices
+        // and all subsequent connections use cert pinning via PinnedCertVerifier. This is the
+        // only place in the codebase where invalid-cert acceptance is intentional and necessary.
         let tofu_client = reqwest::ClientBuilder::new()
             .danger_accept_invalid_certs(true)
             .timeout(Duration::from_secs(60))
@@ -3071,31 +3075,27 @@ impl ZynkSyncService {
         // NOTE: Port cleanup is now handled in lib.rs start_zynksync() before creating the service
         // Self::cleanup_port_57963();
 
-        // push-api-key has its own sub-router with cert requirement enforced by middleware
-        let push_key_route = Router::new()
-            .route("/api/zynksync/push-api-key", post(handle_push_api_key))
-            .layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&self),
-                require_verified_device,
-            ))
-            .with_state(Arc::clone(&self));
-
-        // All other routes — open to any TLS peer; inject_verified_device populates
-        // VerifiedDevice extension when peer cert matches a DB record.
-        let app = Router::new()
-            .route("/api/zynksync/receive", post(handle_receive_sync))
+        // Public routes — reachable without a client cert (pairing bootstrap only).
+        let public_routes = Router::new()
             .route("/api/zynksync/info", axum::routing::get(handle_device_info))
             .route("/api/zynksync/verify-pairing", post(handle_verify_pairing))
-            .route("/api/zchat/deliver", post(handle_zchat_deliver))
             .route("/api/identity/verify-sync-code", post(handle_verify_sync_code))
             .route("/api/identity/consume-sync-code", post(handle_consume_sync_code))
+            .route("/api/zynklink/verify-code", post(handle_zynklink_verify_code))
+            .route("/api/zynklink/accept-code", post(handle_zynklink_accept_code))
+            .with_state(Arc::clone(&self));
+
+        // Protected routes — require a verified client cert (mTLS).
+        // inject_verified_device (outer layer) must have already set VerifiedDevice before
+        // require_verified_device (inner layer) checks for it.
+        let protected_routes = Router::new()
+            .route("/api/zynksync/receive", post(handle_receive_sync))
+            .route("/api/zchat/deliver", post(handle_zchat_deliver))
             .route("/api/zynksync/inventory", post(handle_get_inventory))
             .route("/api/zynksync/delete", post(handle_delete_memories))
             .route("/api/zynksync/delete-by-hash", post(handle_delete_by_hash))
             .route("/api/zynksync/update-memory", post(handle_update_memory))
             .route("/api/zynksync/fetch", post(handle_fetch_memories))
-            .route("/api/zynklink/verify-code", post(handle_zynklink_verify_code))
-            .route("/api/zynklink/accept-code", post(handle_zynklink_accept_code))
             .route("/api/zynklink/directories", post(handle_zynklink_directories))
             .route("/api/zynklink/files", post(handle_zynklink_files))
             .route("/api/zynklink/download", post(handle_zynklink_download))
@@ -3106,11 +3106,20 @@ impl ZynkSyncService {
             .route("/api/zynksync/conversations/receive", post(handle_receive_conversations))
             .route("/api/presence/heartbeat", post(handle_heartbeat))
             .route("/api/presence/goodbye", post(handle_goodbye))
+            .route("/api/zynksync/push-api-key", post(handle_push_api_key))
             .route("/api/zynksync/pause", post(handle_pause))
             .route("/api/zynksync/resume", post(handle_resume))
             .route("/api/ollama/info", axum::routing::get(handle_ollama_info))
             .route("/api/ollama/*path", any(handle_ollama_proxy))
-            .merge(push_key_route)
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&self),
+                require_verified_device,
+            ))
+            .with_state(Arc::clone(&self));
+
+        let app = Router::new()
+            .merge(public_routes)
+            .merge(protected_routes)
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(&self),
                 inject_verified_device,
@@ -4838,6 +4847,20 @@ async fn handle_ollama_proxy(
     let uri = request.uri().clone();
     let path = uri.path().trim_start_matches("/api/ollama");
     let query = uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
+
+    // Block Ollama admin operations — paired devices may only use inference and model discovery.
+    // Administrative endpoints (pull, push, create, copy, delete) could exhaust disk or cause
+    // unintended changes to the host's model library.
+    const BLOCKED: &[&str] = &[
+        "/api/pull", "/api/push", "/api/create", "/api/copy", "/api/delete",
+    ];
+    if BLOCKED.iter().any(|b| path == *b || path.starts_with(&format!("{}/", b))) {
+        return (
+            StatusCode::FORBIDDEN,
+            "Administrative Ollama operations are not available via remote proxy",
+        ).into_response();
+    }
+
     let target_url = format!("http://localhost:11434{}{}", path, query);
 
     // Read request body
