@@ -2207,6 +2207,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Cloud backup commands
+            commands::backup::get_backup_key,
+            commands::backup::get_r2_config_status,
+            commands::backup::backup_memories_to_r2,
+            commands::backup::restore_memories_from_r2,
             // Model and API key commands
             commands::models::get_models,
             commands::models::open_models_folder,

@@ -398,6 +398,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
         >
           👤 Identity
         </button>
+
       </div>
 
       {/* Status Badge */}

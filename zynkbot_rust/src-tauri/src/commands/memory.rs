@@ -35,8 +35,8 @@ pub async fn list_memories(
     if session_id.is_some() { sql.push_str(" AND session_id = ?"); }
     if namespace.is_some() { sql.push_str(" AND namespace = ?"); }
     if event_type.is_some() { sql.push_str(" AND event_type = ?"); }
-    if date_from.is_some() { sql.push_str(" AND created_at >= ?"); }
-    if date_to.is_some() { sql.push_str(" AND created_at <= ?"); }
+    if date_from.is_some() { sql.push_str(" AND date(created_at) >= ?"); }
+    if date_to.is_some() { sql.push_str(" AND date(created_at) <= ?"); }
     sql.push_str(" ORDER BY datetime(created_at) DESC");
 
     let mut query = sqlx::query_as::<_, memory::Memory>(&sql);

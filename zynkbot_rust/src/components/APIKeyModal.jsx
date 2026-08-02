@@ -113,6 +113,45 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [showKeys, setShowKeys] = useState({});
   const [showCostGuide, setShowCostGuide] = useState(false);
   const [modelSelections, setModelSelections] = useState({});
+  const [pushingKeys, setPushingKeys] = useState(false);
+  const [pushKeysMsg, setPushKeysMsg] = useState('');
+
+  const PUSHABLE_KEYS = [
+    'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
+    'OPENAI_API_KEY',    'OPENAI_MODEL',
+    'XAI_API_KEY',       'XAI_MODEL',
+    'MISTRAL_API_KEY',   'MISTRAL_MODEL',
+    'CUSTOM_API_URL',    'CUSTOM_API_KEY', 'CUSTOM_MODEL',
+    'R2_ENDPOINT',       'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET',
+  ];
+
+  const handlePushAllKeys = async () => {
+    setPushingKeys(true); setPushKeysMsg('');
+    try {
+      const keys = await invoke('get_api_keys');
+      const entries = PUSHABLE_KEYS.map(k => [k, keys[k]]).filter(([, v]) => v && v.trim());
+      if (entries.length === 0) { setPushKeysMsg('No keys configured.'); return; }
+      let pushed = 0;
+      for (const [k, v] of entries) {
+        try { await invoke('propagate_api_key', { key: k, value: v }); pushed++; } catch {}
+      }
+      setPushKeysMsg(`✓ Pushed ${pushed} key${pushed !== 1 ? 's' : ''}`);
+      setTimeout(() => setPushKeysMsg(''), 4000);
+    } catch (e) {
+      setPushKeysMsg('Failed: ' + String(e));
+    } finally {
+      setPushingKeys(false);
+    }
+  };
+
+  // R2 backup state
+  const [r2Endpoint, setR2Endpoint] = useState("");
+  const [r2AccessKey, setR2AccessKey] = useState("");
+  const [r2SecretKey, setR2SecretKey] = useState("");
+  const [r2Bucket, setR2Bucket] = useState("zynkbot-backups");
+  const [r2SaveStatus, setR2SaveStatus] = useState({ type: "idle", message: "" });
+  const [showOllama, setShowOllama] = useState(false);
+  const [showR2, setShowR2] = useState(false);
 
   // Custom endpoint state
   const [customUrl, setCustomUrl] = useState("");
@@ -161,6 +200,10 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       if (keys.CUSTOM_API_URL) setCustomUrl(keys.CUSTOM_API_URL);
       if (keys.CUSTOM_API_KEY) setCustomApiKey(keys.CUSTOM_API_KEY);
       if (keys.CUSTOM_MODEL) setCustomModel(keys.CUSTOM_MODEL);
+      if (keys.R2_ENDPOINT) setR2Endpoint(keys.R2_ENDPOINT);
+      if (keys.R2_ACCESS_KEY_ID) setR2AccessKey(keys.R2_ACCESS_KEY_ID);
+      if (keys.R2_SECRET_ACCESS_KEY) setR2SecretKey(keys.R2_SECRET_ACCESS_KEY);
+      if (keys.R2_BUCKET) setR2Bucket(keys.R2_BUCKET || "zynkbot-backups");
 
       const selections = {};
       for (const p of PROVIDERS) {
@@ -478,7 +521,18 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       <div className="api-key-modal-container" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose}>×</button>
 
-        <h2>API Key Management</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '4px' }}>
+          <h2 style={{ margin: 0 }}>API Key Management</h2>
+          <button
+            onClick={handlePushAllKeys}
+            disabled={pushingKeys}
+            style={{ background: '#ffb86c', border: 'none', color: '#282a36', padding: '5px 12px', borderRadius: '4px', cursor: pushingKeys ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', opacity: pushingKeys ? 0.6 : 1, flexShrink: 0 }}
+            title="Push all configured API keys to online ZynkSync devices"
+          >
+            {pushingKeys ? '…' : '🔑 Push to all devices'}
+          </button>
+          {pushKeysMsg && <span style={{ fontSize: '0.8rem', color: pushKeysMsg.startsWith('✓') ? '#50fa7b' : '#ff5555' }}>{pushKeysMsg}</span>}
+        </div>
         <p className="modal-subtitle">
           Configure your AI provider API keys to enable cloud models.{' '}
           <button
@@ -622,7 +676,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
 
           {/* Custom / Ollama section */}
           <div className="api-key-item">
-            <div className="provider-header">
+            <div className="provider-header" onClick={() => setShowOllama(v => !v)} style={{ cursor: 'pointer', userSelect: 'none' }}>
               <div className="provider-info">
                 <span className="provider-name">
                   {isAndroid ? "Ollama (Local AI)" : "Custom / Ollama"}
@@ -633,16 +687,19 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                     : "Any OpenAI-compatible server (Ollama, llama-server, LM Studio)"}
                 </span>
               </div>
-              <div className="provider-status">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                 {isCustomConfigured() ? (
                   <span className="status-configured">✅ Configured</span>
                 ) : (
                   <span className="status-missing">⚠️ Not set</span>
                 )}
+                <span style={{ background: '#44475a', color: '#f8f8f2', fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                  {showOllama ? 'Hide ▴' : 'Show ▾'}
+                </span>
               </div>
             </div>
 
-            {isAndroid ? (
+            {showOllama && (isAndroid ? (
               /* ── Android: one-tap connect, no manual fields ── */
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
                 {syncPeers.length === 0 ? (
@@ -862,8 +919,131 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                   )}
                 </div>
               </div>
-            )}
+            ))}
           </div>
+        </div>
+
+        {/* Cloud Backup (Cloudflare R2) */}
+        <div className="api-section" style={{ marginTop: '20px' }}>
+          <div className="api-section-header" onClick={() => setShowR2(v => !v)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h3>☁ Cloud Backup (Cloudflare R2)</h3>
+              <span className="api-section-desc">Zero-knowledge encrypted memory backup. Your key never leaves this device.</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens'); }}
+                className="btn-get-key"
+                title="Open Cloudflare R2 API tokens page"
+              >
+                🔗 Get credentials
+              </button>
+              <span style={{ background: '#44475a', color: '#f8f8f2', fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                {showR2 ? 'Hide ▴' : 'Show ▾'}
+              </span>
+            </div>
+          </div>
+          {showR2 && <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Endpoint URL</label>
+              <input
+                type="text"
+                value={r2Endpoint}
+                onChange={e => setR2Endpoint(e.target.value)}
+                placeholder="https://<account-id>.r2.cloudflarestorage.com"
+                style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Access Key ID</label>
+                <input
+                  type="text"
+                  value={r2AccessKey}
+                  onChange={e => setR2AccessKey(e.target.value)}
+                  placeholder="Access Key ID"
+                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem', width: '100%' }}
+                />
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Secret Access Key</label>
+                <input
+                  type="password"
+                  value={r2SecretKey}
+                  onChange={e => setR2SecretKey(e.target.value)}
+                  placeholder="Secret Access Key"
+                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem', width: '100%' }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Bucket Name</label>
+                <input
+                  type="text"
+                  value={r2Bucket}
+                  onChange={e => setR2Bucket(e.target.value)}
+                  placeholder="zynkbot-backups"
+                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem' }}
+                />
+              </div>
+              <button
+                onClick={async () => {
+                  if (!r2Endpoint.trim() || !r2AccessKey.trim() || !r2SecretKey.trim()) {
+                    setR2SaveStatus({ type: 'error', message: 'Endpoint, Access Key ID, and Secret Key are required.' });
+                    return;
+                  }
+                  setR2SaveStatus({ type: 'saving', message: 'Saving…' });
+                  try {
+                    const vals = {
+                      R2_ENDPOINT: r2Endpoint.trim(),
+                      R2_ACCESS_KEY_ID: r2AccessKey.trim(),
+                      R2_SECRET_ACCESS_KEY: r2SecretKey.trim(),
+                      R2_BUCKET: r2Bucket.trim() || 'zynkbot-backups',
+                    };
+                    for (const [k, v] of Object.entries(vals)) {
+                      await invoke('set_api_key', { key: k, value: v });
+                    }
+                    setR2SaveStatus({ type: 'ok', message: 'Saved!' });
+                    setTimeout(() => setR2SaveStatus({ type: 'idle', message: '' }), 3000);
+                    // Offer to push to paired devices
+                    try {
+                      const peers = await invoke('get_zynksync_peers');
+                      const onlinePeers = (peers || []).filter(p => p.is_online);
+                      if (onlinePeers.length > 0) {
+                        const confirmed = window.confirm(
+                          `Send R2 backup credentials to your ${onlinePeers.length} other device${onlinePeers.length > 1 ? 's' : ''}?\n\n` +
+                          `Credentials travel encrypted, peer-to-peer — they don't touch the internet.`
+                        );
+                        if (confirmed) {
+                          for (const [k, v] of Object.entries(vals)) {
+                            await invoke('propagate_api_key', { key: k, value: v });
+                          }
+                        }
+                      }
+                    } catch (e) {
+                      console.debug('[R2] Propagation skipped:', e);
+                    }
+                  } catch (err) {
+                    setR2SaveStatus({ type: 'error', message: String(err) });
+                  }
+                }}
+                style={{
+                  padding: '8px 20px', borderRadius: '4px', border: 'none',
+                  background: r2SaveStatus.type === 'ok' ? '#50fa7b' : '#6272a4',
+                  color: r2SaveStatus.type === 'ok' ? '#282a36' : '#fff',
+                  cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap',
+                }}
+              >
+                {r2SaveStatus.type === 'saving' ? 'Saving…' : r2SaveStatus.type === 'ok' ? '✓ Saved' : 'Save'}
+              </button>
+            </div>
+            {r2SaveStatus.message && r2SaveStatus.type !== 'ok' && (
+              <div style={{ fontSize: '0.8rem', color: r2SaveStatus.type === 'error' ? '#ff5555' : '#6272a4' }}>
+                {r2SaveStatus.message}
+              </div>
+            )}
+          </div>}
         </div>
 
         <div className="api-key-note">
