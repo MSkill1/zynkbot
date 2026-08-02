@@ -10,6 +10,37 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
+## [0.9.3] — 2026-08-01 — Ensemble, Model Picker, and Sync Fixes
+
+### Highlights
+- Ensemble Mode overhauled with parallel execution and improved synthesis
+- Mistral added as a 4th API provider
+- Per-provider model picker — choose which model each provider uses
+- Several ZynkSync correctness fixes that were silently breaking contradiction detection and deletion propagation
+
+### Features
+- Mistral API support (alongside Anthropic, OpenAI, and xAI)
+- Per-provider model picker in Settings — select the specific model for each API provider
+- New conversation button
+- Ensemble Mode Phase 1 now runs all models in parallel (previously sequential)
+- Ensemble Mode Phase 2 synthesis improved: better consensus detection, tighter memory injection, API fallback if local model fails
+- GPU conflict guard in Ensemble modal — warns when Custom/Ollama and a local GGUF are both selected (shared CUDA device)
+- Live-verified model lists for all four providers
+- ZynkLink file visibility and own-share UX polish
+
+### Bug Fixes
+- **Contradiction detection was silently failing** — background memory classifier was hardcoded to a cheaper model (Haiku / gpt-4o-mini / grok-4.3) instead of the user's configured model; stronger models now correctly classify dog-name-level contradictions that the cheaper models missed
+- **Contradiction resolution deletion not propagating** — resolving a contradiction by keeping the new memory deleted the old one locally but never notified paired devices; deletion now propagates immediately via ZynkSync
+- **Real-time deletion missing tombstone timestamp** — delete-by-hash requests sent to peers were missing `deleted_at`, so the recreation guard on the receiving side could never fire; timestamp now included in all real-time deletion payloads
+- **Ensemble local models grayed out on desktop** — production build check incorrectly disabled local GGUF models on all production builds, not just Android; desktop release builds now correctly allow local model selection
+- **Memory decision API calls rejected by newer models** — `temperature` parameter sent to all providers was deprecated in newer models (claude-sonnet-5, gpt-5.5, grok-4.5), causing silent 400 errors and fallback failures; removed from all four provider helpers
+
+### Internal
+- Android CI: fixed NDK toolchain not on PATH during OpenSSL cross-compilation
+- Android CI: fixed `sdkmanager` not found (setup-android action added before NDK install step)
+
+---
+
 ## [0.9.2] — 2026-07-25 — Android Phase 1
 
 ### Highlights
