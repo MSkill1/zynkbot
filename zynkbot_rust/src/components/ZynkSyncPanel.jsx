@@ -14,37 +14,6 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   const [pairingIPPart, setPairingIPPart] = useState('');
   const [pairingNumPart, setPairingNumPart] = useState('');
   const [showAddDevice, setShowAddDevice] = useState(false);
-  const [pushingKeys, setPushingKeys] = useState(false);
-
-  const PUSHABLE_KEYS = [
-    'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
-    'OPENAI_API_KEY',    'OPENAI_MODEL',
-    'XAI_API_KEY',       'XAI_MODEL',
-    'MISTRAL_API_KEY',   'MISTRAL_MODEL',
-    'CUSTOM_API_URL',    'CUSTOM_API_KEY', 'CUSTOM_MODEL',
-    'R2_ENDPOINT',       'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET',
-  ];
-
-  const handlePushAllKeys = async () => {
-    setPushingKeys(true);
-    try {
-      const keys = await invoke('get_api_keys');
-      const entries = PUSHABLE_KEYS.map(k => [k, keys[k]]).filter(([, v]) => v && v.trim());
-      if (entries.length === 0) {
-        setMessage('No API keys configured to push.');
-        return;
-      }
-      let pushed = 0;
-      for (const [k, v] of entries) {
-        try { await invoke('propagate_api_key', { key: k, value: v }); pushed++; } catch {}
-      }
-      setMessage(`✓ Pushed ${pushed} key${pushed !== 1 ? 's' : ''} to online devices.`);
-    } catch (e) {
-      setMessage(`Failed to push keys: ${e}`);
-    } finally {
-      setPushingKeys(false);
-    }
-  };
 
   const fetchPeers = useCallback(async () => {
     try {
@@ -430,28 +399,6 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           👤 Identity
         </button>
 
-        {/* Push all API keys to online peers */}
-        {peers.some(p => p.is_online) && (
-          <button
-            onClick={handlePushAllKeys}
-            disabled={pushingKeys}
-            style={{
-              flex: isAndroid ? '1 1 calc(50% - 4px)' : 1,
-              padding: '8px 10px',
-              background: '#ffb86c',
-              color: '#282a36',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: pushingKeys ? 'wait' : 'pointer',
-              fontSize: '0.82rem',
-              fontWeight: 'bold',
-              opacity: pushingKeys ? 0.6 : 1,
-            }}
-            title="Push all configured API keys to online devices"
-          >
-            {pushingKeys ? '…' : '🔑 Push Keys'}
-          </button>
-        )}
       </div>
 
       {/* Status Badge */}

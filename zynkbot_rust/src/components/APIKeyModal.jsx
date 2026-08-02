@@ -113,6 +113,36 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [showKeys, setShowKeys] = useState({});
   const [showCostGuide, setShowCostGuide] = useState(false);
   const [modelSelections, setModelSelections] = useState({});
+  const [pushingKeys, setPushingKeys] = useState(false);
+  const [pushKeysMsg, setPushKeysMsg] = useState('');
+
+  const PUSHABLE_KEYS = [
+    'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL',
+    'OPENAI_API_KEY',    'OPENAI_MODEL',
+    'XAI_API_KEY',       'XAI_MODEL',
+    'MISTRAL_API_KEY',   'MISTRAL_MODEL',
+    'CUSTOM_API_URL',    'CUSTOM_API_KEY', 'CUSTOM_MODEL',
+    'R2_ENDPOINT',       'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET',
+  ];
+
+  const handlePushAllKeys = async () => {
+    setPushingKeys(true); setPushKeysMsg('');
+    try {
+      const keys = await invoke('get_api_keys');
+      const entries = PUSHABLE_KEYS.map(k => [k, keys[k]]).filter(([, v]) => v && v.trim());
+      if (entries.length === 0) { setPushKeysMsg('No keys configured.'); return; }
+      let pushed = 0;
+      for (const [k, v] of entries) {
+        try { await invoke('propagate_api_key', { key: k, value: v }); pushed++; } catch {}
+      }
+      setPushKeysMsg(`✓ Pushed ${pushed} key${pushed !== 1 ? 's' : ''}`);
+      setTimeout(() => setPushKeysMsg(''), 4000);
+    } catch (e) {
+      setPushKeysMsg('Failed: ' + String(e));
+    } finally {
+      setPushingKeys(false);
+    }
+  };
 
   // R2 backup state
   const [r2Endpoint, setR2Endpoint] = useState("");
@@ -472,7 +502,18 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       <div className="api-key-modal-container" onClick={(e) => e.stopPropagation()}>
         <button className="modal-close" onClick={onClose}>×</button>
 
-        <h2>API Key Management</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '4px' }}>
+          <h2 style={{ margin: 0 }}>API Key Management</h2>
+          <button
+            onClick={handlePushAllKeys}
+            disabled={pushingKeys}
+            style={{ background: '#ffb86c', border: 'none', color: '#282a36', padding: '5px 12px', borderRadius: '4px', cursor: pushingKeys ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', opacity: pushingKeys ? 0.6 : 1, flexShrink: 0 }}
+            title="Push all configured API keys to online ZynkSync devices"
+          >
+            {pushingKeys ? '…' : '🔑 Push to all devices'}
+          </button>
+          {pushKeysMsg && <span style={{ fontSize: '0.8rem', color: pushKeysMsg.startsWith('✓') ? '#50fa7b' : '#ff5555' }}>{pushKeysMsg}</span>}
+        </div>
         <p className="modal-subtitle">
           Configure your AI provider API keys to enable cloud models.{' '}
           <button
