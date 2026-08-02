@@ -120,6 +120,8 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [r2SecretKey, setR2SecretKey] = useState("");
   const [r2Bucket, setR2Bucket] = useState("zynkbot-backups");
   const [r2SaveStatus, setR2SaveStatus] = useState({ type: "idle", message: "" });
+  const [showOllama, setShowOllama] = useState(false);
+  const [showR2, setShowR2] = useState(false);
 
   // Custom endpoint state
   const [customUrl, setCustomUrl] = useState("");
@@ -614,9 +616,10 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
 
           {/* Custom / Ollama section */}
           <div className="api-key-item">
-            <div className="provider-header">
+            <div className="provider-header" onClick={() => setShowOllama(v => !v)} style={{ cursor: 'pointer', userSelect: 'none' }}>
               <div className="provider-info">
                 <span className="provider-name">
+                  {showOllama ? '▾' : '▸'}{' '}
                   {isAndroid ? "Ollama (Local AI)" : "Custom / Ollama"}
                 </span>
                 <span className="provider-description">
@@ -634,7 +637,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
               </div>
             </div>
 
-            {isAndroid ? (
+            {showOllama && (isAndroid ? (
               /* ── Android: one-tap connect, no manual fields ── */
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
                 {syncPeers.length === 0 ? (
@@ -829,17 +832,17 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                   )}
                 </div>
               </div>
-            )}
+            ))}
           </div>
         </div>
 
         {/* Cloud Backup (Cloudflare R2) */}
         <div className="api-section" style={{ marginTop: '20px' }}>
-          <div className="api-section-header">
-            <h3>☁ Cloud Backup (Cloudflare R2)</h3>
+          <div className="api-section-header" onClick={() => setShowR2(v => !v)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+            <h3>{showR2 ? '▾' : '▸'} ☁ Cloud Backup (Cloudflare R2)</h3>
             <span className="api-section-desc">Zero-knowledge encrypted memory backup. Your key never leaves this device.</span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+          {showR2 && <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
               <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Endpoint URL</label>
               <input
@@ -939,7 +942,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                 {r2SaveStatus.message}
               </div>
             )}
-          </div>
+          </div>}
         </div>
 
         <div className="api-key-note">
