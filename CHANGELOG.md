@@ -29,7 +29,6 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - ZynkLink file visibility and own-share UX polish
 
 ### Bug Fixes
-- **Contradiction detection was silently failing** — background memory classifier was hardcoded to a cheaper model (Haiku / gpt-4o-mini / grok-4.3) instead of the user's configured model; stronger models now correctly classify dog-name-level contradictions that the cheaper models missed
 - **Contradiction resolution deletion not propagating** — resolving a contradiction by keeping the new memory deleted the old one locally but never notified paired devices; deletion now propagates immediately via ZynkSync
 - **Real-time deletion missing tombstone timestamp** — delete-by-hash requests sent to peers were missing `deleted_at`, so the recreation guard on the receiving side could never fire; timestamp now included in all real-time deletion payloads
 - **Ensemble local models grayed out on desktop** — production build check incorrectly disabled local GGUF models on all production builds, not just Android; desktop release builds now correctly allow local model selection
