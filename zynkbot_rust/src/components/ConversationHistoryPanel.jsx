@@ -257,16 +257,20 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
           />
           <div style={{ display: "flex", gap: "8px", marginTop: "8px", alignItems: "center" }}>
             <input
-              type="date"
+              type="text"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
+              placeholder="YYYY-MM-DD"
+              maxLength={10}
               style={{ flex: 1, padding: "5px 8px", background: "#282a36", border: "1px solid #44475a", borderRadius: "4px", color: "#6272a4", fontSize: "0.8rem" }}
             />
             <span style={{ color: "#6272a4", fontSize: "0.8rem" }}>to</span>
             <input
-              type="date"
+              type="text"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
+              placeholder="YYYY-MM-DD"
+              maxLength={10}
               style={{ flex: 1, padding: "5px 8px", background: "#282a36", border: "1px solid #44475a", borderRadius: "4px", color: "#6272a4", fontSize: "0.8rem" }}
             />
             {(dateFrom || dateTo) && (

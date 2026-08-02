@@ -460,6 +460,22 @@ pub async fn clear_all_memories(user_id: String, propagate: Option<bool>) -> Res
         println!("[Memory] Deletion propagation disabled (identity adoption cleanup)");
     }
 
+    // Record all tombstones BEFORE deleting so any batch sync that fires during
+    // propagation sees a complete tombstone set and doesn't re-pull from peers.
+    if should_propagate && !content_hashes.is_empty() {
+        let service = {
+            let g = crate::ZYNKSYNC_SERVICE.lock().await;
+            g.as_ref().cloned()
+        };
+        if let Some(service) = service {
+            if let Err(e) = service.record_tombstones(&content_hashes).await {
+                eprintln!("[Memory] Warning: failed to pre-record tombstones: {}", e);
+            } else {
+                println!("[Memory] Pre-recorded {} tombstones before deletion", content_hashes.len());
+            }
+        }
+    }
+
     let result = sqlx::query("DELETE FROM memories WHERE user_id = ?")
         .bind(&user_id)
         .execute(&pool)

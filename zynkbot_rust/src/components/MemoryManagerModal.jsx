@@ -777,20 +777,22 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             <option value="achievement">Achievement</option>
           </select>
           <input
-            type="date"
+            type="text"
             value={filterDateFrom}
             onChange={(e) => setFilterDateFrom(e.target.value)}
             className="date-input"
-            placeholder="From date"
-            title="Filter from date"
+            placeholder="From: YYYY-MM-DD"
+            title="Filter from date (YYYY-MM-DD)"
+            maxLength={10}
           />
           <input
-            type="date"
+            type="text"
             value={filterDateTo}
             onChange={(e) => setFilterDateTo(e.target.value)}
             className="date-input"
-            placeholder="To date"
-            title="Filter to date"
+            placeholder="To: YYYY-MM-DD"
+            title="Filter to date (YYYY-MM-DD)"
+            maxLength={10}
           />
           <button onClick={fetchMemories} className="refresh-button">
             🔄 Refresh
