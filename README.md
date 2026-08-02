@@ -4,7 +4,7 @@
 
 *By [ContainAI](https://containai.ai) – Building ethical AI infrastructure*
 
-Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same backend — memory system, local ML stack, and encrypted device sync — runs natively on Android and desktop without modification. It connects to Claude, GPT-4o, or Grok through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required — for typical conversational use, expect an estimated $5–15/month in API costs, versus $20/month per provider for subscription apps ([cost breakdown](API_COSTS.md)). Local GGUF models are also supported for fully offline, zero-cost use.
+Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same Rust backend — memory system, ML inference, and encrypted device sync — runs on Android and desktop. It connects to Claude, GPT, Grok, or Mistral through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required — for typical conversational use, expect an estimated $5–15/month in API costs, versus $20/month per provider for subscription apps ([cost breakdown](API_COSTS.md)). Local GGUF models are supported for fully offline, zero-cost use on desktop. Android uses cloud API models or Ollama proxied from a paired desktop over your home network.
 
 **Current Status**: [![GitHub Release](https://img.shields.io/github/v/release/MSkill1/zynkbot?label=latest)](https://github.com/MSkill1/zynkbot/releases/latest) — desktop (Windows, Linux) + Android beta. iOS planned.
 
@@ -297,7 +297,7 @@ Every installation runs in exactly one containment mode at a time. The default i
 | **Child**     | Strict                | For minors, aggressive filtering  |
 | **Sovereign** | Warnings only         | Warns but doesn't block           |
 | **Witness**   | No filtering          | Full freedom, no restrictions     |
-| **HIPAA**     | Healthcare compliance | PHI protection, no memory storage |
+| **HIPAA**     | Healthcare-oriented   | PHI detection, no memory storage  |
 
 **How filtering works:**
 
@@ -344,9 +344,10 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 
 You can connect to any of these cloud providers. Your memory database stays local — only the conversation prompt is sent. Additional API LLMs coming soon.
 
-- **OpenAI** (GPT-4o, GPT-4o-mini) — [Get API key](https://platform.openai.com/api-keys)
-- **Anthropic** (Claude Sonnet, Claude Haiku) — [Get API key](https://platform.claude.com/)
-- **xAI** (Grok) — [Get API key](https://console.x.ai/)
+- **Anthropic** (Claude models) — [Get API key](https://console.anthropic.com/settings/keys)
+- **OpenAI** (GPT and o-series models) — [Get API key](https://platform.openai.com/api-keys)
+- **xAI** (Grok models) — [Get API key](https://console.x.ai/)
+- **Mistral** (Mistral and Codestral models) — [Get API key](https://console.mistral.ai/api-keys)
 
 Wondering what API keys actually cost? → [Honest cost estimates](API_COSTS.md)
 
@@ -453,7 +454,7 @@ The installer does not install the CUDA toolkit itself — that requires a reboo
 
 **Professional:**
 
-- Healthcare (HIPAA-friendly local deployment)
+- Healthcare (local deployment with PHI-aware configuration; not a substitute for HIPAA compliance review)
 - Legal (confidential client information)
 - Research (proprietary data analysis)
 
