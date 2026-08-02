@@ -4707,7 +4707,8 @@ async fn handle_push_api_key(
 
     // Allowlist — never let a peer set arbitrary env vars
     const ALLOWED: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY",
-                                "CUSTOM_API_URL", "CUSTOM_API_KEY", "CUSTOM_MODEL"];
+                                "CUSTOM_API_URL", "CUSTOM_API_KEY", "CUSTOM_MODEL",
+                                "R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"];
     if !ALLOWED.contains(&key) {
         return Err(format!("Key '{}' is not propagatable", key));
     }

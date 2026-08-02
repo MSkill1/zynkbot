@@ -3,6 +3,19 @@ import { invoke } from '@tauri-apps/api/core';
 import MemoryGraphModal from "./MemoryGraphModal";
 import "../styles/MemoryManagerModal.css";
 
+// Auto-masks MM/DD/YYYY input and converts to YYYY-MM-DD for the filter
+function maskDate(value) {
+  const digits = value.replace(/\D/g, '').substring(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.substring(0, 2)}/${digits.substring(2)}`;
+  return `${digits.substring(0, 2)}/${digits.substring(2, 4)}/${digits.substring(4)}`;
+}
+function displayToISO(display) {
+  const m = display.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return '';
+  return `${m[3]}-${m[1]}-${m[2]}`;
+}
+
 // Canonical namespace list mirrors nlp_enhancer.rs detect_namespace() patterns
 const CANONICAL_NAMESPACES = [
   'personal', 'work', 'career', 'health', 'family', 'education',
@@ -22,6 +35,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [filterEventType, setFilterEventType] = useState("all");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  const [dateFromDisplay, setDateFromDisplay] = useState("");
+  const [dateToDisplay, setDateToDisplay] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null); // null | 'busy' | 'ok' | 'error'
   const [backupMsg, setBackupMsg] = useState('');
@@ -443,7 +458,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
       <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
         {/* Header */}
-        <div style={{ padding: '12px 16px', paddingTop: 'calc(env(safe-area-inset-top, 28px) + 12px)', borderBottom: '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+        <div style={{ padding: '12px 16px', paddingTop: 'calc(env(safe-area-inset-top, 28px) + 12px)', borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           {selectedMemory ? (
             <>
               <button
@@ -473,14 +488,16 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 </button>
                 <button onClick={handleClearAllMemories} style={{ background: 'none', border: '1px solid #ff5555', color: '#ff5555', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>Clear All</button>
               </div>
-              {backupMsg && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, fontSize: '0.75rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b', background: '#282a36', padding: '4px 8px', borderRadius: '4px', zIndex: 10, whiteSpace: 'nowrap' }}>
-                  {backupMsg}
-                </div>
-              )}
             </>
           )}
         </div>
+
+        {/* Backup status message — separate row so overflow:hidden on parent doesn't clip it */}
+        {backupMsg && !selectedMemory && (
+          <div style={{ padding: '6px 16px', borderBottom: '1px solid #44475a', background: '#1e1f2e', flexShrink: 0, fontSize: '0.8rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b', textAlign: 'center' }}>
+            {backupMsg}
+          </div>
+        )}
 
         {/* Floating close button - bottom right, like settings panel */}
         <button
@@ -845,20 +862,28 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
           </select>
           <input
             type="text"
-            value={filterDateFrom}
-            onChange={(e) => setFilterDateFrom(e.target.value)}
+            value={dateFromDisplay}
+            onChange={(e) => {
+              const masked = maskDate(e.target.value);
+              setDateFromDisplay(masked);
+              setFilterDateFrom(displayToISO(masked));
+            }}
             className="date-input"
-            placeholder="From: YYYY-MM-DD"
-            title="Filter from date (YYYY-MM-DD)"
+            placeholder="From: MM/DD/YYYY"
+            title="Filter from date (MM/DD/YYYY)"
             maxLength={10}
           />
           <input
             type="text"
-            value={filterDateTo}
-            onChange={(e) => setFilterDateTo(e.target.value)}
+            value={dateToDisplay}
+            onChange={(e) => {
+              const masked = maskDate(e.target.value);
+              setDateToDisplay(masked);
+              setFilterDateTo(displayToISO(masked));
+            }}
             className="date-input"
-            placeholder="To: YYYY-MM-DD"
-            title="Filter to date (YYYY-MM-DD)"
+            placeholder="To: MM/DD/YYYY"
+            title="Filter to date (MM/DD/YYYY)"
             maxLength={10}
           />
           <button onClick={fetchMemories} className="refresh-button">

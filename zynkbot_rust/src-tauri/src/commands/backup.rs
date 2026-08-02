@@ -264,7 +264,7 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
         .map_err(|e| format!("Serialization failed: {}", e))?;
     let encrypted = encrypt_bytes(&key, &payload)?;
 
-    r2_put(&cfg, &format!("{}/backup.enc", user_id), encrypted).await?;
+    r2_put(&cfg, "backup.enc", encrypted).await?;
 
     println!("[Backup] Backed up {} memories for user {}", count, user_id);
     Ok(serde_json::json!({
@@ -279,7 +279,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
     let key = load_or_create_key()?;
     let cfg = load_r2_config()?;
 
-    let encrypted = r2_get(&cfg, &format!("{}/backup.enc", user_id)).await?;
+    let encrypted = r2_get(&cfg, "backup.enc").await?;
     let plaintext = decrypt_bytes(&key, &encrypted)?;
     let memories: Vec<serde_json::Value> = serde_json::from_slice(&plaintext)
         .map_err(|e| format!("Failed to parse backup data: {}", e))?;

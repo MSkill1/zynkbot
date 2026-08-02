@@ -891,12 +891,35 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                   }
                   setR2SaveStatus({ type: 'saving', message: 'Saving…' });
                   try {
-                    await invoke('set_api_key', { key: 'R2_ENDPOINT', value: r2Endpoint.trim() });
-                    await invoke('set_api_key', { key: 'R2_ACCESS_KEY_ID', value: r2AccessKey.trim() });
-                    await invoke('set_api_key', { key: 'R2_SECRET_ACCESS_KEY', value: r2SecretKey.trim() });
-                    await invoke('set_api_key', { key: 'R2_BUCKET', value: r2Bucket.trim() || 'zynkbot-backups' });
+                    const vals = {
+                      R2_ENDPOINT: r2Endpoint.trim(),
+                      R2_ACCESS_KEY_ID: r2AccessKey.trim(),
+                      R2_SECRET_ACCESS_KEY: r2SecretKey.trim(),
+                      R2_BUCKET: r2Bucket.trim() || 'zynkbot-backups',
+                    };
+                    for (const [k, v] of Object.entries(vals)) {
+                      await invoke('set_api_key', { key: k, value: v });
+                    }
                     setR2SaveStatus({ type: 'ok', message: 'Saved!' });
                     setTimeout(() => setR2SaveStatus({ type: 'idle', message: '' }), 3000);
+                    // Offer to push to paired devices
+                    try {
+                      const peers = await invoke('get_zynksync_peers');
+                      const onlinePeers = (peers || []).filter(p => p.is_online);
+                      if (onlinePeers.length > 0) {
+                        const confirmed = window.confirm(
+                          `Send R2 backup credentials to your ${onlinePeers.length} other device${onlinePeers.length > 1 ? 's' : ''}?\n\n` +
+                          `Credentials travel encrypted, peer-to-peer — they don't touch the internet.`
+                        );
+                        if (confirmed) {
+                          for (const [k, v] of Object.entries(vals)) {
+                            await invoke('propagate_api_key', { key: k, value: v });
+                          }
+                        }
+                      }
+                    } catch (e) {
+                      console.debug('[R2] Propagation skipped:', e);
+                    }
                   } catch (err) {
                     setR2SaveStatus({ type: 'error', message: String(err) });
                   }
