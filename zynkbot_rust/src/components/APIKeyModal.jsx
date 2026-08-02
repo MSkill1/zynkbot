@@ -114,6 +114,13 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [showCostGuide, setShowCostGuide] = useState(false);
   const [modelSelections, setModelSelections] = useState({});
 
+  // R2 backup state
+  const [r2Endpoint, setR2Endpoint] = useState("");
+  const [r2AccessKey, setR2AccessKey] = useState("");
+  const [r2SecretKey, setR2SecretKey] = useState("");
+  const [r2Bucket, setR2Bucket] = useState("zynkbot-backups");
+  const [r2SaveStatus, setR2SaveStatus] = useState({ type: "idle", message: "" });
+
   // Custom endpoint state
   const [customUrl, setCustomUrl] = useState("");
   const [customApiKey, setCustomApiKey] = useState("");
@@ -157,6 +164,10 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       if (keys.CUSTOM_API_URL) setCustomUrl(keys.CUSTOM_API_URL);
       if (keys.CUSTOM_API_KEY) setCustomApiKey(keys.CUSTOM_API_KEY);
       if (keys.CUSTOM_MODEL) setCustomModel(keys.CUSTOM_MODEL);
+      if (keys.R2_ENDPOINT) setR2Endpoint(keys.R2_ENDPOINT);
+      if (keys.R2_ACCESS_KEY_ID) setR2AccessKey(keys.R2_ACCESS_KEY_ID);
+      if (keys.R2_SECRET_ACCESS_KEY) setR2SecretKey(keys.R2_SECRET_ACCESS_KEY);
+      if (keys.R2_BUCKET) setR2Bucket(keys.R2_BUCKET || "zynkbot-backups");
 
       const selections = {};
       for (const p of PROVIDERS) {
@@ -817,6 +828,92 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Cloud Backup (Cloudflare R2) */}
+        <div className="api-section" style={{ marginTop: '20px' }}>
+          <div className="api-section-header">
+            <h3>☁ Cloud Backup (Cloudflare R2)</h3>
+            <span className="api-section-desc">Zero-knowledge encrypted memory backup. Your key never leaves this device.</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Endpoint URL</label>
+              <input
+                type="text"
+                value={r2Endpoint}
+                onChange={e => setR2Endpoint(e.target.value)}
+                placeholder="https://<account-id>.r2.cloudflarestorage.com"
+                style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem' }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Access Key ID</label>
+                <input
+                  type="text"
+                  value={r2AccessKey}
+                  onChange={e => setR2AccessKey(e.target.value)}
+                  placeholder="Access Key ID"
+                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem', width: '100%' }}
+                />
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Secret Access Key</label>
+                <input
+                  type="password"
+                  value={r2SecretKey}
+                  onChange={e => setR2SecretKey(e.target.value)}
+                  placeholder="Secret Access Key"
+                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem', width: '100%' }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Bucket Name</label>
+                <input
+                  type="text"
+                  value={r2Bucket}
+                  onChange={e => setR2Bucket(e.target.value)}
+                  placeholder="zynkbot-backups"
+                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem' }}
+                />
+              </div>
+              <button
+                onClick={async () => {
+                  if (!r2Endpoint.trim() || !r2AccessKey.trim() || !r2SecretKey.trim()) {
+                    setR2SaveStatus({ type: 'error', message: 'Endpoint, Access Key ID, and Secret Key are required.' });
+                    return;
+                  }
+                  setR2SaveStatus({ type: 'saving', message: 'Saving…' });
+                  try {
+                    await invoke('set_api_key', { key: 'R2_ENDPOINT', value: r2Endpoint.trim() });
+                    await invoke('set_api_key', { key: 'R2_ACCESS_KEY_ID', value: r2AccessKey.trim() });
+                    await invoke('set_api_key', { key: 'R2_SECRET_ACCESS_KEY', value: r2SecretKey.trim() });
+                    await invoke('set_api_key', { key: 'R2_BUCKET', value: r2Bucket.trim() || 'zynkbot-backups' });
+                    setR2SaveStatus({ type: 'ok', message: 'Saved!' });
+                    setTimeout(() => setR2SaveStatus({ type: 'idle', message: '' }), 3000);
+                  } catch (err) {
+                    setR2SaveStatus({ type: 'error', message: String(err) });
+                  }
+                }}
+                style={{
+                  padding: '8px 20px', borderRadius: '4px', border: 'none',
+                  background: r2SaveStatus.type === 'ok' ? '#50fa7b' : '#6272a4',
+                  color: r2SaveStatus.type === 'ok' ? '#282a36' : '#fff',
+                  cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap',
+                }}
+              >
+                {r2SaveStatus.type === 'saving' ? 'Saving…' : r2SaveStatus.type === 'ok' ? '✓ Saved' : 'Save'}
+              </button>
+            </div>
+            {r2SaveStatus.message && r2SaveStatus.type !== 'ok' && (
+              <div style={{ fontSize: '0.8rem', color: r2SaveStatus.type === 'error' ? '#ff5555' : '#6272a4' }}>
+                {r2SaveStatus.message}
               </div>
             )}
           </div>

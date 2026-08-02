@@ -23,6 +23,37 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const [isEditing, setIsEditing] = useState(false);
+  const [backupStatus, setBackupStatus] = useState(null); // null | 'busy' | 'ok' | 'error'
+  const [backupMsg, setBackupMsg] = useState('');
+
+  const handleBackup = async () => {
+    setBackupStatus('busy'); setBackupMsg('Backing up…');
+    try {
+      const res = await invoke('backup_memories_to_r2', { userId });
+      setBackupStatus('ok'); setBackupMsg(res.message);
+    } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
+    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 4000);
+  };
+
+  const handleRestore = async () => {
+    if (!window.confirm('Restore memories from cloud backup? Memories already on this device will be skipped.')) return;
+    setBackupStatus('busy'); setBackupMsg('Restoring…');
+    try {
+      const res = await invoke('restore_memories_from_r2', { userId });
+      setBackupStatus('ok'); setBackupMsg(res.message);
+      fetchMemories();
+    } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
+    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 5000);
+  };
+
+  const handleCopyKey = async () => {
+    try {
+      const key = await invoke('get_backup_key');
+      await navigator.clipboard.writeText(key);
+      setBackupStatus('ok'); setBackupMsg('Encryption key copied — store it somewhere safe!');
+    } catch (err) { setBackupStatus('error'); setBackupMsg('Could not copy key: ' + String(err)); }
+    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 5000);
+  };
   const [editFormData, setEditFormData] = useState({
     title: '',
     content: '',
@@ -426,7 +457,27 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
           ) : (
             <>
               <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: 1 }}>Memory Manager</h2>
-              <button onClick={handleClearAllMemories} style={{ background: 'none', border: '1px solid #ff5555', color: '#ff5555', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', flexShrink: 0 }}>Clear All</button>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button onClick={handleBackup} disabled={backupStatus === 'busy'}
+                  style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  {backupStatus === 'busy' ? '…' : '☁ Backup'}
+                </button>
+                <button onClick={handleRestore} disabled={backupStatus === 'busy'}
+                  style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  Restore
+                </button>
+                <button onClick={handleCopyKey}
+                  style={{ background: '#ffb86c', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}
+                  title="Copy encryption key — store it somewhere safe">
+                  🔑 Key
+                </button>
+                <button onClick={handleClearAllMemories} style={{ background: 'none', border: '1px solid #ff5555', color: '#ff5555', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>Clear All</button>
+              </div>
+              {backupMsg && (
+                <div style={{ position: 'absolute', top: '100%', right: 0, fontSize: '0.75rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b', background: '#282a36', padding: '4px 8px', borderRadius: '4px', zIndex: 10, whiteSpace: 'nowrap' }}>
+                  {backupMsg}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -719,19 +770,35 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         {/* Header */}
         <div className="modal-header">
           <h2>Memory Manager</h2>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button onClick={handleBackup} disabled={backupStatus === 'busy'}
+              title="Encrypt and back up all memories to Cloudflare R2"
+              style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', padding: '8px 14px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              {backupStatus === 'busy' ? '…' : '☁ Backup'}
+            </button>
+            <button onClick={handleRestore} disabled={backupStatus === 'busy'}
+              title="Download and decrypt memories from Cloudflare R2"
+              style={{ background: '#44475a', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              Restore
+            </button>
+            <button onClick={handleCopyKey}
+              title="Copy your encryption key — store it somewhere safe. Without it, backups cannot be recovered."
+              style={{ background: '#ffb86c', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              🔑 Key
+            </button>
             <button
               onClick={handleClearAllMemories}
               className="delete-button"
-              style={{
-                backgroundColor: '#ff5555',
-                padding: '8px 16px',
-                fontSize: '14px'
-              }}
+              style={{ backgroundColor: '#ff5555', padding: '8px 16px', fontSize: '14px' }}
               title="Clear all memories for this user"
             >
-              🗑️ Clear All Memories
+              🗑️ Clear All
             </button>
+            {backupMsg && (
+              <span style={{ fontSize: '0.8rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b' }}>
+                {backupMsg}
+              </span>
+            )}
             <button onClick={onClose} className="close-button">✕</button>
           </div>
         </div>
@@ -777,20 +844,22 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             <option value="achievement">Achievement</option>
           </select>
           <input
-            type="date"
+            type="text"
             value={filterDateFrom}
             onChange={(e) => setFilterDateFrom(e.target.value)}
             className="date-input"
-            placeholder="From date"
-            title="Filter from date"
+            placeholder="From: YYYY-MM-DD"
+            title="Filter from date (YYYY-MM-DD)"
+            maxLength={10}
           />
           <input
-            type="date"
+            type="text"
             value={filterDateTo}
             onChange={(e) => setFilterDateTo(e.target.value)}
             className="date-input"
-            placeholder="To date"
-            title="Filter to date"
+            placeholder="To: YYYY-MM-DD"
+            title="Filter to date (YYYY-MM-DD)"
+            maxLength={10}
           />
           <button onClick={fetchMemories} className="refresh-button">
             🔄 Refresh
