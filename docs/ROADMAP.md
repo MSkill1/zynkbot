@@ -209,8 +209,12 @@ Early groundwork for the developer platform. Full SDK public release is v3.0; v1
 
 ### Security
 - ~~**TLS 1.3 Encryption** — Encrypt all ZynkSync/ZynkLink/ZChat traffic~~ ✅
-- **Device Authentication** — ED25519 keypairs per device, sign sync requests, prevent MITM
+- ~~**mTLS Device Authentication** — Devices present their certificate during TLS handshake; server verifies cert against paired-device DB before accepting protected requests. Pairing-bootstrap routes remain open; all sync, file transfer, messaging, Ollama, and API-key propagation routes require a verified cert.~~ ✅
 - **Audit Logging** — Comprehensive exportable logs for all network operations (who synced what, when)
+- **Network request limits** — Per-connection body size cap, concurrent-request limit, and hard timeouts to prevent a paired device from exhausting CPU, RAM, or bandwidth on the host
+- **OS Keychain / Android Keystore storage for API keys** — Currently stored in a plaintext `.env` file; migrate to the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service, Android Keystore) so keys are protected at rest even if the filesystem is accessible to another process
+- **Prompt injection defense** — Memory content injected into prompts should be clearly delimited and labeled as untrusted data; LLM-extracted memories containing instruction-like text must not be able to override system-prompt behavior
+- **Memory provenance and confidence** — Store the source conversation, extraction timestamp, model used, and a confidence indicator for each extracted memory; enables tracing incorrect memories back to origin and auditing extraction quality over time
 
 ### Ensemble Enhancements
 - **User-selectable coordinator model** — Currently auto-selected (Anthropic → xAI → OpenAI → local); allow user to manually designate which model acts as coordinator. Critical: the coordinator's training biases shape how the synthesis frames consensus and uncertainty — two coordinators can reach opposite verdicts from identical responses. For sensitive or contested questions, coordinator selection is not cosmetic.

@@ -2,7 +2,7 @@
 
 **Local-first, privacy-preserving networking across your devices**
 
-Zynkbot's networking features enable device-to-device communication, memory synchronization, file sharing, and *potentially* distrubuted LLM inference—all without cloud dependency or third-party servers.
+Zynkbot's networking features enable device-to-device communication, memory synchronization, file sharing, and *potentially* distributed LLM inference—all without cloud dependency or third-party servers.
 
 ---
 
@@ -25,12 +25,12 @@ All features work over any shared local network (home WiFi, office LAN, or mobil
 ### What It Does
 
 - Automatically syncs conversation memories between paired devices
-- Background synchronization every 60 seconds
+- Background synchronization every 5 minutes (300s default; configurable)
 - Complete data sync including embeddings, entities, and relationships
 
 ### Key Features
 
-- ✅ **Automatic Sync**: Background sync at configurable intervals (default 60s)
+- ✅ **Automatic Sync**: Background sync at configurable intervals (default 300s / 5 minutes)
 - ✅ **Complete Data**: Syncs embeddings, entities, relationships, and metadata
 - ✅ **Local Network Only**: Data never leaves your network
 
@@ -280,12 +280,14 @@ All networking features share common infrastructure:
 
 ### Current (v0.9 Production)
 
-- ✅ **TLS 1.3 encryption** for all sync traffic (self-signed certs, automatic trust on pairing)
-- ⚠️ **Pairing codes** expire after 10 minutes
-- ⚠️ **Local network only** - not exposed to internet
-- ✅ **Path validation** prevents directory traversal
+- ✅ **TLS 1.3 encryption** for all sync traffic (self-signed certs, pinned on pairing)
+- ✅ **mTLS device authentication** — paired devices present their certificate during the TLS handshake; the server verifies the cert against the database before accepting any protected request. Unauthenticated connections are rejected at the protocol level, not just the application layer.
+- ✅ **Pairing codes** with 10-minute expiration for initial device introduction (TOFU — trust-on-first-use; cert is pinned immediately after)
+- ✅ **Local network only** — not exposed to internet
+- ✅ **Path validation** prevents directory traversal in file transfers
 - ✅ **Pairing required** for all network features
 - ✅ **Independent trust relationships** — ZynkLink and ZynkSync are separate pairings. Unsyncing a device does not remove its ZynkLink pairing, and unlinking does not remove its ZynkSync pairing. Each can be revoked independently.
+- ✅ **Ollama admin operations blocked** — paired devices may use inference and model discovery via the remote proxy; pull, push, create, copy, and delete are rejected.
 
 **Safe for:**
 - Home networks
@@ -300,10 +302,10 @@ All networking features share common infrastructure:
 ### Future Enhancements
 
 See [ROADMAP.md](ROADMAP.md) for planned security features:
-- Device authentication with cryptographic keys
 - Audit logs for all network operations
-- Optional end-to-end encryption
+- Network request size and concurrency limits
 - Integrity verification for synced data
+- OS keychain / Android Keystore for API key storage
 
 ---
 
@@ -419,14 +421,14 @@ sudo firewall-cmd --reload
 
 ## Platform Support
 
-**Current (Rust/Tauri Desktop v0.9):**
+**Current (v0.9):**
 - ✅ Windows 10/11
 - ✅ Linux (Ubuntu, Arch, Fedora)
+- ✅ Android (beta — APK via [GitHub Releases](https://github.com/MSkill1/zynkbot/releases/latest))
 - ⚠️ macOS (not tested)
 
-**Future:**
-- 📱 Android (Tauri Mobile - primary platform goal)
-- 📱 iOS (Tauri Mobile - planned)
+**Planned:**
+- 📱 iOS (Tauri Mobile — planned)
 
 ---
 
@@ -434,7 +436,7 @@ sudo firewall-cmd --reload
 
 ### ZynkSync
 
-- **Sync interval**: 60 seconds (configurable)
+- **Sync interval**: 300 seconds / 5 minutes (configurable)
 - **Typical sync time**: Fast on a local network; varies by batch size and hardware
 - **Network bandwidth**: ~10-50KB per memory (includes embeddings)
 

@@ -460,8 +460,8 @@ pub async fn clear_all_memories(user_id: String, propagate: Option<bool>) -> Res
         println!("[Memory] Deletion propagation disabled (identity adoption cleanup)");
     }
 
-    // Record all tombstones BEFORE deleting from the DB so any batch sync that fires
-    // during propagation sees a complete tombstone set and doesn't re-pull from peers.
+    // Record all tombstones BEFORE deleting so any batch sync that fires during
+    // propagation sees a complete tombstone set and doesn't re-pull from peers.
     if should_propagate && !content_hashes.is_empty() {
         let service = {
             let g = crate::ZYNKSYNC_SERVICE.lock().await;

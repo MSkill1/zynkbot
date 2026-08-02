@@ -172,6 +172,10 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [pullLog, setPullLog] = useState([]);
   const pullLogRef = useRef(null);
 
+  // Stop model state
+  const [isStopping, setIsStopping] = useState(false);
+  const [stopMsg, setStopMsg] = useState("");
+
   useEffect(() => {
     if (isOpen) {
       loadAPIKeys();
@@ -478,6 +482,21 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     } finally {
       unlisten();
       setIsPulling(false);
+    }
+  };
+
+  const handleStopModel = async () => {
+    const model = customModel.trim();
+    if (!model) return;
+    setIsStopping(true);
+    setStopMsg("");
+    try {
+      const msg = await invoke('stop_ollama_model', { modelName: model });
+      setStopMsg(msg);
+    } catch (err) {
+      setStopMsg(`❌ ${err}`);
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -810,7 +829,32 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                       🗑️ Remove
                     </button>
                   )}
+                  {customModel.trim() && (
+                    <button
+                      onClick={handleStopModel}
+                      disabled={isStopping}
+                      style={{
+                        padding: '6px 12px', background: '#3a1a1a',
+                        border: '1px solid #ff555566', borderRadius: '4px',
+                        color: '#ff5555', cursor: isStopping ? 'wait' : 'pointer',
+                        fontSize: '0.85rem'
+                      }}
+                      title={`Unload ${customModel} from GPU/RAM`}
+                    >
+                      {isStopping ? "Stopping..." : "⏹ Stop Model"}
+                    </button>
+                  )}
                 </div>
+                {stopMsg && (
+                  <div style={{
+                    fontSize: '0.83rem', padding: '6px 8px', borderRadius: '4px', marginTop: '4px',
+                    background: stopMsg.startsWith('✅') ? '#1a3a1a' : '#3a1a1a',
+                    color: stopMsg.startsWith('✅') ? '#50fa7b' : '#ff5555',
+                    border: `1px solid ${stopMsg.startsWith('✅') ? '#50fa7b44' : '#ff555544'}`
+                  }}>
+                    {stopMsg}
+                  </div>
+                )}
 
                 {/* Pull Model — desktop only */}
                 <div style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px solid #44475a' }}>

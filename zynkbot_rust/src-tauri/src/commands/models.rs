@@ -439,6 +439,29 @@ fn strip_ansi_codes(s: &str) -> String {
     result
 }
 
+/// Run `ollama stop <model_name>` to unload the model from GPU/RAM.
+/// Returns immediately; does not stream progress.
+#[tauri::command]
+pub async fn stop_ollama_model(model_name: String) -> Result<String, String> {
+    if model_name.is_empty()
+        || !model_name.chars().all(|c| c.is_alphanumeric() || ":.-_/".contains(c))
+    {
+        return Err(format!("Invalid model name: {}", model_name));
+    }
+
+    let output = std::process::Command::new("ollama")
+        .args(["stop", &model_name])
+        .output()
+        .map_err(|e| format!("Failed to run ollama: {}", e))?;
+
+    if output.status.success() {
+        Ok(format!("✅ {} stopped", model_name))
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("ollama stop failed: {}", stderr.trim()))
+    }
+}
+
 /// Run `ollama pull <model_name>` and stream progress via "ollama-pull-progress" events
 #[tauri::command]
 pub async fn pull_ollama_model(app: tauri::AppHandle, model_name: String) -> Result<(), String> {

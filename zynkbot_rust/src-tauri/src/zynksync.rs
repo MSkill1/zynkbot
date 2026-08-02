@@ -26,9 +26,11 @@ use axum::{
     Json,
     extract::{State, ConnectInfo, Request},
     http::StatusCode,
+    middleware::Next,
     response::{Response, IntoResponse},
     body::Body,
 };
+use crate::tls::{PeerCertDer, VerifiedDevice};
 use std::net::SocketAddr;
 use sha2::{Sha256, Digest};
 use crate::zchat;
@@ -271,7 +273,17 @@ impl ZynkSyncService {
         }
         println!("[TLS] rebuild_http_client: {} peer cert(s) in DB, {} pinned", cert_count, pinned_ders.len());
 
-        let tls_config = crate::tls::build_pinned_client_config(pinned_ders);
+        let tls_config = match crate::tls::build_pinned_client_config_with_cert(
+            pinned_ders.clone(),
+            &self.cert_pem,
+            &self.key_pem,
+        ) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("[TLS] Failed to build client config with cert: {}, falling back to no-cert", e);
+                crate::tls::build_pinned_client_config(pinned_ders)
+            }
+        };
         let client = reqwest::ClientBuilder::new()
             .use_preconfigured_tls(tls_config)
             .timeout(std::time::Duration::from_secs(30))
@@ -476,8 +488,12 @@ impl ZynkSyncService {
             println!("[ZynkSync] Sending {} peer(s) to host for bidirectional mesh introduction", client_peers.len());
         }
 
-        // Use a TOFU client for the initial pairing request — the peer cert is not yet pinned.
-        // The pairing code provides the authentication; the cert is pinned after this exchange.
+        // TOFU (Trust On First Use): accept any cert for the initial pairing request.
+        // The peer cert cannot be pinned before pairing completes — that's a chicken-and-egg
+        // problem inherent to first contact. Security here comes from the 6-digit pairing code,
+        // which the user verifies out-of-band. After pairing, the cert is stored in zynk_devices
+        // and all subsequent connections use cert pinning via PinnedCertVerifier. This is the
+        // only place in the codebase where invalid-cert acceptance is intentional and necessary.
         let tofu_client = reqwest::ClientBuilder::new()
             .danger_accept_invalid_certs(true)
             .timeout(Duration::from_secs(60))
@@ -3059,23 +3075,27 @@ impl ZynkSyncService {
         // NOTE: Port cleanup is now handled in lib.rs start_zynksync() before creating the service
         // Self::cleanup_port_57963();
 
-        // Create Axum router with device-to-device endpoints
-        let app = Router::new()
-            .route("/api/zynksync/receive", post(handle_receive_sync))
+        // Public routes — reachable without a client cert (pairing bootstrap only).
+        let public_routes = Router::new()
             .route("/api/zynksync/info", axum::routing::get(handle_device_info))
             .route("/api/zynksync/verify-pairing", post(handle_verify_pairing))
-            .route("/api/zchat/deliver", post(handle_zchat_deliver))
             .route("/api/identity/verify-sync-code", post(handle_verify_sync_code))
             .route("/api/identity/consume-sync-code", post(handle_consume_sync_code))
-            // New endpoints for bidirectional "active device wins" sync
+            .route("/api/zynklink/verify-code", post(handle_zynklink_verify_code))
+            .route("/api/zynklink/accept-code", post(handle_zynklink_accept_code))
+            .with_state(Arc::clone(&self));
+
+        // Protected routes — require a verified client cert (mTLS).
+        // inject_verified_device (outer layer) must have already set VerifiedDevice before
+        // require_verified_device (inner layer) checks for it.
+        let protected_routes = Router::new()
+            .route("/api/zynksync/receive", post(handle_receive_sync))
+            .route("/api/zchat/deliver", post(handle_zchat_deliver))
             .route("/api/zynksync/inventory", post(handle_get_inventory))
             .route("/api/zynksync/delete", post(handle_delete_memories))
             .route("/api/zynksync/delete-by-hash", post(handle_delete_by_hash))
             .route("/api/zynksync/update-memory", post(handle_update_memory))
             .route("/api/zynksync/fetch", post(handle_fetch_memories))
-            // ZynkLink endpoints for file sharing
-            .route("/api/zynklink/verify-code", post(handle_zynklink_verify_code))
-            .route("/api/zynklink/accept-code", post(handle_zynklink_accept_code))
             .route("/api/zynklink/directories", post(handle_zynklink_directories))
             .route("/api/zynklink/files", post(handle_zynklink_files))
             .route("/api/zynklink/download", post(handle_zynklink_download))
@@ -3089,14 +3109,27 @@ impl ZynkSyncService {
             .route("/api/zynksync/push-api-key", post(handle_push_api_key))
             .route("/api/zynksync/pause", post(handle_pause))
             .route("/api/zynksync/resume", post(handle_resume))
-            // Ollama: info endpoint (returns configured model) + proxy to localhost:11434
             .route("/api/ollama/info", axum::routing::get(handle_ollama_info))
             .route("/api/ollama/*path", any(handle_ollama_proxy))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&self),
+                require_verified_device,
+            ))
             .with_state(Arc::clone(&self));
 
-        // Build TLS config from this device's certificate
-        let server_config = crate::tls::build_server_config(&self.cert_pem, &self.key_pem)
-            .map_err(|e| format!("Failed to build TLS config: {}", e))?;
+        let app = Router::new()
+            .merge(public_routes)
+            .merge(protected_routes)
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::clone(&self),
+                inject_verified_device,
+            ))
+            .with_state(Arc::clone(&self));
+
+        // Build TLS config with optional client certificate request (mTLS)
+        let server_config = crate::tls::build_server_config_with_optional_client_auth(
+            &self.cert_pem, &self.key_pem,
+        ).map_err(|e| format!("Failed to build TLS config: {}", e))?;
         let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
         // Bind TCP listener on fixed port 57963
@@ -3145,14 +3178,25 @@ impl ZynkSyncService {
                                     return;
                                 }
                             };
+                            // Extract client cert DER presented during mTLS handshake (may be None)
+                            let peer_cert_der: Option<PeerCertDer> = tls_stream
+                                .get_ref()
+                                .1
+                                .peer_certificates()
+                                .and_then(|certs| certs.first())
+                                .map(|c| PeerCertDer(c.as_ref().to_vec()));
                             let io = TokioIo::new(tls_stream);
                             let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                                 let mut router = router.clone();
+                                let peer_cert_der = peer_cert_der.clone();
                                 async move {
                                     let (parts, body) = req.into_parts();
                                     let body = axum::body::Body::new(body);
                                     let mut req = hyper::Request::from_parts(parts, body);
                                     req.extensions_mut().insert(ConnectInfo(peer_addr));
+                                    if let Some(cert) = peer_cert_der {
+                                        req.extensions_mut().insert(cert);
+                                    }
                                     use tower::Service;
                                     router.call(req).await
                                 }
@@ -3172,6 +3216,49 @@ impl ZynkSyncService {
 
         Ok(port)
     }
+}
+
+/// Middleware: looks up the PeerCertDer extension (set by accept loop from mTLS handshake)
+/// against zynk_devices.tls_cert_der. On a match, injects a VerifiedDevice extension so
+/// downstream middleware and handlers have cryptographic proof of device identity.
+async fn inject_verified_device(
+    State(service): State<Arc<ZynkSyncService>>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    if let Some(peer_cert) = req.extensions().get::<PeerCertDer>().cloned() {
+        let result = sqlx::query(
+            "SELECT device_id, device_name FROM zynk_devices \
+             WHERE tls_cert_der = ? AND sync_paired = 1 LIMIT 1"
+        )
+        .bind(&peer_cert.0)
+        .fetch_optional(&service.db_pool)
+        .await;
+
+        if let Ok(Some(row)) = result {
+            let device_id: String = row.try_get("device_id").unwrap_or_default();
+            let device_name: String = row.try_get("device_name").unwrap_or_default();
+            if !device_id.is_empty() {
+                req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
+            }
+        }
+    }
+    next.run(req).await
+}
+
+/// Middleware: rejects requests that lack a VerifiedDevice extension (i.e. the peer did not
+/// present a cert that matches a paired device). Used on sensitive routes like push-api-key.
+async fn require_verified_device(
+    req: Request,
+    next: Next,
+) -> Response {
+    if req.extensions().get::<VerifiedDevice>().is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "mTLS device verification required" })),
+        ).into_response();
+    }
+    next.run(req).await
 }
 
 /// Axum handler for receiving sync memories from a peer
@@ -4691,18 +4778,20 @@ async fn handle_ollama_info(
 async fn handle_push_api_key(
     State(service): State<Arc<ZynkSyncService>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    axum::Extension(verified): axum::Extension<VerifiedDevice>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<axum::Json<serde_json::Value>, String> {
     let key = payload.get("key").and_then(|v| v.as_str()).ok_or("Missing key")?;
     let value = payload.get("value").and_then(|v| v.as_str()).ok_or("Missing value")?;
 
-    // Only accept from trusted sync peers
+    // Device identity is now verified by mTLS cert (require_verified_device middleware ran).
+    // Keep IP check as defence-in-depth.
     let sender_ip = addr.ip().to_string();
     let peers = service.peers.read().await;
     let trusted = peers.values().any(|p| p.host == sender_ip && p.paired);
     drop(peers);
     if !trusted {
-        return Err(format!("Untrusted sender: {}", sender_ip));
+        return Err(format!("Untrusted sender IP {}, verified device: {}", sender_ip, verified.device_id));
     }
 
     // Allowlist — never let a peer set arbitrary env vars
@@ -4731,7 +4820,7 @@ async fn handle_push_api_key(
         .map_err(|e| format!("Failed to write .env: {}", e))?;
     std::env::set_var(key, value);
 
-    println!("[ZynkSync] ✓ Received API key push for {} from {}", key, sender_ip);
+    println!("[ZynkSync] ✓ Received API key push for {} from {} ({})", key, verified.device_name, sender_ip);
 
     if let Ok(guard) = crate::APP_HANDLE.lock() {
         if let Some(app) = guard.as_ref() {
@@ -4758,6 +4847,20 @@ async fn handle_ollama_proxy(
     let uri = request.uri().clone();
     let path = uri.path().trim_start_matches("/api/ollama");
     let query = uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
+
+    // Block Ollama admin operations — paired devices may only use inference and model discovery.
+    // Administrative endpoints (pull, push, create, copy, delete) could exhaust disk or cause
+    // unintended changes to the host's model library.
+    const BLOCKED: &[&str] = &[
+        "/api/pull", "/api/push", "/api/create", "/api/copy", "/api/delete",
+    ];
+    if BLOCKED.iter().any(|b| path == *b || path.starts_with(&format!("{}/", b))) {
+        return (
+            StatusCode::FORBIDDEN,
+            "Administrative Ollama operations are not available via remote proxy",
+        ).into_response();
+    }
+
     let target_url = format!("http://localhost:11434{}{}", path, query);
 
     // Read request body
