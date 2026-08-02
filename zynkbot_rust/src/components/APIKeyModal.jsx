@@ -838,9 +838,19 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
 
         {/* Cloud Backup (Cloudflare R2) */}
         <div className="api-section" style={{ marginTop: '20px' }}>
-          <div className="api-section-header" onClick={() => setShowR2(v => !v)} style={{ cursor: 'pointer', userSelect: 'none' }}>
-            <h3>{showR2 ? '▾' : '▸'} ☁ Cloud Backup (Cloudflare R2)</h3>
-            <span className="api-section-desc">Zero-knowledge encrypted memory backup. Your key never leaves this device.</span>
+          <div className="api-section-header" onClick={() => setShowR2(v => !v)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <h3>{showR2 ? '▾' : '▸'} ☁ Cloud Backup (Cloudflare R2)</h3>
+              <span className="api-section-desc">Zero-knowledge encrypted memory backup. Your key never leaves this device.</span>
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens'); }}
+              className="btn-get-key"
+              style={{ flexShrink: 0, marginTop: '2px' }}
+              title="Open Cloudflare R2 API tokens page"
+            >
+              🔗 Get credentials
+            </button>
           </div>
           {showR2 && <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
