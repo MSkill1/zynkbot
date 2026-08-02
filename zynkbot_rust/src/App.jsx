@@ -224,6 +224,7 @@ export default function App() {
   const memoryManagerRef = useRef(null);
   const conversationEndRef = useRef(null);
   const chatContainerRef = useRef(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768);
@@ -397,6 +398,17 @@ export default function App() {
     if (distanceFromBottom > 200) return;
     container.scrollTop = container.scrollHeight;
   }, [messages, isLoading]);
+
+  useEffect(() => {
+    const container = chatContainerRef.current;
+    if (!container) return;
+    const onScroll = () => {
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      setShowScrollButton(distanceFromBottom > 200);
+    };
+    container.addEventListener('scroll', onScroll);
+    return () => container.removeEventListener('scroll', onScroll);
+  }, []);
 
   // Voice input now handled by VoiceButton component (using whisper.cpp)
 
@@ -1442,31 +1454,60 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className="conversation-history" ref={chatContainerRef} style={{minHeight: 'unset', marginBottom: 0}}>
-              {messages.length === 0 ? (
-                <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
-              ) : (
-                messages.map((msg) => (
-                  <ChatMessage
-                    key={msg.id}
-                    message={msg}
-                    metadata={msg.role === 'assistant' ? msg.metadata : null}
-                    onExecuteWebSearch={handleExecuteWebSearch}
-                    sessionId={sessionId}
-                    userId={userId}
-                  />
-                ))
-              )}
-              {isLoading && (
-                <div className="message bot-message">
-                  <div className="message-content">
-                    {modelType && modelType.endsWith('.gguf')
-                      ? '⏳ Processing with local model (this may take a minute or two on CPU)...'
-                      : 'Thinking...'}
+            <div style={{ position: 'relative' }}>
+              <div className="conversation-history" ref={chatContainerRef} style={{minHeight: 'unset', marginBottom: 0}}>
+                {messages.length === 0 ? (
+                  <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
+                ) : (
+                  messages.map((msg) => (
+                    <ChatMessage
+                      key={msg.id}
+                      message={msg}
+                      metadata={msg.role === 'assistant' ? msg.metadata : null}
+                      onExecuteWebSearch={handleExecuteWebSearch}
+                      sessionId={sessionId}
+                      userId={userId}
+                    />
+                  ))
+                )}
+                {isLoading && (
+                  <div className="message bot-message">
+                    <div className="message-content">
+                      {modelType && modelType.endsWith('.gguf')
+                        ? '⏳ Processing with local model (this may take a minute or two on CPU)...'
+                        : 'Thinking...'}
+                    </div>
                   </div>
-                </div>
+                )}
+                <div ref={conversationEndRef} />
+              </div>
+              {showScrollButton && (
+                <button
+                  onClick={() => conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                  style={{
+                    position: 'absolute',
+                    bottom: '12px',
+                    right: '16px',
+                    width: '44px',
+                    height: '44px',
+                    borderRadius: '50%',
+                    background: 'rgba(99, 102, 241, 0.9)',
+                    border: 'none',
+                    color: '#fff',
+                    fontSize: '22px',
+                    lineHeight: 1,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+                    zIndex: 10,
+                  }}
+                  aria-label="Scroll to bottom"
+                >
+                  ↓
+                </button>
               )}
-              <div ref={conversationEndRef} />
             </div>
 
             {/* Memory hint — only shown before first message */}
