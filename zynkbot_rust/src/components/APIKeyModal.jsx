@@ -619,7 +619,6 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
             <div className="provider-header" onClick={() => setShowOllama(v => !v)} style={{ cursor: 'pointer', userSelect: 'none' }}>
               <div className="provider-info">
                 <span className="provider-name">
-                  {showOllama ? '▾' : '▸'}{' '}
                   {isAndroid ? "Ollama (Local AI)" : "Custom / Ollama"}
                 </span>
                 <span className="provider-description">
@@ -628,12 +627,15 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                     : "Any OpenAI-compatible server (Ollama, llama-server, LM Studio)"}
                 </span>
               </div>
-              <div className="provider-status">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                 {isCustomConfigured() ? (
                   <span className="status-configured">✅ Configured</span>
                 ) : (
                   <span className="status-missing">⚠️ Not set</span>
                 )}
+                <span style={{ background: '#44475a', color: '#f8f8f2', fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                  {showOllama ? 'Hide ▴' : 'Show ▾'}
+                </span>
               </div>
             </div>
 
@@ -838,19 +840,23 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
 
         {/* Cloud Backup (Cloudflare R2) */}
         <div className="api-section" style={{ marginTop: '20px' }}>
-          <div className="api-section-header" onClick={() => setShowR2(v => !v)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div className="api-section-header" onClick={() => setShowR2(v => !v)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
-              <h3>{showR2 ? '▾' : '▸'} ☁ Cloud Backup (Cloudflare R2)</h3>
+              <h3>☁ Cloud Backup (Cloudflare R2)</h3>
               <span className="api-section-desc">Zero-knowledge encrypted memory backup. Your key never leaves this device.</span>
             </div>
-            <button
-              onClick={(e) => { e.stopPropagation(); openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens'); }}
-              className="btn-get-key"
-              style={{ flexShrink: 0, marginTop: '2px' }}
-              title="Open Cloudflare R2 API tokens page"
-            >
-              🔗 Get credentials
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+              <button
+                onClick={(e) => { e.stopPropagation(); openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens'); }}
+                className="btn-get-key"
+                title="Open Cloudflare R2 API tokens page"
+              >
+                🔗 Get credentials
+              </button>
+              <span style={{ background: '#44475a', color: '#f8f8f2', fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
+                {showR2 ? 'Hide ▴' : 'Show ▾'}
+              </span>
+            </div>
           </div>
           {showR2 && <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
