@@ -138,9 +138,20 @@ pub async fn send_message(
     })
 }
 
+/// Build a plain reqwest client for external API calls.
+/// Pass `true` for LAN/self-signed endpoints (Ollama), `false` for public HTTPS APIs.
+pub fn default_client(accept_invalid_certs: bool) -> reqwest::Client {
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(accept_invalid_certs)
+        .build()
+        .unwrap_or_default()
+}
+
 /// Send a message via OpenAI API with SSE token streaming.
 /// Also used by xAI (Grok) since it uses the OpenAI-compatible format.
 /// `api_url` lets callers override the endpoint (e.g. xAI uses a different base URL).
+/// `client` should be built by the caller — use `default_client(false)` for public APIs,
+/// `default_client(true)` for LAN endpoints, or the ZynkSync mTLS client for peer URLs.
 #[allow(dead_code)]
 pub async fn send_message_streaming<F>(
     api_key: &str,
@@ -149,16 +160,12 @@ pub async fn send_message_streaming<F>(
     max_tokens: Option<u32>,
     temperature: Option<f32>,
     api_url: &str,
-    accept_invalid_certs: bool,
+    client: reqwest::Client,
     on_token: F,
 ) -> Result<LLMResponse, LLMError>
 where
     F: Fn(String),
 {
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(accept_invalid_certs)
-        .build()
-        .unwrap_or_default();
 
     let request_body = OpenAIRequest {
         model: model.to_string(),

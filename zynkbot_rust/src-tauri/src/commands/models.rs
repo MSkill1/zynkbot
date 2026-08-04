@@ -386,16 +386,45 @@ pub async fn fetch_custom_models(base_url: String, api_key: String) -> Result<Ve
 /// Called from mobile when the user taps "Connect to Ollama on [PC]".
 #[tauri::command]
 pub async fn get_peer_ollama_config(host: String, port: u16) -> Result<String, String> {
-    let url = format!("https://{}:{}/api/ollama/info", host, port);
+    let base_url = format!("https://{}:{}", host, port);
+    let url = format!("{}/api/ollama/info", base_url);
 
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(8))
-        .build()
-        .map_err(|e| e.to_string())?;
+    // Use the ZynkSync mTLS client if this host:port is a paired peer — the endpoint
+    // is behind require_verified_device and will 401 without a client certificate.
+    let client = {
+        let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+        if let Some(service) = guard.as_ref() {
+            if let Some(c) = service.get_peer_client_for_url(&base_url).await {
+                c
+            } else {
+                reqwest::Client::builder()
+                    .danger_accept_invalid_certs(true)
+                    .timeout(std::time::Duration::from_secs(8))
+                    .build()
+                    .map_err(|e| e.to_string())?
+            }
+        } else {
+            reqwest::Client::builder()
+                .danger_accept_invalid_certs(true)
+                .timeout(std::time::Duration::from_secs(8))
+                .build()
+                .map_err(|e| e.to_string())?
+        }
+    };
 
     let response = client.get(&url).send().await
         .map_err(|e| format!("Can't reach desktop ({}): {}", host, e))?;
+
+    let status = response.status();
+    if status == 401 || status == 403 {
+        return Err(
+            "This device isn't paired with the desktop yet. \
+             Open ZynkSync on both devices and complete pairing first.".to_string()
+        );
+    }
+    if !status.is_success() {
+        return Err(format!("Desktop returned error {}", status));
+    }
 
     let json: serde_json::Value = response.json().await
         .map_err(|e| format!("Invalid response from desktop: {}", e))?;

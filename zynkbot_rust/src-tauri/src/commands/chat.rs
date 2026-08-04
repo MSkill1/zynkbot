@@ -3,6 +3,19 @@ use crate::ReplyResponse;
 use crate::Memory;
 use tauri::Emitter;
 
+/// Returns the ZynkSync mTLS-capable HTTP client if `base_url` points to a paired peer,
+/// otherwise returns a plain client that accepts self-signed certificates (for LAN Ollama).
+async fn build_custom_client(base_url: &str) -> reqwest::Client {
+    let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+    if let Some(service) = guard.as_ref() {
+        if let Some(client) = service.get_peer_client_for_url(base_url).await {
+            println!("[mTLS] Using ZynkSync mTLS client for custom endpoint: {}", base_url);
+            return client;
+        }
+    }
+    crate::llm::openai::default_client(true)
+}
+
 fn get_best_available_backend() -> Option<String> {
     let custom_url = std::env::var("CUSTOM_API_URL").unwrap_or_default();
     let custom_model = std::env::var("CUSTOM_MODEL").unwrap_or_default();
@@ -596,7 +609,7 @@ pub async fn send_message_with_memory(
                 Some(4096),
                 None,
                 "https://api.openai.com/v1/chat/completions",
-                false,
+                crate::llm::openai::default_client(false),
                 move |token| { app_handle.emit("stream-token", token).ok(); },
             ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
@@ -636,7 +649,7 @@ pub async fn send_message_with_memory(
                 Some(4096),
                 None,
                 "https://api.x.ai/v1/chat/completions",
-                false,
+                crate::llm::openai::default_client(false),
                 move |token| { app_handle.emit("stream-token", token).ok(); },
             ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
@@ -674,7 +687,7 @@ pub async fn send_message_with_memory(
                 Some(4096),
                 None,
                 "https://api.mistral.ai/v1/chat/completions",
-                false,
+                crate::llm::openai::default_client(false),
                 move |token| { app_handle.emit("stream-token", token).ok(); },
             ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
@@ -700,6 +713,7 @@ pub async fn send_message_with_memory(
         }];
 
         println!("[⏱️ PERF] Calling custom endpoint ({}) model: {}", api_url, model_name);
+        let custom_client = build_custom_client(&base_url).await;
         let response = crate::llm::openai::send_message_streaming(
             &api_key,
             &model_name,
@@ -707,7 +721,7 @@ pub async fn send_message_with_memory(
             Some(4096),
             None,
             &api_url,
-            true, // custom/LAN endpoint — accept self-signed certs
+            custom_client,
             move |token| { app_handle.emit("stream-token", token).ok(); },
         ).await.map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))?;
         response.content
@@ -1725,7 +1739,7 @@ pub async fn run_ensemble(
         let api_key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
         if !api_key.is_empty() {
             let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
-            crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(256), None, "https://api.mistral.ai/v1/chat/completions", false, |_| {})
+            crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(256), None, "https://api.mistral.ai/v1/chat/completions", crate::llm::openai::default_client(false), |_| {})
                 .await.map(|r| r.content).ok()
         } else { None }
     } else if coordinator_model.to_lowercase() == "custom" {
@@ -1735,7 +1749,8 @@ pub async fn run_ensemble(
         if !base_url.is_empty() && !model_name.is_empty() {
             let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
             let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
-            crate::llm::openai::send_message_streaming(&api_key, &model_name, messages, Some(256), None, &api_url, true, |_| {})
+            let custom_client = build_custom_client(&base_url).await;
+            crate::llm::openai::send_message_streaming(&api_key, &model_name, messages, Some(256), None, &api_url, custom_client, |_| {})
                 .await.map(|r| r.content).ok()
         } else { None }
     } else {
@@ -1881,7 +1896,7 @@ pub async fn run_ensemble(
                         ).await.map(|r| r.content).map_err(|e| e.to_string())
                     } else {
                         let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
-                        crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(4096), None, "https://api.mistral.ai/v1/chat/completions", false, |_| {})
+                        crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(4096), None, "https://api.mistral.ai/v1/chat/completions", crate::llm::openai::default_client(false), |_| {})
                             .await.map(|r| r.content).map_err(|e| e.to_string())
                     }
                 } else if model_backend.to_lowercase() == "custom" {
@@ -1892,8 +1907,9 @@ pub async fn run_ensemble(
                     let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
                     let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
                     let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_question.clone() }];
+                    let custom_client = build_custom_client(&base_url).await;
                     crate::llm::openai::send_message_streaming(
-                        &api_key, &model_name, messages, Some(2048), None, &api_url, true, |_| {}
+                        &api_key, &model_name, messages, Some(2048), None, &api_url, custom_client, |_| {}
                     ).await.map(|r| r.content).map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))
                 } else {
                     if image_data.is_some() {
@@ -2025,7 +2041,7 @@ pub async fn run_ensemble(
         let api_key = std::env::var("MISTRAL_API_KEY")
             .map_err(|_| "MISTRAL_API_KEY not set".to_string())?;
         let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
-        crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(4096), None, "https://api.mistral.ai/v1/chat/completions", false, |_| {})
+        crate::llm::openai::send_message_streaming(&api_key, &mistral_model, messages, Some(4096), None, "https://api.mistral.ai/v1/chat/completions", crate::llm::openai::default_client(false), |_| {})
             .await.map_err(|e| e.to_string())?.content
     } else if coordinator_model.to_lowercase() == "custom" {
         let base_url = std::env::var("CUSTOM_API_URL")
@@ -2035,7 +2051,8 @@ pub async fn run_ensemble(
         let api_key = std::env::var("CUSTOM_API_KEY").unwrap_or_default();
         let api_url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
         let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
-        crate::llm::openai::send_message_streaming(&api_key, &model_name, messages, Some(4096), None, &api_url, true, |_| {})
+        let custom_client = build_custom_client(&base_url).await;
+        crate::llm::openai::send_message_streaming(&api_key, &model_name, messages, Some(4096), None, &api_url, custom_client, |_| {})
             .await.map_err(|e| e.to_string())?.content
     } else {
         // Local model coordinator — enables fully offline ensemble
