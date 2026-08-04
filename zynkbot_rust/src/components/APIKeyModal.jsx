@@ -445,6 +445,9 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       setApiKeys(prev => ({ ...prev, CUSTOM_API_URL: proxyUrl, CUSTOM_MODEL: model }));
       delete apiKeys.CUSTOM_API_KEY;
       setCustomStatus({ type: "success", message: `✓ Connected to ${peer.device_name} — using ${model}` });
+      // Auto-select the custom backend so the user doesn't have to change it manually
+      // (especially important on Android where no local models exist to fall back to).
+      localStorage.setItem('zynkbot_preferred_model', 'custom');
       if (onKeysChanged) onKeysChanged();
     } catch (err) {
       setCustomStatus({ type: "error", message: String(err) });
@@ -926,11 +929,20 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
         {/* Cloud Backup (Cloudflare R2) */}
         <div className="api-section" style={{ marginTop: '20px' }}>
           <div className="api-section-header" onClick={() => setShowR2(v => !v)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <h3>☁ Cloud Backup (Cloudflare R2)</h3>
-              <span className="api-section-desc">Zero-knowledge encrypted memory backup. Your key never leaves this device.</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', margin: 0 }}>
+              ☁ Cloud Backup
+              <span style={{ fontSize: '0.72rem', background: '#1a3a1a', color: '#50fa7b', border: '1px solid #50fa7b44', padding: '2px 7px', borderRadius: '10px', fontWeight: 'normal', letterSpacing: '0.02em' }}>Free Beta</span>
+            </h3>
+            <span style={{ background: '#44475a', color: '#f8f8f2', fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {showR2 ? 'Hide ▴' : 'Show ▾'}
+            </span>
+          </div>
+          <div style={{ marginTop: '6px' }}>
+            <span className="api-section-desc">
+              Zero-knowledge encrypted backup — your key never leaves this device.{' '}
+              <span style={{ color: '#bd93f9' }}>Free during beta. Early users get founder pricing when paid tiers launch.</span>
+            </span>
+            <div style={{ marginTop: '10px' }}>
               <button
                 onClick={(e) => { e.stopPropagation(); openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens'); }}
                 className="btn-get-key"
@@ -938,9 +950,6 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
               >
                 🔗 Get credentials
               </button>
-              <span style={{ background: '#44475a', color: '#f8f8f2', fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
-                {showR2 ? 'Hide ▴' : 'Show ▾'}
-              </span>
             </div>
           </div>
           {showR2 && <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>

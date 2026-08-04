@@ -184,6 +184,7 @@ export default function App() {
 
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const isSendingRef = useRef(false); // synchronous guard against concurrent sends
   const [modelType, setModelType] = useState(() => {
     return localStorage.getItem('zynkbot_preferred_model') || 'local';
   });
@@ -293,42 +294,55 @@ export default function App() {
 
       setAvailableModels(models);
 
-      // Validate stored model: if it's an API model, check that a key exists
-      const stored = localStorage.getItem('zynkbot_preferred_model') || 'local';
-      const storedModel = models.find(m => m.id === stored);
-      const isApiModel = storedModel?.type === 'api' || ['anthropic', 'openai', 'xai'].includes(stored);
-
-      if (isApiModel) {
-        try {
-          const keys = await invoke('get_api_keys');
-          const keyMap = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY' };
-          const requiredKey = keyMap[stored];
-          const hasKey = requiredKey && keys[requiredKey] && keys[requiredKey].length > 0;
-          if (!hasKey) {
-            const firstLocal = models.find(m => m.type === 'local');
-            const fallback = firstLocal ? firstLocal.id : 'local';
-            setModelType(fallback);
-            localStorage.setItem('zynkbot_preferred_model', fallback);
-            console.log('No API key for', stored, '— defaulting to', fallback);
-          }
-        } catch (e) {
-          console.warn('Could not validate API key, keeping stored model');
-        }
-      } else if (models.length > 0 && !models.find(m => m.id === stored)) {
-        setModelType(models[0].id);
-        console.log('Stored model not found, auto-selected:', models[0].id);
+      // On first run (nothing stored), default to first local GGUF model.
+      // After that: always honour whatever the user last selected — never override it.
+      // Migration: if localStorage somehow holds a raw GGUF path that doesn't match any
+      // model in the list (e.g. path changed after reinstall), treat it as unset.
+      let stored = localStorage.getItem('zynkbot_preferred_model');
+      if (stored && stored.endsWith('.gguf') && !models.find(m => m.id === stored)) {
+        console.log('[Models] Stale GGUF path in localStorage, clearing:', stored);
+        localStorage.removeItem('zynkbot_preferred_model');
+        stored = null;
       }
+      if (!stored) {
+        // Priority: local (privacy) → custom/Ollama → first available API model.
+        // Android has no local models, so it naturally falls through to custom or API.
+        const firstLocal = models.find(m => m.model_type === 'local');
+        const custom = models.find(m => m.id === 'custom');
+        const firstApi = models.find(m => m.model_type === 'api' && m.id !== 'custom');
+        const defaultModel = firstLocal || custom || firstApi;
+        if (defaultModel) {
+          setModelType(defaultModel.id);
+          localStorage.setItem('zynkbot_preferred_model', defaultModel.id);
+          console.log('[Models] First run — defaulting to:', defaultModel.id);
+        }
+      } else if (stored === 'local' && !models.find(m => m.id === 'local' || m.model_type === 'local')) {
+        // Stale 'local' stored value but no local models available (e.g. Android after a
+        // desktop-only install migrated over). Fall through to custom/API instead of leaving
+        // the user stuck on a backend that will error out.
+        const custom = models.find(m => m.id === 'custom');
+        const firstApi = models.find(m => m.model_type === 'api' && m.id !== 'custom');
+        const fallback = custom || firstApi;
+        if (fallback) {
+          setModelType(fallback.id);
+          localStorage.setItem('zynkbot_preferred_model', fallback.id);
+          console.log('[Models] Stale "local" preference with no local models — switching to:', fallback.id);
+        }
+      } else if (stored && stored !== modelType) {
+        // localStorage changed out-of-band (e.g. APIKeyModal switched to 'custom' after
+        // connecting to a desktop). Sync the in-memory state so the picker reflects it.
+        setModelType(stored);
+        console.log('[Models] Syncing modelType to stored preference:', stored);
+      }
+      // If the user already has a preference stored, leave it alone regardless of
+      // whether the model appears in the current list (e.g. Ollama might be offline).
 
       return models;
     } catch (error) {
       console.error('Failed to fetch models from Rust:', error);
-      // Last resort: hardcoded local fallback only
-      const fallbackModels = [
-        { id: "local", name: "Local Model", type: "local" }
-      ];
+      const fallbackModels = [{ id: "local", name: "Local Model", type: "local" }];
       setAvailableModels(fallbackModels);
-      setModelType('local');
-      console.warn('Using local fallback model');
+      console.warn('Using local fallback model list');
       return fallbackModels;
     }
   };
@@ -550,6 +564,8 @@ export default function App() {
 
   const handleSendMessage = async (message) => {
     if (!message.trim()) return;
+    if (isSendingRef.current) return; // prevent re-entrant calls before React re-renders
+    isSendingRef.current = true;
 
     // Disable send button immediately to prevent double-clicks
     setIsLoading(true);
@@ -735,6 +751,7 @@ export default function App() {
         }];
       });
     } finally {
+      isSendingRef.current = false;
       setIsLoading(false);
     }
   };

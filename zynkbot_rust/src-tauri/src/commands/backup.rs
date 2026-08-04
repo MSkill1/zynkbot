@@ -14,6 +14,10 @@ fn key_path() -> std::path::PathBuf {
     crate::db::get_app_data_dir().join("backup.key")
 }
 
+fn key_acknowledged_path() -> std::path::PathBuf {
+    crate::db::get_app_data_dir().join("backup_key_acknowledged")
+}
+
 fn load_or_create_key() -> Result<[u8; 32], String> {
     let path = key_path();
     if path.exists() {
@@ -39,6 +43,54 @@ fn load_or_create_key() -> Result<[u8; 32], String> {
 #[tauri::command]
 pub async fn get_backup_key() -> Result<String, String> {
     load_or_create_key().map(|k| hex::encode(&k))
+}
+
+/// Returns the current backup key and whether the user has acknowledged saving it.
+#[tauri::command]
+pub async fn get_backup_key_status() -> Result<serde_json::Value, String> {
+    let key = load_or_create_key()?;
+    let acknowledged = key_acknowledged_path().exists();
+    Ok(serde_json::json!({
+        "key": hex::encode(&key),
+        "acknowledged": acknowledged
+    }))
+}
+
+/// Records that the user has saved their backup key.
+#[tauri::command]
+pub async fn acknowledge_backup_key() -> Result<(), String> {
+    std::fs::write(key_acknowledged_path(), b"1")
+        .map_err(|e| format!("Failed to write acknowledged flag: {}", e))
+}
+
+/// Derives a 32-byte AES-256 key from a passphrase using Argon2id and saves it as
+/// the backup key. Uses a fixed domain-separator salt so the same passphrase always
+/// produces the same key on any device — enabling passphrase-based recovery.
+#[tauri::command]
+pub async fn derive_key_from_passphrase(passphrase: String) -> Result<String, String> {
+    use argon2::{Argon2, Algorithm, Version, Params};
+
+    if passphrase.trim().is_empty() {
+        return Err("Passphrase cannot be empty".to_string());
+    }
+
+    // Fixed salt — intentionally deterministic for cross-device recovery
+    const SALT: &[u8] = b"zynkbot-backup-v1-key-derivation";
+
+    let params = Params::new(65536, 3, 1, Some(32))
+        .map_err(|e| format!("Invalid Argon2 params: {:?}", e))?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
+    let mut key = [0u8; 32];
+    argon2.hash_password_into(passphrase.as_bytes(), SALT, &mut key)
+        .map_err(|e| format!("Key derivation failed: {:?}", e))?;
+
+    std::fs::write(key_path(), hex::encode(&key))
+        .map_err(|e| format!("Failed to save derived key: {}", e))?;
+    std::fs::write(key_acknowledged_path(), b"1")
+        .map_err(|e| format!("Failed to write acknowledged flag: {}", e))?;
+
+    Ok(hex::encode(&key))
 }
 
 // --- Encryption ---

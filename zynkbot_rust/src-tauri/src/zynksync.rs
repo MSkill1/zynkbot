@@ -37,6 +37,21 @@ use crate::zchat;
 use crate::user_identity;
 use tauri::Emitter;
 
+fn extract_host_port(url: &str) -> Option<(String, u16)> {
+    let without_scheme = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let host_port = without_scheme.split('/').next()?;
+    if let Some(colon_pos) = host_port.rfind(':') {
+        let host = host_port[..colon_pos].to_string();
+        let port: u16 = host_port[colon_pos + 1..].parse().ok()?;
+        Some((host, port))
+    } else {
+        let port = if url.starts_with("https://") { 443 } else { 80 };
+        Some((host_port.to_string(), port))
+    }
+}
+
 /// Represents a peer device
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerDevice {
@@ -303,6 +318,19 @@ impl ZynkSyncService {
 
     pub async fn get_http_client(&self) -> reqwest::Client {
         self.http_client.read().await.clone()
+    }
+
+    /// Returns the mTLS-capable HTTP client if `url` points to a known paired peer,
+    /// otherwise returns None. Used by chat/memory callers to transparently upgrade to mTLS.
+    pub async fn get_peer_client_for_url(&self, url: &str) -> Option<reqwest::Client> {
+        let (host, port) = extract_host_port(url)?;
+        let peers = self.peers.read().await;
+        let is_peer = peers.values().any(|p| p.host == host && p.port == port);
+        if is_peer {
+            Some(self.get_http_client().await)
+        } else {
+            None
+        }
     }
 
     /// Generate a new 6-digit pairing code

@@ -735,7 +735,7 @@ async fn call_mistral_for_memory_decision(prompt: &str) -> Result<String, String
         Some(4096),
         None,
         "https://api.mistral.ai/v1/chat/completions",
-        false,
+        openai::default_client(false),
         |_| {},
     ).await {
         Ok(response) => Ok(response.content),
@@ -762,7 +762,18 @@ async fn call_custom_for_memory_decision(prompt: &str) -> Result<String, String>
         temperature: Some(0.3),
     };
 
-    let client = reqwest::Client::new();
+    let client = {
+        let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+        if let Some(service) = guard.as_ref() {
+            if let Some(c) = service.get_peer_client_for_url(&base_url).await {
+                c
+            } else {
+                crate::llm::openai::default_client(true)
+            }
+        } else {
+            crate::llm::openai::default_client(true)
+        }
+    };
     let mut builder = client.post(&api_url).header("Content-Type", "application/json").json(&req);
     if !api_key.is_empty() {
         builder = builder.header("Authorization", format!("Bearer {}", api_key));
@@ -2209,6 +2220,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Cloud backup commands
             commands::backup::get_backup_key,
+            commands::backup::get_backup_key_status,
+            commands::backup::acknowledge_backup_key,
+            commands::backup::derive_key_from_passphrase,
             commands::backup::get_r2_config_status,
             commands::backup::backup_memories_to_r2,
             commands::backup::restore_memories_from_r2,

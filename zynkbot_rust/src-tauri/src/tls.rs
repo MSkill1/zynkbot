@@ -71,33 +71,6 @@ fn generate_and_save(data_dir: &Path) -> Result<(String, String, Vec<u8>), Strin
     Ok((cert_pem, key_pem, cert_der))
 }
 
-/// Build a rustls ServerConfig from PEM-encoded cert and key.
-/// Used by start_http_server() to create the TLS acceptor.
-pub fn build_server_config(cert_pem: &str, key_pem: &str) -> Result<rustls::ServerConfig, String> {
-    use rustls_pemfile::{certs, private_key};
-    use std::io::BufReader;
-    let _ = rustls::crypto::ring::default_provider().install_default();
-
-    let cert_chain: Vec<rustls::pki_types::CertificateDer<'static>> = {
-        let mut reader = BufReader::new(cert_pem.as_bytes());
-        certs(&mut reader)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Failed to parse cert PEM: {}", e))?
-    };
-
-    let key = {
-        let mut reader = BufReader::new(key_pem.as_bytes());
-        private_key(&mut reader)
-            .map_err(|e| format!("Failed to parse key PEM: {}", e))?
-            .ok_or_else(|| "No private key found in PEM".to_string())?
-    };
-
-    rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(cert_chain, key)
-        .map_err(|e| format!("Failed to build TLS ServerConfig: {}", e))
-}
-
 /// Build a rustls ServerConfig that requests (but does not require) a client certificate.
 /// The accept loop extracts the presented cert and injects it as a `PeerCertDer` extension
 /// so middleware can verify device identity against the DB.

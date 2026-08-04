@@ -53,6 +53,7 @@ sha2 = "0.10"  # SHA-256 hashing for content-based sync comparison
 hmac = "0.12"   # HMAC-SHA256 for AWS Sig V4 signing (R2 backup)
 aes-gcm = "0.10" # AES-256-GCM encryption for cloud backup
 hex = "0.4"     # Hex encode/decode for backup key and signatures
+argon2 = "0.5"  # Argon2id passphrase-derived backup key
 
 # Database (SQLite)
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "chrono", "uuid", "json"] }
