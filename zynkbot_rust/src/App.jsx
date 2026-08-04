@@ -1383,7 +1383,7 @@ export default function App() {
       <div style={{
         display: 'flex',
         gap: '20px',
-        padding: '0 20px 20px 20px',
+        padding: isMobile ? '0 4px 12px 4px' : '0 20px 20px 20px',
         maxWidth: '1800px',
         margin: '0 auto',
         alignItems: 'stretch',

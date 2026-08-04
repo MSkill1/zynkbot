@@ -388,6 +388,7 @@ body.modal-open .conversation-history {
   .conversation-history {
     max-height: 45dvh;
     min-height: 120px;
+    padding: 0.5rem 0.25rem;
   }
 
   /* === INPUT AREA === */
