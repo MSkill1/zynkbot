@@ -1380,18 +1380,18 @@ export default function App() {
       </CollapsibleSidebar>
 
       {/* Main Content - Chat + Insights (2 columns) */}
-      <div style={{
+      <div className={isMobile ? 'mobile-main-content' : undefined} style={{
         display: 'flex',
-        gap: '20px',
-        padding: isMobile ? '0 4px 12px 4px' : '0 20px 20px 20px',
-        maxWidth: '1800px',
-        margin: '0 auto',
-        alignItems: 'stretch',
-        minHeight: 'calc(100vh - 200px)'
+        gap: isMobile ? 0 : '20px',
+        padding: isMobile ? undefined : '0 20px 20px 20px',
+        maxWidth: isMobile ? undefined : '1800px',
+        margin: isMobile ? undefined : '0 auto',
+        alignItems: isMobile ? undefined : 'stretch',
+        minHeight: isMobile ? undefined : 'calc(100vh - 200px)'
       }}>
         {/* Left: Conversation + Recent Memories */}
-        <div style={{flex: '1 1 60%', minWidth: '0', display: 'flex', flexDirection: 'column', gap: '20px', height: '100%'}}>
-          <div>
+        <div className={isMobile ? 'mobile-left-col' : undefined} style={{flex: '1 1 60%', minWidth: '0', display: 'flex', flexDirection: 'column', gap: isMobile ? 0 : '20px', height: isMobile ? undefined : '100%'}}>
+          <div className={isMobile ? 'mobile-conv-section' : undefined}>
             <div style={{marginBottom: '15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
               <h2 style={{margin: 0, color: '#8be9fd'}}>Conversation</h2>
               <div style={{ display: 'flex', gap: '6px' }}>
@@ -1437,6 +1437,9 @@ export default function App() {
                 </button>
               </div>
             </div>
+            {/* Scrollable content: messages + tip + Recent Memories */}
+            <div className={isMobile ? 'mobile-scroll-content' : undefined}>
+
             {availableModels.length === 0 && (
               <div style={{
                 margin: '8px 12px',
@@ -1544,7 +1547,9 @@ export default function App() {
               </div>
             )}
 
-            {/* Compose area: file chips + textarea + buttons — sticky on mobile */}
+            </div> {/* /mobile-scroll-content */}
+
+            {/* Compose area: file chips + textarea + buttons — flex-shrink:0, sits at bottom of flex column */}
             <div className={isMobile ? 'mobile-compose-area' : undefined}>
 
             {/* Attached file chips */}

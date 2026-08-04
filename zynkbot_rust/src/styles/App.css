@@ -383,24 +383,67 @@ body.modal-open .conversation-history {
     margin: 0;
   }
 
-  /* === CONVERSATION AREA === */
-  /* dvh keeps height stable as mobile keyboard appears/disappears */
+  /* === MOBILE FULL-HEIGHT FLEX LAYOUT === */
+  /* The main content, left column, and conversation section form a flex column
+     that fills exactly 100dvh. The scroll area grows to fill the middle.
+     The compose bar (textarea + buttons) is a fixed-height flex child at the bottom.
+     No position:sticky needed — the flex layout enforces the geometry. */
+
+  .mobile-main-content {
+    height: 100dvh !important;
+    overflow: hidden !important;
+    padding: 0 4px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 0 !important;
+  }
+
+  .mobile-left-col {
+    flex: 1 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+  }
+
+  .mobile-conv-section {
+    flex: 1 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .mobile-scroll-content {
+    flex: 1 !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    padding-bottom: 8px !important;
+  }
+
+  /* conversation-history no longer needs its own max-height cap on mobile —
+     the outer flex layout limits it naturally */
+  .mobile-scroll-content .conversation-history {
+    max-height: none !important;
+    min-height: 0 !important;
+    padding: 0.5rem 0.25rem !important;
+    margin-bottom: 0 !important;
+  }
+
+  /* === CONVERSATION AREA (non-flex path, kept for safety) === */
   .conversation-history {
-    max-height: 45dvh;
     min-height: 120px;
     padding: 0.5rem 0.25rem;
   }
 
-  /* === STICKY COMPOSE BAR === */
-  /* File chips + textarea + buttons stick to viewport bottom.
-     Recent Memories renders above it in the DOM so it scrolls out of view. */
+  /* === COMPOSE BAR === */
+  /* flex-shrink:0 keeps it at the bottom of the flex column */
   .mobile-compose-area {
-    position: sticky;
-    bottom: 0;
+    flex-shrink: 0;
     background: #181a20;
     padding: 6px 0;
     padding-bottom: env(safe-area-inset-bottom, 6px);
-    z-index: 50;
   }
 
   /* === INPUT AREA === */
