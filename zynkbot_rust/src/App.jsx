@@ -1537,6 +1537,16 @@ export default function App() {
               </div>
             )}
 
+            {/* On mobile: Recent Memories sits here (above input) so the sticky input bar sits at the true bottom */}
+            {isMobile && (
+              <div style={{ marginTop: '8px' }}>
+                <MemoryManager ref={memoryManagerRef} user_id={userId} apiBaseUrl={API_BASE_URL} containmentMode={containmentMode} />
+              </div>
+            )}
+
+            {/* Compose area: file chips + textarea + buttons — sticky on mobile */}
+            <div className={isMobile ? 'mobile-compose-area' : undefined}>
+
             {/* Attached file chips */}
             {attachedFiles.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
@@ -1877,17 +1887,21 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            </div> {/* /mobile-compose-area */}
           </div>
 
-          {/* Recent Memories - moved here from right column */}
-          <div>
-            <MemoryManager
-              ref={memoryManagerRef}
-              user_id={userId}
-              apiBaseUrl={API_BASE_URL}
-              containmentMode={containmentMode}
-            />
-          </div>
+          {/* Recent Memories - desktop only; mobile version renders above the sticky input */}
+          {!isMobile && (
+            <div>
+              <MemoryManager
+                ref={memoryManagerRef}
+                user_id={userId}
+                apiBaseUrl={API_BASE_URL}
+                containmentMode={containmentMode}
+              />
+            </div>
+          )}
         </div>
 
         {/* Live Insights panel removed - simplified to single-column layout */}

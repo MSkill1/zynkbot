@@ -391,6 +391,18 @@ body.modal-open .conversation-history {
     padding: 0.5rem 0.25rem;
   }
 
+  /* === STICKY COMPOSE BAR === */
+  /* File chips + textarea + buttons stick to viewport bottom.
+     Recent Memories renders above it in the DOM so it scrolls out of view. */
+  .mobile-compose-area {
+    position: sticky;
+    bottom: 0;
+    background: #181a20;
+    padding: 6px 0;
+    padding-bottom: env(safe-area-inset-bottom, 6px);
+    z-index: 50;
+  }
+
   /* === INPUT AREA === */
   /* Stack textarea above buttons on very narrow screens */
   .chat-input-wrapper {
