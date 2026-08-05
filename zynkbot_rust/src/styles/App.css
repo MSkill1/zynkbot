@@ -420,11 +420,21 @@ body.modal-open .conversation-history {
     min-height: 0 !important;
     overflow-y: auto !important;
     padding-bottom: 8px !important;
+    display: flex !important;
+    flex-direction: column !important;
   }
 
-  /* conversation-history no longer needs its own max-height cap on mobile —
-     the outer flex layout limits it naturally */
-  .mobile-scroll-content .conversation-history {
+  /* Conversation wrapper flex-grows so the chat area fills all space above
+     the compose bar — no huge empty gap when the conversation is empty. */
+  .mobile-conv-fill {
+    flex: 1 !important;
+    min-height: 200px !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .mobile-conv-fill .conversation-history {
+    flex: 1 !important;
     max-height: none !important;
     min-height: 0 !important;
     padding: 0.5rem 0.25rem !important;

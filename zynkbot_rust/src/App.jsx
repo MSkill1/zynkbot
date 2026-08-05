@@ -1437,8 +1437,15 @@ export default function App() {
                 </button>
               </div>
             </div>
-            {/* Scrollable content: messages + tip + Recent Memories */}
+            {/* Scrollable content: Recent Memories at top, conversation at bottom (near input) */}
             <div className={isMobile ? 'mobile-scroll-content' : undefined}>
+
+            {/* On mobile: Recent Memories sits at TOP of scroll area */}
+            {isMobile && (
+              <div style={{ marginBottom: '8px', flexShrink: 0 }}>
+                <MemoryManager ref={memoryManagerRef} user_id={userId} apiBaseUrl={API_BASE_URL} containmentMode={containmentMode} />
+              </div>
+            )}
 
             {availableModels.length === 0 && (
               <div style={{
@@ -1474,7 +1481,7 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div style={{ position: 'relative' }}>
+            <div className={isMobile ? 'mobile-conv-fill' : undefined} style={{ position: 'relative' }}>
               <div className="conversation-history" ref={chatContainerRef} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
                   <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
@@ -1537,13 +1544,6 @@ export default function App() {
                   Tip: start with " <span style={{ fontWeight: 'bold' }}>Remember:</span> " to force save directly into your memories.
                   Use the Remember: command when you want exact details saved precisely to be recalled later.
                 </span>
-              </div>
-            )}
-
-            {/* On mobile: Recent Memories sits here (above input) so the sticky input bar sits at the true bottom */}
-            {isMobile && (
-              <div style={{ marginTop: '8px' }}>
-                <MemoryManager ref={memoryManagerRef} user_id={userId} apiBaseUrl={API_BASE_URL} containmentMode={containmentMode} />
               </div>
             )}
 
