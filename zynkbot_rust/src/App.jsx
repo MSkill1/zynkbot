@@ -373,11 +373,13 @@ export default function App() {
     if (!container) return;
     const onScroll = () => {
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      setShowScrollButton(distanceFromBottom > 200);
+      setShowScrollButton(distanceFromBottom > 80);
     };
     container.addEventListener('scroll', onScroll);
+    // Fire once on mount so button appears immediately if user is already scrolled up
+    onScroll();
     return () => container.removeEventListener('scroll', onScroll);
-  }, []);
+  }, [messages.length]);
 
   // Voice input now handled by VoiceButton component (using whisper.cpp)
 
