@@ -383,19 +383,21 @@ body.modal-open .conversation-history {
     margin: 0;
   }
 
-  /* === MOBILE FULL-HEIGHT FLEX LAYOUT === */
-  /* The main content, left column, and conversation section form a flex column
-     that fills exactly 100dvh. The scroll area grows to fill the middle.
-     The compose bar (textarea + buttons) is a fixed-height flex child at the bottom.
-     No position:sticky needed — the flex layout enforces the geometry. */
-
+  /* === MOBILE FULL-HEIGHT FLEX LAYOUT ===
+     Pin input + button grid to bottom of viewport; conversation-history fills
+     the middle and scrolls internally. No Recent Memories widget below the
+     input (hidden via .memory-manager display:none above) means this works
+     cleanly with a straight flex column. */
   .mobile-main-content {
     height: 100dvh !important;
     overflow: hidden !important;
     padding: 0 4px !important;
     display: flex !important;
     flex-direction: column !important;
+    max-width: none !important;
+    margin: 0 !important;
     min-height: 0 !important;
+    align-items: stretch !important;
   }
 
   .mobile-left-col {
@@ -405,55 +407,37 @@ body.modal-open .conversation-history {
     display: flex !important;
     flex-direction: column !important;
     gap: 0 !important;
+    height: auto !important;
   }
 
   .mobile-conv-section {
     flex: 1 !important;
     min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
     overflow: hidden !important;
-    display: flex !important;
-    flex-direction: column !important;
   }
 
-  .mobile-scroll-content {
+  /* The position:relative wrapper around conversation-history grows to fill space */
+  .mobile-conv-history-wrap {
     flex: 1 !important;
     min-height: 0 !important;
-    overflow-y: auto !important;
-    padding-bottom: 8px !important;
     display: flex !important;
     flex-direction: column !important;
   }
 
-  /* Conversation wrapper flex-grows so the chat area fills all space above
-     the compose bar — no huge empty gap when the conversation is empty. */
-  .mobile-conv-fill {
+  /* Conversation history fills its wrapper, scrolls internally */
+  .mobile-conv-history-wrap > .conversation-history {
     flex: 1 !important;
-    min-height: 200px !important;
-    display: flex !important;
-    flex-direction: column !important;
-  }
-
-  .mobile-conv-fill .conversation-history {
-    flex: 1 !important;
+    min-height: 0 !important;
     max-height: none !important;
-    min-height: 0 !important;
-    padding: 0.5rem 0.25rem !important;
     margin-bottom: 0 !important;
   }
 
-  /* === CONVERSATION AREA (non-flex path, kept for safety) === */
+  /* === CONVERSATION AREA (fallback for non-flex path) === */
   .conversation-history {
     min-height: 120px;
     padding: 0.5rem 0.25rem;
-  }
-
-  /* === COMPOSE BAR === */
-  /* flex-shrink:0 keeps it at the bottom of the flex column */
-  .mobile-compose-area {
-    flex-shrink: 0;
-    background: #181a20;
-    padding: 6px 0;
-    padding-bottom: env(safe-area-inset-bottom, 6px);
   }
 
   /* === INPUT AREA === */
@@ -463,10 +447,10 @@ body.modal-open .conversation-history {
     gap: 8px !important;
   }
 
-  /* Full-width 1x2 grid on mobile — Voice/Send hidden, so only Ensemble+Clear in one row */
+  /* Full-width 2×2 grid on mobile: Ensemble | Clear / Memory Manager | Send */
   .chat-button-grid {
     grid-template-columns: 1fr 1fr !important;
-    grid-template-rows: 48px !important;
+    grid-template-rows: 48px 48px !important;
     width: 100% !important;
   }
 
@@ -478,6 +462,12 @@ body.modal-open .conversation-history {
     height: 48px !important;
     min-height: 48px !important;
     max-height: 48px !important;
+  }
+
+  /* === HIDE INLINE MEMORY WIDGET ON MOBILE ===
+     The Memory Manager modal is still opened via the mobile button grid. */
+  .memory-manager {
+    display: none !important;
   }
 
   /* === CONVERSATION HISTORY PANEL === */

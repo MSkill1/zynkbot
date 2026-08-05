@@ -107,51 +107,6 @@ function AccessGate() {
   );
 }
 
-function MobileModelManager() {
-  const [models, setModels] = useState([]);
-  const [deleting, setDeleting] = useState(null);
-
-  useEffect(() => {
-    invoke('list_user_models').then(setModels).catch(() => {});
-  }, []);
-
-  const handleDelete = async (filename) => {
-    if (!window.confirm(`Delete ${filename}? This cannot be undone.`)) return;
-    setDeleting(filename);
-    try {
-      await invoke('delete_user_model', { filename });
-      setModels(prev => prev.filter(f => f !== filename));
-    } catch (e) {
-      alert('Delete failed: ' + e);
-    } finally {
-      setDeleting(null);
-    }
-  };
-
-  if (models.length === 0) return null;
-
-  return (
-    <div style={{ marginTop: '20px', padding: '15px', background: '#1e1f29', borderRadius: '8px', border: '1px solid #44475a' }}>
-      <h4 style={{ color: '#ff5555', fontSize: '0.95rem', margin: '0 0 10px' }}>🗑️ Downloaded Local Models</h4>
-      <p style={{ fontSize: '0.82rem', color: '#9aa5c4', marginBottom: '10px' }}>
-        Local models are not supported on Android. Delete to free up storage.
-      </p>
-      {models.map(filename => (
-        <div key={filename} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', padding: '8px 10px', background: '#282a36', borderRadius: '6px' }}>
-          <span style={{ fontSize: '0.82rem', color: '#f8f8f2', wordBreak: 'break-all', flex: 1, marginRight: '10px' }}>{filename}</span>
-          <button
-            onClick={() => handleDelete(filename)}
-            disabled={deleting === filename}
-            style={{ padding: '5px 12px', background: '#ff5555', color: '#fff', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '0.82rem', whiteSpace: 'nowrap' }}
-          >
-            {deleting === filename ? 'Deleting…' : 'Delete'}
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export default function App() {
   // Persistent user ID from backend (shared across all YOUR devices)
   const [userId, setUserId] = useState(null);
@@ -1039,9 +994,6 @@ export default function App() {
           </p>
         </div>
 
-        {/* Mobile: Manage Downloaded Models */}
-        {isMobile && <MobileModelManager />}
-
         {/* Getting Started */}
         <div style={{marginTop: '20px', padding: '15px', background: '#1e1f29', borderRadius: '8px', border: '1px solid #44475a'}}>
           <div
@@ -1437,16 +1389,6 @@ export default function App() {
                 </button>
               </div>
             </div>
-            {/* Scrollable content: Recent Memories at top, conversation at bottom (near input) */}
-            <div className={isMobile ? 'mobile-scroll-content' : undefined}>
-
-            {/* On mobile: Recent Memories sits at TOP of scroll area */}
-            {isMobile && (
-              <div style={{ marginBottom: '8px', flexShrink: 0 }}>
-                <MemoryManager ref={memoryManagerRef} user_id={userId} apiBaseUrl={API_BASE_URL} containmentMode={containmentMode} />
-              </div>
-            )}
-
             {availableModels.length === 0 && (
               <div style={{
                 margin: '8px 12px',
@@ -1481,7 +1423,7 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className={isMobile ? 'mobile-conv-fill' : undefined} style={{ position: 'relative' }}>
+            <div className={isMobile ? 'mobile-conv-history-wrap' : undefined} style={{ position: 'relative' }}>
               <div className="conversation-history" ref={chatContainerRef} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
                   <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
@@ -1547,11 +1489,6 @@ export default function App() {
               </div>
             )}
 
-            </div> {/* /mobile-scroll-content */}
-
-            {/* Compose area: file chips + textarea + buttons — flex-shrink:0, sits at bottom of flex column */}
-            <div className={isMobile ? 'mobile-compose-area' : undefined}>
-
             {/* Attached file chips */}
             {attachedFiles.length > 0 && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
@@ -1609,12 +1546,12 @@ export default function App() {
                   placeholder="Type your message... (Shift+Enter for new line)"
                   className="query-input"
                   disabled={isLoading}
-                  rows={4}
+                  rows={isMobile ? 3 : 4}
                   style={{
                     width: '100%',
                     resize: 'vertical',
-                    minHeight: '90px',
-                    maxHeight: '200px',
+                    minHeight: isMobile ? '60px' : '90px',
+                    maxHeight: isMobile ? '135px' : '200px',
                     padding: '12px',
                     paddingBottom: '45px',
                     background: '#282a36',
@@ -1747,14 +1684,16 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right: 2x2 Button Grid (1x2 on mobile — no Voice/Send) */}
+              {/* Right: 2×2 Button Grid.
+                  Desktop: Voice | Ensemble / Send | Clear
+                  Mobile:  Ensemble | Clear / MemoryManager | Send */}
               <div className="chat-button-grid" style={{
                 display: 'grid',
-                gridTemplateColumns: isMobile ? '85px' : '85px 85px',
-                gridTemplateRows: isMobile ? '42px' : '42px 42px',
+                gridTemplateColumns: '85px 85px',
+                gridTemplateRows: '42px 42px',
                 gap: '10px'
               }}>
-                {/* Top Left: Voice (hidden on mobile — Android keyboard handles dictation) */}
+                {/* Desktop-only: Voice (mobile uses Android keyboard dictation) */}
                 {!isMobile && (voiceInputEnabled ? (
                   <VoiceButton
                     onTranscript={(text) => setInput(text)}
@@ -1767,6 +1706,8 @@ export default function App() {
                       minHeight: '42px',
                       maxHeight: '42px',
                       boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      gridColumn: 1,
+                      gridRow: 1,
                     }}
                   />
                 ) : (
@@ -1783,12 +1724,14 @@ export default function App() {
                     textAlign: 'center',
                     padding: '4px',
                     boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                    gridColumn: 1,
+                    gridRow: 1,
                   }}>
                     Voice Disabled
                   </div>
                 ))}
 
-                {/* Top Right: Ensemble */}
+                {/* Ensemble — mobile: TL (1,1); desktop: TR (1,2) */}
                 <button
                   onClick={() => setShowEnsemble(true)}
                   disabled={isLoading || containmentMode === 'child'}
@@ -1814,7 +1757,9 @@ export default function App() {
                     alignItems: 'center',
                     justifyContent: 'center',
                     boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                    flex: 'none'
+                    flex: 'none',
+                    gridColumn: isMobile ? 1 : 2,
+                    gridRow: 1,
                   }}
                   onMouseOver={(e) => !(isLoading || containmentMode === 'child') && (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
@@ -1822,42 +1767,42 @@ export default function App() {
                   Ensemble
                 </button>
 
-                {/* Bottom Left: Send (hidden on mobile — Android keyboard Enter key handles send) */}
-                {!isMobile && (
-                  <button
-                    onClick={() => handleSendMessage(input)}
-                    disabled={isLoading}
-                    style={{
-                      width: '85px',
-                      height: '42px',
-                      minWidth: '85px',
-                      maxWidth: '85px',
-                      minHeight: '42px',
-                      maxHeight: '42px',
-                      padding: '0',
-                      background: 'linear-gradient(135deg, #50fa7b 0%, #3dd66b 100%)',
-                      color: '#282a36',
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: isLoading ? 'not-allowed' : 'pointer',
-                      fontWeight: 'bold',
-                      fontSize: '0.75rem',
-                      transition: 'all 0.2s',
-                      opacity: isLoading ? 0.5 : 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                      flex: 'none'
-                    }}
-                    onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
-                    onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
-                  >
-                    {isLoading ? 'Sending...' : 'Send'}
-                  </button>
-                )}
+                {/* Send — mobile: BR (2,2); desktop: BL (2,1) */}
+                <button
+                  onClick={() => handleSendMessage(input)}
+                  disabled={isLoading}
+                  style={{
+                    width: '85px',
+                    height: '42px',
+                    minWidth: '85px',
+                    maxWidth: '85px',
+                    minHeight: '42px',
+                    maxHeight: '42px',
+                    padding: '0',
+                    background: 'linear-gradient(135deg, #50fa7b 0%, #3dd66b 100%)',
+                    color: '#282a36',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    fontWeight: 'bold',
+                    fontSize: '0.75rem',
+                    transition: 'all 0.2s',
+                    opacity: isLoading ? 0.5 : 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                    flex: 'none',
+                    gridColumn: isMobile ? 2 : 1,
+                    gridRow: 2,
+                  }}
+                  onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
+                  onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
+                >
+                  {isLoading ? 'Sending...' : 'Send'}
+                </button>
 
-                {/* Bottom Right: Clear */}
+                {/* Clear — mobile: TR (1,2); desktop: BR (2,2) */}
                 <button
                   onClick={handleClearConversation}
                   disabled={isLoading}
@@ -1883,30 +1828,67 @@ export default function App() {
                     alignItems: 'center',
                     justifyContent: 'center',
                     boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                    flex: 'none'
+                    flex: 'none',
+                    gridColumn: 2,
+                    gridRow: isMobile ? 1 : 2,
                   }}
                   onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                 >
                   Clear
                 </button>
+
+                {/* Mobile-only: Memory Manager — BL (2,1); opens the modal via ref */}
+                {isMobile && (
+                  <button
+                    onClick={() => memoryManagerRef.current?.open()}
+                    disabled={isLoading}
+                    title="Open Memory Manager"
+                    style={{
+                      width: '85px',
+                      height: '42px',
+                      minWidth: '85px',
+                      maxWidth: '85px',
+                      minHeight: '42px',
+                      maxHeight: '42px',
+                      padding: '0',
+                      background: 'linear-gradient(135deg, #bd93f9 0%, #9575e0 100%)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      fontWeight: 'bold',
+                      fontSize: '0.72rem',
+                      transition: 'all 0.2s',
+                      opacity: isLoading ? 0.5 : 1,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                      flex: 'none',
+                      gridColumn: 1,
+                      gridRow: 2,
+                    }}
+                  >
+                    📚 Memories
+                  </button>
+                )}
               </div>
             </div>
-
-            </div> {/* /mobile-compose-area */}
           </div>
 
-          {/* Recent Memories - desktop only; mobile version renders above the sticky input */}
-          {!isMobile && (
-            <div>
-              <MemoryManager
-                ref={memoryManagerRef}
-                user_id={userId}
-                apiBaseUrl={API_BASE_URL}
-                containmentMode={containmentMode}
-              />
-            </div>
-          )}
+          {/* MemoryManager: renders inline widget + modal as siblings. On mobile,
+              the .memory-manager widget div is hidden via CSS so only the modal is
+              available — opened via memoryManagerRef.current.open() from the mobile
+              button grid. */}
+          <div>
+            <MemoryManager
+              ref={memoryManagerRef}
+              user_id={userId}
+              apiBaseUrl={API_BASE_URL}
+              containmentMode={containmentMode}
+            />
+          </div>
         </div>
 
         {/* Live Insights panel removed - simplified to single-column layout */}
