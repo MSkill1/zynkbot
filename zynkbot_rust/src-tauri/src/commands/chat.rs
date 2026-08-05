@@ -3,6 +3,15 @@ use crate::ReplyResponse;
 use crate::Memory;
 use tauri::Emitter;
 
+/// Tauri command: cancel the in-flight LLM generation.
+/// Sets the global GENERATION_CANCELLED flag; the streaming loops in llm/openai.rs
+/// and llm/anthropic.rs check this flag at the top of each iteration and break out.
+#[tauri::command]
+pub fn cancel_generation() {
+    crate::GENERATION_CANCELLED.store(true, std::sync::atomic::Ordering::SeqCst);
+    println!("[Rust] 🛑 Generation cancellation requested");
+}
+
 /// Returns the ZynkSync mTLS-capable HTTP client if `base_url` points to a paired peer,
 /// otherwise returns a plain client that accepts self-signed certificates (for LAN Ollama).
 async fn build_custom_client(base_url: &str) -> reqwest::Client {
@@ -74,6 +83,10 @@ pub async fn send_message_with_memory(
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
 ) -> Result<ReplyResponse, String> {
     use crate::conversation_engine::ConversationEngine;
+
+    // Reset cancellation flag at the start of every new request so stale
+    // cancellations from a previous stopped generation don't leak into this one.
+    crate::GENERATION_CANCELLED.store(false, std::sync::atomic::Ordering::SeqCst);
 
     // Normalize brand name misspellings from voice transcription before any processing
     let message = crate::normalize_brand_names(message);

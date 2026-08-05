@@ -2,7 +2,9 @@ import React, { useState, useEffect } from "react";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import "../styles/ChatMessage.css";
 
-export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId }) {
+export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit }) {
+  const [editDraft, setEditDraft] = useState(message.content || "");
+  useEffect(() => { if (isEditing) setEditDraft(message.content || ""); }, [isEditing, message.content]);
   // Handle both old format {user, bot} and new format {role, content}
   const isUserMessage = message.role === 'user';
   const content = message.content;
@@ -35,7 +37,46 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
               </span>
             )}
           </div>
-          <div className="message-content">{content}</div>
+          {isEditing ? (
+            <div className="message-edit-container">
+              <textarea
+                value={editDraft}
+                onChange={(e) => setEditDraft(e.target.value)}
+                autoFocus
+                rows={Math.min(8, Math.max(2, editDraft.split('\n').length + 1))}
+                className="message-edit-textarea"
+              />
+              <div className="message-edit-actions">
+                <button
+                  onClick={onCancelEdit}
+                  className="message-edit-btn message-edit-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => onSaveEdit && onSaveEdit(editDraft.trim())}
+                  disabled={!editDraft.trim() || editDraft.trim() === (message.content || "").trim()}
+                  className="message-edit-btn message-edit-save"
+                >
+                  Save & regenerate
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="message-content">{content}</div>
+              {onEdit && (
+                <button
+                  className="message-action-btn"
+                  onClick={onEdit}
+                  title="Edit and resend"
+                  aria-label="Edit last message"
+                >
+                  ✏️ Edit
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
     );
@@ -225,6 +266,16 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
               </ul>
             </details>
           </div>
+        )}
+        {onRegenerate && (
+          <button
+            className="message-action-btn"
+            onClick={onRegenerate}
+            title="Regenerate response"
+            aria-label="Regenerate last response"
+          >
+            ↻ Regenerate
+          </button>
         )}
       </div>
     </div>

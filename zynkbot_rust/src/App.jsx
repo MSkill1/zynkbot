@@ -139,6 +139,7 @@ export default function App() {
 
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState(null);
   const isSendingRef = useRef(false); // synchronous guard against concurrent sends
   const [modelType, setModelType] = useState(() => {
     return localStorage.getItem('zynkbot_preferred_model') || 'local';
@@ -519,10 +520,11 @@ export default function App() {
     }
   };
 
-  const handleSendMessage = async (message) => {
+  const handleSendMessage = async (message, options = {}) => {
     if (!message.trim()) return;
     if (isSendingRef.current) return; // prevent re-entrant calls before React re-renders
     isSendingRef.current = true;
+    const skipUserMessageAdd = options.skipUserMessageAdd === true;
 
     // Disable send button immediately to prevent double-clicks
     setIsLoading(true);
@@ -571,7 +573,9 @@ export default function App() {
       timestamp: new Date().toISOString()
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    if (!skipUserMessageAdd) {
+      setMessages(prev => [...prev, userMessage]);
+    }
 
     try {
       console.log('=== SENDING TO RUST BACKEND ===');
@@ -711,6 +715,63 @@ export default function App() {
       isSendingRef.current = false;
       setIsLoading(false);
     }
+  };
+
+  // Stop the currently streaming generation.
+  // Optimistically flip UI out of loading state immediately — the backend's
+  // post-stream work (memory extraction, sync) continues in the background but
+  // the user shouldn't have to wait for it. The re-entrant send guard is also
+  // cleared so a fresh Send can be sent right away.
+  const handleStopGeneration = async () => {
+    setIsLoading(false);
+    isSendingRef.current = false;
+    try {
+      await invoke('cancel_generation');
+    } catch (e) {
+      console.error('Failed to cancel generation:', e);
+    }
+  };
+
+  // Edit the last user message: turn it into an inline editable textarea in place.
+  // The ChatMessage component renders a textarea + Save/Cancel when its id matches
+  // editingMessageId.
+  const handleEditLastUser = () => {
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx === -1) return;
+    setEditingMessageId(messages[lastUserIdx].id);
+  };
+
+  // Called from ChatMessage's Save button: update the message content in place,
+  // drop any assistant response that followed, then re-run inference with the
+  // edited content (no duplicate user message in the conversation log).
+  const handleSaveEdit = async (messageId, newContent) => {
+    setEditingMessageId(null);
+    const idx = messages.findIndex(m => m.id === messageId);
+    if (idx === -1) return;
+    // Update content and drop anything after (usually a stale assistant reply)
+    const truncated = messages.slice(0, idx + 1).map((m, i) =>
+      i === idx ? { ...m, content: newContent } : m
+    );
+    setMessages(truncated);
+    // Regenerate response — skip re-adding the user message since it's already in the list
+    await handleSendMessage(newContent, { skipUserMessageAdd: true });
+  };
+
+  const handleCancelEdit = () => setEditingMessageId(null);
+
+  // Regenerate the last assistant response: strip from last user onwards, then re-send
+  const handleRegenerateLast = async () => {
+    let lastUserIdx = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { lastUserIdx = i; break; }
+    }
+    if (lastUserIdx === -1) return;
+    const prompt = messages[lastUserIdx].content;
+    setMessages(messages.slice(0, lastUserIdx));
+    await handleSendMessage(prompt);
   };
 
   // Execute web search when user confirms
@@ -1430,16 +1491,31 @@ export default function App() {
                 {messages.length === 0 ? (
                   <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
                 ) : (
-                  messages.map((msg) => (
-                    <ChatMessage
-                      key={msg.id}
-                      message={msg}
-                      metadata={msg.role === 'assistant' ? msg.metadata : null}
-                      onExecuteWebSearch={handleExecuteWebSearch}
-                      sessionId={sessionId}
-                      userId={userId}
-                    />
-                  ))
+                  (() => {
+                    // Find indices of the last user message and last assistant message
+                    // so ChatMessage can render Edit / Regenerate icons on those only.
+                    let lastUserIdx = -1, lastAssistantIdx = -1;
+                    for (let i = messages.length - 1; i >= 0; i--) {
+                      if (lastUserIdx === -1 && messages[i].role === 'user') lastUserIdx = i;
+                      if (lastAssistantIdx === -1 && messages[i].role === 'assistant') lastAssistantIdx = i;
+                      if (lastUserIdx !== -1 && lastAssistantIdx !== -1) break;
+                    }
+                    return messages.map((msg, idx) => (
+                      <ChatMessage
+                        key={msg.id}
+                        message={msg}
+                        metadata={msg.role === 'assistant' ? msg.metadata : null}
+                        onExecuteWebSearch={handleExecuteWebSearch}
+                        sessionId={sessionId}
+                        userId={userId}
+                        onEdit={!isLoading && idx === lastUserIdx ? handleEditLastUser : undefined}
+                        onRegenerate={!isLoading && idx === lastAssistantIdx ? handleRegenerateLast : undefined}
+                        isEditing={editingMessageId === msg.id}
+                        onSaveEdit={(newContent) => handleSaveEdit(msg.id, newContent)}
+                        onCancelEdit={handleCancelEdit}
+                      />
+                    ));
+                  })()
                 )}
                 {isLoading && (
                   <div className="message bot-message">
@@ -1769,10 +1845,10 @@ export default function App() {
                   Ensemble
                 </button>
 
-                {/* Send — mobile: BR (2,2); desktop: BL (2,1) */}
+                {/* Send/Stop — same grid slot. Turns into red Stop button while streaming. */}
                 <button
-                  onClick={() => handleSendMessage(input)}
-                  disabled={isLoading}
+                  onClick={isLoading ? handleStopGeneration : () => handleSendMessage(input)}
+                  title={isLoading ? 'Stop generation' : 'Send message'}
                   style={{
                     width: '85px',
                     height: '42px',
@@ -1781,15 +1857,16 @@ export default function App() {
                     minHeight: '42px',
                     maxHeight: '42px',
                     padding: '0',
-                    background: 'linear-gradient(135deg, #50fa7b 0%, #3dd66b 100%)',
-                    color: '#282a36',
+                    background: isLoading
+                      ? 'linear-gradient(135deg, #ff5555 0%, #ff6b6b 100%)'
+                      : 'linear-gradient(135deg, #50fa7b 0%, #3dd66b 100%)',
+                    color: isLoading ? '#fff' : '#282a36',
                     border: 'none',
                     borderRadius: '8px',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    cursor: 'pointer',
                     fontWeight: 'bold',
                     fontSize: '0.75rem',
                     transition: 'all 0.2s',
-                    opacity: isLoading ? 0.5 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -1798,10 +1875,10 @@ export default function App() {
                     gridColumn: isMobile ? 2 : 1,
                     gridRow: 2,
                   }}
-                  onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
+                  onMouseOver={(e) => (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                 >
-                  {isLoading ? 'Sending...' : 'Send'}
+                  {isLoading ? '■ Stop' : 'Send'}
                 </button>
 
                 {/* Clear — mobile: TR (1,2); desktop: BR (2,2) */}
