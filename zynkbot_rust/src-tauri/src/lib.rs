@@ -26,6 +26,13 @@ mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
 use serde::{Deserialize, Serialize};
 // use chrono::Utc;  // Unused - commented out
 
+/// Global cancellation flag for the current LLM generation.
+/// Set to true by the `cancel_generation` Tauri command; checked at the top of
+/// each streaming loop iteration in llm/openai.rs and llm/anthropic.rs.
+/// Reset to false at the start of every new send_message_with_memory call.
+pub static GENERATION_CANCELLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Normalize common voice-transcription misspellings of the brand name.
 /// Whisper and other STT engines frequently transcribe "Zynkbot" as Zincbot,
 /// Zinkbot, Sinkbot, Zyncbot, or "Zinc bot". Fix these before any processing.
@@ -2240,6 +2247,7 @@ pub fn run() {
             commands::models::stop_ollama_model,
             commands::models::get_peer_ollama_config,
             commands::chat::send_message_with_memory,
+            commands::chat::cancel_generation,
             commands::chat::run_ensemble,
             commands::memory::list_memories,
             commands::memory::update_memory,

@@ -204,6 +204,10 @@ where
     let mut output_tokens: u32 = 0;
 
     while let Some(chunk_result) = byte_stream.next().await {
+        if crate::GENERATION_CANCELLED.load(std::sync::atomic::Ordering::SeqCst) {
+            println!("[Rust Anthropic] 🛑 Cancelled mid-stream");
+            break;
+        }
         let bytes = chunk_result.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
         let text = String::from_utf8_lossy(&bytes);
         line_buffer.push_str(&text);
@@ -330,6 +334,10 @@ where
     let mut output_tokens: u32 = 0;
 
     while let Some(chunk_result) = byte_stream.next().await {
+        if crate::GENERATION_CANCELLED.load(std::sync::atomic::Ordering::SeqCst) {
+            println!("[Rust Anthropic] 🛑 Cancelled mid-stream");
+            break;
+        }
         let bytes = chunk_result.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
         let text = String::from_utf8_lossy(&bytes);
         line_buffer.push_str(&text);
