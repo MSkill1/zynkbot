@@ -222,18 +222,6 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
     if let Ok(model) = std::env::var("MISTRAL_MODEL") {
         keys.insert("MISTRAL_MODEL".to_string(), serde_json::json!(model));
     }
-    if let Ok(v) = std::env::var("R2_ENDPOINT") {
-        keys.insert("R2_ENDPOINT".to_string(), serde_json::json!(v));
-    }
-    if let Ok(v) = std::env::var("R2_ACCESS_KEY_ID") {
-        keys.insert("R2_ACCESS_KEY_ID".to_string(), serde_json::json!(v));
-    }
-    if let Ok(v) = std::env::var("R2_SECRET_ACCESS_KEY") {
-        keys.insert("R2_SECRET_ACCESS_KEY".to_string(), serde_json::json!(v));
-    }
-    if let Ok(v) = std::env::var("R2_BUCKET") {
-        keys.insert("R2_BUCKET".to_string(), serde_json::json!(v));
-    }
     Ok(serde_json::json!(keys))
 }
 
