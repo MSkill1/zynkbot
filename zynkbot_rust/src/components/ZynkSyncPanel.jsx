@@ -220,30 +220,32 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
     }
   };
 
-  // Check status on mount — auto-start if peers exist
+  // Reflect the backend's current sync state. The backend already handles
+  // auto-start on app launch based on the persisted sync_state.json — the
+  // panel should NOT restart the service on mount, or the user's pause is
+  // silently overridden every time the panel is reopened.
   useEffect(() => {
-    const checkServiceStatus = async () => {
+    let cancelled = false;
+    const checkStatus = async () => {
       try {
         const isRunning = await invoke('get_zynksync_status');
-        if (isRunning) {
-          setSyncStatus('running');
-          fetchPeers();
-        } else {
-          const existingPeers = await invoke('get_zynksync_peers');
-          if (existingPeers && existingPeers.length > 0) {
-            await invoke('start_zynksync', { syncIntervalSecs: 60 });
-            setSyncStatus('running');
-            fetchPeers();
-          } else {
-            setSyncStatus('stopped');
-          }
-        }
+        if (cancelled) return;
+        setSyncStatus(isRunning ? 'running' : 'stopped');
+        fetchPeers();
       } catch (error) {
+        if (cancelled) return;
         console.error('[ZynkSync] Failed to check status:', error);
         setSyncStatus('stopped');
       }
     };
-    checkServiceStatus();
+    checkStatus();
+    // Re-check after 2s in case the panel opens before the backend has
+    // finished its startup auto-start based on persisted state.
+    const t = setTimeout(checkStatus, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for pairing warnings

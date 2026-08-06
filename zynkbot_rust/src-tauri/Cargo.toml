@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.9.2"
+version = "0.9.4"
 description = "A local-first AI companion with persistent memory"
 authors = ["ContainAI"]
 license = "AGPL-3.0"
