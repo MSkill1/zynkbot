@@ -1017,15 +1017,6 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 {backupMsg}
               </span>
             )}
-            {keyStatus && !keyStatus.acknowledged && (
-              <span
-                onClick={() => setShowKeySaveModal(true)}
-                style={{ fontSize: '0.78rem', color: '#ffb86c', background: '#3a2800', border: '1px solid #ffb86c44', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                title="Click to save your backup encryption key"
-              >
-                ⚠ Save key
-              </span>
-            )}
             <button onClick={onClose} className="close-button">✕</button>
           </div>
         </div>
