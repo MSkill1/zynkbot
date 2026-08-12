@@ -13,6 +13,7 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ### Technical Debt
 
+- **ZynkLink mTLS cert exchange** — ZynkLink pairing does not currently exchange TLS certificates, so ZynkLink file/chat routes cannot be gated behind the `require_verified_device` middleware (auth relies on `check_zynklink_authorized`'s user_id check against `zynklink_pairings`). Add cert exchange to `handle_zynklink_verify_code` / `handle_zynklink_accept_code`, store in `zynk_devices.tls_cert_der`, widen `rebuild_http_client`'s `WHERE sync_paired = 1` filter to include link-only peers, and move the ZynkLink routes back under `require_verified_device`.
 - **Memory identity merge on first sync** — When two devices sync for the first time, memories that already existed on the receiving device are not adopted into the synced namespace (KI-011). Fix requires an identity merge step during the first-sync handshake. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) (KI-011).
 - ~~**ZynkLink/ZynkSync trust split**~~ ✅ — ZynkLink and ZynkSync now maintain independent trust records (`sync_paired` column). Unlinking and unsyncing are independent operations with no side effects on the other pairing.
 
