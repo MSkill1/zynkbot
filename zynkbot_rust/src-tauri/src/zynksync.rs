@@ -3113,6 +3113,22 @@ impl ZynkSyncService {
             .route("/api/zynklink/accept-code", post(handle_zynklink_accept_code))
             .with_state(Arc::clone(&self));
 
+        // ZynkLink routes — reachable without a client cert. ZynkLink pairing
+        // does not yet exchange TLS certs, so gating these behind
+        // require_verified_device broke file listing / transfer / chat
+        // (see roadmap: "ZynkLink mTLS cert exchange"). Auth is enforced by
+        // check_zynklink_authorized inside each handler, which validates the
+        // requester's user_id against zynklink_pairings — matching v0.9.2
+        // behavior. Move back under require_verified_device once pairing
+        // exchanges certs.
+        let zynklink_routes = Router::new()
+            .route("/api/zynklink/directories", post(handle_zynklink_directories))
+            .route("/api/zynklink/files", post(handle_zynklink_files))
+            .route("/api/zynklink/download", post(handle_zynklink_download))
+            .route("/api/zynklink/deliver-chat", post(handle_zynklink_deliver_chat))
+            .route("/api/zynklink/notify-unpaired", post(handle_zynklink_notify_unpaired))
+            .with_state(Arc::clone(&self));
+
         // Protected routes — require a verified client cert (mTLS).
         // inject_verified_device (outer layer) must have already set VerifiedDevice before
         // require_verified_device (inner layer) checks for it.
@@ -3124,11 +3140,6 @@ impl ZynkSyncService {
             .route("/api/zynksync/delete-by-hash", post(handle_delete_by_hash))
             .route("/api/zynksync/update-memory", post(handle_update_memory))
             .route("/api/zynksync/fetch", post(handle_fetch_memories))
-            .route("/api/zynklink/directories", post(handle_zynklink_directories))
-            .route("/api/zynklink/files", post(handle_zynklink_files))
-            .route("/api/zynklink/download", post(handle_zynklink_download))
-            .route("/api/zynklink/deliver-chat", post(handle_zynklink_deliver_chat))
-            .route("/api/zynklink/notify-unpaired", post(handle_zynklink_notify_unpaired))
             .route("/api/zynksync/introduce", post(handle_introduce))
             .route("/api/zynksync/notify-unsynced", post(handle_notify_unsynced))
             .route("/api/zynksync/conversations/receive", post(handle_receive_conversations))
@@ -3147,6 +3158,7 @@ impl ZynkSyncService {
 
         let app = Router::new()
             .merge(public_routes)
+            .merge(zynklink_routes)
             .merge(protected_routes)
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(&self),

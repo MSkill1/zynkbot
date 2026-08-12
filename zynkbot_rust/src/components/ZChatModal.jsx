@@ -333,15 +333,17 @@ export default function ZChatModal({
               😊
             </button>
 
-            <VoiceButton
-              onTranscript={(text) => setInput(text)}
-              disabled={isSending}
-              style={{
-                minWidth: '45px',
-                minHeight: '45px',
-                height: '45px'
-              }}
-            />
+            {!isAndroid && (
+              <VoiceButton
+                onTranscript={(text) => setInput(text)}
+                disabled={isSending}
+                style={{
+                  minWidth: '45px',
+                  minHeight: '45px',
+                  height: '45px'
+                }}
+              />
+            )}
 
             <input
               type="text"
