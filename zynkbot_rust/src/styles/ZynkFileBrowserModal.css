@@ -410,6 +410,35 @@
     padding: 14px 16px;
   }
 
+  /* Narrow-screen header layout: title must be able to shrink and truncate
+     so the close button never pushes off the right edge. */
+  .zfb-header-left {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .zfb-header-left h2 {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 1.1rem;
+  }
+
+  .zfb-header-right {
+    flex-shrink: 0;
+    gap: 6px;
+  }
+
+  .zfb-count {
+    display: none;
+  }
+
+  .zfb-close-btn {
+    padding: 4px 10px;
+    font-size: 1.3rem;
+  }
+
   .zfb-file-row {
     flex-wrap: wrap;
     padding-left: 10px;
