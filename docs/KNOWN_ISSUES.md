@@ -151,4 +151,14 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-*Last updated: 2026-07-12*
+## Mobile UI
+
+### KI-018 — ZChat emoji picker overflows the screen on narrow Android phones
+**Status:** Open  
+**Affected:** Android users tapping the 😊 button in ZChat on phones with narrow screens (~360–411px CSS width)  
+**Description:** The emoji picker in `ZChatModal.jsx` renders an inline grid of emoji buttons above the input row. It has no width cap or horizontal scroll container, so on a narrow phone the grid runs off the right edge of the screen — the leftmost emojis are visible but the rest can't be reached because the panel isn't scrollable. The Tab S3 (wider screen) shows the full row and works normally.  
+**Fix target:** Two reasonable directions. (a) Constrain the picker to the modal width with `max-width: 100%; overflow-x: auto; flex-wrap: wrap;` and enlarge the touch target — keeps a consistent Zynkbot picker on desktop and mobile. (b) Hide the picker button entirely on Android (`{!isAndroid && ...}` around the 😊 button, same pattern as the VoiceButton fix in v0.9.4 hotfix). Android keyboards already expose a full emoji set via the keyboard's emoji key — duplicating it in-app is redundant and the phone's picker is better. Preferred: (b) on mobile, keep the small in-app picker on desktop where OS emoji entry is clumsier.
+
+---
+
+*Last updated: 2026-08-12*
