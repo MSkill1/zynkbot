@@ -457,6 +457,27 @@ pub async fn list_memories(
     query.fetch_all(pool).await
 }
 
+/// Load all pinned memories for one private persona collection.
+pub async fn list_pinned_collection_memories(
+    pool: &SqlitePool,
+    user_id: &str,
+    collection_id: &str,
+) -> Result<Vec<Memory>, sqlx::Error> {
+    sqlx::query_as::<_, Memory>(
+        "SELECT id, title, content, source_type, session_id, created_at, updated_at,
+                parent_scroll_id, chunk_index, user_id, namespace,
+                is_syncable, is_shareable, event_type, event_date,
+                link_count, is_ephemeral, expires_at, entities_detected, original_text
+         FROM memories
+         WHERE user_id = ? AND collection_id = ? AND memory_placement = 'pinned'
+         ORDER BY datetime(created_at), id",
+    )
+    .bind(user_id)
+    .bind(collection_id)
+    .fetch_all(pool)
+    .await
+}
+
 /// Get a single memory by ID.
 pub async fn get_memory(
     pool: &SqlitePool,

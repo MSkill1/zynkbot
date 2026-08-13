@@ -24,6 +24,21 @@ The system prompt has **two variants** chosen by `is_api_model`:
 - **Full** — sent to API backends (Claude/GPT/Grok). ~1,100–1,200 tokens.
 - **Slim** — sent to local GGUF backends. ~350 tokens. Preserves every behavior but condenses the voice paragraph and removes redundant examples. Detail in the Token Budget section below.
 
+Custom models can use a private persona prompt stored outside the repository in
+the app-data `personas` directory. The filename is the selected model identifier
+with non-alphanumeric filename characters replaced by underscores, plus `.md`.
+For example, model `my-persona:latest` maps to
+`personas/my-persona_latest.md`. Matching is therefore exact and opt-in: without
+that exact local file, the normal Zynkbot prompt is used. A private persona
+replaces the generic companion identity while retaining the date,
+`MEMORY_EXTRACT`, `WEB_SEARCH_NEEDED`, history, recalled-memory, and KB
+protocols. Persona contents never need to enter the public repository.
+
+An optional sidecar named `<sanitized-model>.identity.json` is appended to the
+private persona at runtime. It can hold ordinary names, role identities, and
+contextual address rules separately from the persona prose. This allows private
+identity changes without editing public code or retraining a model.
+
 The structure described below is the **full** version. Slim differs only in verbosity, not in what it asks the LLM to do.
 
 The system prompt is mostly static, with two dynamic insertions. It establishes six things in this order:
