@@ -211,7 +211,8 @@ Early groundwork for the developer platform. Full SDK public release is v3.0; v1
 
 ### Security
 - ~~**TLS 1.3 Encryption** — Encrypt all ZynkSync/ZynkLink/ZChat traffic~~ ✅
-- ~~**mTLS Device Authentication** — Devices present their certificate during TLS handshake; server verifies cert against paired-device DB before accepting protected requests. Pairing-bootstrap routes remain open; all sync, file transfer, messaging, Ollama, and API-key propagation routes require a verified cert.~~ ✅
+- ~~**ZynkSync mTLS Device Authentication** — Sync-paired devices present their certificate during the TLS handshake; the server verifies it against the paired-device database. Pairing-bootstrap routes remain open; sync, Ollama proxy, and API-key propagation routes require a verified certificate.~~ ✅
+- **ZynkLink/ZChat mTLS Device Authentication** — Exchange certificates during ZynkLink pairing and move file-transfer and messaging routes behind verified-client-certificate middleware. These routes currently use their separate pairing records and request-level authorization.
 - **Audit Logging** — Comprehensive exportable logs for all network operations (who synced what, when)
 - **Network request limits** — Per-connection body size cap, concurrent-request limit, and hard timeouts to prevent a paired device from exhausting CPU, RAM, or bandwidth on the host
 - **OS Keychain / Android Keystore storage for API keys** — Currently stored in a plaintext `.env` file; migrate to the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service, Android Keystore) so keys are protected at rest even if the filesystem is accessible to another process

@@ -356,7 +356,7 @@ Your IT or security team will know what your organization already uses and what 
 
 **Current status:**
 - Database layer: Not applicable. Zynkbot uses SQLite — a local file accessed directly by the process. There is no network database connection to secure.
-- ZynkSync, ZynkLink, and ZChat LAN traffic: TLS via `rustls` is on the **v1.0 roadmap**. For standalone local deployments, this traffic currently runs unencrypted on the local network. For enterprise deployments on a hospital network, standard network-layer controls (VLANs, private subnets) reduce the exposure of this gap until it is addressed.
+- ZynkSync, ZynkLink, and ZChat LAN traffic uses TLS via `rustls`. ZynkSync protected routes additionally require a pinned client certificate. ZynkLink and ZChat currently rely on their separate pairing records and request-level authorization rather than mTLS client-certificate enforcement; certificate exchange for link-only peers remains roadmap work. Treat this distinction as a deployment-review item rather than claiming uniform mTLS coverage.
 
 **How to satisfy it for enterprise deployments:** Route Zynkbot traffic through whatever TLS termination your organization already operates. Your network team will know the right approach for your infrastructure.
 

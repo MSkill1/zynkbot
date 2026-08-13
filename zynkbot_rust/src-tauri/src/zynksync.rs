@@ -97,7 +97,21 @@ pub struct SyncMemory {
     #[serde(default)]
     pub original_text: Option<String>,
     #[serde(default)]
+    pub collection_id: Option<String>,
+    #[serde(default = "default_memory_placement")]
+    pub memory_placement: String,
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default)]
+    pub temporal_status: Option<String>,
+    #[serde(default)]
+    pub provenance_json: Option<String>,
+    #[serde(default)]
     pub relationships: Vec<MemoryRelationship>,  // Relationships from memory_links
+}
+
+fn default_memory_placement() -> String {
+    "retrieved".to_string()
 }
 
 /// Represents a relationship between memories (from memory_links table)
@@ -1257,7 +1271,8 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected, original_text
+                        event_type, event_date, entities_detected, original_text,
+                        collection_id, memory_placement, external_id, temporal_status, provenance_json
                  FROM memories
                  WHERE is_syncable = 1
                    AND created_at > ?
@@ -1271,7 +1286,8 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected, original_text
+                        event_type, event_date, entities_detected, original_text,
+                        collection_id, memory_placement, external_id, temporal_status, provenance_json
                  FROM memories
                  WHERE is_syncable = 1
                  ORDER BY created_at ASC
@@ -1317,6 +1333,11 @@ impl ZynkSyncService {
                     event_date: row.get("event_date"),
                     entities_detected: row.get("entities_detected"),
                     original_text: row.get("original_text"),
+                    collection_id: row.get("collection_id"),
+                    memory_placement: row.get("memory_placement"),
+                    external_id: row.get("external_id"),
+                    temporal_status: row.get("temporal_status"),
+                    provenance_json: row.get("provenance_json"),
                     relationships: Vec::new(),  // Will be populated below
                 }
             })
@@ -1363,7 +1384,8 @@ impl ZynkSyncService {
                         "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                                 parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                                 embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                                event_type, event_date, entities_detected, original_text
+                                event_type, event_date, entities_detected, original_text,
+                                collection_id, memory_placement, external_id, temporal_status, provenance_json
                          FROM memories WHERE id IN ({})",
                         in_clause
                     );
@@ -1405,6 +1427,11 @@ impl ZynkSyncService {
                         event_date: row.get("event_date"),
                         entities_detected: row.get("entities_detected"),
                         original_text: row.get("original_text"),
+                        collection_id: row.get("collection_id"),
+                        memory_placement: row.get("memory_placement"),
+                        external_id: row.get("external_id"),
+                        temporal_status: row.get("temporal_status"),
+                        provenance_json: row.get("provenance_json"),
                         relationships: Vec::new(),  // Will be populated below
                     });
                 }
@@ -1598,13 +1625,20 @@ impl ZynkSyncService {
                     println!("[ZynkSync] Updating existing memory (newer timestamp from peer)");
                     sqlx::query(
                         "UPDATE memories
-                         SET title = ?, namespace = ?, created_at = ?, session_id = ?
+                         SET title = ?, namespace = ?, created_at = ?, session_id = ?,
+                             collection_id = ?, memory_placement = ?, external_id = ?,
+                             temporal_status = ?, provenance_json = ?
                          WHERE id = ?"
                     )
                     .bind(&memory.title)
                     .bind(&memory.namespace)
                     .bind(memory.created_at)
                     .bind(&memory.session_id)
+                    .bind(&memory.collection_id)
+                    .bind(&memory.memory_placement)
+                    .bind(&memory.external_id)
+                    .bind(&memory.temporal_status)
+                    .bind(&memory.provenance_json)
                     .bind(existing_memory.0)
                     .execute(&self.db_pool)
                     .await
@@ -1647,8 +1681,9 @@ impl ZynkSyncService {
                             "INSERT INTO memories (user_id, session_id, content, title, source_type, created_at, updated_at,
                                                    parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                                                    embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                                                   event_type, event_date, entities_detected, original_text)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                                   event_type, event_date, entities_detected, original_text,
+                                                   collection_id, memory_placement, external_id, temporal_status, provenance_json)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                         )
                         .bind(local_user_id)
                         .bind(&memory.session_id)
@@ -1672,6 +1707,11 @@ impl ZynkSyncService {
                         .bind(memory.event_date)
                         .bind(memory.entities_detected.as_ref())
                         .bind(memory.original_text.as_deref())
+                        .bind(memory.collection_id.as_deref())
+                        .bind(&memory.memory_placement)
+                        .bind(memory.external_id.as_deref())
+                        .bind(memory.temporal_status.as_deref())
+                        .bind(memory.provenance_json.as_deref())
                         .execute(&self.db_pool)
                         .await
                         .map_err(|e| format!("Failed to insert ID-colliding memory: {}", e))?;
@@ -1687,8 +1727,9 @@ impl ZynkSyncService {
                     "INSERT INTO memories (id, user_id, session_id, content, title, source_type, created_at, updated_at,
                                           parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                                           embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                                          event_type, event_date, entities_detected, original_text)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                          event_type, event_date, entities_detected, original_text,
+                                          collection_id, memory_placement, external_id, temporal_status, provenance_json)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 )
                 .bind(memory.id)
                 .bind(local_user_id)
@@ -1713,6 +1754,11 @@ impl ZynkSyncService {
                 .bind(memory.event_date)
                 .bind(memory.entities_detected.as_ref())
                 .bind(memory.original_text.as_deref())
+                .bind(memory.collection_id.as_deref())
+                .bind(&memory.memory_placement)
+                .bind(memory.external_id.as_deref())
+                .bind(memory.temporal_status.as_deref())
+                .bind(memory.provenance_json.as_deref())
                 .execute(&self.db_pool)
                 .await
                 .map_err(|e| format!("Failed to insert memory: {}", e))?;
@@ -2410,7 +2456,8 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected, original_text
+                        event_type, event_date, entities_detected, original_text,
+                        collection_id, memory_placement, external_id, temporal_status, provenance_json
                  FROM memories WHERE id IN ({})",
                 in_clause
             );
@@ -2454,6 +2501,11 @@ impl ZynkSyncService {
                     event_date: row.get("event_date"),
                     entities_detected: row.get("entities_detected"),
                     original_text: row.get("original_text"),
+                    collection_id: row.get("collection_id"),
+                    memory_placement: row.get("memory_placement"),
+                    external_id: row.get("external_id"),
+                    temporal_status: row.get("temporal_status"),
+                    provenance_json: row.get("provenance_json"),
                     relationships: Vec::new(),  // Will be populated below
                 }
             })
