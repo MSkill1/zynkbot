@@ -4841,6 +4841,7 @@ async fn handle_push_api_key(
         "XAI_API_KEY",       "XAI_MODEL",
         "MISTRAL_API_KEY",   "MISTRAL_MODEL",
         "CUSTOM_API_URL",    "CUSTOM_API_KEY", "CUSTOM_MODEL",
+        "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
     ];
     if !ALLOWED.contains(&key) {
         return Err(format!("Key '{}' is not propagatable", key));

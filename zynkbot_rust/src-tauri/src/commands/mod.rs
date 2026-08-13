@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod chat;
 pub mod setup_wizard;
 pub mod conversation;
