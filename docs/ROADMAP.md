@@ -411,9 +411,9 @@ Hash chain integrity layer on top of the v1.0 conversation history tables. The b
 - User reviews and ratings
 
 ### Licensing Model
-- ✅ Free for non-commercial use
+- ✅ Free for permitted community uses
 - 💰 Paid commercial licensing (tiered pricing)
-- 🤝 Revenue supports open source development
+- 🤝 Revenue supports community source development
 
 ---
 
@@ -467,7 +467,7 @@ Hash chain integrity layer on top of the v1.0 conversation history tables. The b
 #### Programs
 - Security audit funding
 - Privacy research grants
-- Open source project support
+- Community project support
 - Educational initiatives
 
 ### Partner Integrations
@@ -529,7 +529,7 @@ This feature would combine those into an explicit epistemic gate: before generat
 **Constraints / requirements:**
 - Must be built from Zynkbot's own primitives in pure Rust — no external runtime, must work on mobile (no Python sidecar).
 - Must be validated before shipping: demonstrate it catches a class of hallucination or overconfident answer that the existing contradiction-detection + ensemble path misses. If it doesn't measurably improve on what's already there, it doesn't ship.
-- Fully first-principles / own-implementation, so it stays license-clean and commercializable under the existing dual license.
+- Fully first-principles / own-implementation, so it stays license-clean and commercializable under the community source and commercial licensing model.
 
 **Why deferred:** Non-blocking, post-launch, and needs measurement before it's worth building. The hard part is evaluation (what does it actually improve?), not the code.
 
@@ -608,7 +608,7 @@ A local-first, LAN-synced credential and financial-info vault built on top of Zy
 **To maintain focus, we explicitly won't:**
 - ❌ Engagement optimization (anti-user)
 - ❌ Data selling or sharing (anti-ethics)
-- ❌ Proprietary lock-in (anti-open source)
+- ❌ Proprietary lock-in without source visibility
 - ❌ Dark patterns or manipulation (anti-transparency)
 - ❌ Central servers for sync or storage
 - ❌ Telemetry or analytics

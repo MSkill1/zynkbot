@@ -88,4 +88,4 @@ Zynkbot's architecture inverts that dependency. Semantic search, local LLM infer
 
 *For humanitarian or educational deployment inquiries: matt@containai.ai*
 
-*Non-commercial humanitarian use is free under AGPL v3. See [COMMERCIAL_LICENSE.md](../../COMMERCIAL_LICENSE.md) for organizational licensing.*
+*Noncommercial humanitarian use is free under the Zynkbot Community Source License. See [COMMERCIAL_LICENSE.md](../../COMMERCIAL_LICENSE.md) for commercial licensing.*

@@ -39,8 +39,8 @@ Not artificial. Aligned. And recursive.
 - 📱 Android/iOS (planned via Tauri Mobile)
 
 **License:**
-- AGPL v3 for non-commercial use (prevents surveillance capitalism)
-- Commercial license available for enterprise
+- Community source license for permitted free uses
+- Commercial license required for commercial distribution and services
 
 ---
 
@@ -72,16 +72,16 @@ Zynkbot is the foundation of a larger ecosystem. The two planned expansions are 
 - Memory retrieval is visible
 - AI reasoning is explainable
 - Safety filters are user-configurable
-- Source code is auditable (AGPL)
+- Publicly available source code is auditable
 
-### 4. Sustainable Open Source
+### 4. Sustainable Community Source
 - Dual licensing prevents exploitation
 - Commercial use funds development
 - Foundation ensures long-term maintenance
 - Community-driven roadmap
 
 ### 5. Anti-Surveillance Capitalism
-- AGPL prevents closed-source derivatives
+- Commercial terms prevent unauthorized monetized derivatives and services
 - No data harvesting for training
 - No engagement optimization
 - No dark patterns or manipulation
@@ -153,7 +153,7 @@ Zynkbot is the foundation of a larger ecosystem. The two planned expansions are 
 
 **Immediate (2026):**
 1. v1.0 desktop release
-2. Open source launch (GitHub, HN, Reddit)
+2. Public source launch (GitHub, HN, Reddit)
 3. Documentation and community building
 4. Mobile development begins
 
@@ -202,7 +202,7 @@ Zynkbot is a statement that **AI should serve users, not exploit them**.
 
 **Contact:** matt@containai.ai
 **GitHub:** https://github.com/MSkill1/zynkbot
-**License:** AGPL v3 (non-commercial) + Commercial license
+**License:** Zynkbot Community Source License + commercial licensing
 **Founded:** 2025
 **Founder:** Matthew Skillman
 
@@ -216,4 +216,3 @@ Zynkbot is a statement that **AI should serve users, not exploit them**.
 *Looking ahead*
 
 If someone uses Zynkbot consistently — for years — something further may become possible. Because the memory graph preserves how understanding evolved, not just what was recorded, a long enough history could let a person reconstruct not merely what happened in their life, but how they understood it as it happened. Whether that potential is realized depends on consistent use and data longevity that no one can yet verify. But if it holds, the implications reach beyond productivity — into how people understand themselves across time.
-

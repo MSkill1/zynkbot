@@ -7,9 +7,10 @@ Copyright © Matthew Skillman / ContainAI
 
 ## Why This Exists
 
-This project uses a dual license: AGPL v3 for non-commercial use, and a commercial license
-for business use. To keep that model working — and to allow the license to evolve as the
-project grows — we need contributors to grant us certain rights over contributions they submit.
+Zynkbot uses a community source license for permitted free uses and separate
+commercial licenses for commercial distribution and services. To keep that
+model working — and to allow the license to evolve as the project grows — we
+need contributors to grant us certain rights over contributions they submit.
 
 This agreement only applies if you contribute code, documentation, or other content to this
 repository. It does **not** apply to people who simply use or install Zynkbot.
@@ -40,9 +41,10 @@ it as part of this project.
 
 ### 4. You understand the licensing model
 
-You understand that this project is dual-licensed (AGPL v3 + commercial), and that your
-contribution may be included in versions of the software distributed under a different
-compatible license in the future (for example, if we move from AGPL to LGPL).
+You understand that this project uses a community source license plus separate
+commercial licensing, and that your contribution may be included in versions
+of the software distributed under this license, a commercial license, or a
+different license the project may adopt in the future.
 
 ---
 

@@ -175,7 +175,7 @@ The same memory architecture — hybrid search, contradiction detection, transpa
 
 **Personal use:** Journaling, decision history, relationship context — any application where a user's accumulated knowledge should inform future interactions without requiring the user to maintain that context manually.
 
-The architecture is open source under AGPL v3 for private individuals, educators, and non-profits. Commercial licensing is available for proprietary applications built on this foundation — contact matt@containai.ai.
+The architecture is source-available and free for personal, internal business, educational, nonprofit, research, and humanitarian use. Commercial distribution and services require a license — contact matt@containai.ai.
 
 ---
 

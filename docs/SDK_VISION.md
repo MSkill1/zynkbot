@@ -27,7 +27,7 @@ Building privacy-first AI is hard:
 Zynkbot SDK provides:
 - ✅ Battle-tested privacy components
 - ✅ Pure Rust implementation (fast, safe, portable)
-- ✅ AGPL open source (prevents exploitation)
+- ✅ Publicly available, auditable source
 - ✅ Commercial licensing available
 - ✅ Well-documented, easy to integrate
 
@@ -65,8 +65,8 @@ if result.is_blocked {
 ```
 
 **License:**
-- Free for non-commercial use
-- Paid commercial license required for businesses
+- Free for uses permitted by the community source license
+- Paid commercial license required for commercial products and services
 
 ---
 
@@ -344,23 +344,23 @@ impl MedicalNotes {
 
 ## Licensing Model
 
-### Free Tier (Non-Commercial)
+### Community Source Tier
 
 **Eligible:**
 - Personal projects
 - Educational use
-- Open source projects
+- Noncommercial community projects
 - Non-profit organizations
 - Businesses with <$1M annual revenue
 
 **Terms:**
-- AGPL v3 license
-- Must open source your derivative work
-- No commercial restrictions if under revenue threshold
+- Zynkbot Community Source License
+- Noncommercial modifications and redistribution permitted under the license
+- Internal business use permitted
 
 ---
 
-### Commercial Tier (Paid)
+### Commercial Tier
 
 **Eligible:**
 - Businesses with >$1M annual revenue
@@ -481,10 +481,10 @@ Once SDK is released, we'll showcase:
 A: v3.0 targeted for 2027. Beta program may start earlier.
 
 **Q: Can I use it in a commercial product?**
-A: Yes, but you need a commercial license if revenue >$1M/year.
+A: Yes, with a commercial license. Contact matt@containai.ai to discuss terms.
 
 **Q: Is there vendor lock-in?**
-A: No. AGPL allows you to fork and maintain your own version.
+A: The source is publicly available, and the community source license permits noncommercial forks and internal modifications. Commercial products and services require a license.
 
 **Q: What languages are supported?**
 A: Rust-native, with bindings planned for Python, JavaScript, Go.
@@ -503,5 +503,5 @@ A: Focus on privacy, consent, and safety — not just LLM orchestration.
 **GitHub:** https://github.com/MSkill1/zynkbot
 **Contact:** matt@containai.ai
 
-**License:** AGPL v3 (free) + Commercial licensing
+**License:** Zynkbot Community Source License + commercial licensing
 **Status:** Planning phase, development begins 2027

@@ -303,7 +303,7 @@ Linux:   ~/.local/share/zynkbot/zynkbot.db
 **Zynkbot:**
 - Your conversations NEVER used for training anything
 - Local models are frozen (downloaded once, never updated from your data)
-- You can verify this (open source, auditable)
+- You can verify this (source-available and auditable)
 
 ### 5. Containment at the Edge
 
@@ -337,7 +337,7 @@ Result: Sensitive data never left your device
 | **Memory transparency** | ❌ Opaque | ✅ Full visibility/editing |
 | **Containment enforcement** | Output filtering | Pre-LLM input filtering |
 | **Data ownership** | Terms of service controlled | You own the database file |
-| **Privacy audit** | Trust company claims | Open source, verifiable |
+| **Privacy audit** | Trust company claims | Public source, verifiable |
 | **Works in emergency** | ❌ No internet = no AI | ✅ Local LLM continues working |
 | **Cost** | $20-200/month subscription | Free local models (optional API) |
 | **Latency (API)** | 1-10s | 1-10s (same if using API) |
@@ -538,4 +538,3 @@ See [ROADMAP.md](../ROADMAP.md) for full timeline.
 *"Containment means blocking at the routing layer. Local-first means your data never leaves your device. Together, they create AI you actually control."*
 
 **ContainAI** – Building the infrastructure for ethical AI
-

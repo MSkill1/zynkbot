@@ -65,5 +65,4 @@ This architecture proves you can build transparent, auditable medical AI with 70
 - Administrative AI for scheduling, billing, and insurance questions
 - Research tools for academic medical centers and clinical trials
 
-Download Zynkbot, build your medical AI application on this compliance-ready foundation. The containment architecture is open source (AGPL v3). Your medical application logic is proprietary. That's the business model: transparent compliance infrastructure + specialized healthcare functionality.  Licensing to use Zynkbot's containment modes for commercial purposes is available.
-
+Download Zynkbot and evaluate this compliance-ready foundation. The containment architecture is source-available and auditable. Commercial medical applications, deployments, and services require a commercial license. That's the business model: transparent compliance infrastructure plus licensed specialized healthcare functionality.

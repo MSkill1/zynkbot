@@ -618,10 +618,10 @@ The first run compiles all Rust dependencies (3–5 minutes). Subsequent runs ta
 
 ## License
 
-**Zynkbot is dual-licensed:**
-
-- **AGPL v3.0** — Free for non-commercial use, evaluation, and contribution
-- **Commercial License** — Required for distribution or sale (contact: matt@containai.ai)
+Zynkbot is source-available. Personal, internal business, nonprofit,
+educational, research, humanitarian, and other noncommercial uses are free.
+Commercial distribution and commercial services require a separate license
+(contact: matt@containai.ai).
 
 See the `LICENSE` file in the project root for full terms.
 

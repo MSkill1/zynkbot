@@ -467,8 +467,8 @@ sudo firewall-cmd --reload
 
 ## License
 
-Zynkbot networking features are part of Zynkbot and licensed under:
-- **AGPL v3** - Free for non-commercial use
-- **Commercial License** - Required for commercial use
+Zynkbot networking features are part of Zynkbot and are source-available under
+the Zynkbot Community Source License. Commercial distribution and commercial
+services require a separate license.
 
 See [LICENSE](../LICENSE) for full terms.

@@ -483,7 +483,7 @@ Zynkbot is in active development. Contributions welcome!
 - Test coverage
 - Documentation improvements
 
-Zynkbot is written in Rust, but the architecture — local-first memory, hybrid search, containment modes, snap-ins — is language-agnostic. If you want to build a Python fork, a Go implementation, or adapt the concepts for a different stack, the AGPL license permits it. Fork freely.
+Zynkbot is written in Rust, but the architecture — local-first memory, hybrid search, containment modes, snap-ins — is language-agnostic. Noncommercial forks and adaptations are welcome under the community source license. Commercial products and services require a separate license.
 
 Before contributing code:
 
@@ -513,37 +513,29 @@ Zynkbot was built through a years-long collaboration between its developer and A
 
 ## License
 
-**Zynkbot is DUAL-LICENSED:**
+Zynkbot's source code is publicly available. It is free for personal, internal
+business, nonprofit, educational, research, humanitarian, and other
+noncommercial use.
 
-### Non-Commercial Use (Free)
+Commercial distribution and commercial services — including paid installation,
+hosting, support, hardware bundling, white-labeling, and commercial SDK
+integration — require a separate commercial license.
 
-**AGPL v3** with anti-surveillance provisions - see [LICENSE](LICENSE)
+Commercial terms may include per-installation pricing, subscriptions, annual
+renewals, or revenue sharing. Contact matt@containai.ai.
 
-- Free for personal, educational, and non-profit use
-- Full source code access
-- Freedom to modify and redistribute
-- Commercial use NOT permitted under this license
+See [LICENSE](LICENSE) for complete terms and
+[COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) for commercial licensing
+information.
 
-### Commercial Use (Paid License Required)
+### Contributing
 
-**Commercial License** - see [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md)
+Contributions require agreement to the [Contributor License Agreement](CLA.md).
+You keep copyright in your work and grant the project the right to relicense it,
+which allows commercial licenses to be offered alongside the community source
+license.
 
-- Use in for-profit businesses and organizations
-- Integration into commercial products
-- No copyleft requirements
-- Priority support available
-- Contact: matt@containai.ai
-
-**Not sure which applies?** Email before using: matt@containai.ai
-
-**Why Dual Licensing?**
-
-- Protects against surveillance capitalism (AGPL copyleft)
-- Prevents big tech from taking Zynkbot closed-source
-- Allows sustainable development through commercial licensing
-- Keeps non-commercial use free and open
-
-**Trademark:** "Zynkbot" and "ContainAI" are trademarks of Matthew Skillman - see [TRADEMARK](TRADEMARK)
+**Trademark:** "Zynkbot" and "ContainAI" are trademarks of Matthew Skillman — see [TRADEMARK](TRADEMARK).
 
 Copyright (c) 2024-2026 Matthew Skillman / ContainAI
 

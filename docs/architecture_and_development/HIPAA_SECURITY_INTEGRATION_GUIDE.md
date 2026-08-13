@@ -247,7 +247,7 @@ The following are intentionally left as integration points so organizations can 
 | Memory system | Processes all input | ✅ Disabled entirely in HIPAA mode — extraction pipeline does not run |
 | Audit trail | Provider-managed, limited access | ✅ Local JSON logs, your infrastructure |
 | Self-hostable | ❌ No | ✅ Yes |
-| Open source | ❌ No | ✅ Yes |
+| Publicly auditable source | ❌ No | ✅ Yes |
 | BAA required | ✅ Yes — and you must trust it | ✅ Not required if PHI never leaves device |
 
 ### Processing Flow

@@ -1,87 +1,74 @@
-ZYNKBOT COMMERCIAL DISTRIBUTION LICENSE
-========================================
+# Zynkbot Commercial Licensing
 
 Copyright (c) 2024-2026 Matthew Skillman / ContainAI
-Zynkbot™ is a trademark of Matthew Skillman.
+Zynkbot is a trademark of Matthew Skillman.
 
----
+This page explains when to request commercial terms. It is not itself a grant
+of commercial rights or a substitute for a signed commercial agreement.
 
-WHO NEEDS THIS LICENSE
------------------------
-A commercial license is required if you want to distribute or sell Zynkbot —
-or a product that incorporates Zynkbot code — to third parties.
+## When a commercial license is required
 
-This includes:
-- Selling or licensing a software product that incorporates Zynkbot code
-- Offering Zynkbot as a hosted paid service (SaaS or managed service)
-- White-labeling or rebranding Zynkbot for distribution to customers
-- Bundling Zynkbot with a commercial product you distribute
+The [Zynkbot Community Source License](LICENSE) permits personal, internal
+business, nonprofit, educational, research, humanitarian, and other
+noncommercial uses. A separate written commercial license is required for:
 
-WHO DOES NOT NEED THIS LICENSE
---------------------------------
-You do not need a commercial license for:
-- Personal use, evaluation, or testing — take all the time you need
-- Internal use at your organization, commercial or otherwise
-- Modifying or building on the code for your own purposes
-- Contributing code, documentation, or fixes to this repository
-- Educational, academic, or non-profit use
-- Open source projects released under a compatible license
+- Paid installation, configuration, customization, or deployment
+- Paid support, maintenance, management, or Zynkbot-specific training
+- Selling, licensing, bundling, or otherwise commercially distributing Zynkbot
+- Selling hardware, appliances, or devices containing Zynkbot
+- Offering Zynkbot as a paid hosted, managed, or software-as-a-service product
+- White-labeling or rebranding Zynkbot for customers
+- Integrating Zynkbot source code or its SDK into a commercial product
+- Proprietary, advertising-supported, or otherwise monetized derivatives
+- Selling access to functionality materially provided by Zynkbot
 
-In short: download it, try it, modify it, and contribute to it freely.
-A license is only required when you distribute or sell it.
+## Uses that do not require a commercial license
 
----
+Subject to the complete terms in [LICENSE](LICENSE), examples include:
 
-OBTAINING A COMMERCIAL LICENSE
---------------------------------
+- Personal use, study, experimentation, evaluation, and hobby projects
+- Internal use by a business that does not distribute Zynkbot or offer it as a
+  product or service to third parties
+- Noncommercial modification and redistribution
+- Eligible nonprofit, educational, public-research, public-health,
+  humanitarian, free-clinic, and government use
+- Genuinely unpaid volunteer assistance
+
+A contractor or service provider charging to install, configure, maintain,
+support, host, or manage Zynkbot requires a commercial license even when the
+customer's own use would otherwise be permitted.
+
+## Available commercial structures
+
+Commercial terms are negotiated for the use case and may include:
+
+- Per-installation or per-device fees
+- Annual or monthly subscriptions
+- Per-customer or per-seat pricing
+- Royalties or revenue sharing
+- Perpetual licenses
+- Support and maintenance agreements
+- Custom enterprise terms
+
+## Request a license
+
 Contact: matt@containai.ai
 Subject: Zynkbot Commercial License Inquiry
 
 Please include:
-- Your organization name and intended use case
-- Estimated number of end users or installations
-- Whether you need a perpetual license or subscription terms
 
-We aim to respond within 3 business days.
+- Your name and organization
+- The product or service you intend to offer
+- The expected number of customers, installations, devices, or users
+- Whether you need source-code modification, SDK integration, hosting,
+  distribution, support, or white-label rights
+- Your preferred pricing structure, if known
 
-Pricing is available upon request based on use case and scale.
+No commercial rights are granted until the copyright holder and licensee enter
+a separate written agreement.
 
----
+## Trademark
 
-WHAT THE COMMERCIAL LICENSE PROVIDES
---------------------------------------
-- Permission to distribute Zynkbot or products incorporating it
-- No requirement to publish your modifications under AGPL
-- Priority support (optional, as negotiated)
-- Custom licensing terms available for enterprise use
-
----
-
-ENFORCEMENT
------------
-Distributing or selling this software without a valid commercial license
-constitutes copyright infringement and breach of this agreement. The copyright
-holder reserves the right to seek all available remedies under applicable law,
-including injunctive relief and damages.
-
----
-
-GOVERNING LAW
--------------
-This agreement is governed by the laws of the United States. Disputes arising
-under this agreement shall be resolved in the courts of Vermont.
-
----
-
-DUAL LICENSING NOTICE
-----------------------
-This software is dual-licensed:
-1. AGPL v3.0 — free for use, modification, and contribution (see LICENSE)
-2. Commercial Distribution License (this document) — required for distribution/sale
-
----
-
-VERSION
--------
-Commercial License Version 1.1
-Last Updated: 2026-05-22
+Commercial copyright permission does not automatically grant permission to use
+the Zynkbot or ContainAI names, logos, or branding. Trademark permissions must
+be stated separately in the commercial agreement. See [TRADEMARK](TRADEMARK).

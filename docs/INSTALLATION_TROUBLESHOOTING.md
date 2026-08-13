@@ -638,8 +638,8 @@ If you've tried these solutions and still have issues:
 
 ## License
 
-Zynkbot is dual-licensed:
-- **AGPL v3** - Free for non-commercial use
-- **Commercial License** - Required for commercial use
+Zynkbot is source-available. Personal, internal business, nonprofit,
+educational, research, humanitarian, and other noncommercial uses are free.
+Commercial distribution and commercial services require a separate license.
 
 See [LICENSE](../LICENSE) for full terms.

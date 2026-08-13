@@ -2,7 +2,7 @@
 
 **Status:** Planned 2028
 **Organization type:** Non-profit (501(c)(3))
-**Purpose:** Provide long-term governance and funding stability for ethical AI infrastructure — stewarding open source projects, commissioning independent security audits, advocating for AI standards, and providing grants to aligned developers
+**Purpose:** Provide long-term governance and funding stability for ethical AI infrastructure — stewarding public-source projects, commissioning independent security audits, advocating for AI standards, and providing grants to aligned developers
 
 ---
 
@@ -37,9 +37,9 @@ Companies that meet the standard can display it. Companies that can't — or won
 
 ## Foundation Pillars
 
-### 🛡️ Steward Open Source Projects
+### 🛡️ Steward Public-Source Projects
 
-Provide legal ownership, governance, and funding stability for Zynkbot, the ContainAI SDK, and aligned community projects. The Foundation ensures these tools can never be sold off, closed-sourced, or abandoned — not that it runs day-to-day development, which remains the work of ContainAI and the open source community.
+Provide legal ownership, governance, and funding stability for Zynkbot, the ContainAI SDK, and aligned community projects. The Foundation helps keep source available and projects maintained — not that it runs day-to-day development, which remains the work of ContainAI and the contributor community.
 
 - Legal stewardship and project governance
 - Public roadmap oversight
@@ -66,7 +66,7 @@ Promote standards for consent-based, ethical AI development. Educate developers,
 
 ### 💚 Grant Programs
 
-Fund developers and organizations building ethical AI tools. Support research into responsible AI architectures and sustainable open source.
+Fund developers and organizations building ethical AI tools. Support research into responsible AI architectures and sustainable public-source development.
 
 - Developer grants
 - Research funding
@@ -101,7 +101,7 @@ Zynkbot's memory database lives on your device. An optional encrypted cloud back
 Snap-ins are purpose-built extensions for specific industries and workflows. ContainAI will develop and offer snap-ins as a primary revenue stream — tools for lawyers, medical professionals, tradespeople, educators, and others. Third-party developers are explicitly welcome to build and sell their own. The base app remains free; the snap-in marketplace is how the ecosystem grows and pays for itself.
 
 **SDK Commercial Licensing**
-The ContainAI SDK is free for personal, research, and open-source use under AGPL. Commercial products built on it require a commercial license. Revenue from SDK licensing funds Foundation operations — security audits, ongoing development, and community grants.
+The ContainAI SDK is free for uses permitted by the Zynkbot Community Source License. Commercial products and services built on it require a commercial license. Revenue from SDK licensing funds Foundation operations — security audits, ongoing development, and community grants.
 
 **Donations & Grants**
 Community donations and mission-aligned grants provide additional stability. These fund the non-profit work: advocacy, research, and support for developers building ethical AI tools.
@@ -111,7 +111,7 @@ Community donations and mission-aligned grants provide additional stability. The
 ## Roadmap to Foundation
 
 **2026 — Zynkbot v1.0 Launch**
-Open source desktop release. Community building and initial user adoption. Mobile development begins.
+Public source desktop release. Community building and initial user adoption. Mobile development begins.
 
 **2027 — SDK & Commercial Licensing**
 ContainAI SDK v1.0 released. Commercial licensing established. Revenue from SDK licenses and Zynkbot premium features begins funding Foundation establishment.
@@ -139,6 +139,6 @@ The Foundation isn't established yet — it's funded by and follows from Zynkbot
 
 **ContainAI Foundation** (Planned 2028)
 **Organization:** ContainAI
-**License:** AGPL v3 (Zynkbot) + Commercial licensing (SDK)
+**License:** Zynkbot Community Source License + commercial licensing
 **Founded:** 2025 (Foundation planned 2028)
 **Founder:** Matthew Skillman

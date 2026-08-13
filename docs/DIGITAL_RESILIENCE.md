@@ -275,7 +275,7 @@ The resilience property that matters is that every device runs a full local inst
 | **Cost in developing world** | ❌ $20-200/month (expensive) | ✅ One-time $300-1000 hardware cost |
 | **Data sovereignty** | ❌ Data leaves country/region | ✅ All data stays local |
 | **Privacy in crisis** | ❌ Sensitive info uploaded to cloud | ✅ All processing on-device |
-| **Long-term viability** | ❌ Depends on company survival | ✅ Software is open source (AGPL v3) |
+| **Long-term viability** | ❌ Depends on company survival | ✅ Publicly available source supports independent continuity |
 
 ---
 
@@ -417,7 +417,7 @@ ContainAI will offer an opt-in cryptographically hashed remote backup service (s
 - Privacy can protect activists or enable criminals
 
 **Our approach:**
-- **Transparent:** Open source (AGPL v3), auditable code
+- **Transparent:** Publicly available, auditable source code
 - **User-controlled:** Individuals and communities decide how to deploy
 - **No backdoors:** No remote disable capability (can't be weaponized against users)
 - **Educational focus:** Emphasize humanitarian and resilience use cases

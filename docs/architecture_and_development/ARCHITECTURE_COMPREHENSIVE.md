@@ -38,7 +38,7 @@ Zynkbot is a **privacy-first conversational AI system** with persistent semantic
 2. **Pure Rust Core**: Zero Python dependencies in production - fully Rust-powered
 3. **Desktop-Native**: Tauri 2.x cross-platform desktop app with native OS integration
 4. **Offline-Capable**: Full functionality without internet (except API LLMs)
-5. **Open Source**: Dual-licensed, see license in documentation
+5. **Source Available**: Community source plus commercial licensing; see license documentation
 ---
 
 ## Technology Stack
@@ -780,7 +780,7 @@ zynkbot/                       # Repository root
 ├── knowledge_base/            # Example KB files (for testing)
 ├── labs/                      # Experimental features
 ├── README.md
-├── LICENSE                    # AGPL v3
+├── LICENSE                    # Zynkbot Community Source License
 ├── COMMERCIAL_LICENSE.md
 ├── ROADMAP.md
 ├── CHANGELOG.md
@@ -822,6 +822,6 @@ zynkbot/                       # Repository root
 
 ---
 
-**License**: AGPL-3.0 (open source) / Commercial License available — see [COMMERCIAL_LICENSE.md](../../COMMERCIAL_LICENSE.md)
+**License**: Zynkbot Community Source License / commercial licensing available — see [COMMERCIAL_LICENSE.md](../../COMMERCIAL_LICENSE.md)
 **Contact**: [GitHub Issues](https://github.com/MSkill1/zynkbot/issues)
 **Version**: 1.0.0 (Production Release)
