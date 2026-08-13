@@ -6,7 +6,6 @@ pub mod memory;
 pub mod models;
 pub mod nlp;
 pub mod onboarding;
-pub mod persona_memory;
 pub mod safety;
 pub mod sync_codes;
 pub mod user_identity;

@@ -2259,8 +2259,6 @@ pub fn run() {
             commands::memory::get_memory_contradictions,
             commands::memory::get_full_memory_graph,
             commands::memory::get_namespaces,
-            commands::persona_memory::import_persona_memory_collection,
-            commands::persona_memory::delete_persona_memory_collection,
             // NEW: Einstein demo & contradiction detection (Pure Rust)
             commands::onboarding::apply_einstein_seed,
             commands::onboarding::load_small_einstein_demo,
