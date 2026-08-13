@@ -1,70 +1,190 @@
-GNU AFFERO GENERAL PUBLIC LICENSE
-Version 3, 19 November 2007
+ZYNKBOT COMMUNITY SOURCE LICENSE
+Version 1.0, August 13, 2026
 
-Copyright (C) 2024-2026 Matthew Skillman
+Copyright (c) 2024-2026 Matthew Skillman / ContainAI
+All rights reserved except as expressly granted below.
 
-"Zynkbot" is a trademark of Matthew Skillman. Use of the trademark is subject to
-the terms described in the TRADEMARK file.
+Zynkbot's source code is publicly available. This license permits personal,
+internal business, nonprofit, educational, research, humanitarian, and other
+noncommercial use. Commercial distribution and commercial services require a
+separate commercial license.
 
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU Affero General Public License as published by the Free
-Software Foundation, either version 3 of the License, or (at your option) any
-later version.
+1. DEFINITIONS
 
-This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
-details.
+"Software" means the Zynkbot source code, executable code, documentation, and
+other materials distributed with this license, excluding third-party components
+that identify a different license.
 
-You should have received a copy of the GNU Affero General Public License along
-with this program. If not, see <https://www.gnu.org/licenses/>.
+"You" means the individual or legal entity exercising rights under this
+license.
 
----
+"Internal Use" means use solely within You or Your organization for Your own
+operations, without distributing the Software or providing access to it as a
+product or service to third parties.
 
-ADDITIONAL TERMS (per AGPL Section 7):
+"Commercial Service" means any paid, revenue-generating, or other commercially
+compensated service that materially uses, installs, configures, deploys,
+maintains, supports, hosts, manages, or provides access to the Software.
 
-Prohibition on Surveillance Capitalism:
-This software may not be used by organizations whose primary business model
-involves mass surveillance, data mining for behavioral prediction, or the sale
-of user attention to advertisers without explicit, informed, opt-in consent
-from each user.
+"Commercial Distribution" means selling, licensing, leasing, sublicensing,
+bundling, white-labeling, or otherwise distributing the Software, or a product
+that incorporates or is based on the Software, for commercial advantage or
+monetary compensation.
 
-Specifically prohibited uses include (but are not limited to):
-- Deployment as part of advertising-funded services that profile users
-- Integration with systems designed for mass behavioral surveillance
-- Deployment in contexts that violate user privacy rights under GDPR, CCPA,
-  or equivalent regulations
+"Noncommercial Purpose" means a purpose not primarily intended for commercial
+advantage or monetary compensation.
 
-This restriction is enforceable under Section 7 of the AGPL v3 license.
+2. ACCEPTANCE
 
----
+By using, copying, modifying, or distributing the Software, You accept this
+license. If You do not accept it, You receive no rights under this license.
 
-COMMERCIAL DISTRIBUTION LICENSE:
+3. PERMITTED USES
 
-This software is free to download, use, modify, and contribute to — including
-within a commercial organization — under the terms of the AGPL v3 license above.
+Subject to this license, the copyright holder grants You a non-exclusive,
+worldwide, royalty-free, non-transferable license to use, copy, and modify the
+Software for the following purposes:
 
-A separate commercial license is required only if you intend to distribute
-or sell this software, or a product that incorporates it, to third parties.
+a. personal study, private use, hobby projects, research, experimentation,
+   testing, and evaluation;
 
-Requires a commercial license:
-- Selling or licensing a product that incorporates Zynkbot code
-- Offering Zynkbot as a hosted service for a fee (SaaS or managed service)
-- White-labeling or rebranding Zynkbot for distribution to customers
+b. Internal Use, including Internal Use by a for-profit business;
 
-Does NOT require a commercial license:
-- Personal use, evaluation, or testing — take as long as you need
-- Internal use at any organization, commercial or otherwise
-- Modifying or building on the code for your own purposes
-- Contributing code, documentation, or fixes to this repository
-- Educational, research, and non-profit use
+c. use by charitable and nonprofit organizations, educational institutions,
+   public research organizations, public-safety and public-health organizations,
+   free clinics, humanitarian organizations, and government institutions in
+   furtherance of their public-benefit missions; and
 
-For commercial distribution licensing:
-Contact: matt@containai.ai
+d. other Noncommercial Purposes.
+
+Employees may be paid in the ordinary course of their employment for work that
+supports an otherwise permitted Internal Use or public-benefit use. Receipt of
+donations, grants, or cost reimbursement by an eligible public-benefit
+organization does not by itself make that organization's use commercial.
+
+4. NONCOMMERCIAL MODIFICATION AND DISTRIBUTION
+
+You may modify the Software and distribute original or modified copies solely
+for Noncommercial Purposes, provided that You:
+
+a. include this license and all copyright, attribution, and warranty notices;
+
+b. clearly identify material modifications You made;
+
+c. do not state or imply that Your version is endorsed by, sponsored by, or an
+   official release of Matthew Skillman, ContainAI, or Zynkbot; and
+
+d. do not impose terms that purport to grant rights in the Software broader
+   than the rights granted by this license.
+
+You may charge no more than reasonable, documented reproduction and delivery
+costs for a distribution made under this section.
+
+5. COMMERCIAL LICENSE REQUIRED
+
+This license does not grant permission to engage in Commercial Services or
+Commercial Distribution. A separate written commercial license from the
+copyright holder is required before You may, directly or indirectly:
+
+a. charge to install, configure, customize, deploy, maintain, support, manage,
+   or provide training specifically for the Software;
+
+b. sell, license, lease, bundle, white-label, or otherwise commercially
+   distribute the Software or a modified version;
+
+c. sell or distribute hardware, appliances, devices, or other products with the
+   Software installed, incorporated, or bundled;
+
+d. offer the Software or a modified version as a paid hosted service, managed
+   service, software-as-a-service offering, or other monetized service;
+
+e. incorporate the Software or its source code into a proprietary or commercial
+   product, SDK, platform, or service;
+
+f. sell access to functionality materially provided by the Software; or
+
+g. use the Software in advertising-supported or otherwise directly monetized
+   products or services offered to third parties.
+
+Commercial licenses may use per-installation fees, subscriptions, annual
+renewals, revenue sharing, royalties, or other negotiated terms. No such rights
+are granted until both You and the copyright holder enter a separate written
+agreement.
+
+Commercial licensing contact: matt@containai.ai
 Subject: Zynkbot Commercial License Inquiry
 
-See COMMERCIAL_LICENSE.md for full details.
+6. VOLUNTEERS AND UNPAID ASSISTANCE
 
----
+This license permits a person to provide genuinely unpaid assistance installing,
+configuring, or supporting the Software for a permitted user. Reimbursement of
+reasonable, documented out-of-pocket travel or media costs does not by itself
+make the assistance a Commercial Service. Salary, consulting fees, service fees,
+subscription revenue, bundled charges, or other compensation connected to the
+assistance require a commercial license.
 
-Full AGPL v3 license text: https://www.gnu.org/licenses/agpl-3.0.txt
+7. NO SUBLICENSING OR TRANSFER
+
+You may not sublicense or transfer this license. A recipient of a permitted
+copy receives rights directly from the copyright holder under this license.
+
+8. THIRD-PARTY SOFTWARE
+
+Third-party components included with or used by the Software remain governed by
+their own licenses. This license does not reduce, replace, or expand rights or
+obligations under those licenses.
+
+9. TRADEMARKS
+
+This license does not grant permission to use the names, trademarks, service
+marks, or logos of Zynkbot, ContainAI, or Matthew Skillman except as reasonably
+necessary to describe the origin of an unmodified copy. See the TRADEMARK file.
+
+10. PATENTS
+
+The copyright holder grants You a patent license for patent claims the copyright
+holder can license that are necessarily infringed by Your permitted use of the
+Software. This patent license ends immediately if You or Your organization make
+a written claim that the Software infringes a patent.
+
+11. COMPLIANCE AND TERMINATION
+
+Your rights under this license terminate automatically if You violate its terms.
+For a first violation, Your rights will be reinstated if You stop the violation
+and take reasonable steps to correct its effects within thirty days after
+receiving written notice. Repeated, willful, or uncured violations terminate
+Your rights permanently unless the copyright holder agrees otherwise in writing.
+
+Sections that by their nature should survive termination, including Sections 8,
+9, 12, 13, and 14, survive termination.
+
+12. DISCLAIMER OF WARRANTY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SOFTWARE IS PROVIDED "AS IS" AND
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+NONINFRINGEMENT.
+
+13. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE COPYRIGHT HOLDER AND CONTRIBUTORS
+WILL NOT BE LIABLE FOR ANY INDIRECT, SPECIAL, INCIDENTAL, CONSEQUENTIAL,
+EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF DATA, PROFITS, REVENUE,
+GOODWILL, OR BUSINESS INTERRUPTION, ARISING FROM OR RELATED TO THE SOFTWARE OR
+THIS LICENSE, UNDER ANY LEGAL THEORY, EVEN IF ADVISED OF THE POSSIBILITY.
+
+14. GENERAL TERMS
+
+This license is the entire agreement concerning the rights it grants in the
+Software. If any provision is unenforceable, it will be reformed only to the
+minimum extent necessary, and the remaining provisions will continue in effect.
+Failure to enforce a provision is not a waiver. This license is governed by the
+laws of the State of Vermont and applicable United States federal law, without
+regard to conflict-of-laws rules. Exclusive venue for disputes arising from this
+license lies in the state or federal courts with jurisdiction in Vermont.
+
+15. OTHER LICENSES
+
+The copyright holder may offer the Software under other terms, including
+commercial licenses. Nothing in this license obligates the copyright holder to
+offer identical terms to different licensees.
