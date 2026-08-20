@@ -1,134 +1,73 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
+import { useVoiceInput } from '../hooks/useVoiceInput';
 
 /**
- * VoiceButton - Voice input with privacy notice
- *
- * Desktop: Uses Web Speech API (sends audio to Google)
- * Android: Will use native on-device recognition (private)
+ * VoiceButton - Records audio and transcribes via OpenAI Whisper API.
+ * Works on both desktop and Android (GrapheneOS-compatible).
  *
  * Props:
- * - onTranscript: (text: string) => void - Callback when transcription completes
- * - disabled: boolean - Whether button is disabled
- * - style: object - Optional additional styles
+ * - onTranscript: (text: string) => void
+ * - disabled: boolean
+ * - style: object
  */
 export default function VoiceButton({ onTranscript, disabled, style }) {
   const [showModal, setShowModal] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [hasConsented, setHasConsented] = useState(() => {
-    // Check if user has previously consented
-    return localStorage.getItem('zynkbot_voice_consent') === 'true';
-  });
-  const recognitionRef = useRef(null);
+  const [hasConsented, setHasConsented] = useState(() =>
+    localStorage.getItem('zynkbot_voice_consent_openai') === 'true'
+  );
+  const { isRecording, isTranscribing, startRecording, stopRecording } = useVoiceInput();
 
-  const handleClick = () => {
+  const handleClick = async () => {
     if (isRecording) {
-      stopRecording();
+      const text = await stopRecording();
+      if (text && onTranscript) onTranscript(text);
     } else if (hasConsented) {
-      // User already consented, start recording directly
-      startWebSpeech();
+      await startRecording();
     } else {
-      // Show privacy modal first time
       setShowModal(true);
     }
   };
 
-  const startWebSpeech = () => {
+  const handleConsent = async () => {
+    localStorage.setItem('zynkbot_voice_consent_openai', 'true');
+    setHasConsented(true);
     setShowModal(false);
-
-    // Save consent to localStorage
-    if (!hasConsented) {
-      localStorage.setItem('zynkbot_voice_consent', 'true');
-      setHasConsented(true);
-    }
-
-    // Check if Web Speech API is available
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.');
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;  // Keep recording until manually stopped
-    recognition.interimResults = true;  // Get partial results as user speaks
-    recognition.lang = 'en-US';
-
-    let finalTranscript = '';
-
-    recognition.onstart = () => {
-      setIsRecording(true);
-      finalTranscript = '';
-    };
-
-    recognition.onresult = (event) => {
-      let interimTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript + ' ';
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-
-      // Show interim results in real-time (optional - you could display this)
-      console.log('[VoiceButton] Interim:', interimTranscript);
-    };
-
-    recognition.onerror = (event) => {
-      console.error('[VoiceButton] Speech recognition error:', event.error);
-      if (onTranscript && finalTranscript.trim()) {
-        onTranscript(finalTranscript.trim());
-      }
-      setIsRecording(false);
-    };
-
-    recognition.onend = () => {
-      // Send final transcript when recording ends
-      if (onTranscript && finalTranscript.trim()) {
-        onTranscript(finalTranscript.trim());
-      }
-      setIsRecording(false);
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-  };
-
-  const stopRecording = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-    setIsRecording(false);
+    await startRecording();
   };
 
   const getButtonStyle = () => {
-    if (isRecording) return { background: '#ff5555' };  // Red - recording
-    return { background: '#6272a4' };                   // Gray - idle
+    if (isTranscribing) return { background: '#f1fa8c' };
+    if (isRecording) return { background: '#ff5555' };
+    return { background: '#6272a4' };
   };
 
   const getButtonText = () => {
-    if (isRecording) return '■';  // Stop
-    return '🎤';                   // Record
+    if (isTranscribing) return '…';
+    if (isRecording) return '■';
+    return '🎤';
+  };
+
+  const getTitle = () => {
+    if (isTranscribing) return 'Transcribing…';
+    if (isRecording) return 'Tap to stop and transcribe';
+    return 'Voice input (OpenAI Whisper)';
   };
 
   return (
     <>
       <button
         onClick={handleClick}
-        disabled={disabled}
-        title={isRecording ? 'Click to stop recording' : 'Click for voice input'}
+        disabled={disabled || isTranscribing}
+        title={getTitle()}
         style={{
           padding: '8px 12px',
           ...getButtonStyle(),
           color: '#f8f8f2',
           border: 'none',
           borderRadius: '4px',
-          cursor: disabled ? 'not-allowed' : 'pointer',
+          cursor: (disabled || isTranscribing) ? 'not-allowed' : 'pointer',
           fontSize: '1rem',
-          opacity: disabled ? 0.5 : 1,
+          opacity: (disabled || isTranscribing) ? 0.5 : 1,
           minWidth: '48px',
           minHeight: '40px',
           display: 'inline-flex',
@@ -141,15 +80,11 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
         {getButtonText()}
       </button>
 
-      {/* Privacy Modal */}
       {showModal && (
         <div
           style={{
             position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
+            top: 0, left: 0, right: 0, bottom: 0,
             background: 'rgba(0, 0, 0, 0.7)',
             display: 'flex',
             alignItems: 'center',
@@ -164,41 +99,25 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
               background: '#1e1f29',
               borderRadius: '12px',
               padding: '30px',
-              maxWidth: '550px',
+              maxWidth: '480px',
               width: '100%',
               border: '1px solid #44475a',
               boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)'
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 style={{ color: '#ff5555', marginBottom: '15px', fontSize: '1.3rem' }}>
-              ⚠️ Privacy Notice
+            <h2 style={{ color: '#ffb86c', marginBottom: '15px', fontSize: '1.3rem' }}>
+              🎤 Voice Input — Privacy Notice
             </h2>
-
             <div style={{ color: '#f8f8f2', marginBottom: '20px', lineHeight: '1.6' }}>
-              <p style={{ marginBottom: '15px' }}>
-                <strong>Desktop limitations:</strong> Rust does not currently have a production-ready
-                local speech recognition solution for Windows.
+              <p style={{ marginBottom: '12px' }}>
+                Your audio is sent to <strong>OpenAI Whisper</strong> for transcription.
+                Audio is not stored by OpenAI beyond the request.
               </p>
-
-              <p style={{ marginBottom: '15px' }}>
-                <strong>Good news for Android:</strong> When Zynkbot launches on Android (our primary platform),
-                voice input will use native on-device recognition with full privacy - no data leaves your phone.
+              <p style={{ marginBottom: '0', color: '#bd93f9', fontSize: '0.9rem' }}>
+                Speak your message, then tap the red ■ button to transcribe.
               </p>
-
-              <p style={{ marginBottom: '15px' }}>
-                <strong>Your options on desktop:</strong>
-              </p>
-              <ul style={{ marginLeft: '20px', marginBottom: '0' }}>
-                <li style={{ marginBottom: '8px' }}>
-                  <strong style={{ color: '#50fa7b' }}>Type your message</strong> - Complete privacy, no API calls
-                </li>
-                <li>
-                  <strong style={{ color: '#ffb86c' }}>Use Web Speech (Google)</strong> - Audio sent to Google servers (not private)
-                </li>
-              </ul>
             </div>
-
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
               <button
                 onClick={() => setShowModal(false)}
@@ -209,26 +128,24 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
                   border: 'none',
                   borderRadius: '6px',
                   cursor: 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '0.95rem'
+                  fontWeight: 'bold'
                 }}
               >
-                I'll Type Instead
+                Cancel
               </button>
               <button
-                onClick={startWebSpeech}
+                onClick={handleConsent}
                 style={{
                   padding: '10px 20px',
-                  background: '#ffb86c',
+                  background: '#50fa7b',
                   color: '#282a36',
                   border: 'none',
                   borderRadius: '6px',
                   cursor: 'pointer',
-                  fontWeight: 'bold',
-                  fontSize: '0.95rem'
+                  fontWeight: 'bold'
                 }}
               >
-                Use Web Speech (Google)
+                I Understand, Record
               </button>
             </div>
           </div>

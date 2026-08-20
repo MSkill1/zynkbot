@@ -1771,8 +1771,8 @@ export default function App() {
                 gridTemplateRows: '42px 42px',
                 gap: '10px'
               }}>
-                {/* Desktop-only: Voice (mobile uses Android keyboard dictation) */}
-                {!isMobile && (voiceInputEnabled ? (
+                {/* Voice input — OpenAI Whisper, works on Android (graphene-dictation) */}
+                {(voiceInputEnabled ? (
                   <VoiceButton
                     onTranscript={(text) => setInput(text)}
                     disabled={isLoading}

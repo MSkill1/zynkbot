@@ -1301,18 +1301,47 @@ pub(crate) fn is_query_about_zynkbot(query: &str) -> bool {
 // WHISPER: LOCAL SPEECH-TO-TEXT (Pure Rust)
 // ============================================================================
 
-/// Transcribe audio file to text using local Whisper model (candle)
-/// TEMPORARILY DISABLED: Whisper conflicts with llama-cpp-2 (GGML symbol collision)
-/// Re-enable when: (1) whisper.cpp/llama.cpp resolve conflicts, or (2) use dynamic linking
-///
-/// # Arguments
-/// * `audio_data` - WAV audio file as byte array (16kHz mono preferred)
-///
-/// # Returns
-/// * Error message explaining feature is disabled
+/// Transcribe audio via OpenAI Whisper API (graphene-dictation branch).
+/// Sends WAV bytes as multipart/form-data to api.openai.com/v1/audio/transcriptions.
+/// Requires OPENAI_API_KEY in environment (loaded via dotenv at startup).
 #[tauri::command]
-async fn transcribe_audio(_audio_data: Vec<u8>) -> Result<String, String> {
-    Err("Voice transcription temporarily disabled due to library conflicts. Will be re-enabled when whisper.cpp and llama.cpp resolve GGML symbol conflicts.".to_string())
+async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
+    let api_key = std::env::var("OPENAI_API_KEY")
+        .map_err(|_| "OPENAI_API_KEY not set — add it to your .env file".to_string())?;
+
+    let part = reqwest::multipart::Part::bytes(audio_data)
+        .file_name("audio.wav")
+        .mime_str("audio/wav")
+        .map_err(|e| format!("MIME error: {e}"))?;
+
+    let form = reqwest::multipart::Form::new()
+        .text("model", "whisper-1")
+        .part("file", part);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.openai.com/v1/audio/transcriptions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("OpenAI request failed: {e}"))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("OpenAI API error {status}: {body}"));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse OpenAI response: {e}"))?;
+
+    json["text"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .ok_or_else(|| "No text field in OpenAI response".to_string())
 }
 
 // ============================================================================
