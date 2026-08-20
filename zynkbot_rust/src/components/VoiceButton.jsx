@@ -36,13 +36,12 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
   };
 
   const getButtonStyle = () => {
-    if (isTranscribing) return { background: '#f1fa8c' };
+    if (isTranscribing) return { background: '#44475a' };
     if (isRecording) return { background: '#ff5555' };
     return { background: '#6272a4' };
   };
 
   const getButtonText = () => {
-    if (isTranscribing) return '…';
     if (isRecording) return '■';
     return '🎤';
   };
@@ -55,6 +54,7 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
 
   return (
     <>
+      <style>{`@keyframes zynk-spin { to { transform: rotate(360deg); } }`}</style>
       <button
         onClick={handleClick}
         disabled={disabled || isTranscribing}
@@ -77,7 +77,17 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
           ...style
         }}
       >
-        {getButtonText()}
+        {isTranscribing ? (
+          <span style={{
+            display: 'inline-block',
+            width: '14px',
+            height: '14px',
+            border: '2px solid rgba(248,248,242,0.3)',
+            borderTopColor: '#f8f8f2',
+            borderRadius: '50%',
+            animation: 'zynk-spin 0.7s linear infinite',
+          }} />
+        ) : getButtonText()}
       </button>
 
       {showModal && (
@@ -112,7 +122,8 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
             <div style={{ color: '#f8f8f2', marginBottom: '20px', lineHeight: '1.6' }}>
               <p style={{ marginBottom: '12px' }}>
                 Your audio is sent to <strong>OpenAI Whisper</strong> for transcription.
-                Audio is not stored by OpenAI beyond the request.
+                OpenAI retains audio for up to <strong>30 days</strong> for abuse monitoring
+                and does not use it to train models by default.
               </p>
               <p style={{ marginBottom: '0', color: '#bd93f9', fontSize: '0.9rem' }}>
                 Speak your message, then tap the red ■ button to transcribe.

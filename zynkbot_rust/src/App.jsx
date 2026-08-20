@@ -1632,6 +1632,7 @@ export default function App() {
                     maxHeight: isMobile ? '135px' : '200px',
                     padding: '12px',
                     paddingBottom: '45px',
+                    paddingRight: isMobile ? '50px' : '12px',
                     background: '#282a36',
                     border: '1px solid #44475a',
                     borderRadius: '8px',
@@ -1760,6 +1761,27 @@ export default function App() {
                     </button>
                   )}
                 </div>
+
+                {/* Mobile: circular mic button, bottom-right of textarea */}
+                {isMobile && voiceInputEnabled && (
+                  <VoiceButton
+                    onTranscript={(text) => setInput(text)}
+                    disabled={isLoading}
+                    style={{
+                      position: 'absolute',
+                      bottom: '8px',
+                      right: '8px',
+                      width: '36px',
+                      height: '36px',
+                      minWidth: '36px',
+                      minHeight: '36px',
+                      borderRadius: '50%',
+                      padding: '0',
+                      zIndex: 10,
+                      fontSize: '0.9rem',
+                    }}
+                  />
+                )}
               </div>
 
               {/* Right: 2×2 Button Grid.
@@ -1771,8 +1793,8 @@ export default function App() {
                 gridTemplateRows: '42px 42px',
                 gap: '10px'
               }}>
-                {/* Voice input — OpenAI Whisper, works on Android (graphene-dictation) */}
-                {(voiceInputEnabled ? (
+                {/* Desktop-only: Voice in grid (mobile has circular button on textarea) */}
+                {!isMobile && (voiceInputEnabled ? (
                   <VoiceButton
                     onTranscript={(text) => setInput(text)}
                     disabled={isLoading}

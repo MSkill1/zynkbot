@@ -107,11 +107,11 @@ export function useVoiceInput() {
       console.error('[VoiceInput] Failed to start recording:', error);
       console.error('[VoiceInput] Error details:', error.name, error.message);
 
-      // More helpful error message for Linux/WebKitGTK users
-      const isLinux = navigator.platform.toLowerCase().includes('linux');
+      // More helpful error message for Linux/WebKitGTK users (not Android — it also reports "linux")
+      const isLinux = navigator.platform.toLowerCase().includes('linux') && !window.AndroidPaths;
       const errorMsg = isLinux
         ? 'Microphone access not available in Tauri on Linux.\n\nThis is a WebKitGTK limitation. You can:\n1. Use the type input instead\n2. Grant microphone permissions to WebKitGTK at OS level\n3. Use the Windows version of Zynkbot for full voice support'
-        : 'Microphone access denied. Please check your browser/system settings and grant microphone permissions.';
+        : 'Microphone access denied. Please check your system settings and grant microphone permission to Zynkbot.';
 
       alert(errorMsg);
     }

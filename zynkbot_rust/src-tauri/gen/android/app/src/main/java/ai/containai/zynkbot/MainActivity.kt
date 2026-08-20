@@ -23,6 +23,12 @@ class MainActivity : TauriActivity() {
 
     companion object {
         private const val REQ_WRITE_STORAGE = 100
+        private const val REQ_LOCAL_NETWORK = 101
+        // ACCESS_LOCAL_NETWORK is Android 16+ (SDK 36). Using string literal because the
+        // constant may not be present when compiling against older SDK stubs, and because
+        // GrapheneOS enforces it more strictly than stock Android — see hotfix for LAN
+        // access on Pixel 10 / Android 16 devices.
+        private const val PERM_ACCESS_LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
     }
 
     private var webViewRef: WeakReference<WebView>? = null
@@ -305,6 +311,7 @@ class MainActivity : TauriActivity() {
             ensureShareDir()
         }
         requestNotificationPermissionIfNeeded()
+        requestLocalNetworkPermissionIfNeeded()
         requestManageStorageIfNeeded()
         startSyncService()
     }
@@ -353,6 +360,22 @@ class MainActivity : TauriActivity() {
                 != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
             }
+        }
+    }
+
+    // Android 16 (SDK 36) makes LAN access a runtime permission. Without an explicit
+    // request, GrapheneOS keeps the auto-grant in REVOKE_WHEN_REQUESTED state and
+    // silently blocks connections to 192.168.x.x / 10.x.x.x, breaking ZynkSync pairing.
+    // Requesting it here converts the compat auto-grant into a user-affirmed grant.
+    private fun requestLocalNetworkPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < 36) return
+        try {
+            if (ContextCompat.checkSelfPermission(this, PERM_ACCESS_LOCAL_NETWORK)
+                != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(PERM_ACCESS_LOCAL_NETWORK), REQ_LOCAL_NETWORK)
+            }
+        } catch (_: Exception) {
+            // Older devices without the permission constant will throw — ignore.
         }
     }
 
