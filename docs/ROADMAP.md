@@ -7,6 +7,45 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ---
 
+## v0.9.5 - "Hey Zynk" Wake-Word + Timer (Priority — build first)
+
+**Status:** Not started. Primary next feature after launch.
+
+**Goal:** Say "Hey Zynk, set a timer for 10 minutes" and have it actually create a working countdown — wake-word detection and the timer action built together, with the timer as the first concrete thing the wake word triggers (rather than building wake-word in the abstract with nothing for it to do yet).
+
+**Why build them together:** Wake-word alone is a demo with no payoff; timers alone don't need wake-word to be useful. Pairing them means the very first wake-word build has an immediate, testable, satisfying result — say the phrase, hear a countdown confirmed — instead of a listening service with nothing to show for it.
+
+### Part 1 — Wake-word detection
+
+1. Integrate an on-device wake-word engine (e.g. Porcupine/Picovoice, or an open alternative) trained on "Hey Zynk" — check current licensing terms for custom wake words before committing (free tiers often limit custom phrases).
+
+2. App-level only — NOT an OS modification. No GrapheneOS/AOSP fork, no system-level audio hook. Works identically on stock Android and GrapheneOS.
+
+3. Implement as an Android background/foreground service:
+   - Default OFF — always-listening should be opt-in, not default (matches the project's privacy posture).
+   - On detection: brief chime/visual confirmation (so the user knows it heard them), then capture the following speech via the existing voice-input pipeline (reuse, don't rebuild).
+
+4. Battery/lifecycle testing — this is the real risk, not the detection model itself:
+   - Service survives being backgrounded, isn't killed by Android's process management.
+   - Measure real battery drain over a full day of always-listening.
+   - Confirm behavior when the phone is locked.
+
+### Part 2 — Timer action (the first thing the wake word triggers)
+
+5. Add a lightweight intent-check step: after wake-word capture (or from any typed/dictated input), ask the model whether the message is a timer/alarm request and extract the duration as structured output (e.g. `{"is_timer": true, "duration_seconds": 600}`).
+
+6. Android: implement the actual timer via `AlarmManager` (`setExactAndAllowWhileIdle` or `setAlarmClock`) + a completion notification with sound, so it fires even if the app is backgrounded. Requires `SCHEDULE_EXACT_ALARM` permission (Android 12+, explicit grant) — add the request flow with a clear explanation of why it's needed.
+
+7. Zynkbot confirms in chat/voice when the timer is set ("Timer set for 10 minutes") — the confirmation is the "did this actually work" signal for the user.
+
+8. Test background-execution edge cases end-to-end: wake word fires while app is backgrounded → timer gets set → phone is locked → timer still fires correctly.
+
+**Sequencing note:** Ship wake-word + timer as one working slice before expanding to other voice commands. Once this slice works reliably, other intents (reminders, memory creation via wake word, etc.) reuse the same wake-word service and the same intent-parsing pattern — cheap to add after this foundation exists.
+
+**Effort estimate:** Medium overall. Timer logic itself is small (a day or so); wake-word detection integration is well-solved (days); the bulk of real time goes to background-service reliability and battery testing on actual Android hardware — budget more time for testing than for the initial build.
+
+---
+
 ## v1.0 - Desktop Stable Release (Q3 2026)
 
 **Focus:** Polish, stability, documentation
@@ -15,6 +54,7 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 - **ZynkLink mTLS cert exchange** — ZynkLink pairing does not currently exchange TLS certificates, so ZynkLink file/chat routes cannot be gated behind the `require_verified_device` middleware (auth relies on `check_zynklink_authorized`'s user_id check against `zynklink_pairings`). Add cert exchange to `handle_zynklink_verify_code` / `handle_zynklink_accept_code`, store in `zynk_devices.tls_cert_der`, widen `rebuild_http_client`'s `WHERE sync_paired = 1` filter to include link-only peers, and move the ZynkLink routes back under `require_verified_device`.
 - **Android push notifications for ZChat messages** — When a ZChat message arrives from a paired device while the app is backgrounded, post a system notification with a tone + pop-up. Requires: Android notification channel + `POST_NOTIFICATIONS` permission (API 33+), Kotlin bridge in `MainActivity.kt` for notify/dismiss, Tauri command wrapping the bridge, and a hook in `handle_zchat_deliver` (or the Tauri event that fires on chat receive) that only posts when the app is backgrounded. Sound file already exists from `abcc6d4`. Tap → deep-link back into the ZChat conversation.
+- **Real safety classifier to replace TinyBERT** — The current `toxic-bert` classifier is a demonstration-grade layer; it false-positives on grief and clinical language ("battle with ALS", "passed away") and lacks nuance for instruction-harm vs discussion-of-harm. Thresholds have been raised (Guardian block > 0.9, Sovereign warn > 0.85) to suppress false positives, but the underlying classifier remains crude. Replacement options: (a) a small purpose-built model like Llama Guard 3 (1B or 8B GGUF, runnable via existing `llama-cpp-2` Rust bindings — no Python required), (b) delegate to a fast LLM call (local Ollama or Anthropic API) with a proper classification prompt, or (c) trust the primary model's own refusal behavior and remove the pre-filter for adult-user modes. Constraint: Zynkbot ships models for embeddings (`all-MiniLM-L6-v2`), NER (`bert-base-NER`), and safety (`toxic-bert`) — adding a 1-8 GB Guard model materially increases install size, and on Android the RAM budget matters. Preferred direction TBD; option (b) with a small local model is probably the right balance for the mobile case.
 - **Memory identity merge on first sync** — When two devices sync for the first time, memories that already existed on the receiving device are not adopted into the synced namespace (KI-011). Fix requires an identity merge step during the first-sync handshake. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) (KI-011).
 - ~~**ZynkLink/ZynkSync trust split**~~ ✅ — ZynkLink and ZynkSync now maintain independent trust records (`sync_paired` column). Unlinking and unsyncing are independent operations with no side effects on the other pairing.
 
@@ -269,12 +309,44 @@ Early groundwork for the developer platform. Full SDK public release is v3.0; v1
 ### Knowledge Base Enhancements
 - **GPU/CUDA acceleration for embeddings** — Offload the sentence-transformer embedding model to GPU during document indexing; significantly reduces indexing time for large corpora on machines with a capable GPU; CPU fallback remains for machines without CUDA
 
-### Voice Input (Whisper Re-enablement)
-Voice transcription is implemented (`useVoiceInput.js`, `whisper.rs`, `transcribe_audio` Tauri command) but disabled due to a GGML symbol collision between llama.cpp and whisper.cpp that causes a link error at build time. A Candle-based Whisper alternative was investigated but has the same gibberish-on-microphone issue (upstream: candle Issue #2182 — model works on audio files, not live microphone input).
+### Voice Input
 
-- **Monitor upstream fixes** — Track llama.cpp and candle for resolution of the GGML collision / microphone input issues (build this?)
+#### 🎙️ Native Offline Dictation — Vosk Integration
+
+**Priority:** High
+**Status:** Planned
+
+##### Problem
+Dictation currently works out of the box on Android via Google's Speech Services / Gboard, and on other platforms via their native OS dictation. On GrapheneOS specifically — the most privacy-aligned target platform for Zynkbot — there is no built-in speech-to-text. GrapheneOS ships their own on-device Speech Services app, but it is text-to-speech only; a GrapheneOS speech-to-text engine has been announced but is not yet released.
+
+This creates an inconsistency: Zynkbot's whole value proposition is local, private, back-end-agnostic AI — but dictation, one of the most-used input methods, currently either doesn't work (GrapheneOS) or silently depends on Google (everywhere else). That's a gap worth closing directly rather than leaving to the OS.
+
+##### Proposed Solution
+Integrate **Vosk** (Apache 2.0 licensed, offline speech recognition engine by Alpha Cephei) directly into Zynkbot as a first-party dictation option.
+
+- Fully on-device, offline — no audio ever leaves the phone
+- Apache 2.0 license — permissive, no copyleft obligations, safe to bundle
+- Cross-platform (Android confirmed; also has Linux/Windows/iOS support)
+- ~50MB per language model, downloaded on demand — small footprint next to any local LLM inference Zynkbot already supports via Ollama
+- Gives Zynkbot consistent dictation behavior across every OS, including GrapheneOS, without depending on Google Speech Services anywhere
+
+##### Explicitly NOT integrating
+Dicio (the reference app that uses Vosk) is GPL-3.0 licensed. We are depending on Vosk directly rather than absorbing Dicio's codebase, to avoid GPL copyleft obligations and because we don't need Dicio's built-in skills (weather, search, etc.) — Zynkbot's RAG/ensemble system already covers that ground.
+
+##### Why this matters
+Dictation is a core, high-frequency input method. Getting it right, fully local, and platform-consistent — especially on GrapheneOS, the most privacy-conscious platform Zynkbot targets — is essential to the "fully local, fully private" promise the whole project is built on.
+
+---
+
+#### Whisper (Desktop) — Blocked, Vosk Preferred for Mobile
+
+Voice transcription via Whisper is implemented (`useVoiceInput.js`, `whisper.rs`, `transcribe_audio` Tauri command) but disabled due to a GGML symbol collision between llama.cpp and whisper.cpp that causes a link error at build time. A Candle-based Whisper alternative was investigated but has the same gibberish-on-microphone issue (upstream: candle Issue #2182 — model works on audio files, not live microphone input).
+
+**Preferred path forward:** Vosk (above) for Android/GrapheneOS. Whisper may still be revisited for desktop if the symbol collision is resolved upstream.
+
+- **Monitor upstream fixes** — Track llama.cpp and candle for resolution of the GGML collision / microphone input issues
 - **Re-enable voice input** — Once a clean path exists, wire `useVoiceInput.js` back into the UI (currently code-complete; only the UI toggle is disabled)
-- **Evaluate alternative approaches** — e.g. OpenAI Whisper API (implemented online fallback), or a standalone Whisper binary called via subprocess to avoid the symbol conflict entirely
+- **Evaluate alternative approaches** — e.g. standalone Whisper binary called via subprocess to avoid the symbol conflict entirely
 
 ---
 
