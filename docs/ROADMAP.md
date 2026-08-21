@@ -76,10 +76,9 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - **Scroll-to-bottom button on Android** — floating ↓ button when user scrolls up in a long conversation; auto-dismisses at bottom.
 - **ZynkSync TLS handshake log spam** — downgrade `HandshakeFailure` from known paired IPs to `debug!`; add connection-attempt debounce on the Android client side.
 - **Android push notifications for ZChat** — post a system notification with tone when a ZChat message arrives while the app is backgrounded.
+- **ZynkLink mTLS cert exchange** — ZynkLink and ZChat routes currently use request-level auth (`check_zynklink_authorized`) rather than verified TLS certificates. Fix: exchange certs during `handle_zynklink_verify_code` / `handle_zynklink_accept_code`, store in `zynk_devices.tls_cert_der`, widen `rebuild_http_client` filter to include link-only peers, move ZynkLink/ZChat routes behind `require_verified_device`. Known security gap — must ship before v1.0.
 
 ### Technical Debt (deferred to v1.1+)
-
-- **ZynkLink mTLS cert exchange** — ZynkLink and ZChat routes use request-level auth; cert exchange during pairing and middleware promotion is the clean fix. Non-blocking for v1.0.
 - **Real safety classifier** — current `toxic-bert` false-positives on clinical/grief language. Replacement options: Llama Guard 3 (GGUF via existing llama-cpp-2 bindings), LLM-delegated classification, or trust primary model refusals for adult modes. Thresholds raised to suppress false positives for now.
 - **Memory identity merge on first sync** — memories on the receiving device are not adopted into the synced namespace on first sync (KI-011). Requires identity merge step during first-sync handshake.
 - **Rotating startup tips** — replace static tip with a pool that surfaces less-discovered features.
