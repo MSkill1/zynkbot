@@ -333,9 +333,12 @@ pub async fn send_message_with_memory(
             .collect()
     };
 
-    // ONE-HOP GRAPH TRAVERSAL: For each recalled memory, pull in directly linked
-    // memories via "elaborates", "contradicts", or "resolves" relationships.
-    // Capped at 3 additional memories to prevent prompt bloat.
+    // ONE-HOP GRAPH TRAVERSAL: For each recalled memory, pull in all directly
+    // linked memories regardless of relation type (supports, reminds_of, elaborates,
+    // contradicts, resolves, related, etc.). Links are sorted by confidence so the
+    // strongest associations are included first. Capped at 8 hop-memories total to
+    // bound prompt size; build_memory_context enforces the final per-model limit.
+    const MAX_HOP_MEMORIES: usize = 8;
     let mut linked_memories: Vec<crate::memory::Memory> = Vec::new();
     if !is_zynkbot_query {
         let already_included_ids: std::collections::HashSet<i32> = recalled_memories.iter()
@@ -345,11 +348,13 @@ pub async fn send_message_with_memory(
             .map(|m| m.content.clone())
             .collect();
 
-        for mem in &recalled_memories {
-            if let Ok(links) = crate::memory::get_memory_links(&db_pool, mem.id).await {
+        'outer: for mem in &recalled_memories {
+            if let Ok(mut links) = crate::memory::get_memory_links(&db_pool, mem.id).await {
+                // Strongest links first so the cap preserves the most meaningful ones
+                links.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
                 for link in links {
-                    if link.relation_type != "elaborates" && link.relation_type != "contradicts" && link.relation_type != "resolves" {
-                        continue;
+                    if linked_memories.len() >= MAX_HOP_MEMORIES {
+                        break 'outer;
                     }
                     let linked_id = if link.source_memory_id == mem.id {
                         link.target_memory_id
@@ -365,8 +370,8 @@ pub async fn send_message_with_memory(
                         if already_included_content.contains(&linked_mem.content) {
                             continue;
                         }
-                        println!("[RUST] 🔗 Graph traversal: memory #{} → linked #{} ({:?}) via '{}'",
-                            mem.id, linked_id, linked_mem.title, link.relation_type);
+                        println!("[RUST] 🔗 Graph traversal: memory #{} → linked #{} ({:?}) via '{}' (conf {:.2})",
+                            mem.id, linked_id, linked_mem.title, link.relation_type, link.confidence);
                         already_included_content.insert(linked_mem.content.clone());
                         linked_memories.push(linked_mem);
                     }
