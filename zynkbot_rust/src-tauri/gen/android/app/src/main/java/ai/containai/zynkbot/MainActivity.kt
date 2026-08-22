@@ -299,7 +299,10 @@ class MainActivity : TauriActivity() {
         fun startListening() {
             if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
-                fire("window.__voskError&&window.__voskError('Microphone permission not granted');")
+                runOnUiThread {
+                    requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_RECORD_AUDIO)
+                }
+                fire("window.__voskError&&window.__voskError('Microphone permission not granted — please allow in the prompt then try again');")
                 return
             }
             Thread {
