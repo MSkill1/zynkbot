@@ -478,6 +478,7 @@ class MainActivity : TauriActivity() {
         requestLocalNetworkPermissionIfNeeded()
         requestManageStorageIfNeeded()
         requestRecordAudioIfNeeded()
+        extractVoskModelIfNeeded()
         startSyncService()
     }
 
@@ -541,6 +542,31 @@ class MainActivity : TauriActivity() {
             }
         } catch (_: Exception) {
             // Older devices without the permission constant will throw — ignore.
+        }
+    }
+
+    private fun extractVoskModelIfNeeded() {
+        val modelDir = File(filesDir, "vosk-model")
+        if (modelDir.exists() && modelDir.list()?.isNotEmpty() == true) return
+        Thread {
+            try {
+                copyAssetDir("vosk-model", modelDir)
+            } catch (e: Exception) {
+                android.util.Log.e("VoskModel", "Failed to extract bundled model: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun copyAssetDir(assetPath: String, destDir: File) {
+        val children = assets.list(assetPath) ?: return
+        if (children.isEmpty()) {
+            destDir.parentFile?.mkdirs()
+            assets.open(assetPath).use { input -> FileOutputStream(destDir).use { input.copyTo(it) } }
+        } else {
+            destDir.mkdirs()
+            for (child in children) {
+                copyAssetDir("$assetPath/$child", File(destDir, child))
+            }
         }
     }
 

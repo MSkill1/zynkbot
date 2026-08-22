@@ -18,6 +18,9 @@ zynkbot_rust/src-tauri/models/
 *.gguf
 *.safetensors
 
+# Bundled Vosk model (placed locally for APK builds, not tracked in git)
+zynkbot_rust/src-tauri/gen/android/app/src/main/assets/vosk-model/
+
 # Database files
 *.db
 *.sqlite
