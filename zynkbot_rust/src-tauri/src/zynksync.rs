@@ -4350,26 +4350,26 @@ async fn handle_delete_by_hash(
 
     let memory_info: Option<(i32, DateTime<Utc>)> = {
         use sha2::{Digest, Sha256};
-        let rows: Vec<(i32, String, String)> = sqlx::query_as::<_, (i32, String, String)>(
-            "SELECT id, content, created_at FROM memories"
+        let rows: Vec<(i32, String, String, Option<String>)> = sqlx::query_as::<_, (i32, String, String, Option<String>)>(
+            "SELECT id, content, created_at, updated_at FROM memories"
         )
         .fetch_all(&service.db_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to lookup memories: {}", e)}))))?;
         rows.into_iter()
-            .find(|(_, c, _)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
-            .map(|(id, _, created_at_str)| {
+            .find(|(_, c, _, _)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
+            .map(|(id, _, created_at_str, updated_at_str)| {
                 let created_at = created_at_str.parse::<DateTime<Utc>>().unwrap_or(DateTime::<Utc>::MIN_UTC);
-                (id, created_at)
+                let updated_at = updated_at_str.and_then(|s| s.parse::<DateTime<Utc>>().ok()).unwrap_or(DateTime::<Utc>::MIN_UTC);
+                (id, created_at.max(updated_at))
             })
     };
 
     match memory_info {
-        Some((id, created_at)) => {
+        Some((id, effective_time)) => {
             // Only delete if the memory predates the tombstone.
-            // A memory created after the tombstone was recorded is an intentional recreation
-            // and should not be wiped by a stale deletion event.
-            let should_delete = tombstone_time.map_or(true, |ts| created_at <= ts);
+            // Use max(created_at, updated_at) so restored memories (updated_at = now) are protected.
+            let should_delete = tombstone_time.map_or(true, |ts| effective_time <= ts);
 
             if should_delete {
                 let _ = sqlx::query(
