@@ -1570,8 +1570,8 @@ export default function App() {
               )}
             </div>
 
-            {/* Rotating tip — only shown before first message */}
-            {messages.length === 0 && (
+            {/* Rotating tip — only shown before first message and while input is empty */}
+            {messages.length === 0 && !input && (
               <div style={{ textAlign: 'center', marginBottom: '6px', padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.65)', fontStyle: 'italic', lineHeight: '1.6' }}>
                   {TIPS[tipIdx % TIPS.length]}
