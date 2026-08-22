@@ -6,11 +6,12 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
   const [modelReady, setModelReady] = useState(() => isAndroid ? window.VoskBridge.isModelReady() : true);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [awaitingDownloadConfirm, setAwaitingDownloadConfirm] = useState(false);
   const { isRecording, isTranscribing, startRecording, stopRecording } = useVoiceInput();
 
   useEffect(() => {
     if (!isAndroid) return;
-    window.__voskModelReady = () => { setModelReady(true); setIsDownloading(false); setDownloadProgress(0); };
+    window.__voskModelReady = () => { setModelReady(true); setIsDownloading(false); setDownloadProgress(0); setAwaitingDownloadConfirm(false); };
     window.__voskDownloadProgress = (pct) => { setIsDownloading(true); setDownloadProgress(pct); };
     window.__voskDownloadError = (msg) => { setIsDownloading(false); alert('Voice model download failed: ' + msg); };
     return () => {
@@ -23,9 +24,13 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
   const handleClick = async () => {
     if (isDownloading) return;
     if (isAndroid && !modelReady) {
-      if (confirm('Offline voice model (~40 MB) needs to be downloaded once. Download now?')) {
+      if (awaitingDownloadConfirm) {
+        setAwaitingDownloadConfirm(false);
         setIsDownloading(true);
         window.VoskBridge.downloadModel();
+      } else {
+        setAwaitingDownloadConfirm(true);
+        setTimeout(() => setAwaitingDownloadConfirm(false), 4000);
       }
       return;
     }
@@ -46,7 +51,7 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
   const getLabel = () => {
     if (isDownloading) return `${downloadProgress}%`;
     if (isRecording) return '■';
-    if (isAndroid && !modelReady) return '⬇';
+    if (isAndroid && !modelReady) return awaitingDownloadConfirm ? '✓' : '⬇';
     return '🎤';
   };
 
@@ -54,7 +59,7 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
     if (isDownloading) return `Downloading voice model… ${downloadProgress}%`;
     if (isTranscribing) return 'Transcribing…';
     if (isRecording) return 'Tap to stop recording';
-    if (isAndroid && !modelReady) return 'Tap to download offline voice model (~40 MB)';
+    if (isAndroid && !modelReady) return awaitingDownloadConfirm ? 'Tap again to confirm download (~40 MB)' : 'Tap to download offline voice model (~40 MB)';
     if (isAndroid) return 'Voice input (offline)';
     return 'Voice input (OpenAI Whisper)';
   };
