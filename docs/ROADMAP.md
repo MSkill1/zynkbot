@@ -7,13 +7,19 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ---
 
-## v0.9.5 — "Hey Zynk" Wake-Word + Timer (Priority — build first)
+## v0.9.5 — Offline Voice + Wake Word + Timer
 
-**Status:** Not started. Primary next feature after launch.
+**Status:** In progress on `graphene-dictation` branch.
 
-**Goal:** Say "Hey Zynk, set a timer for 10 minutes" and have it actually create a working countdown — wake-word detection and the timer action built together, with the timer as the first concrete thing the wake word triggers (rather than building wake-word in the abstract with nothing for it to do yet).
+**Goal:** Fully offline voice input on all platforms (Linux, Android), "Hey Zynk" wake-word detection, and a working timer/alarm as the first concrete wake-word action. Also includes voice memory query ("What do I know about X?").
 
-**Why build them together:** Wake-word alone is a demo with no payoff; timers alone don't need wake-word to be useful. Pairing them means the very first wake-word build has an immediate, testable, satisfying result — say the phrase, hear a countdown confirmed — instead of a listening service with nothing to show for it.
+### Part 0 — Vosk offline dictation (prerequisite, ships with v0.9.5)
+
+- Replace OpenAI Whisper (API-dependent) with [Vosk](https://alphacephei.com/vosk/) for fully on-device transcription on all platforms.
+- **Linux/Desktop:** Use the `vosk` Rust crate (C FFI wrapper). The existing mic button routes through a new `transcribe_audio` Tauri command. **This fixes dictation on Linux** — previously broken because it required the OpenAI API; Vosk works fully offline.
+- **Android:** Vosk Java SDK via Kotlin bridge in `MainActivity.kt`, same interface as `AndroidPaths`. Replaces the current Whisper API call on Android.
+- Vosk model (~50MB English) shown as a downloadable item in the model management UI alongside the three LLM models. Same model file works on all platforms.
+- Android Enter key no longer sends — Enter = line break on Android (send via button only), preserving multi-paragraph input. Desktop behavior unchanged.
 
 ### Part 1 — Wake-word detection
 
@@ -23,26 +29,33 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 3. Implement as an Android background/foreground service:
    - Default OFF — always-listening should be opt-in, not default (matches the project's privacy posture).
-   - On detection: brief chime/visual confirmation (so the user knows it heard them), then capture the following speech via the existing voice-input pipeline (reuse, don't rebuild).
+   - On detection: brief chime/visual confirmation (so the user knows it heard them), then capture the following speech via Vosk.
 
 4. Battery/lifecycle testing — this is the real risk, not the detection model itself:
    - Service survives being backgrounded, isn't killed by Android's process management.
    - Measure real battery drain over a full day of always-listening.
    - Confirm behavior when the phone is locked.
 
-### Part 2 — Timer action (the first thing the wake word triggers)
+### Part 2 — Timer/alarm (the first wake-word action)
 
 5. Add a lightweight intent-check step: after wake-word capture (or from any typed/dictated input), ask the model whether the message is a timer/alarm request and extract the duration as structured output (e.g. `{"is_timer": true, "duration_seconds": 600}`).
 
-6. Android: implement the actual timer via `AlarmManager` (`setExactAndAllowWhileIdle` or `setAlarmClock`) + a completion notification with sound, so it fires even if the app is backgrounded. Requires `SCHEDULE_EXACT_ALARM` permission (Android 12+, explicit grant) — add the request flow with a clear explanation of why it's needed.
+6. Android: implement via `AlarmManager` (`setExactAndAllowWhileIdle` or `setAlarmClock`) + completion notification with sound, fires even when backgrounded. Requires `SCHEDULE_EXACT_ALARM` permission (Android 12+) — add explicit grant request flow.
 
-7. Zynkbot confirms in chat/voice when the timer is set ("Timer set for 10 minutes") — the confirmation is the "did this actually work" signal for the user.
+7. Zynkbot confirms in chat when the timer is set ("Timer set for 10 minutes").
 
-8. Test background-execution edge cases end-to-end: wake word fires while app is backgrounded → timer gets set → phone is locked → timer still fires correctly.
+8. Test background-execution edge cases: wake word fires while backgrounded → timer set → phone locked → timer still fires correctly.
 
-**Sequencing note:** Ship wake-word + timer as one working slice before expanding to other voice commands. Once this slice works reliably, other intents (reminders, memory creation via wake word, etc.) reuse the same wake-word service and the same intent-parsing pattern — cheap to add after this foundation exists.
+### Part 3 — Voice memory query
 
-**Effort estimate:** Medium overall. Timer logic itself is small (a day or so); wake-word detection integration is well-solved (days); the bulk of real time goes to background-service reliability and battery testing on actual Android hardware — budget more time for testing than for the initial build.
+9. Intent: "Hey Zynk, what do I know about X?" — extract the subject, run a memory search, speak + display the top results.
+   - Reuses the same intent-parse step from Part 2.
+   - Speak response via TTS (Android TTS API / desktop speech synthesis).
+   - Displayed in chat as a normal assistant turn so the answer is browsable.
+
+**Sequencing note:** Ship Vosk (Part 0) first — it's a prerequisite for reliable wake-word + dictation. Then wake-word + timer as one working slice. Voice memory query follows using the same infrastructure.
+
+**Effort estimate:** Part 0 (Vosk) is the bulk of the engineering (platform wiring). Parts 1–3 are medium; the real time cost is background-service reliability and battery testing on Android hardware.
 
 ---
 
@@ -69,8 +82,8 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ### Remaining for v1.0
 
-- **Cloud backup (R2)** — test `feature/cloud-backup-r2` branch end-to-end, merge to main. Essential for users and for development (delete and restore memories cleanly).
-- **Vosk offline dictation** — required before `graphene-dictation` merges to main. OpenAI Whisper is the interim implementation; Vosk replaces it with fully on-device transcription. See Voice Input section below.
+- ~~**Cloud backup (R2)**~~ ✅ — merged to main (v0.9.4). Encrypted R2 backup includes memories + conversation history. Tombstone-safe restore propagates to peers.
+- **Vosk offline dictation** — shipping in v0.9.5 on `graphene-dictation` branch alongside wake-word. Fixes Linux dictation (previously API-dependent). Required before `graphene-dictation` merges to main.
 - **Play Store public release** — promote from internal testing to production track.
 - **Write-time memory consolidation** — multi-turn conversations produce near-duplicate memories. Extend the existing relationship-detection LLM call to return a three-way decision (fresh fact / rephrasing / elaboration) and skip or overwrite redundant memories. Zero new API calls. High impact, low cost.
 - **Scroll-to-bottom button on Android** — floating ↓ button when user scrolls up in a long conversation; auto-dismisses at bottom.
@@ -320,6 +333,7 @@ Early groundwork for the developer platform. Full public SDK is v3.0; v1.3 estab
 
 - **User profile update mechanism** — add a profile editor (Settings or Memory Manager) to update name, age, and other onboarding fields after the fact. Future fields: date of birth (derive age automatically), timezone, occupation, preferred language, pronouns.
 - **Push notification reminders** — full OS-level reminders via `tauri-plugin-notification`. User sets lead time; reminders fire even when the app is minimized. Requires background scheduler and per-platform notification permission handling. Builds on startup date surfacing (v1.0).
+- **Calendar integration** — read-only access to the device calendar so Zynkbot can answer "what's on my calendar?" and incorporate upcoming events into memory/context. On Android: `READ_CALENDAR` permission + ContentProvider query via Kotlin bridge. On desktop: OS calendar API (iCal on macOS, EWS/iCal on Linux/Windows). Voice query "Hey Zynk, what's on my calendar?" reuses the wake-word intent framework from v0.9.5. Scope: read-only first; write (add event) is a separate feature.
 - **Emotional State Awareness** — lightweight sentiment/distress classification on user input before the main LLM call. Adjust response framing based on detected state. Builds continuity across sessions via elaborates/causes chains.
 - **Per-User Tone Adaptation** — learn and match individual communication style over time. Store tone preferences derived from feedback and conversation patterns. Adjust formality, verbosity, and directness per user. Stored locally.
 - **Atomic fact extraction with elaborates-linking** *(deferred from v0.9)* — switch from one MEMORY_EXTRACT per message to one per distinct fact, each with focused embeddings. Co-extracted facts auto-link with `elaborates`. Defer until retrieval issues are observed in practice.

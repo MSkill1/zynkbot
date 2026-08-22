@@ -1616,12 +1616,12 @@ export default function App() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey && !isLoading) {
+                    if (e.key === "Enter" && !e.shiftKey && !isLoading && !window.AndroidPaths) {
                       e.preventDefault();
                       handleSendMessage(input);
                     }
                   }}
-                  placeholder="Type your message... (Shift+Enter for new line)"
+                  placeholder={window.AndroidPaths ? "Type your message..." : "Type your message... (Shift+Enter for new line)"}
                   className="query-input"
                   disabled={isLoading}
                   rows={isMobile ? 3 : 4}
