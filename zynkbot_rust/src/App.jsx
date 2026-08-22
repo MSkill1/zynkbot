@@ -139,6 +139,19 @@ export default function App() {
 
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const TIPS = [
+    <>Tip: start with "<strong>Remember:</strong>" to force save directly into your memories — use it when you want exact details saved precisely.</>,
+    <>Tap <strong>Memory</strong> to see everything Zynkbot knows about you. You can edit, delete, or add memories at any time.</>,
+    <>Open <strong>History</strong> to browse past conversations and copy any response.</>,
+    <><strong>ZynkSync</strong> keeps your memories in sync across all your devices automatically — no account required.</>,
+    <><strong>ZynkLink</strong> lets you share files directly with paired devices over your local network. No cloud, no upload.</>,
+    <><strong>Ensemble mode</strong> queries multiple AI models at once and synthesizes their answers — great for questions where accuracy matters.</>,
+    <>Add documents to the <strong>Knowledge Base</strong> — Zynkbot can answer questions about them using RAG search.</>,
+    <>Everything stays on your device. Your memories and conversations never leave unless you choose to back them up.</>,
+    <>Include "<strong>Zynkbot</strong>" in your question to ask about its own features — e.g. "Zynkbot, how does Ensemble mode work?"</>,
+    <>The <strong>mic button</strong> lets you dictate your message — transcribed locally on-device, no internet needed.</>,
+  ];
+  const [tipIdx, setTipIdx] = useState(() => Math.floor(Math.random() * TIPS.length));
   const [editingMessageId, setEditingMessageId] = useState(null);
   const isSendingRef = useRef(false); // synchronous guard against concurrent sends
   const [modelType, setModelType] = useState(() => {
@@ -1557,13 +1570,17 @@ export default function App() {
               )}
             </div>
 
-            {/* Memory hint — only shown before first message */}
+            {/* Rotating tip — only shown before first message */}
             {messages.length === 0 && (
-              <div style={{ textAlign: 'center', marginBottom: '6px', padding: '0 12px' }}>
+              <div style={{ textAlign: 'center', marginBottom: '6px', padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.65)', fontStyle: 'italic', lineHeight: '1.6' }}>
-                  Tip: start with " <span style={{ fontWeight: 'bold' }}>Remember:</span> " to force save directly into your memories.
-                  Use the Remember: command when you want exact details saved precisely to be recalled later.
+                  {TIPS[tipIdx % TIPS.length]}
                 </span>
+                <button
+                  onClick={() => setTipIdx(i => (i + 1) % TIPS.length)}
+                  title="Next tip"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.45)', fontSize: '13px', padding: '0 2px', lineHeight: 1, flexShrink: 0 }}
+                >↻</button>
               </div>
             )}
 
