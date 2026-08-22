@@ -135,6 +135,140 @@ ZynkSync and ZynkLink are currently tightly coupled to the desktop context. Befo
 - **Interface contracts** — Document the stable boundary each module exposes; these become the base the SDK Foundation builds on.
 - **Test coverage** — Unit and integration tests against extracted modules.
 
+**Leads to:** v1.2 track — either local instance on Android, Parenting Mode, or SDK Foundation. Direction will be finalized based on community feedback and resource availability after v1.1 ships.
+
+---
+
+## v1.2 - Android + SDK Foundation + Companion Enhancements (Q4 2026)
+
+**Focus:** Three co-primary tracks: Android launch, SDK Foundation groundwork, and companion/networking depth
+
+### Android (Co-primary Track)
+
+The core of Zynkbot is the Rust backend — memory system, ML inference, safety layer, and networking — and it is designed to run on Android. The frontend and database layers are not locked in:
+
+- **Frontend:** Tauri Mobile is the current plan, but not a hard requirement — React Native or a thin native shell are viable alternatives. The Rust backend exposes a clean interface that any frontend can use, and it compiles to any target without Python or C++ dependencies.
+- **Database:** SQLite — lightweight, embedded, no server process. Already in use on desktop; the same database layer carries forward to mobile without modification.
+- **The Rust backend is the constant.** Everything else adapts to the platform.
+
+#### Platform Support
+- Android application (priority — v1.1)
+- iOS application (follow-on; separate AppStore submission process)
+- Mobile-optimized UI with touch gesture support
+- Mobile system integration (notifications, background sync)
+
+#### Mobile-Specific Features
+- Offline mode optimization and battery efficiency improvements
+- Mobile-friendly Snap-ins and voice input optimization
+- Camera/photo integration (OCR, image analysis)
+- **sqlite-vec: indexed vector search at scale** — current search is a linear scan (correct and fast at typical usage; degrades at very large memory counts). sqlite-vec adds approximate nearest-neighbor indexing so search stays fast regardless of how many memories accumulate. Applies to both desktop and mobile.
+- **Desktop ↔ Mobile sync via ZynkSync** — Conflict resolution improvements for mobile edge cases; bandwidth optimization and background sync scheduling
+
+#### On-Device AI Research (Mobile)
+
+Local model inference on phones is a distinct architectural problem from desktop GGUF/llama.cpp. CPU-only GGUF models miss device NPUs entirely. Investigation needed:
+
+- **Apple (iOS/macOS):** Core ML format — Apple's Neural Engine runs Core ML models natively. Conversion tooling (coremltools) exists for common model families.
+- **Qualcomm Snapdragon (Android):** QNN/ONNX format — Snapdragon's Hexagon NPU is the dominant Android AI accelerator. Qualcomm AI Hub provides pre-optimized models for common architectures.
+- **Google Tensor (Android):** TFLite / LiteRT — Google's in-house NPU on Pixel devices. TFLite models target the Tensor chip directly.
+- **Fallback:** GGUF/llama.cpp CPU inference — correct and functional, just slower and battery-intensive. Suitable as a universal baseline while platform-native paths are evaluated.
+- **Memory quality bridging** — Local 7B models can extract facts but may produce imprecise relationship classification JSON. When the phone connects to a larger model (home server or user-approved API call), queued locally-extracted memories should be re-evaluated by the larger model for accuracy before permanent storage. Design the re-check protocol here.
+
+**Goal:** Identify which format(s) to target for v1.1 Android launch; ship CPU-path GGUF as baseline while NPU investigation continues.
+
+---
+
+### SDK Foundation (Co-primary Track)
+
+Early groundwork for the developer platform. Full SDK public release is v3.0; v1.1 establishes the internal architecture so the surface area is stable before exposing it externally.
+
+- **Define clean internal API boundaries** — Identify the Rust modules that become SDK-facing (memory system, containment layer, ZynkSync protocol, safety classifier). Ensure each has a clear interface contract, not just internal use.
+- **Snap-in architecture hardening** — Snap-ins are the primary SDK extension point. Finalize the data contract and lifecycle hooks so third-party snap-ins can be built against a stable interface.
+- **Documentation-first approach** — Write the SDK developer guide before the public release. Internal use forces discovery of gaps.
+- **CLI scaffold for snap-in development** — Basic tooling for creating, testing, and packaging a snap-in locally.
+
+---
+
+### User Profile Enhancements
+
+- **User profile update mechanism** — The onboarding process writes a `user_profile.json` file containing the user's full name, preferred name, and age at the time of onboarding. Currently there is no way to update these values after the fact short of re-running onboarding. Add a simple profile editor (accessible from Settings or Memory Manager) that lets the user update any field. Future profile fields to consider adding as use cases emerge: date of birth (to derive age automatically), timezone, occupation, preferred language, pronouns. The JSON structure is intentionally open-ended so new fields can be added without breaking existing reads.
+
+### Companion Layer Enhancements
+
+- **Push notification reminders** — Full OS-level reminders via `tauri-plugin-notification` (cross-platform: Linux, Windows, macOS). User sets lead time (e.g., 1 day, 1 hour before); reminders fire even when the app is minimized. Requires background scheduler and notification permission handling per platform. Builds on the startup date surfacing added in v1.0.
+
+- **Emotional State Awareness** — Detect user's emotional tone before the main LLM call
+  - Lightweight sentiment/distress classification on user input
+  - Adjust response framing based on detected state (distress, frustration, neutral, positive)
+  - Builds continuity across sessions without the user having to re-explain - elaborates/causes chains
+- **Per-User Tone Adaptation** — Learn and match individual communication style over time
+  - Store tone preferences derived from feedback and conversation patterns
+  - Adjust formality, verbosity, and directness per user
+  - Stored locally; never inferred from external data
+
+- **Atomic fact extraction with elaborates-linking (deferred from v0.9)** — Currently the LLM prompt asks for one MEMORY_EXTRACT line per user message, combining all personal facts from that message into a single compound memory. Compound storage relies on semantic similarity to surface relevant fragments — e.g. "User has two nephews John (8) and Jack (9)" should match queries about either name or either age. If user feedback during v0.9 shows retrieval missing on specific sub-facts (e.g. "how old is Jack?" failing to surface the nephew memory), switch to atomic extraction:
+  - Change the MEMORY_EXTRACT instruction in `conversation_engine.rs` to emit one line per distinct fact instead of per message
+  - Each fact becomes its own memory row with a focused embedding
+  - Co-extracted facts from the same message get auto-linked with an `elaborates` relationship (the plumbing for this already exists in `lib.rs` since the SQLite migration — see commit `84136f4`, `if stored_ids.len() > 1` block, currently dormant under compound prompting)
+  - Trade-off: richer relationship graph and sharper per-fact retrieval, at the cost of fragmenting the user's original phrasing across multiple memories and a denser `elaborates` edge set in the graph view
+  - Defer until retrieval issues are observed in practice; don't pre-optimize
+
+(Slim system prompt for local models — implemented in v0.9; previously this section listed it as deferred. See `conversation_engine.rs::build_prompt` where `is_api_model == false` now branches to a ~350-token slim system prompt that preserves all behaviors but condenses the voice section and MEMORY_EXTRACT examples. Necessary because KB context (~1.4k tokens) + the previous 1.2k system prompt + memory recall would overflow a 4K-window local model.)
+
+- **Typed memory classification** *(exploration item)* — Zynkbot's memories are currently flat (a single `content` string with `namespace` and relationship edges). Claude Code's internal agent-memory system uses discrete *types* (user profile, behavioral feedback, project state, reference pointers), each with structured `Why:` and `How to apply:` fields that help the agent decide when to surface a given memory. Worth exploring whether Zynkbot could classify extracted memories into analogous types at write time — e.g. distinguishing a biographical fact ("has two nephews") from a stated preference ("prefers concise replies") from a relationship fact ("niece Emma's birthday is March 4") — and use the type to gate injection: biographical facts injected when the user asks identity questions, preferences injected always, relationship facts injected when the named entity appears in the conversation. Contrast with current behavior: all memories compete on cosine similarity alone, so injection is entirely retrieval-score-driven with no semantic role differentiation. This is an architecture exploration, not a bug fix; defer until retrieval quality issues motivate it.
+
+### Conversation History Enhancements
+
+**"What Did I Learn?" Digest** — A periodic summary view showing what you got out of your conversations, derived from the semantic memory system.
+- Weekly and monthly digest views
+- Digest entries link back to source conversations
+- Topic grouping and message count per topic
+
+**Thread Branching Chart** — Visual diagram (git-branch style) showing where a conversation went off-topic and how it returned.
+- Per-conversation branch view accessible from message view
+- Shows turn number where topic shifted, length of each branch, and return point
+
+**Memory ↔ Conversation Linking** — Bidirectional link between the semantic memory system and the raw conversation log.
+- In Memory Manager: "Source conversations" link on each memory entry
+- In conversation history: annotation on messages showing which memories were extracted
+
+**Resumed Session Summarization** — For very long conversations, auto-summarize earlier turns into a compact brief rather than overflowing the context window.
+- Inject the brief as a system-level context note, followed by the most recent N turns verbatim
+
+**Feedback Log Viewer** — Read path for the `message_feedback` table (thumbs up/down ratings already collected).
+- `get_feedback_log` Tauri command: JOIN `message_feedback` with `conversation_messages` on `cm.id::TEXT = mf.message_id`, return rated responses with text, model backend, and timestamp
+- `FeedbackLogPanel.jsx` modal: summary stats (total rated, 👍 / 👎 counts), list of rated responses with faded text preview and model/date metadata - with user consent, gather data on model preferences and usage
+- "Feedback" button next to "History" in the Conversation header
+
+**Export**
+- Export session to JSON
+- Export session to plain text / Markdown
+
+### ZynkSync Enhancements
+- **Namespace Filtering UI** — Checkbox in ZynkSync settings to select which namespaces sync
+  - Database already supports `namespace` column and indexes
+  - Backend filtering logic needed in `zynksync.rs`; UI controls in ZynkSyncPanel.jsx
+  - Use case: keep "work" namespace local, sync "family" namespace
+- **is_syncable Checkbox?** — Per-memory control in MemoryManager UI
+  - Database already has `is_syncable` column (default true)
+  - Add checkbox to MemoryManagerModal.jsx edit form
+- **Sync Conflict Viewer** — UI to review past conflict resolutions
+- **Selective Device Sync** — Choose which paired devices receive which namespaces
+
+### Security
+- ~~**TLS 1.3 Encryption** — Encrypt all ZynkSync/ZynkLink/ZChat traffic~~ ✅
+- ~~**ZynkSync mTLS Device Authentication** — Sync-paired devices present their certificate during the TLS handshake; the server verifies it against the paired-device database. Pairing-bootstrap routes remain open; sync, Ollama proxy, and API-key propagation routes require a verified certificate.~~ ✅
+- **ZynkLink/ZChat mTLS Device Authentication** — Exchange certificates during ZynkLink pairing and move file-transfer and messaging routes behind verified-client-certificate middleware. These routes currently use their separate pairing records and request-level authorization.
+- **Audit Logging** — Comprehensive exportable logs for all network operations (who synced what, when)
+- **Network request limits** — Per-connection body size cap, concurrent-request limit, and hard timeouts to prevent a paired device from exhausting CPU, RAM, or bandwidth on the host
+- **OS Keychain / Android Keystore storage for API keys** — Currently stored in a plaintext `.env` file; migrate to the OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service, Android Keystore) so keys are protected at rest even if the filesystem is accessible to another process
+- **Prompt injection defense** — Memory content injected into prompts should be clearly delimited and labeled as untrusted data; LLM-extracted memories containing instruction-like text must not be able to override system-prompt behavior
+- **Memory provenance and confidence** — Store the source conversation, extraction timestamp, model used, and a confidence indicator for each extracted memory; enables tracing incorrect memories back to origin and auditing extraction quality over time
+
+### Ensemble Enhancements
+- **User-selectable coordinator model** — Currently auto-selected (Anthropic → xAI → OpenAI → local); allow user to manually designate which model acts as coordinator. Critical: the coordinator's training biases shape how the synthesis frames consensus and uncertainty — two coordinators can reach opposite verdicts from identical responses. For sensitive or contested questions, coordinator selection is not cosmetic.
+- **Per-question model presets** — Save favorite model combinations for specific use cases (e.g. "research" preset, "creative" preset)
+
 ### ZynkLink Enhancements
 
 - **Android share-sheet target** *(small, high impact)* — Register Zynkbot as a share target in Android's share sheet so users can share any file directly into ZynkbotShare from any app. Add `<intent-filter>` for `ACTION_SEND` / `ACTION_SEND_MULTIPLE` with `*/*` MIME type; handle incoming `content://` URI in `MainActivity.kt` by copying to ZynkbotShare. Small Kotlin addition, no Rust changes.

@@ -35,105 +35,6 @@ impl ConversationEngine {
         Self {}
     }
 
-    /// Load an optional private persona prompt matching the exact model identifier.
-    /// Prompts live in the app-data `personas` directory and never in the repo.
-    pub fn load_private_persona(model_identifier: Option<&str>) -> Result<Option<String>, String> {
-        let Some(selected_model) = model_identifier else {
-            return Ok(None);
-        };
-        let selected_model = selected_model.trim();
-        if selected_model.is_empty() {
-            return Ok(None);
-        }
-        let safe_name: String = selected_model
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        let prompt_path = crate::db::get_app_data_dir()
-            .join("personas")
-            .join(format!("{}.md", safe_name));
-        if !prompt_path.exists() {
-            return Ok(None);
-        }
-        let metadata = std::fs::metadata(&prompt_path)
-            .map_err(|e| format!("Private persona prompt is unavailable at '{}': {}", prompt_path.display(), e))?;
-        if metadata.len() > 128 * 1024 {
-            return Err("Private persona prompt exceeds the 128 KiB limit".to_string());
-        }
-        let prompt = std::fs::read_to_string(&prompt_path)
-            .map_err(|e| format!("Failed to read private persona prompt '{}': {}", prompt_path.display(), e))?;
-        if prompt.trim().is_empty() {
-            return Err("Private persona prompt is empty".to_string());
-        }
-        let identity_path = crate::db::get_app_data_dir()
-            .join("personas")
-            .join(format!("{}.identity.json", safe_name));
-        if !identity_path.exists() {
-            return Ok(Some(prompt));
-        }
-        let identity_metadata = std::fs::metadata(&identity_path)
-            .map_err(|e| format!("Private identity configuration is unavailable at '{}': {}", identity_path.display(), e))?;
-        if identity_metadata.len() > 16 * 1024 {
-            return Err("Private identity configuration exceeds the 16 KiB limit".to_string());
-        }
-        let identity_text = std::fs::read_to_string(&identity_path)
-            .map_err(|e| format!("Failed to read private identity configuration '{}': {}", identity_path.display(), e))?;
-        let identity: serde_json::Value = serde_json::from_str(&identity_text)
-            .map_err(|e| format!("Private identity configuration is invalid JSON: {}", e))?;
-        let identity = serde_json::to_string_pretty(&identity)
-            .map_err(|e| format!("Failed to normalize private identity configuration: {}", e))?;
-        Ok(Some(format!(
-            "{}\n\nPRIVATE IDENTITY CONFIGURATION — apply contextually; do not recite it:\n{}",
-            prompt, identity
-        )))
-    }
-
-    /// Return the optional memory collection associated with an exact private persona.
-    pub fn load_private_persona_collection(
-        model_identifier: Option<&str>,
-    ) -> Result<Option<String>, String> {
-        let Some(selected_model) = model_identifier else {
-            return Ok(None);
-        };
-        let safe_name: String = selected_model
-            .trim()
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
-                    character
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        if safe_name.is_empty() {
-            return Ok(None);
-        }
-        let identity_path = crate::db::get_app_data_dir()
-            .join("personas")
-            .join(format!("{}.identity.json", safe_name));
-        if !identity_path.exists() {
-            return Ok(None);
-        }
-        let identity: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(&identity_path)
-                .map_err(|e| format!("Failed to read private identity configuration: {}", e))?,
-        )
-        .map_err(|e| format!("Private identity configuration is invalid JSON: {}", e))?;
-        Ok(identity
-            .get("memory_collection_id")
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string))
-    }
-
     /// Determine if user input is memory-worthy
     /// Filters out conversational filler and acknowledgments
     pub fn is_memory_worthy(&self, content: &str) -> bool {
@@ -294,7 +195,6 @@ impl ConversationEngine {
         recalled_memories: Option<&[Memory]>,
         is_api_model: bool,
         user_name: Option<&str>,
-        private_persona_prompt: Option<&str>,
     ) -> String {
         // System prompt — full (~1.1k tokens) for cloud models, slim (~350 tokens)
         // for local GGUF models whose context windows (often 4K) can't afford the
@@ -304,11 +204,7 @@ impl ConversationEngine {
         let today = Local::now().format("%B %d, %Y").to_string();
         let subject_label = user_name.unwrap_or("User");
 
-        let has_private_persona = private_persona_prompt.is_some();
-
-        let mut system_prompt = if let Some(persona) = private_persona_prompt {
-            format!("Today's date is {today}.\n\n{persona}\n\nZYNKBOT RUNTIME PROTOCOL — operational instructions only; they do not replace or rename the persona above:\n- Stored memories below were selected because they may be relevant to this exchange. Use them naturally when relevant, not merely to demonstrate recall.\n- Preserve temporal framing, uncertainty, conflict, and evolution in supplied memories. Never fill missing concrete personal history with plausible details.\n- For unrelated general knowledge, answer from model knowledge.\n- For current information such as news, weather, or prices, output: WEB_SEARCH_NEEDED: [query]. Do not use web search to reconstruct personal history.\n\n")
-        } else if is_api_model {
+        let mut system_prompt = if is_api_model {
             format!("Today's date is {today}.\n\nYou are Zynkbot, a personal AI companion.
 
 COMPANION VOICE — always observe these regardless of what the user asks:
@@ -390,16 +286,6 @@ When NOT to extract:
 
 "#
             ));
-        } else if has_private_persona {
-            system_prompt.push_str(&format!(r#"PERSONAL FACT EXTRACTION:
-Scan the user's current message for newly stated personal facts. If any are present, the first line of your output must be:
-MEMORY_EXTRACT: [one third-person statement combining the new facts, starting with "{subject_label}"]
-
-Omit MEMORY_EXTRACT when the user states no new personal facts, including recall questions, chitchat, general knowledge, and current events. Do not re-extract supplied memories as new facts.
-
-Your conversational response follows after the optional MEMORY_EXTRACT line. Remain entirely within the private persona defined above.
-
-"#));
         } else {
             system_prompt.push_str(&format!(r#"PART 1 — FACT EXTRACTION:
 Scan the user's message for personal facts (name, age, job, location, family, pets, feelings, preferences, plans, health). If ANY personal facts are present, the VERY FIRST LINE of your output MUST be:
@@ -514,27 +400,6 @@ mod tests {
         assert!(!ConversationEngine::is_api_model("custom"));
     }
 
-    #[test]
-    fn test_private_persona_replaces_zynkbot_identity_and_keeps_runtime_contract() {
-        let engine = ConversationEngine::new();
-        let private_prompt = "You are ExamplePersona. Preserve this exact identity.";
-        let prompt = engine.build_prompt(
-            "What does this pattern suggest?",
-            None,
-            None,
-            false,
-            Some("Matthew"),
-            Some(private_prompt),
-        );
-
-        assert!(prompt.contains(private_prompt));
-        assert!(prompt.contains("selected because they may be relevant"));
-        assert!(prompt.contains("MEMORY_EXTRACT:"));
-        assert!(prompt.contains("WEB_SEARCH_NEEDED:"));
-        assert!(!prompt.contains("As Zynkbot, be warm"));
-        assert!(!prompt.contains("Your Zynkbot response"));
-    }
-
     /// Verify that only recalled + linked memories reach the prompt.
     /// Entity-matched memories exist solely for contradiction/duplicate detection
     /// in the background task and must NOT appear in the LLM prompt.
@@ -577,7 +442,6 @@ mod tests {
             None,
             Some(&engine_memories),
             true,
-            None,
             None,
         );
 

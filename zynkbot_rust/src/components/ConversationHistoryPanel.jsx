@@ -47,6 +47,15 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
 
   const isHipaaMode = containmentMode === "hipaa";
   const isAndroid = !!window.AndroidPaths;
+  const [copiedMsgId, setCopiedMsgId] = useState(null);
+
+  const copyMessage = async (id, text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMsgId(id);
+      setTimeout(() => setCopiedMsgId(null), 2000);
+    } catch (_) {}
+  };
 
   const loadSessions = useCallback(async () => {
     if (!userId || isHipaaMode) return;

@@ -107,13 +107,6 @@ pub async fn build_conversation_prompt(
 
     let engine = ConversationEngine::new();
     let is_api = ConversationEngine::is_api_model(&backend);
-    let prompt_model_identifier = if backend.eq_ignore_ascii_case("custom") {
-        std::env::var("CUSTOM_MODEL").ok()
-    } else {
-        Some(backend.clone())
-    };
-    let private_persona_prompt =
-        ConversationEngine::load_private_persona(prompt_model_identifier.as_deref())?;
 
     let prompt = engine.build_prompt(
         &user_input,
@@ -121,7 +114,6 @@ pub async fn build_conversation_prompt(
         recalled_memories.as_deref(),
         is_api,
         None,
-        private_persona_prompt.as_deref(),
     );
 
     Ok(prompt)

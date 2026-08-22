@@ -137,18 +137,6 @@ pub async fn send_message_with_memory(
         }
     }
 
-    // A custom endpoint has a generic backend name, so resolve its exact model
-    // identifier before selecting any private persona prompt or memory collection.
-    let prompt_model_identifier = if forced_backend.eq_ignore_ascii_case("custom") {
-        std::env::var("CUSTOM_MODEL").ok()
-    } else {
-        Some(forced_backend.clone())
-    };
-    let private_persona_prompt =
-        ConversationEngine::load_private_persona(prompt_model_identifier.as_deref())?;
-    let private_persona_collection =
-        ConversationEngine::load_private_persona_collection(prompt_model_identifier.as_deref())?;
-
     // When a file is attached, `message` contains the full dump (file content + question).
     // `user_query` carries only the clean question — use it for safety checks, memory search,
     // KB search, and conversation history. Falls back to `message` when no file is attached.
@@ -345,9 +333,12 @@ pub async fn send_message_with_memory(
             .collect()
     };
 
-    // ONE-HOP GRAPH TRAVERSAL: For each recalled memory, pull in directly linked
-    // memories via "elaborates", "contradicts", or "resolves" relationships.
-    // Capped at 3 additional memories to prevent prompt bloat.
+    // ONE-HOP GRAPH TRAVERSAL: For each recalled memory, pull in all directly
+    // linked memories regardless of relation type (supports, reminds_of, elaborates,
+    // contradicts, resolves, related, etc.). Links are sorted by confidence so the
+    // strongest associations are included first. Capped at 8 hop-memories total to
+    // bound prompt size; build_memory_context enforces the final per-model limit.
+    const MAX_HOP_MEMORIES: usize = 8;
     let mut linked_memories: Vec<crate::memory::Memory> = Vec::new();
     if !is_zynkbot_query {
         let already_included_ids: std::collections::HashSet<i32> = recalled_memories.iter()
@@ -357,11 +348,13 @@ pub async fn send_message_with_memory(
             .map(|m| m.content.clone())
             .collect();
 
-        for mem in &recalled_memories {
-            if let Ok(links) = crate::memory::get_memory_links(&db_pool, mem.id).await {
+        'outer: for mem in &recalled_memories {
+            if let Ok(mut links) = crate::memory::get_memory_links(&db_pool, mem.id).await {
+                // Strongest links first so the cap preserves the most meaningful ones
+                links.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
                 for link in links {
-                    if link.relation_type != "elaborates" && link.relation_type != "contradicts" && link.relation_type != "resolves" {
-                        continue;
+                    if linked_memories.len() >= MAX_HOP_MEMORIES {
+                        break 'outer;
                     }
                     let linked_id = if link.source_memory_id == mem.id {
                         link.target_memory_id
@@ -377,8 +370,8 @@ pub async fn send_message_with_memory(
                         if already_included_content.contains(&linked_mem.content) {
                             continue;
                         }
-                        println!("[RUST] 🔗 Graph traversal: memory #{} → linked #{} ({:?}) via '{}'",
-                            mem.id, linked_id, linked_mem.title, link.relation_type);
+                        println!("[RUST] 🔗 Graph traversal: memory #{} → linked #{} ({:?}) via '{}' (conf {:.2})",
+                            mem.id, linked_id, linked_mem.title, link.relation_type, link.confidence);
                         already_included_content.insert(linked_mem.content.clone());
                         linked_memories.push(linked_mem);
                     }
@@ -492,16 +485,6 @@ pub async fn send_message_with_memory(
     // LLM can address them by name and use the name in MEMORY_EXTRACT lines.
     let user_display_name = crate::memory::get_user_display_name(&db_pool, &user_id).await;
 
-    // Pinned memories are persona-scoped and bypass semantic ranking. They are
-    // still ordinary, editable memory records and are never embedded in code.
-    let pinned_memories = if let Some(collection_id) = private_persona_collection.as_deref() {
-        crate::memory::list_pinned_collection_memories(&db_pool, &user_id, collection_id)
-            .await
-            .map_err(|e| format!("Failed to load pinned persona memories: {}", e))?
-    } else {
-        Vec::new()
-    };
-
     // Close database connection
     db_pool.close().await;
 
@@ -522,12 +505,9 @@ pub async fn send_message_with_memory(
     // Include semantic results AND one-hop graph-linked memories only.
     // entity_matched_memories are for contradiction/duplicate detection in the background
     // task and should NOT be injected into the prompt — they failed the hybrid search threshold.
-    let pinned_ids: std::collections::HashSet<i32> =
-        pinned_memories.iter().map(|memory| memory.id).collect();
-    let engine_memories: Vec<crate::conversation_engine::Memory> = pinned_memories
+    let engine_memories: Vec<crate::conversation_engine::Memory> = recalled_memories
         .iter()
-        .chain(recalled_memories.iter().filter(|memory| !pinned_ids.contains(&memory.id)))
-        .chain(linked_memories.iter().filter(|memory| !pinned_ids.contains(&memory.id)))
+        .chain(linked_memories.iter())
         .map(|mem| crate::conversation_engine::Memory {
             id: mem.id,
             content: mem.content.clone(),
@@ -545,7 +525,6 @@ pub async fn send_message_with_memory(
         Some(&engine_memories),
         is_api_model,
         user_display_name.as_deref(),
-        private_persona_prompt.as_deref(),
     );
 
     // Prepend KB context if available
@@ -1750,7 +1729,7 @@ pub async fn run_ensemble(
     );
 
     let engine = crate::conversation_engine::ConversationEngine::new();
-    let assessment_full_prompt = engine.build_prompt(&assessment_prompt, None, None, true, None, None);
+    let assessment_full_prompt = engine.build_prompt(&assessment_prompt, None, None, true, None);
 
     // Use coordinator to assess
     let needs_search = if coordinator_model.to_lowercase().contains("anthropic") {
@@ -2053,7 +2032,7 @@ pub async fn run_ensemble(
     // For synthesis, we skip ALL pre-checks and memory search - just get the LLM response
     // Build the prompt directly without memory context
     let engine = crate::conversation_engine::ConversationEngine::new();
-    let full_prompt = engine.build_prompt(&synthesis_prompt, None, None, true, None, None);
+    let full_prompt = engine.build_prompt(&synthesis_prompt, None, None, true, None);
 
     // Call LLM directly without all the overhead
     let reply_text = if coordinator_model.to_lowercase().contains("anthropic") {
