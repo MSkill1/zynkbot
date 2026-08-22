@@ -304,7 +304,10 @@ impl ContainmentLayer {
             ContainmentMode::Sovereign => {
                 // Sovereign Mode: Warn but don't block
                 // Show warning if either pattern matching OR TinyBERT flags it
-                if pattern_flagged || (result.category.is_harmful() && result.confidence > 0.3) {
+                // Raised from 0.3 → 0.85: TinyBERT is demo-grade and false-positives on
+                // grief/clinical language. Only warn on very high confidence until we
+                // replace the classifier (see ROADMAP → "Real safety classifier").
+                if pattern_flagged || (result.category.is_harmful() && result.confidence > 0.85) {
                     let reason = if pattern_flagged {
                         "Harmful instruction request"
                     } else {
@@ -337,8 +340,9 @@ impl ContainmentLayer {
             }
             ContainmentMode::Child => {
                 // This is the secondary check (OpenAI Moderation API is primary)
-                // Use very strict threshold for child safety
-                if result.category.is_harmful() && result.confidence > 0.2 {
+                // Raised from 0.2 → 0.7: 0.2 was aggressive-to-false-positive even for
+                // Child mode. Primary safety layer is the moderation API.
+                if result.category.is_harmful() && result.confidence > 0.7 {
                     Some(format!(
                         "[BLOCK] I can't answer that in Child Mode. (Secondary check detected: {})",
                         result.category.description()
@@ -348,7 +352,10 @@ impl ContainmentLayer {
                 }
             }
             ContainmentMode::Elder => {
-                if result.category.is_harmful() && result.confidence > 0.4 {
+                // Raised from 0.4 → 0.85: Elder mode is meant to be gentle, not
+                // restrictive. TinyBERT false-positives on grief language make 0.4
+                // interrupt normal conversation.
+                if result.category.is_harmful() && result.confidence > 0.85 {
                     Some("[GENTLE] I'm worried this topic might be distressing. Would you like to talk about something else?".to_string())
                 } else {
                     None

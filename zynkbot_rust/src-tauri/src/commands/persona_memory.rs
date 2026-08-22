@@ -120,7 +120,14 @@ pub async fn import_persona_memory_collection(
                 memory_placement, external_id, temporal_status, provenance_json
              ) VALUES (?, ?, 'persona_import', ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(format!("Imported {}", memory.memory_type))
+        .bind({
+            let spaced = memory.memory_type.replace('_', " ");
+            let mut chars = spaced.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
         .bind(&memory.content)
         .bind(&user_id)
         .bind(&package.collection.namespace)

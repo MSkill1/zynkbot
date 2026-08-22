@@ -339,31 +339,32 @@ pub fn should_block(text: &str, mode: &str) -> Result<(bool, Option<SafetyResult
         "witness" => false,  // Never block
         "sovereign" => false,  // Warn but don't block
         "guardian" | "default" => {
-            // Python Guardian blocks: S1 (Violent Crimes), S3 (Sex Crimes), S4 (Child Exploitation), S11 (Self-Harm)
-            // TinyBERT equivalent: Only block SevereToxic and Threat at high confidence
-            // Allow: Toxic (mild), Obscene (adult content OK), Insult (OK), IdentityHate (handled elsewhere)
+            // TinyBERT is a demo-grade classifier — it false-positives on grief and
+            // clinical language ("battle with ALS", "passed away"). Thresholds raised
+            // from 0.6 → 0.9 to only block on very high confidence until we replace
+            // the classifier (see ROADMAP → "Real safety classifier").
             match result.category {
-                SafetyCategory::SevereToxic => result.confidence > 0.6,  // Violent crimes, severe harm
-                SafetyCategory::Threat => result.confidence > 0.6,       // Violent threats, self-harm
+                SafetyCategory::SevereToxic => result.confidence > 0.9,  // Violent crimes, severe harm
+                SafetyCategory::Threat => result.confidence > 0.9,       // Violent threats, self-harm
                 _ => false,  // Allow everything else (including Toxic, Obscene, Insult)
             }
         }
         "hipaa" => {
             // Same as guardian for general safety, but HIPAA-specific checks happen in containment.rs
             match result.category {
-                SafetyCategory::SevereToxic => result.confidence > 0.6,
-                SafetyCategory::Threat => result.confidence > 0.6,
+                SafetyCategory::SevereToxic => result.confidence > 0.9,
+                SafetyCategory::Threat => result.confidence > 0.9,
                 _ => false,
             }
         }
         "elder" => {
-            // More lenient - only block very severe cases
-            result.category.is_harmful() && result.confidence > 0.75
+            // Elder mode: gentle, not restrictive — only fire on very high confidence.
+            result.category.is_harmful() && result.confidence > 0.9
         }
         "child" => {
-            // Child mode uses OpenAI API with toxic-bert fallback
-            // This is a fallback only - block more aggressively
-            result.category.is_harmful() && result.confidence > 0.4
+            // Child mode primary check is OpenAI Moderation API. TinyBERT is a fallback
+            // only, so keep it stricter than adult modes but not aggressive-to-false-positives.
+            result.category.is_harmful() && result.confidence > 0.7
         }
         _ => false,  // Unknown mode - don't block
     };

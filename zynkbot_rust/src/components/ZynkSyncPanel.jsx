@@ -199,8 +199,18 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           });
           console.log('[ZynkSync] Migrated', migratedCount, 'memories');
           await invoke('set_user_identity', { userId: peer.user_id });
-          setMessage(`✓ Joined network — syncing with ${peer.device_name}`);
           if (onIdentityAdopted) onIdentityAdopted(peer.user_id);
+          // Immediately sync with the host so any memories that arrived before
+          // identity migration (or were cut off mid-transfer) are pulled in fresh
+          // under the correct user_id, rather than waiting for the 60s auto-sync loop.
+          setMessage(`⏳ Pulling memories from ${peer.device_name}...`);
+          try {
+            await invoke('broadcast_sync_to_all_peers', { userId: peer.user_id });
+            if (onMemoriesSynced) onMemoriesSynced();
+          } catch (syncErr) {
+            console.warn('[ZynkSync] Post-pairing sync failed (will retry automatically):', syncErr);
+          }
+          setMessage(`✓ Joined network — memories synced with ${peer.device_name}`);
         } catch (identityError) {
           setMessage(`✗ Identity sync failed: ${identityError}`);
         }
