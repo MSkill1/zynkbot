@@ -291,8 +291,6 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     .await
     .map_err(|e| format!("Query failed: {}", e))?;
 
-    pool.close().await;
-
     let count = rows.len();
     let memories_json: Vec<serde_json::Value> = rows.into_iter().map(|r| {
         serde_json::json!({
@@ -312,17 +310,84 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
         })
     }).collect();
 
-    let payload = serde_json::to_vec(&memories_json)
+    let session_rows: Vec<(String, String, Option<String>, String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT session_id, user_id, title, CAST(started_at AS TEXT), CAST(last_active AS TEXT),
+                message_count, model_backend, containment_mode
+         FROM conversation_sessions
+         WHERE user_id = ?
+         ORDER BY started_at"
+    )
+    .bind(&user_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Session query failed: {}", e))?;
+
+    let sessions_json: Vec<serde_json::Value> = session_rows.into_iter().map(|r| {
+        serde_json::json!({
+            "session_id": r.0,
+            "user_id": r.1,
+            "title": r.2,
+            "started_at": r.3,
+            "last_active": r.4,
+            "message_count": r.5,
+            "model_backend": r.6,
+            "containment_mode": r.7,
+        })
+    }).collect();
+
+    let message_rows: Vec<(String, String, String, String, String, Option<String>, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT session_id, user_id, role, content, CAST(created_at AS TEXT),
+                model_backend, containment_mode, entry_hash, prev_hash
+         FROM conversation_messages
+         WHERE user_id = ?
+         ORDER BY session_id, created_at"
+    )
+    .bind(&user_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Message query failed: {}", e))?;
+
+    let session_count = sessions_json.len();
+    let message_count = message_rows.len();
+    let messages_json: Vec<serde_json::Value> = message_rows.into_iter().map(|r| {
+        serde_json::json!({
+            "session_id": r.0,
+            "user_id": r.1,
+            "role": r.2,
+            "content": r.3,
+            "created_at": r.4,
+            "model_backend": r.5,
+            "containment_mode": r.6,
+            "entry_hash": r.7,
+            "prev_hash": r.8,
+        })
+    }).collect();
+
+    pool.close().await;
+
+    let bundle = serde_json::json!({
+        "version": 2,
+        "memories": memories_json,
+        "conversations": {
+            "sessions": sessions_json,
+            "messages": messages_json,
+        }
+    });
+
+    let payload = serde_json::to_vec(&bundle)
         .map_err(|e| format!("Serialization failed: {}", e))?;
     let encrypted = encrypt_bytes(&key, &payload)?;
 
     r2_put(&cfg, "backup.enc", encrypted).await?;
 
-    println!("[Backup] Backed up {} memories for user {}", count, user_id);
+    println!("[Backup] Backed up {} memories, {} sessions, {} messages for user {}",
+        count, session_count, message_count, user_id);
     Ok(serde_json::json!({
         "success": true,
         "count": count,
-        "message": format!("Backed up {} memories", count)
+        "session_count": session_count,
+        "message_count": message_count,
+        "message": format!("Backed up {} memories, {} conversations ({} messages)", count, session_count, message_count)
     }))
 }
 
@@ -333,8 +398,20 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
 
     let encrypted = r2_get(&cfg, "backup.enc").await?;
     let plaintext = decrypt_bytes(&key, &encrypted)?;
-    let memories: Vec<serde_json::Value> = serde_json::from_slice(&plaintext)
+    let parsed: serde_json::Value = serde_json::from_slice(&plaintext)
         .map_err(|e| format!("Failed to parse backup data: {}", e))?;
+
+    // v1 payload was a raw array of memories; v2 wraps memories + conversations.
+    let (memories, sessions, messages): (Vec<serde_json::Value>, Vec<serde_json::Value>, Vec<serde_json::Value>) = match &parsed {
+        serde_json::Value::Array(arr) => (arr.clone(), Vec::new(), Vec::new()),
+        serde_json::Value::Object(_) => {
+            let memories = parsed.get("memories").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let sessions = parsed.get("conversations").and_then(|c| c.get("sessions")).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let messages = parsed.get("conversations").and_then(|c| c.get("messages")).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            (memories, sessions, messages)
+        }
+        _ => return Err("Unexpected backup payload shape".to_string()),
+    };
 
     let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await
         .map_err(|e| format!("DB connect failed: {}", e))?;
@@ -342,6 +419,10 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     let mut restored_hashes: Vec<String> = Vec::new();
+    let mut sessions_inserted = 0usize;
+    let mut sessions_skipped = 0usize;
+    let mut messages_inserted = 0usize;
+    let mut messages_skipped = 0usize;
 
     for mem in &memories {
         let content = match mem["content"].as_str() {
@@ -406,6 +487,102 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         println!("[Backup] Cleared local tombstones for {} restored memories", restored_hashes.len());
     }
 
+    // Restore conversation sessions (skip if session_id already exists).
+    for sess in &sessions {
+        let session_id = match sess["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => { sessions_skipped += 1; continue; }
+        };
+
+        let exists: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM conversation_sessions WHERE session_id = ?"
+        )
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(false);
+
+        if exists { sessions_skipped += 1; continue; }
+
+        let result = sqlx::query(
+            "INSERT INTO conversation_sessions (
+                session_id, user_id, title, started_at, last_active,
+                message_count, model_backend, containment_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(session_id)
+        .bind(sess["user_id"].as_str().unwrap_or(&user_id))
+        .bind(sess["title"].as_str())
+        .bind(sess["started_at"].as_str())
+        .bind(sess["last_active"].as_str())
+        .bind(sess["message_count"].as_i64().unwrap_or(0))
+        .bind(sess["model_backend"].as_str())
+        .bind(sess["containment_mode"].as_str())
+        .execute(&pool)
+        .await;
+
+        match result {
+            Ok(_) => sessions_inserted += 1,
+            Err(e) => eprintln!("[Backup] Session insert failed: {}", e),
+        }
+    }
+
+    // Restore conversation messages (skip if same session_id + created_at + role exists).
+    for msg in &messages {
+        let session_id = match msg["session_id"].as_str() {
+            Some(s) if !s.is_empty() => s,
+            _ => { messages_skipped += 1; continue; }
+        };
+        let role = match msg["role"].as_str() {
+            Some(r) if !r.is_empty() => r,
+            _ => { messages_skipped += 1; continue; }
+        };
+        let created_at = match msg["created_at"].as_str() {
+            Some(c) if !c.is_empty() => c,
+            _ => { messages_skipped += 1; continue; }
+        };
+        let content = match msg["content"].as_str() {
+            Some(c) => c,
+            _ => { messages_skipped += 1; continue; }
+        };
+
+        let exists: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM conversation_messages
+             WHERE session_id = ? AND created_at = ? AND role = ?"
+        )
+        .bind(session_id)
+        .bind(created_at)
+        .bind(role)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(false);
+
+        if exists { messages_skipped += 1; continue; }
+
+        let result = sqlx::query(
+            "INSERT INTO conversation_messages (
+                session_id, user_id, role, content, created_at,
+                model_backend, containment_mode, entry_hash, prev_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(session_id)
+        .bind(msg["user_id"].as_str().unwrap_or(&user_id))
+        .bind(role)
+        .bind(content)
+        .bind(created_at)
+        .bind(msg["model_backend"].as_str())
+        .bind(msg["containment_mode"].as_str())
+        .bind(msg["entry_hash"].as_str())
+        .bind(msg["prev_hash"].as_str())
+        .execute(&pool)
+        .await;
+
+        match result {
+            Ok(_) => messages_inserted += 1,
+            Err(e) => eprintln!("[Backup] Message insert failed: {}", e),
+        }
+    }
+
     pool.close().await;
 
     // Push to peers: clear their tombstones then sync the restored memories.
@@ -428,11 +605,21 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         }
     }
 
-    println!("[Backup] Restored {}, skipped {} for user {}", inserted, skipped, user_id);
+    println!(
+        "[Backup] Restored {} memories ({} skipped), {} sessions ({} skipped), {} messages ({} skipped) for user {}",
+        inserted, skipped, sessions_inserted, sessions_skipped, messages_inserted, messages_skipped, user_id
+    );
     Ok(serde_json::json!({
         "success": true,
         "inserted": inserted,
         "skipped": skipped,
-        "message": format!("Restored {} memories ({} already existed)", inserted, skipped)
+        "sessions_inserted": sessions_inserted,
+        "sessions_skipped": sessions_skipped,
+        "messages_inserted": messages_inserted,
+        "messages_skipped": messages_skipped,
+        "message": format!(
+            "Restored {} memories ({} existed), {} conversations ({} messages)",
+            inserted, skipped, sessions_inserted, messages_inserted
+        )
     }))
 }
