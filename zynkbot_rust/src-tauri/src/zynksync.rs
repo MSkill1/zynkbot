@@ -4392,8 +4392,8 @@ async fn handle_delete_by_hash(
                 }
                 Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
             } else {
-                println!("[ZynkSync] Skipping delete-by-hash: memory created_at {} is newer than tombstone deleted_at {:?}",
-                    created_at, tombstone_time);
+                println!("[ZynkSync] Skipping delete-by-hash: memory effective_time {} is newer than tombstone deleted_at {:?}",
+                    effective_time, tombstone_time);
                 Ok(Json(serde_json::json!({ "success": true, "deleted": 0, "skipped": "newer_than_tombstone" })))
             }
         }
