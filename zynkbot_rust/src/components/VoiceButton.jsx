@@ -1,54 +1,61 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 
-/**
- * VoiceButton - Records audio and transcribes via OpenAI Whisper API.
- * Works on both desktop and Android (GrapheneOS-compatible).
- *
- * Props:
- * - onTranscript: (text: string) => void
- * - disabled: boolean
- * - style: object
- */
 export default function VoiceButton({ onTranscript, disabled, style }) {
-  const [showModal, setShowModal] = useState(false);
-  const [hasConsented, setHasConsented] = useState(() =>
-    localStorage.getItem('zynkbot_voice_consent_openai') === 'true'
-  );
+  const isAndroid = !!window.VoskBridge;
+  const [modelReady, setModelReady] = useState(() => isAndroid ? window.VoskBridge.isModelReady() : true);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
   const { isRecording, isTranscribing, startRecording, stopRecording } = useVoiceInput();
 
+  useEffect(() => {
+    if (!isAndroid) return;
+    window.__voskModelReady = () => { setModelReady(true); setIsDownloading(false); setDownloadProgress(0); };
+    window.__voskDownloadProgress = (pct) => { setIsDownloading(true); setDownloadProgress(pct); };
+    window.__voskDownloadError = (msg) => { setIsDownloading(false); alert('Voice model download failed: ' + msg); };
+    return () => {
+      window.__voskModelReady = null;
+      window.__voskDownloadProgress = null;
+      window.__voskDownloadError = null;
+    };
+  }, [isAndroid]);
+
   const handleClick = async () => {
+    if (isDownloading) return;
+    if (isAndroid && !modelReady) {
+      if (confirm('Offline voice model (~40 MB) needs to be downloaded once. Download now?')) {
+        setIsDownloading(true);
+        window.VoskBridge.downloadModel();
+      }
+      return;
+    }
     if (isRecording) {
       const text = await stopRecording();
       if (text && onTranscript) onTranscript(text);
-    } else if (hasConsented) {
-      await startRecording();
     } else {
-      setShowModal(true);
+      await startRecording();
     }
   };
 
-  const handleConsent = async () => {
-    localStorage.setItem('zynkbot_voice_consent_openai', 'true');
-    setHasConsented(true);
-    setShowModal(false);
-    await startRecording();
+  const getBg = () => {
+    if (isTranscribing || isDownloading) return '#44475a';
+    if (isRecording) return '#ff5555';
+    return '#6272a4';
   };
 
-  const getButtonStyle = () => {
-    if (isTranscribing) return { background: '#44475a' };
-    if (isRecording) return { background: '#ff5555' };
-    return { background: '#6272a4' };
-  };
-
-  const getButtonText = () => {
+  const getLabel = () => {
+    if (isDownloading) return `${downloadProgress}%`;
     if (isRecording) return '■';
+    if (isAndroid && !modelReady) return '⬇';
     return '🎤';
   };
 
   const getTitle = () => {
+    if (isDownloading) return `Downloading voice model… ${downloadProgress}%`;
     if (isTranscribing) return 'Transcribing…';
-    if (isRecording) return 'Tap to stop and transcribe';
+    if (isRecording) return 'Tap to stop recording';
+    if (isAndroid && !modelReady) return 'Tap to download offline voice model (~40 MB)';
+    if (isAndroid) return 'Voice input (offline)';
     return 'Voice input (OpenAI Whisper)';
   };
 
@@ -61,11 +68,11 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
         title={getTitle()}
         style={{
           padding: '8px 12px',
-          ...getButtonStyle(),
+          background: getBg(),
           color: '#f8f8f2',
           border: 'none',
           borderRadius: '4px',
-          cursor: (disabled || isTranscribing) ? 'not-allowed' : 'pointer',
+          cursor: (disabled || isTranscribing || isDownloading) ? 'not-allowed' : 'pointer',
           fontSize: '1rem',
           opacity: (disabled || isTranscribing) ? 0.5 : 1,
           minWidth: '48px',
@@ -87,81 +94,8 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
             borderRadius: '50%',
             animation: 'zynk-spin 0.7s linear infinite',
           }} />
-        ) : getButtonText()}
+        ) : getLabel()}
       </button>
-
-      {showModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0, 0, 0, 0.7)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 10000,
-            padding: '20px'
-          }}
-          onClick={() => setShowModal(false)}
-        >
-          <div
-            style={{
-              background: '#1e1f29',
-              borderRadius: '12px',
-              padding: '30px',
-              maxWidth: '480px',
-              width: '100%',
-              border: '1px solid #44475a',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 style={{ color: '#ffb86c', marginBottom: '15px', fontSize: '1.3rem' }}>
-              🎤 Voice Input — Privacy Notice
-            </h2>
-            <div style={{ color: '#f8f8f2', marginBottom: '20px', lineHeight: '1.6' }}>
-              <p style={{ marginBottom: '12px' }}>
-                Your audio is sent to <strong>OpenAI Whisper</strong> for transcription.
-                OpenAI retains audio for up to <strong>30 days</strong> for abuse monitoring
-                and does not use it to train models by default.
-              </p>
-              <p style={{ marginBottom: '0', color: '#bd93f9', fontSize: '0.9rem' }}>
-                Speak your message, then tap the red ■ button to transcribe.
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => setShowModal(false)}
-                style={{
-                  padding: '10px 20px',
-                  background: '#44475a',
-                  color: '#f8f8f2',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontWeight: 'bold'
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConsent}
-                style={{
-                  padding: '10px 20px',
-                  background: '#50fa7b',
-                  color: '#282a36',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontWeight: 'bold'
-                }}
-              >
-                I Understand, Record
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

@@ -1,18 +1,6 @@
 import { useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
-/**
- * Hook for local speech-to-text using whisper.cpp
- *
- * Privacy-first: All audio processing happens locally via Tauri backend.
- * No audio data leaves the device.
- *
- * Usage:
- * const { isRecording, isTranscribing, startRecording, stopRecording } = useVoiceInput();
- *
- * startRecording(); // User speaks
- * const text = await stopRecording(); // Returns transcribed text
- */
 export function useVoiceInput() {
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -21,7 +9,43 @@ export function useVoiceInput() {
   const streamRef = useRef(null);
   const audioBufferRef = useRef([]);
 
-  // Helper: Convert Float32Array to 16-bit PCM
+  const isAndroidVosk = () => !!window.VoskBridge;
+
+  // ── Android / Vosk path ──────────────────────────────────────────────────
+
+  const startRecordingVosk = () => {
+    setIsRecording(true);
+    window.__voskError = (msg) => {
+      setIsRecording(false);
+      console.error('[VoiceInput] Vosk start error:', msg);
+      if (!msg.includes('not downloaded')) alert('Voice input error: ' + msg);
+    };
+    window.VoskBridge.startListening();
+  };
+
+  const stopRecordingVosk = () => {
+    setIsRecording(false);
+    setIsTranscribing(true);
+    return new Promise((resolve) => {
+      window.__voskResult = (text) => {
+        window.__voskResult = null;
+        window.__voskError = null;
+        setIsTranscribing(false);
+        resolve(text || '');
+      };
+      window.__voskError = (msg) => {
+        window.__voskResult = null;
+        window.__voskError = null;
+        setIsTranscribing(false);
+        console.error('[VoiceInput] Vosk transcription error:', msg);
+        resolve('');
+      };
+      window.VoskBridge.stopListening();
+    });
+  };
+
+  // ── Desktop / Web Audio path ─────────────────────────────────────────────
+
   const floatTo16BitPCM = (float32Array) => {
     const buffer = new ArrayBuffer(float32Array.length * 2);
     const view = new DataView(buffer);
@@ -32,145 +56,74 @@ export function useVoiceInput() {
     return buffer;
   };
 
-  // Helper: Create WAV file with proper RIFF headers
   const encodeWAV = (samples, sampleRate) => {
     const buffer = new ArrayBuffer(44 + samples.byteLength);
     const view = new DataView(buffer);
-
-    // Write WAV header
     const writeString = (offset, string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
+      for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
     };
-
-    writeString(0, 'RIFF');                                      // ChunkID
-    view.setUint32(4, 36 + samples.byteLength, true);          // ChunkSize
-    writeString(8, 'WAVE');                                      // Format
-    writeString(12, 'fmt ');                                     // Subchunk1ID
-    view.setUint32(16, 16, true);                               // Subchunk1Size (16 for PCM)
-    view.setUint16(20, 1, true);                                // AudioFormat (1 for PCM)
-    view.setUint16(22, 1, true);                                // NumChannels (1 for mono)
-    view.setUint32(24, sampleRate, true);                       // SampleRate
-    view.setUint32(28, sampleRate * 2, true);                   // ByteRate
-    view.setUint16(32, 2, true);                                // BlockAlign
-    view.setUint16(34, 16, true);                               // BitsPerSample
-    writeString(36, 'data');                                     // Subchunk2ID
-    view.setUint32(40, samples.byteLength, true);               // Subchunk2Size
-
-    // Copy audio data
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + samples.byteLength, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, samples.byteLength, true);
     const wavData = new Uint8Array(buffer);
     wavData.set(new Uint8Array(samples), 44);
-
     return wavData;
   };
 
-  const startRecording = async () => {
+  const startRecordingDesktop = async () => {
     try {
-      // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,     // Mono
-          sampleRate: 16000,   // 16kHz (whisper expects this)
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        }
+        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
-
       streamRef.current = stream;
       audioBufferRef.current = [];
-
-      // Create Web Audio API context
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: 16000
-      });
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
-
       const source = audioContext.createMediaStreamSource(stream);
-
-      // Use ScriptProcessorNode to capture raw audio
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
-
       processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        audioBufferRef.current.push(new Float32Array(inputData));
+        audioBufferRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
       };
-
       source.connect(processor);
       processor.connect(audioContext.destination);
-
       setIsRecording(true);
-      console.log('[VoiceInput] Recording started (Web Audio API, 16kHz mono)');
     } catch (error) {
       console.error('[VoiceInput] Failed to start recording:', error);
-      console.error('[VoiceInput] Error details:', error.name, error.message);
-
-      // More helpful error message for Linux/WebKitGTK users (not Android — it also reports "linux")
       const isLinux = navigator.platform.toLowerCase().includes('linux') && !window.AndroidPaths;
-      const errorMsg = isLinux
-        ? 'Microphone access not available in Tauri on Linux.\n\nThis is a WebKitGTK limitation. You can:\n1. Use the type input instead\n2. Grant microphone permissions to WebKitGTK at OS level\n3. Use the Windows version of Zynkbot for full voice support'
-        : 'Microphone access denied. Please check your system settings and grant microphone permission to Zynkbot.';
-
-      alert(errorMsg);
+      alert(isLinux
+        ? 'Microphone access is not available in the desktop app yet.\n\nOffline dictation via Vosk is coming in v0.9.5. For now, please type your message.'
+        : 'Microphone access denied. Please grant microphone permission to Zynkbot in your system settings.');
     }
   };
 
-  const stopRecording = async () => {
-    if (!isRecording || !audioContextRef.current) {
-      return '';
-    }
-
+  const stopRecordingDesktop = async () => {
     setIsRecording(false);
     setIsTranscribing(true);
-
     try {
-      // Stop audio processing
-      if (processorRef.current) {
-        processorRef.current.disconnect();
-        processorRef.current = null;
-      }
+      if (processorRef.current) { processorRef.current.disconnect(); processorRef.current = null; }
+      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+      if (audioContextRef.current) { await audioContextRef.current.close(); audioContextRef.current = null; }
 
-      // Stop media stream
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
-      }
-
-      // Close audio context
-      if (audioContextRef.current) {
-        await audioContextRef.current.close();
-        audioContextRef.current = null;
-      }
-
-      console.log('[VoiceInput] Recording stopped, processing audio...');
-
-      // Concatenate all audio chunks
       const totalLength = audioBufferRef.current.reduce((acc, chunk) => acc + chunk.length, 0);
       const audioData = new Float32Array(totalLength);
       let offset = 0;
-      for (const chunk of audioBufferRef.current) {
-        audioData.set(chunk, offset);
-        offset += chunk.length;
-      }
+      for (const chunk of audioBufferRef.current) { audioData.set(chunk, offset); offset += chunk.length; }
 
-      console.log('[VoiceInput] Collected', totalLength, 'samples');
-
-      // Convert to 16-bit PCM
       const pcmData = floatTo16BitPCM(audioData);
-
-      // Encode as WAV with proper headers
       const wavData = encodeWAV(pcmData, 16000);
-
-      console.log('[VoiceInput] Created WAV file, size:', wavData.length, 'bytes');
-
-      // Send to Tauri backend for transcription
       const audioArray = Array.from(wavData);
       const text = await invoke('transcribe_audio', { audioData: audioArray });
-
-      console.log('[VoiceInput] Transcription complete:', text);
-
       return text;
     } catch (error) {
       console.error('[VoiceInput] Transcription failed:', error);
@@ -182,10 +135,18 @@ export function useVoiceInput() {
     }
   };
 
-  return {
-    isRecording,
-    isTranscribing,
-    startRecording,
-    stopRecording
+  // ── Public API ───────────────────────────────────────────────────────────
+
+  const startRecording = async () => {
+    if (isAndroidVosk()) return startRecordingVosk();
+    return startRecordingDesktop();
   };
+
+  const stopRecording = async () => {
+    if (!isRecording) return '';
+    if (isAndroidVosk()) return stopRecordingVosk();
+    return stopRecordingDesktop();
+  };
+
+  return { isRecording, isTranscribing, startRecording, stopRecording };
 }

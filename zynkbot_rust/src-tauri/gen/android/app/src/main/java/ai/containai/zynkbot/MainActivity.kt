@@ -15,8 +15,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import java.io.BufferedInputStream
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.lang.ref.WeakReference
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.zip.ZipInputStream
 
 
 class MainActivity : TauriActivity() {
@@ -24,6 +30,7 @@ class MainActivity : TauriActivity() {
     companion object {
         private const val REQ_WRITE_STORAGE = 100
         private const val REQ_LOCAL_NETWORK = 101
+        private const val REQ_RECORD_AUDIO = 200
         // ACCESS_LOCAL_NETWORK is Android 16+ (SDK 36). Using string literal because the
         // constant may not be present when compiling against older SDK stubs, and because
         // GrapheneOS enforces it more strictly than stock Android — see hotfix for LAN
@@ -246,6 +253,162 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    inner class VoskBridge {
+        @Volatile private var voskModel: org.vosk.Model? = null
+        @Volatile private var speechService: org.vosk.android.SpeechService? = null
+        private val accumulated = StringBuilder()
+
+        private val listener = object : org.vosk.android.RecognitionListener {
+            override fun onPartialResult(h: String?) {}
+            override fun onResult(h: String?) {
+                val t = parseText(h)
+                if (t.isNotEmpty()) synchronized(accumulated) {
+                    if (accumulated.isNotEmpty()) accumulated.append(" ")
+                    accumulated.append(t)
+                }
+            }
+            override fun onFinalResult(h: String?) {
+                val last = parseText(h)
+                val full = synchronized(accumulated) {
+                    buildString {
+                        append(accumulated)
+                        if (accumulated.isNotEmpty() && last.isNotEmpty()) append(" ")
+                        append(last)
+                    }.trim().also { accumulated.clear() }
+                }
+                fire("window.__voskResult&&window.__voskResult('${esc(full)}');")
+            }
+            override fun onError(e: Exception?) {
+                fire("window.__voskError&&window.__voskError('${esc(e?.message ?: "recognition error")}');")
+            }
+            override fun onTimeout() {
+                fire("window.__voskError&&window.__voskError('timeout');")
+            }
+        }
+
+        @JavascriptInterface
+        fun isModelReady(): Boolean {
+            val d = File(filesDir, "vosk-model")
+            return d.exists() && d.isDirectory
+        }
+
+        @JavascriptInterface
+        fun getModelDir(): String = File(filesDir, "vosk-model").absolutePath
+
+        @JavascriptInterface
+        fun startListening() {
+            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+                fire("window.__voskError&&window.__voskError('Microphone permission not granted');")
+                return
+            }
+            Thread {
+                try {
+                    val modelDir = File(filesDir, "vosk-model")
+                    if (!modelDir.exists()) {
+                        fire("window.__voskError&&window.__voskError('Voice model not downloaded yet');")
+                        return@Thread
+                    }
+                    if (voskModel == null) voskModel = org.vosk.Model(modelDir.absolutePath)
+                    val rec = org.vosk.Recognizer(voskModel, 16000.0f)
+                    runOnUiThread {
+                        try {
+                            speechService = org.vosk.android.SpeechService(rec, 16000.0f)
+                            speechService!!.startListening(listener)
+                            fire("window.__voskStarted&&window.__voskStarted();")
+                        } catch (e: Exception) {
+                            fire("window.__voskError&&window.__voskError('${esc(e.message ?: "start failed")}');")
+                        }
+                    }
+                } catch (e: Exception) {
+                    fire("window.__voskError&&window.__voskError('${esc(e.message ?: "model load failed")}');")
+                }
+            }.start()
+        }
+
+        @JavascriptInterface
+        fun stopListening() {
+            runOnUiThread {
+                speechService?.stop()
+                speechService = null
+            }
+        }
+
+        @JavascriptInterface
+        fun downloadModel() {
+            Thread {
+                try {
+                    val modelDir = File(filesDir, "vosk-model")
+                    val tempZip = File(cacheDir, "vosk-model.zip")
+
+                    fire("window.__voskDownloadProgress&&window.__voskDownloadProgress(0);")
+
+                    val conn = URL("https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip")
+                        .openConnection() as HttpURLConnection
+                    conn.connect()
+                    val total = conn.contentLength.toLong()
+                    var read = 0L
+                    var lastPct = -1
+
+                    FileOutputStream(tempZip).use { fos ->
+                        conn.inputStream.use { inp ->
+                            val buf = ByteArray(8192)
+                            var n = inp.read(buf)
+                            while (n != -1) {
+                                fos.write(buf, 0, n)
+                                read += n
+                                if (total > 0) {
+                                    val pct = ((read * 70) / total).toInt()
+                                    if (pct != lastPct) {
+                                        lastPct = pct
+                                        fire("window.__voskDownloadProgress&&window.__voskDownloadProgress($pct);")
+                                    }
+                                }
+                                n = inp.read(buf)
+                            }
+                        }
+                    }
+
+                    fire("window.__voskDownloadProgress&&window.__voskDownloadProgress(70);")
+                    modelDir.deleteRecursively()
+                    modelDir.mkdirs()
+
+                    ZipInputStream(BufferedInputStream(FileInputStream(tempZip))).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            val rel = entry.name.split("/", limit = 2).let { if (it.size > 1) it[1] else "" }
+                            if (rel.isNotEmpty()) {
+                                val out = File(modelDir, rel)
+                                if (entry.isDirectory) out.mkdirs()
+                                else { out.parentFile?.mkdirs(); FileOutputStream(out).use { zis.copyTo(it) } }
+                            }
+                            zis.closeEntry()
+                            entry = zis.nextEntry
+                        }
+                    }
+
+                    tempZip.delete()
+                    fire("window.__voskDownloadProgress&&window.__voskDownloadProgress(100);")
+                    fire("window.__voskModelReady&&window.__voskModelReady();")
+                } catch (e: Exception) {
+                    fire("window.__voskDownloadError&&window.__voskDownloadError('${esc(e.message ?: "download failed")}');")
+                }
+            }.start()
+        }
+
+        private fun parseText(h: String?): String {
+            if (h.isNullOrEmpty()) return ""
+            return try { org.json.JSONObject(h).optString("text", "").trim() } catch (_: Exception) { "" }
+        }
+
+        private fun esc(s: String) = s.replace("\\", "\\\\").replace("'", "\\'")
+
+        private fun fire(js: String) {
+            val wv = webViewRef?.get() ?: return
+            wv.post { wv.evaluateJavascript(js, null) }
+        }
+    }
+
     private fun launchCamera() {
         try {
             val photoFile = File.createTempFile("zynk_photo_", ".jpg", cacheDir)
@@ -298,6 +461,7 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(FolderPickerBridge(), "AndroidFolderPicker")
         webView.addJavascriptInterface(ZynkbotPathsBridge(), "AndroidPaths")
         webView.addJavascriptInterface(AndroidCameraBridge(), "AndroidCamera")
+        webView.addJavascriptInterface(VoskBridge(), "VoskBridge")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -313,6 +477,7 @@ class MainActivity : TauriActivity() {
         requestNotificationPermissionIfNeeded()
         requestLocalNetworkPermissionIfNeeded()
         requestManageStorageIfNeeded()
+        requestRecordAudioIfNeeded()
         startSyncService()
     }
 
@@ -376,6 +541,13 @@ class MainActivity : TauriActivity() {
             }
         } catch (_: Exception) {
             // Older devices without the permission constant will throw — ignore.
+        }
+    }
+
+    private fun requestRecordAudioIfNeeded() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_RECORD_AUDIO)
         }
     }
 
