@@ -59,6 +59,38 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ---
 
+## v0.9.6 — Obsidian Vault Integration
+
+**Status:** Not started.
+
+**Goal:** Export Zynkbot's memory graph as a human-readable, navigable Obsidian vault — making the "closer in spirit to Obsidian than to a chatbot" comparison literal and working.
+
+**Why simpler than any API-based integration:** Obsidian has no API and no server — a vault is just a folder of plain Markdown files on disk, watched and rendered by Obsidian's UI. Zynkbot reads/writes directly into that folder using ordinary filesystem operations, the same pattern already used for the local knowledge base. Nothing talks to Obsidian's internals, so there is no risk of Obsidian updates breaking the integration.
+
+**Design decision:** Zynkbot's SQLite memory graph is the single source of truth. The Obsidian vault is a generated, human-readable projection of it — not a second canonical store. Rich relationship metadata (confidence, type, timestamps) goes in YAML frontmatter; the note body stays clean prose with `[[wikilinks]]` for relationships.
+
+### Scope
+
+**Do first within this release — simpler than Proton Calendar/Drive (no Android intents, no file-format hand-off protocol) and more thematically central to the product's positioning.**
+
+1. **Vault path setting** — user points Zynkbot at their vault folder (or a subfolder, e.g. `Vault/Zynkbot/`).
+
+2. **One-way export (v1):** each memory becomes an individual `.md` file.
+   - Filename: memory title, sanitized for filesystem safety.
+   - Frontmatter: id, namespace, created date, confidence, source.
+   - Body: memory content in prose.
+   - Relationships rendered as `[[wikilinks]]` with type noted inline (e.g. "*(contradicts)* [[Lives in New York]]").
+
+3. **Sync trigger:** export on memory creation/update, OR a manual "Export to Obsidian" action — decide based on whether continuous writes while Obsidian has the vault open causes file-lock friction in testing.
+
+4. **Voice/dictation path:** "note this in Obsidian" — dictate → write directly as a new `.md` file. Simpler than any Proton hand-off since there's no OS intent involved, just a file write.
+
+**Effort estimate:** Small for one-way export — mostly formatting/templating work on data Zynkbot already has.
+
+**Two-way sync (v2, later):** watch the vault folder for edits and reflect meaningful changes back into Zynkbot's memory store. More complex (conflict resolution needed) — explicitly deferred past the first version. File as its own future roadmap item.
+
+---
+
 ## v1.0 — Stable Release: Desktop + Android (Q3 2026)
 
 **Focus:** Ship what's built. Most core features are complete. This version closes the remaining gaps and promotes Android from internal testing to public release.
