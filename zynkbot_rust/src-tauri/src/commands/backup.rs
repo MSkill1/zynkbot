@@ -341,6 +341,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
+    let mut restored_hashes: Vec<String> = Vec::new();
 
     for mem in &memories {
         let content = match mem["content"].as_str() {
@@ -359,12 +360,13 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
 
         if exists { skipped += 1; continue; }
 
+        let now = Utc::now().to_rfc3339();
         let result = sqlx::query(
             "INSERT INTO memories (
                 title, content, source_type, session_id, user_id, namespace,
                 is_syncable, is_shareable, is_ephemeral, entities_detected,
-                event_type, original_text, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                event_type, original_text, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(mem["title"].as_str())
         .bind(&content)
@@ -379,16 +381,52 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         .bind(mem["event_type"].as_str())
         .bind(mem["original_text"].as_str())
         .bind(mem["created_at"].as_str())
+        .bind(&now)
         .execute(&pool)
         .await;
 
         match result {
-            Ok(_) => inserted += 1,
+            Ok(_) => {
+                let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+                restored_hashes.push(hash);
+                inserted += 1;
+            }
             Err(e) => eprintln!("[Backup] Insert failed for memory: {}", e),
         }
     }
 
+    // Clear local tombstones for restored memories so sync doesn't re-delete them.
+    if !restored_hashes.is_empty() {
+        for hash in &restored_hashes {
+            let _ = sqlx::query("DELETE FROM deleted_memory_hashes WHERE content_hash = ?")
+                .bind(hash)
+                .execute(&pool)
+                .await;
+        }
+        println!("[Backup] Cleared local tombstones for {} restored memories", restored_hashes.len());
+    }
+
     pool.close().await;
+
+    // Push to peers: clear their tombstones then sync the restored memories.
+    if inserted > 0 {
+        let service_opt = {
+            let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+            guard.as_ref().map(std::sync::Arc::clone)
+        };
+        if let Some(service) = service_opt {
+            let cleared = service.clear_tombstones_on_peers(&restored_hashes).await;
+            println!("[Backup] Cleared tombstones on {} peer(s)", cleared);
+
+            let peers = service.get_peers().await;
+            for peer in peers.iter().filter(|p| p.paired) {
+                match service.sync_bidirectional(&peer.device_id, &user_id).await {
+                    Ok(r) => println!("[Backup] Synced {} memories to {}", r.memories_sent, r.peer_device_name),
+                    Err(e) => eprintln!("[Backup] Sync to {} failed: {}", peer.device_name, e),
+                }
+            }
+        }
+    }
 
     println!("[Backup] Restored {}, skipped {} for user {}", inserted, skipped, user_id);
     Ok(serde_json::json!({

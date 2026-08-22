@@ -133,13 +133,12 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     try {
       const status = await invoke('get_backup_key_status');
       setKeyStatus(status);
-      await navigator.clipboard.writeText(status.key);
-      setBackupStatus('ok'); setBackupMsg('Encryption key copied — store it somewhere safe!');
-      if (!status.acknowledged) {
-        setShowKeySaveModal(true);
-        setKeyCopied(true);
-      }
-    } catch (err) { setBackupStatus('error'); setBackupMsg('Could not copy key: ' + String(err)); }
+      setKeyCopied(false);
+      setPassphraseMode(false);
+      setPassphraseInput('');
+      setPassphraseConfirm('');
+      setShowKeySaveModal(true);
+    } catch (err) { setBackupStatus('error'); setBackupMsg('Could not load key: ' + String(err)); }
     setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 5000);
   };
   const [editFormData, setEditFormData] = useState({

@@ -4,7 +4,16 @@ import "../styles/ChatMessage.css";
 
 export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit }) {
   const [editDraft, setEditDraft] = useState(message.content || "");
+  const [copied, setCopied] = useState(false);
   useEffect(() => { if (isEditing) setEditDraft(message.content || ""); }, [isEditing, message.content]);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (_) {}
+  };
   // Handle both old format {user, bot} and new format {role, content}
   const isUserMessage = message.role === 'user';
   const content = message.content;
@@ -65,16 +74,21 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
           ) : (
             <>
               <div className="message-content">{content}</div>
-              {onEdit && (
-                <button
-                  className="message-action-btn"
-                  onClick={onEdit}
-                  title="Edit and resend"
-                  aria-label="Edit last message"
-                >
-                  ✏️ Edit
+              <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                <button className="message-action-btn" onClick={handleCopy} title="Copy message">
+                  {copied ? '✓ Copied' : '📋 Copy'}
                 </button>
-              )}
+                {onEdit && (
+                  <button
+                    className="message-action-btn"
+                    onClick={onEdit}
+                    title="Edit and resend"
+                    aria-label="Edit last message"
+                  >
+                    ✏️ Edit
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -267,16 +281,21 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
             </details>
           </div>
         )}
-        {onRegenerate && (
-          <button
-            className="message-action-btn"
-            onClick={onRegenerate}
-            title="Regenerate response"
-            aria-label="Regenerate last response"
-          >
-            ↻ Regenerate
+        <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+          <button className="message-action-btn" onClick={handleCopy} title="Copy message">
+            {copied ? '✓ Copied' : '📋 Copy'}
           </button>
-        )}
+          {onRegenerate && (
+            <button
+              className="message-action-btn"
+              onClick={onRegenerate}
+              title="Regenerate response"
+              aria-label="Regenerate last response"
+            >
+              ↻ Regenerate
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

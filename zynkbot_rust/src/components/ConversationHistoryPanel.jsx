@@ -37,6 +37,16 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   const searchTimeout = useRef(null);
 
   const isHipaaMode = containmentMode === "hipaa";
+  const isAndroid = !!window.AndroidPaths;
+  const [copiedMsgId, setCopiedMsgId] = useState(null);
+
+  const copyMessage = async (id, text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMsgId(id);
+      setTimeout(() => setCopiedMsgId(null), 2000);
+    } catch (_) {}
+  };
 
   const loadSessions = useCallback(async () => {
     if (!userId || isHipaaMode) return;
@@ -158,7 +168,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   if (isHipaaMode) {
     return (
       <div className="conv-history-panel" style={panelStyle}>
-        <div style={{ padding: "20px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ padding: "20px", paddingTop: isAndroid ? "calc(env(safe-area-inset-top, 28px) + 12px)" : "20px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ margin: 0, color: "#f8f8f2", fontSize: "1rem" }}>🕐 Conversation History</h2>
           <button onClick={onClose} className="conv-history-close" style={{ background: "none", border: "none", color: "#6272a4", fontSize: "1.2rem", cursor: "pointer" }}>×</button>
         </div>
@@ -178,7 +188,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   return (
     <div className="conv-history-panel" style={panelStyle}>
       {/* Header */}
-      <div style={{ padding: "16px 20px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1e1f2e" }}>
+      <div style={{ padding: "16px 20px", paddingTop: isAndroid ? "calc(env(safe-area-inset-top, 28px) + 12px)" : "16px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1e1f2e" }}>
         <h2 style={{ margin: 0, color: "#f8f8f2", fontSize: "1rem", fontWeight: "bold", flex: 1, minWidth: 0 }}>
           {selectedSession ? (
             <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -378,8 +388,17 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                 }}>
                   {msg.content}
                 </div>
-                <div style={{ fontSize: "0.7rem", color: "#44475a", marginTop: "3px", padding: "0 4px" }}>
-                  {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "3px", padding: "0 4px" }}>
+                  <span style={{ fontSize: "0.7rem", color: "#44475a" }}>
+                    {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  <button
+                    onClick={() => copyMessage(msg.id, msg.content)}
+                    style={{ background: "none", border: "none", color: copiedMsgId === msg.id ? "#50fa7b" : "#6272a4", fontSize: "0.7rem", cursor: "pointer", padding: "0", lineHeight: 1 }}
+                    title="Copy message"
+                  >
+                    {copiedMsgId === msg.id ? "✓ Copied" : "📋"}
+                  </button>
                 </div>
               </div>
             ))}
