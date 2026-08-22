@@ -280,9 +280,10 @@ All networking features share common infrastructure:
 
 ### Current (v0.9 Production)
 
-- ✅ **TLS 1.3 encryption** for all sync traffic (self-signed certs, pinned on pairing)
-- ✅ **mTLS device authentication** — paired devices present their certificate during the TLS handshake; the server verifies the cert against the database before accepting any protected request. Unauthenticated connections are rejected at the protocol level, not just the application layer.
-- ✅ **Pairing codes** with 10-minute expiration for initial device introduction (TOFU — trust-on-first-use; cert is pinned immediately after)
+- ✅ **TLS transport** for ZynkSync, ZynkLink, and ZChat LAN traffic.
+- ✅ **mTLS device authentication for ZynkSync protected routes** — sync-paired devices present a certificate during the TLS handshake, and the server verifies it against the pinned certificate in the device database. This also protects the paired-desktop Ollama proxy and API-key propagation routes.
+- ⚠️ **Separate ZynkLink/ZChat authorization** — link-only peers are authenticated through pairing records and request-level authorization. They are not yet gated by pinned client certificates; ZynkLink certificate exchange and mTLS enforcement remain roadmap work.
+- ✅ **Pairing codes** with 10-minute expiration for initial device introduction. ZynkSync pins the exchanged device certificate after pairing.
 - ✅ **Local network only** — not exposed to internet
 - ✅ **Path validation** prevents directory traversal in file transfers
 - ✅ **Pairing required** for all network features

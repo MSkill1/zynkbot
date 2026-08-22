@@ -38,6 +38,109 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [dateFromDisplay, setDateFromDisplay] = useState("");
   const [dateToDisplay, setDateToDisplay] = useState("");
   const [isEditing, setIsEditing] = useState(false);
+  const [backupStatus, setBackupStatus] = useState(null); // null | 'busy' | 'ok' | 'error'
+  const [backupMsg, setBackupMsg] = useState('');
+  const [keyStatus, setKeyStatus] = useState(null); // null | { key: string, acknowledged: boolean }
+  const [showKeySaveModal, setShowKeySaveModal] = useState(false);
+  const [keyCopied, setKeyCopied] = useState(false);
+  const [passphraseMode, setPassphraseMode] = useState(false);
+  const [passphraseInput, setPassphraseInput] = useState('');
+  const [passphraseConfirm, setPassphraseConfirm] = useState('');
+  const [passphraseStatus, setPassphraseStatus] = useState('');
+  const [pendingBackup, setPendingBackup] = useState(false);
+
+  const loadKeyStatus = async () => {
+    try {
+      const status = await invoke('get_backup_key_status');
+      setKeyStatus(status);
+    } catch (_) {}
+  };
+
+  const handleCopyKeyFromModal = async () => {
+    if (!keyStatus?.key) return;
+    try {
+      await navigator.clipboard.writeText(keyStatus.key);
+      setKeyCopied(true);
+    } catch (_) {}
+  };
+
+  const handleSetPassphrase = async () => {
+    if (passphraseInput.trim().length < 8) {
+      setPassphraseStatus('Passphrase must be at least 8 characters.');
+      return;
+    }
+    if (passphraseInput !== passphraseConfirm) {
+      setPassphraseStatus('Passphrases do not match.');
+      return;
+    }
+    setPassphraseStatus('Deriving key…');
+    try {
+      const derivedKey = await invoke('derive_key_from_passphrase', { passphrase: passphraseInput });
+      setKeyStatus({ key: derivedKey, acknowledged: true });
+      setPassphraseStatus('');
+      setKeyCopied(true); // counts as confirmed
+    } catch (err) {
+      setPassphraseStatus(String(err));
+    }
+  };
+
+  const handleConfirmKeySaved = async () => {
+    try {
+      await invoke('acknowledge_backup_key');
+      setKeyStatus(prev => prev ? { ...prev, acknowledged: true } : prev);
+    } catch (_) {}
+    setShowKeySaveModal(false);
+    setKeyCopied(false);
+    setPassphraseMode(false);
+    setPassphraseInput('');
+    setPassphraseConfirm('');
+    if (pendingBackup) {
+      setPendingBackup(false);
+      doBackup();
+    }
+  };
+
+  const doBackup = async () => {
+    setBackupStatus('busy'); setBackupMsg('Backing up…');
+    try {
+      const res = await invoke('backup_memories_to_r2', { userId });
+      setBackupStatus('ok'); setBackupMsg(res.message);
+    } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
+    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 4000);
+  };
+
+  const handleBackup = async () => {
+    if (!keyStatus?.acknowledged) {
+      setPendingBackup(true);
+      setShowKeySaveModal(true);
+      return;
+    }
+    doBackup();
+  };
+
+  const handleRestore = async () => {
+    if (!window.confirm('Restore memories from cloud backup? Memories already on this device will be skipped.')) return;
+    setBackupStatus('busy'); setBackupMsg('Restoring…');
+    try {
+      const res = await invoke('restore_memories_from_r2', { userId });
+      setBackupStatus('ok'); setBackupMsg(res.message);
+      fetchMemories();
+    } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
+    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 5000);
+  };
+
+  const handleCopyKey = async () => {
+    try {
+      const status = await invoke('get_backup_key_status');
+      setKeyStatus(status);
+      setKeyCopied(false);
+      setPassphraseMode(false);
+      setPassphraseInput('');
+      setPassphraseConfirm('');
+      setShowKeySaveModal(true);
+    } catch (err) { setBackupStatus('error'); setBackupMsg('Could not load key: ' + String(err)); }
+    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 5000);
+  };
   const [editFormData, setEditFormData] = useState({
     title: '',
     content: '',
@@ -132,11 +235,12 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     }
   };
 
-  // Load memories and namespaces when modal opens
+  // Load memories, namespaces, and backup key status when modal opens
   useEffect(() => {
     if (isOpen) {
       fetchMemories();
       fetchNamespaces();
+      loadKeyStatus();
     }
   }, [isOpen, fetchMemories, fetchNamespaces]);
 
@@ -421,12 +525,128 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   if (!isOpen) return null;
 
+  // ── Key Save Modal ─────────────────────────────────────────────────────────
+  const KeySaveModal = showKeySaveModal ? (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 2000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+    }}>
+      <div style={{
+        background: '#21222c', border: '2px solid #ffb86c', borderRadius: '10px',
+        padding: '24px', maxWidth: '460px', width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.6)'
+      }}>
+        <h3 style={{ color: '#ffb86c', margin: '0 0 8px', fontSize: '1.1rem' }}>
+          ⚠ Save your backup key before continuing
+        </h3>
+        <p style={{ color: '#9aa5c4', fontSize: '0.85rem', margin: '0 0 16px', lineHeight: 1.5 }}>
+          Your memories are encrypted client-side — Zynkbot never sees your key.
+          If you lose this device without saving the key, your backup cannot be recovered.
+        </p>
+
+        {!passphraseMode ? (
+          <>
+            <div style={{ background: '#1e1f29', border: '1px solid #44475a', borderRadius: '6px', padding: '12px', marginBottom: '12px' }}>
+              <div style={{ fontSize: '0.75rem', color: '#6272a4', marginBottom: '4px' }}>Your encryption key (64-char hex):</div>
+              <code style={{ fontSize: '0.78rem', color: '#f1fa8c', wordBreak: 'break-all', lineHeight: 1.6, display: 'block' }}>
+                {keyStatus?.key || '—'}
+              </code>
+            </div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+              <button
+                onClick={handleCopyKeyFromModal}
+                style={{
+                  padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: 'pointer',
+                  background: keyCopied ? '#50fa7b' : '#ffb86c', color: '#282a36', fontWeight: 'bold', fontSize: '0.85rem'
+                }}
+              >
+                {keyCopied ? '✓ Copied!' : '📋 Copy Key'}
+              </button>
+              <button
+                onClick={() => setPassphraseMode(true)}
+                style={{ padding: '8px 16px', borderRadius: '4px', border: '1px solid #6272a4', cursor: 'pointer', background: 'none', color: '#bd93f9', fontSize: '0.85rem' }}
+              >
+                🔐 Use passphrase instead
+              </button>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: '#6272a4', margin: '0 0 16px' }}>
+              Store this key in a password manager or secure note. A passphrase lets you retype it on a new device instead.
+            </p>
+          </>
+        ) : (
+          <>
+            <p style={{ color: '#9aa5c4', fontSize: '0.83rem', margin: '0 0 12px', lineHeight: 1.5 }}>
+              A passphrase always produces the same encryption key — type it on any device to access your backup.
+            </p>
+            <input
+              type="password"
+              placeholder="Passphrase (min 8 characters)"
+              value={passphraseInput}
+              onChange={e => { setPassphraseInput(e.target.value); setPassphraseStatus(''); }}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '8px', background: '#1e1f29', border: '1px solid #44475a', borderRadius: '4px', color: '#f8f8f2', fontSize: '0.85rem', marginBottom: '8px' }}
+            />
+            <input
+              type="password"
+              placeholder="Confirm passphrase"
+              value={passphraseConfirm}
+              onChange={e => { setPassphraseConfirm(e.target.value); setPassphraseStatus(''); }}
+              style={{ width: '100%', boxSizing: 'border-box', padding: '8px', background: '#1e1f29', border: '1px solid #44475a', borderRadius: '4px', color: '#f8f8f2', fontSize: '0.85rem', marginBottom: '8px' }}
+            />
+            {passphraseStatus && (
+              <div style={{ fontSize: '0.8rem', color: passphraseStatus.includes('Deriving') ? '#9aa5c4' : '#ff5555', marginBottom: '8px' }}>
+                {passphraseStatus}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+              <button
+                onClick={handleSetPassphrase}
+                disabled={passphraseInput.length < 8}
+                style={{ padding: '8px 16px', borderRadius: '4px', border: 'none', cursor: passphraseInput.length < 8 ? 'not-allowed' : 'pointer', background: '#bd93f9', color: '#282a36', fontWeight: 'bold', fontSize: '0.85rem', opacity: passphraseInput.length < 8 ? 0.5 : 1 }}
+              >
+                Set Passphrase
+              </button>
+              <button
+                onClick={() => { setPassphraseMode(false); setPassphraseStatus(''); setPassphraseInput(''); setPassphraseConfirm(''); }}
+                style={{ padding: '8px 16px', borderRadius: '4px', border: '1px solid #44475a', cursor: 'pointer', background: 'none', color: '#9aa5c4', fontSize: '0.85rem' }}
+              >
+                ← Back
+              </button>
+            </div>
+          </>
+        )}
+
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button
+            onClick={handleConfirmKeySaved}
+            disabled={!keyCopied}
+            style={{
+              flex: 1, padding: '10px', borderRadius: '4px', border: 'none',
+              background: keyCopied ? '#50fa7b' : '#3a3b4a',
+              color: keyCopied ? '#282a36' : '#6272a4',
+              fontWeight: 'bold', fontSize: '0.9rem',
+              cursor: keyCopied ? 'pointer' : 'not-allowed'
+            }}
+          >
+            {keyCopied ? "✓ I've saved my key — continue" : "Copy or set a passphrase to continue"}
+          </button>
+          <button
+            onClick={() => { setShowKeySaveModal(false); setPendingBackup(false); setKeyCopied(false); setPassphraseMode(false); setPassphraseInput(''); setPassphraseConfirm(''); }}
+            style={{ padding: '10px 14px', borderRadius: '4px', border: '1px solid #44475a', background: 'none', color: '#9aa5c4', cursor: 'pointer', fontSize: '0.85rem' }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   // ── Mobile layout ─────────────────────────────────────────────────────────
   if (isMobile) {
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {KeySaveModal}
+
         {/* Header */}
-        <div style={{ padding: '12px 16px', paddingTop: 'calc(env(safe-area-inset-top, 28px) + 12px)', borderBottom: '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+        <div style={{ padding: '12px 16px', paddingTop: 'calc(env(safe-area-inset-top, 28px) + 12px)', borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           {selectedMemory ? (
             <>
               <button
@@ -441,11 +661,41 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             <>
               <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: 1 }}>Memory Manager</h2>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button onClick={handleBackup} disabled={backupStatus === 'busy'}
+                  style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  {backupStatus === 'busy' ? '…' : '☁ Backup'}
+                </button>
+                <button onClick={handleRestore} disabled={backupStatus === 'busy'}
+                  style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  Restore
+                </button>
+                <button onClick={handleCopyKey}
+                  style={{ background: '#ffb86c', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}
+                  title="Copy encryption key — store it somewhere safe">
+                  🔑 Key
+                </button>
                 <button onClick={handleClearAllMemories} style={{ background: 'none', border: '1px solid #ff5555', color: '#ff5555', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>Clear All</button>
               </div>
             </>
           )}
         </div>
+
+        {/* Key save reminder — mobile */}
+        {keyStatus && !keyStatus.acknowledged && !selectedMemory && (
+          <div
+            onClick={() => setShowKeySaveModal(true)}
+            style={{ padding: '6px 16px', background: '#3a2800', borderBottom: '1px solid #ffb86c44', flexShrink: 0, fontSize: '0.78rem', color: '#ffb86c', textAlign: 'center', cursor: 'pointer' }}
+          >
+            ⚠ Backup key not saved — tap to secure it
+          </div>
+        )}
+
+        {/* Backup status message — separate row so overflow:hidden on parent doesn't clip it */}
+        {backupMsg && !selectedMemory && (
+          <div style={{ padding: '6px 16px', borderBottom: '1px solid #44475a', background: '#1e1f2e', flexShrink: 0, fontSize: '0.8rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b', textAlign: 'center' }}>
+            {backupMsg}
+          </div>
+        )}
 
         {/* Floating close button - bottom right, like settings panel */}
         <button
@@ -731,12 +981,28 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   return (
     <>
+    {KeySaveModal}
     <div className="modal-overlay" onClick={onClose}>
       <div className="memory-manager-modal" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="modal-header">
           <h2>Memory Manager</h2>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button onClick={handleBackup} disabled={backupStatus === 'busy'}
+              title="Encrypt and back up all memories to Cloudflare R2"
+              style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', padding: '8px 14px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              {backupStatus === 'busy' ? '…' : '☁ Backup'}
+            </button>
+            <button onClick={handleRestore} disabled={backupStatus === 'busy'}
+              title="Download and decrypt memories from Cloudflare R2"
+              style={{ background: '#44475a', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              Restore
+            </button>
+            <button onClick={handleCopyKey}
+              title="Copy your encryption key — store it somewhere safe. Without it, backups cannot be recovered."
+              style={{ background: '#ffb86c', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              🔑 Key
+            </button>
             <button
               onClick={handleClearAllMemories}
               className="delete-button"
@@ -745,6 +1011,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             >
               🗑️ Clear All
             </button>
+            {backupMsg && (
+              <span style={{ fontSize: '0.8rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b' }}>
+                {backupMsg}
+              </span>
+            )}
             <button onClick={onClose} className="close-button">✕</button>
           </div>
         </div>

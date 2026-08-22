@@ -97,7 +97,21 @@ pub struct SyncMemory {
     #[serde(default)]
     pub original_text: Option<String>,
     #[serde(default)]
+    pub collection_id: Option<String>,
+    #[serde(default = "default_memory_placement")]
+    pub memory_placement: String,
+    #[serde(default)]
+    pub external_id: Option<String>,
+    #[serde(default)]
+    pub temporal_status: Option<String>,
+    #[serde(default)]
+    pub provenance_json: Option<String>,
+    #[serde(default)]
     pub relationships: Vec<MemoryRelationship>,  // Relationships from memory_links
+}
+
+fn default_memory_placement() -> String {
+    "retrieved".to_string()
 }
 
 /// Represents a relationship between memories (from memory_links table)
@@ -134,6 +148,8 @@ pub struct MemoryInventory {
     pub memory_count: usize,
     #[serde(default)]
     pub deleted_hashes: Vec<String>,  // Tombstones: hashes of explicitly deleted memories
+    #[serde(default)]
+    pub tombstone_timestamps: std::collections::HashMap<String, String>,  // hash → deleted_at ISO
 }
 
 /// Request to get inventory from remote device
@@ -1223,12 +1239,16 @@ impl ZynkSyncService {
         });
         let memory_count = rows.len();
 
-        let deleted_hashes: Vec<String> = sqlx::query_scalar(
-            "SELECT content_hash FROM deleted_memory_hashes"
+        let tombstone_rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT content_hash, deleted_at FROM deleted_memory_hashes"
         )
         .fetch_all(&self.db_pool)
         .await
         .unwrap_or_default();
+
+        let deleted_hashes: Vec<String> = tombstone_rows.iter().map(|r| r.0.clone()).collect();
+        let tombstone_timestamps: std::collections::HashMap<String, String> =
+            tombstone_rows.into_iter().collect();
 
         Ok(MemoryInventory {
             user_id: user_id.to_string(),
@@ -1237,6 +1257,7 @@ impl ZynkSyncService {
             latest_activity,
             memory_count,
             deleted_hashes,
+            tombstone_timestamps,
         })
     }
 
@@ -1257,7 +1278,8 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected, original_text
+                        event_type, event_date, entities_detected, original_text,
+                        collection_id, memory_placement, external_id, temporal_status, provenance_json
                  FROM memories
                  WHERE is_syncable = 1
                    AND created_at > ?
@@ -1271,7 +1293,8 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected, original_text
+                        event_type, event_date, entities_detected, original_text,
+                        collection_id, memory_placement, external_id, temporal_status, provenance_json
                  FROM memories
                  WHERE is_syncable = 1
                  ORDER BY created_at ASC
@@ -1317,6 +1340,11 @@ impl ZynkSyncService {
                     event_date: row.get("event_date"),
                     entities_detected: row.get("entities_detected"),
                     original_text: row.get("original_text"),
+                    collection_id: row.get("collection_id"),
+                    memory_placement: row.get("memory_placement"),
+                    external_id: row.get("external_id"),
+                    temporal_status: row.get("temporal_status"),
+                    provenance_json: row.get("provenance_json"),
                     relationships: Vec::new(),  // Will be populated below
                 }
             })
@@ -1363,7 +1391,8 @@ impl ZynkSyncService {
                         "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                                 parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                                 embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                                event_type, event_date, entities_detected, original_text
+                                event_type, event_date, entities_detected, original_text,
+                                collection_id, memory_placement, external_id, temporal_status, provenance_json
                          FROM memories WHERE id IN ({})",
                         in_clause
                     );
@@ -1405,6 +1434,11 @@ impl ZynkSyncService {
                         event_date: row.get("event_date"),
                         entities_detected: row.get("entities_detected"),
                         original_text: row.get("original_text"),
+                        collection_id: row.get("collection_id"),
+                        memory_placement: row.get("memory_placement"),
+                        external_id: row.get("external_id"),
+                        temporal_status: row.get("temporal_status"),
+                        provenance_json: row.get("provenance_json"),
                         relationships: Vec::new(),  // Will be populated below
                     });
                 }
@@ -1598,13 +1632,20 @@ impl ZynkSyncService {
                     println!("[ZynkSync] Updating existing memory (newer timestamp from peer)");
                     sqlx::query(
                         "UPDATE memories
-                         SET title = ?, namespace = ?, created_at = ?, session_id = ?
+                         SET title = ?, namespace = ?, created_at = ?, session_id = ?,
+                             collection_id = ?, memory_placement = ?, external_id = ?,
+                             temporal_status = ?, provenance_json = ?
                          WHERE id = ?"
                     )
                     .bind(&memory.title)
                     .bind(&memory.namespace)
                     .bind(memory.created_at)
                     .bind(&memory.session_id)
+                    .bind(&memory.collection_id)
+                    .bind(&memory.memory_placement)
+                    .bind(&memory.external_id)
+                    .bind(&memory.temporal_status)
+                    .bind(&memory.provenance_json)
                     .bind(existing_memory.0)
                     .execute(&self.db_pool)
                     .await
@@ -1647,8 +1688,9 @@ impl ZynkSyncService {
                             "INSERT INTO memories (user_id, session_id, content, title, source_type, created_at, updated_at,
                                                    parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                                                    embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                                                   event_type, event_date, entities_detected, original_text)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                                   event_type, event_date, entities_detected, original_text,
+                                                   collection_id, memory_placement, external_id, temporal_status, provenance_json)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                         )
                         .bind(local_user_id)
                         .bind(&memory.session_id)
@@ -1672,6 +1714,11 @@ impl ZynkSyncService {
                         .bind(memory.event_date)
                         .bind(memory.entities_detected.as_ref())
                         .bind(memory.original_text.as_deref())
+                        .bind(memory.collection_id.as_deref())
+                        .bind(&memory.memory_placement)
+                        .bind(memory.external_id.as_deref())
+                        .bind(memory.temporal_status.as_deref())
+                        .bind(memory.provenance_json.as_deref())
                         .execute(&self.db_pool)
                         .await
                         .map_err(|e| format!("Failed to insert ID-colliding memory: {}", e))?;
@@ -1687,8 +1734,9 @@ impl ZynkSyncService {
                     "INSERT INTO memories (id, user_id, session_id, content, title, source_type, created_at, updated_at,
                                           parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                                           embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                                          event_type, event_date, entities_detected, original_text)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                                          event_type, event_date, entities_detected, original_text,
+                                          collection_id, memory_placement, external_id, temporal_status, provenance_json)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 )
                 .bind(memory.id)
                 .bind(local_user_id)
@@ -1713,6 +1761,11 @@ impl ZynkSyncService {
                 .bind(memory.event_date)
                 .bind(memory.entities_detected.as_ref())
                 .bind(memory.original_text.as_deref())
+                .bind(memory.collection_id.as_deref())
+                .bind(&memory.memory_placement)
+                .bind(memory.external_id.as_deref())
+                .bind(memory.temporal_status.as_deref())
+                .bind(memory.provenance_json.as_deref())
                 .execute(&self.db_pool)
                 .await
                 .map_err(|e| format!("Failed to insert memory: {}", e))?;
@@ -2150,11 +2203,36 @@ impl ZynkSyncService {
             let remote_hashes_ts: std::collections::HashSet<String> =
                 remote_inventory.content_hashes.iter().cloned().collect();
 
-            // 1. Apply remote tombstones to local memories
-            let to_tombstone_locally: Vec<i32> = remote_tombstones.iter()
-                .filter(|h| local_hashes_ts.contains(*h))
-                .filter_map(|h| local_hash_to_id_ts.get(h).copied())
-                .collect();
+            // 1. Apply remote tombstones to local memories.
+            // Skip any memory whose updated_at is newer than the tombstone's deleted_at —
+            // this protects memories that were explicitly restored after the deletion.
+            let mut to_tombstone_locally: Vec<i32> = Vec::new();
+            for h in remote_tombstones.iter().filter(|h| local_hashes_ts.contains(*h)) {
+                let id = match local_hash_to_id_ts.get(h).copied() {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let tombstone_deleted_at: Option<DateTime<Utc>> = remote_inventory
+                    .tombstone_timestamps.get(h.as_str())
+                    .and_then(|s| s.parse::<DateTime<Utc>>().ok());
+                if let Some(deleted_at) = tombstone_deleted_at {
+                    let memory_time: Option<DateTime<Utc>> = sqlx::query_scalar(
+                        "SELECT COALESCE(updated_at, created_at) FROM memories WHERE id = ?"
+                    )
+                    .bind(id)
+                    .fetch_optional(&self.db_pool)
+                    .await
+                    .ok()
+                    .flatten();
+                    if let Some(mt) = memory_time {
+                        if mt > deleted_at {
+                            println!("[ZynkSync] Skipping remote tombstone for restored memory (updated_at {} > tombstone {})", mt, deleted_at);
+                            continue;
+                        }
+                    }
+                }
+                to_tombstone_locally.push(id);
+            }
             if !to_tombstone_locally.is_empty() {
                 println!("[ZynkSync] Applying {} remote tombstones locally", to_tombstone_locally.len());
                 self.delete_and_tombstone(&to_tombstone_locally).await?;
@@ -2410,7 +2488,8 @@ impl ZynkSyncService {
                 "SELECT id, user_id, session_id, content, title, source_type, created_at, updated_at,
                         parent_scroll_id, chunk_index, namespace, is_syncable, is_shareable,
                         embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
-                        event_type, event_date, entities_detected, original_text
+                        event_type, event_date, entities_detected, original_text,
+                        collection_id, memory_placement, external_id, temporal_status, provenance_json
                  FROM memories WHERE id IN ({})",
                 in_clause
             );
@@ -2454,6 +2533,11 @@ impl ZynkSyncService {
                     event_date: row.get("event_date"),
                     entities_detected: row.get("entities_detected"),
                     original_text: row.get("original_text"),
+                    collection_id: row.get("collection_id"),
+                    memory_placement: row.get("memory_placement"),
+                    external_id: row.get("external_id"),
+                    temporal_status: row.get("temporal_status"),
+                    provenance_json: row.get("provenance_json"),
                     relationships: Vec::new(),  // Will be populated below
                 }
             })
@@ -2513,6 +2597,40 @@ impl ZynkSyncService {
         let deleted_count = result.rows_affected() as usize;
         println!("[ZynkSync] Deleted {} memories", deleted_count);
         Ok(deleted_count)
+    }
+
+    /// Remove content hashes from tombstones on all paired peers.
+    /// Called after a restore that explicitly un-deletes memories, so peer tombstones
+    /// don't re-delete the restored memories on the next sync cycle.
+    pub async fn clear_tombstones_on_peers(&self, hashes: &[String]) -> usize {
+        let peers = {
+            let peers_map = self.peers.read().await;
+            peers_map.values()
+                .filter(|p| p.paired)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let mut success_count = 0;
+        let payload = serde_json::json!({ "hashes": hashes });
+        for peer in peers {
+            let endpoint = format!("{}/api/zynksync/clear-tombstones", peer.url);
+            let client = self.http_client.read().await.clone();
+            match client
+                .post(&endpoint)
+                .json(&payload)
+                .timeout(Duration::from_secs(15))
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    println!("[ZynkSync] ✓ Cleared tombstones on {}", peer.device_name);
+                    success_count += 1;
+                }
+                Ok(r) => eprintln!("[ZynkSync] ✗ clear-tombstones on {} failed: {}", peer.device_name, r.status()),
+                Err(e) => eprintln!("[ZynkSync] ✗ Could not reach {} for clear-tombstones: {}", peer.device_name, e),
+            }
+        }
+        success_count
     }
 
     /// Record content hashes as tombstones so they are never resurrected by sync.
@@ -3138,6 +3256,7 @@ impl ZynkSyncService {
             .route("/api/zynksync/inventory", post(handle_get_inventory))
             .route("/api/zynksync/delete", post(handle_delete_memories))
             .route("/api/zynksync/delete-by-hash", post(handle_delete_by_hash))
+            .route("/api/zynksync/clear-tombstones", post(handle_clear_tombstones))
             .route("/api/zynksync/update-memory", post(handle_update_memory))
             .route("/api/zynksync/fetch", post(handle_fetch_memories))
             .route("/api/zynksync/introduce", post(handle_introduce))
@@ -4231,26 +4350,26 @@ async fn handle_delete_by_hash(
 
     let memory_info: Option<(i32, DateTime<Utc>)> = {
         use sha2::{Digest, Sha256};
-        let rows: Vec<(i32, String, String)> = sqlx::query_as::<_, (i32, String, String)>(
-            "SELECT id, content, created_at FROM memories"
+        let rows: Vec<(i32, String, String, Option<String>)> = sqlx::query_as::<_, (i32, String, String, Option<String>)>(
+            "SELECT id, content, created_at, updated_at FROM memories"
         )
         .fetch_all(&service.db_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to lookup memories: {}", e)}))))?;
         rows.into_iter()
-            .find(|(_, c, _)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
-            .map(|(id, _, created_at_str)| {
+            .find(|(_, c, _, _)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
+            .map(|(id, _, created_at_str, updated_at_str)| {
                 let created_at = created_at_str.parse::<DateTime<Utc>>().unwrap_or(DateTime::<Utc>::MIN_UTC);
-                (id, created_at)
+                let updated_at = updated_at_str.and_then(|s| s.parse::<DateTime<Utc>>().ok()).unwrap_or(DateTime::<Utc>::MIN_UTC);
+                (id, created_at.max(updated_at))
             })
     };
 
     match memory_info {
-        Some((id, created_at)) => {
+        Some((id, effective_time)) => {
             // Only delete if the memory predates the tombstone.
-            // A memory created after the tombstone was recorded is an intentional recreation
-            // and should not be wiped by a stale deletion event.
-            let should_delete = tombstone_time.map_or(true, |ts| created_at <= ts);
+            // Use max(created_at, updated_at) so restored memories (updated_at = now) are protected.
+            let should_delete = tombstone_time.map_or(true, |ts| effective_time <= ts);
 
             if should_delete {
                 let _ = sqlx::query(
@@ -4273,8 +4392,8 @@ async fn handle_delete_by_hash(
                 }
                 Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
             } else {
-                println!("[ZynkSync] Skipping delete-by-hash: memory created_at {} is newer than tombstone deleted_at {:?}",
-                    created_at, tombstone_time);
+                println!("[ZynkSync] Skipping delete-by-hash: memory effective_time {} is newer than tombstone deleted_at {:?}",
+                    effective_time, tombstone_time);
                 Ok(Json(serde_json::json!({ "success": true, "deleted": 0, "skipped": "newer_than_tombstone" })))
             }
         }
@@ -4283,6 +4402,37 @@ async fn handle_delete_by_hash(
             Ok(Json(serde_json::json!({ "success": true, "deleted": 0 })))
         }
     }
+}
+
+/// Axum handler: peer asks us to clear specific tombstones (restore operation).
+async fn handle_clear_tombstones(
+    State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id).await?;
+
+    let hashes = request.get("hashes")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing hashes array"}))))?;
+
+    let mut cleared = 0u64;
+    for h in hashes {
+        if let Some(hash) = h.as_str() {
+            if let Ok(r) = sqlx::query("DELETE FROM deleted_memory_hashes WHERE content_hash = ?")
+                .bind(hash)
+                .execute(&service.db_pool)
+                .await
+            {
+                cleared += r.rows_affected();
+            }
+        }
+    }
+    println!("[ZynkSync] Cleared {} tombstone(s) on behalf of peer restore", cleared);
+    Ok(Json(serde_json::json!({ "success": true, "cleared": cleared })))
 }
 
 /// Axum handler for receiving a memory edit propagated from a paired device.
@@ -4841,6 +4991,7 @@ async fn handle_push_api_key(
         "XAI_API_KEY",       "XAI_MODEL",
         "MISTRAL_API_KEY",   "MISTRAL_MODEL",
         "CUSTOM_API_URL",    "CUSTOM_API_KEY", "CUSTOM_MODEL",
+        "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
     ];
     if !ALLOWED.contains(&key) {
         return Err(format!("Key '{}' is not propagatable", key));
