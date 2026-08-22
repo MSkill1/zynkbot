@@ -141,7 +141,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const TIPS = [
     <>Tip: start with "<strong>Remember:</strong>" to force save directly into your memories — use it when you want exact details saved precisely.</>,
-    <>Tap <strong>Memory</strong> to see everything Zynkbot knows about you. You can edit, delete, or add memories at any time.</>,
+    <>Tap <strong>Memory Manager</strong> to see everything Zynkbot knows about you. You can edit, delete, or add memories at any time.</>,
     <>Open <strong>History</strong> to browse past conversations and copy any response.</>,
     <><strong>ZynkSync</strong> keeps your memories in sync across all your devices automatically — no account required.</>,
     <><strong>ZynkLink</strong> lets you share files directly with paired devices over your local network. No cloud, no upload.</>,
