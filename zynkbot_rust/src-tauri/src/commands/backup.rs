@@ -359,12 +359,13 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
 
         if exists { skipped += 1; continue; }
 
+        let now = Utc::now().to_rfc3339();
         let result = sqlx::query(
             "INSERT INTO memories (
                 title, content, source_type, session_id, user_id, namespace,
                 is_syncable, is_shareable, is_ephemeral, entities_detected,
-                event_type, original_text, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                event_type, original_text, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(mem["title"].as_str())
         .bind(&content)
@@ -379,6 +380,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         .bind(mem["event_type"].as_str())
         .bind(mem["original_text"].as_str())
         .bind(mem["created_at"].as_str())
+        .bind(&now)
         .execute(&pool)
         .await;
 

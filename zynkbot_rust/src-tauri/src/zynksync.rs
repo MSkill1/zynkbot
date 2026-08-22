@@ -148,6 +148,8 @@ pub struct MemoryInventory {
     pub memory_count: usize,
     #[serde(default)]
     pub deleted_hashes: Vec<String>,  // Tombstones: hashes of explicitly deleted memories
+    #[serde(default)]
+    pub tombstone_timestamps: std::collections::HashMap<String, String>,  // hash → deleted_at ISO
 }
 
 /// Request to get inventory from remote device
@@ -1237,12 +1239,16 @@ impl ZynkSyncService {
         });
         let memory_count = rows.len();
 
-        let deleted_hashes: Vec<String> = sqlx::query_scalar(
-            "SELECT content_hash FROM deleted_memory_hashes"
+        let tombstone_rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT content_hash, deleted_at FROM deleted_memory_hashes"
         )
         .fetch_all(&self.db_pool)
         .await
         .unwrap_or_default();
+
+        let deleted_hashes: Vec<String> = tombstone_rows.iter().map(|r| r.0.clone()).collect();
+        let tombstone_timestamps: std::collections::HashMap<String, String> =
+            tombstone_rows.into_iter().collect();
 
         Ok(MemoryInventory {
             user_id: user_id.to_string(),
@@ -1251,6 +1257,7 @@ impl ZynkSyncService {
             latest_activity,
             memory_count,
             deleted_hashes,
+            tombstone_timestamps,
         })
     }
 
@@ -2196,11 +2203,36 @@ impl ZynkSyncService {
             let remote_hashes_ts: std::collections::HashSet<String> =
                 remote_inventory.content_hashes.iter().cloned().collect();
 
-            // 1. Apply remote tombstones to local memories
-            let to_tombstone_locally: Vec<i32> = remote_tombstones.iter()
-                .filter(|h| local_hashes_ts.contains(*h))
-                .filter_map(|h| local_hash_to_id_ts.get(h).copied())
-                .collect();
+            // 1. Apply remote tombstones to local memories.
+            // Skip any memory whose updated_at is newer than the tombstone's deleted_at —
+            // this protects memories that were explicitly restored after the deletion.
+            let mut to_tombstone_locally: Vec<i32> = Vec::new();
+            for h in remote_tombstones.iter().filter(|h| local_hashes_ts.contains(*h)) {
+                let id = match local_hash_to_id_ts.get(h.as_str()).copied() {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let tombstone_deleted_at: Option<DateTime<Utc>> = remote_inventory
+                    .tombstone_timestamps.get(h.as_str())
+                    .and_then(|s| s.parse::<DateTime<Utc>>().ok());
+                if let Some(deleted_at) = tombstone_deleted_at {
+                    let memory_time: Option<DateTime<Utc>> = sqlx::query_scalar(
+                        "SELECT COALESCE(updated_at, created_at) FROM memories WHERE id = ?"
+                    )
+                    .bind(id)
+                    .fetch_optional(&self.db_pool)
+                    .await
+                    .ok()
+                    .flatten();
+                    if let Some(mt) = memory_time {
+                        if mt > deleted_at {
+                            println!("[ZynkSync] Skipping remote tombstone for restored memory (updated_at {} > tombstone {})", mt, deleted_at);
+                            continue;
+                        }
+                    }
+                }
+                to_tombstone_locally.push(id);
+            }
             if !to_tombstone_locally.is_empty() {
                 println!("[ZynkSync] Applying {} remote tombstones locally", to_tombstone_locally.len());
                 self.delete_and_tombstone(&to_tombstone_locally).await?;
@@ -4283,26 +4315,26 @@ async fn handle_delete_by_hash(
 
     let memory_info: Option<(i32, DateTime<Utc>)> = {
         use sha2::{Digest, Sha256};
-        let rows: Vec<(i32, String, String)> = sqlx::query_as::<_, (i32, String, String)>(
-            "SELECT id, content, created_at FROM memories"
+        let rows: Vec<(i32, String, String, Option<String>)> = sqlx::query_as::<_, (i32, String, String, Option<String>)>(
+            "SELECT id, content, created_at, updated_at FROM memories"
         )
         .fetch_all(&service.db_pool)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to lookup memories: {}", e)}))))?;
         rows.into_iter()
-            .find(|(_, c, _)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
-            .map(|(id, _, created_at_str)| {
+            .find(|(_, c, _, _)| format!("{:x}", Sha256::digest(c.as_bytes())) == content_hash)
+            .map(|(id, _, created_at_str, updated_at_str)| {
                 let created_at = created_at_str.parse::<DateTime<Utc>>().unwrap_or(DateTime::<Utc>::MIN_UTC);
-                (id, created_at)
+                let updated_at = updated_at_str.and_then(|s| s.parse::<DateTime<Utc>>().ok()).unwrap_or(DateTime::<Utc>::MIN_UTC);
+                (id, created_at.max(updated_at))
             })
     };
 
     match memory_info {
-        Some((id, created_at)) => {
+        Some((id, effective_time)) => {
             // Only delete if the memory predates the tombstone.
-            // A memory created after the tombstone was recorded is an intentional recreation
-            // and should not be wiped by a stale deletion event.
-            let should_delete = tombstone_time.map_or(true, |ts| created_at <= ts);
+            // Use max(created_at, updated_at) so restored memories (updated_at = now) are protected.
+            let should_delete = tombstone_time.map_or(true, |ts| effective_time <= ts);
 
             if should_delete {
                 let _ = sqlx::query(
@@ -4325,8 +4357,8 @@ async fn handle_delete_by_hash(
                 }
                 Ok(Json(serde_json::json!({ "success": true, "deleted": deleted_count })))
             } else {
-                println!("[ZynkSync] Skipping delete-by-hash: memory created_at {} is newer than tombstone deleted_at {:?}",
-                    created_at, tombstone_time);
+                println!("[ZynkSync] Skipping delete-by-hash: memory effective_time {} is newer than tombstone deleted_at {:?}",
+                    effective_time, tombstone_time);
                 Ok(Json(serde_json::json!({ "success": true, "deleted": 0, "skipped": "newer_than_tombstone" })))
             }
         }
