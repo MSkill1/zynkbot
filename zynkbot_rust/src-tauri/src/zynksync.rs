@@ -16,7 +16,33 @@ use sqlx::{SqlitePool, Row};
 use chrono::{DateTime, Utc};
 use reqwest::Client as HttpClient;
 use tokio_rustls::TlsAcceptor;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpSocket};
+
+/// Bind a TCP listener with SO_REUSEADDR and retry-on-failure. When the app is
+/// force-closed and quickly reopened, the previous process's socket may still
+/// be in TIME_WAIT holding port 57963. SO_REUSEADDR lets us reclaim it; the
+/// retry loop covers the brief window before the kernel releases it.
+async fn bind_with_reuseaddr(addr: SocketAddr, port: u16) -> Result<TcpListener, String> {
+    let mut last_err: Option<String> = None;
+    for attempt in 1..=6u32 {
+        let socket = TcpSocket::new_v4()
+            .map_err(|e| format!("Failed to create TCP socket: {}", e))?;
+        if let Err(e) = socket.set_reuseaddr(true) {
+            return Err(format!("Failed to set SO_REUSEADDR: {}", e));
+        }
+        match socket.bind(addr) {
+            Ok(()) => match socket.listen(1024) {
+                Ok(listener) => return Ok(listener),
+                Err(e) => last_err = Some(format!("listen() failed on port {}: {}", port, e)),
+            },
+            Err(e) => last_err = Some(format!("bind() failed on port {} (attempt {}): {}", port, attempt, e)),
+        }
+        // Backoff: 100ms, 200ms, 400ms, 800ms, 1600ms — total ~3s before giving up.
+        let delay_ms = 100u64 << (attempt - 1).min(4);
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+    }
+    Err(last_err.unwrap_or_else(|| format!("Failed to bind port {} after retries", port)))
+}
 use hyper_util::rt::{TokioIo, TokioExecutor};
 use hyper_util::server::conn::auto::Builder as HyperConnBuilder;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -3291,11 +3317,13 @@ impl ZynkSyncService {
         ).map_err(|e| format!("Failed to build TLS config: {}", e))?;
         let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
 
-        // Bind TCP listener on fixed port 57963
+        // Bind TCP listener on fixed port 57963 with SO_REUSEADDR so we can
+        // recover from a quick app-restart where the previous process's socket
+        // is still in TIME_WAIT. Retries a few times with backoff for the case
+        // where the old process hasn't fully released the port yet.
         let port: u16 = 57963;
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
-        let tcp_listener = TcpListener::bind(addr).await
-            .map_err(|e| format!("Failed to bind port {}: {}", port, e))?;
+        let tcp_listener = bind_with_reuseaddr(addr, port).await?;
 
         // Store the port
         {
