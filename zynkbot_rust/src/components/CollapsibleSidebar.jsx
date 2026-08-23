@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, hideToggle, onOpen }) {
+export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, voiceInputSource, onVoiceSourceChange, hideToggle, onOpen }) {
   const [isOpen, setIsOpen] = useState(false);
 
   const handleToggle = () => {
@@ -76,7 +76,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
             {onVoiceToggle && (
               <label
                 title={voiceInputEnabled
-                  ? "Voice input enabled (uses Google Web Speech API)\nClick to disable for complete API-free experience"
+                  ? "Voice input enabled\nClick to disable"
                   : "Voice input disabled\nClick to enable voice dictation"}
                 style={{
                   display: 'flex',
@@ -116,6 +116,50 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                 />
                 <span>🎤</span>
               </label>
+            )}
+            {/* Dictation source dropdown (shown when voice enabled) */}
+            {onVoiceSourceChange && voiceInputEnabled && (
+              <select
+                value={voiceInputSource || 'vosk'}
+                onChange={(e) => onVoiceSourceChange(e.target.value)}
+                title={
+                  (voiceInputSource || 'vosk') === 'vosk'
+                    ? 'Offline dictation (Vosk): runs entirely on your device. No internet, nothing leaves your machine. Produces all-lowercase text with no punctuation — modern LLMs handle unpunctuated input well, so responses are still accurate.'
+                    : 'OpenAI Whisper: sends audio to OpenAI. Adds punctuation and capitalization. OpenAI keeps the audio for up to 30 days for abuse monitoring only, then deletes it — API data is not used to train their models. Requires OPENAI_API_KEY and internet.'
+                }
+                style={{
+                  background: '#44475a',
+                  color: '#8be9fd',
+                  border: 'none',
+                  borderRadius: '4px',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  padding: '0 24px 0 10px',
+                  height: '32px',
+                  lineHeight: '32px',
+                  cursor: 'pointer',
+                  boxSizing: 'border-box',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                  MozAppearance: 'none',
+                  backgroundImage: 'url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\' viewBox=\'0 0 10 6\'%3E%3Cpath fill=\'%238be9fd\' d=\'M0 0h10L5 6z\'/%3E%3C/svg%3E")',
+                  backgroundRepeat: 'no-repeat',
+                  backgroundPosition: 'right 8px center'
+                }}
+              >
+                <option
+                  value="vosk"
+                  title="Runs on-device. No internet. No punctuation, but LLMs handle unpunctuated text fine."
+                >
+                  Offline (no punctuation)
+                </option>
+                <option
+                  value="openai"
+                  title="Cloud transcription with punctuation. OpenAI holds audio 30 days for abuse review only, not training. Needs API key + internet."
+                >
+                  OpenAI Whisper (needs key)
+                </option>
+              </select>
             )}
             {onInfoClick && (
               <button

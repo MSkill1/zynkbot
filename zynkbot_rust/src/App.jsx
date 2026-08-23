@@ -190,10 +190,44 @@ export default function App() {
     const stored = localStorage.getItem('zynkbot_voice_input_enabled');
     return stored === null ? true : stored === 'true';
   });
+  const [voiceInputSource, setVoiceInputSource] = useState(() => {
+    // 'vosk' = offline (no punctuation), 'openai' = cloud Whisper (has punctuation)
+    return localStorage.getItem('zynkbot_voice_input_source') || 'vosk';
+  });
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
   const memoryManagerRef = useRef(null);
   const conversationEndRef = useRef(null);
   const chatContainerRef = useRef(null);
+  const inputTextareaRef = useRef(null);
+
+  // Splice transcribed text into the input at the cursor position, padding with
+  // spaces when adjacent to non-whitespace so words don't run together.
+  const insertTranscriptAtCursor = (text) => {
+    if (!text) return;
+    const el = inputTextareaRef.current;
+    setInput((current) => {
+      if (!el || typeof el.selectionStart !== 'number') {
+        // No ref or no selection info — append with a space if there's existing text.
+        return current ? `${current.replace(/\s*$/, '')} ${text}` : text;
+      }
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const before = current.slice(0, start);
+      const after = current.slice(end);
+      const leadPad = before && !/\s$/.test(before) ? ' ' : '';
+      const trailPad = after && !/^\s/.test(after) ? ' ' : '';
+      const insertion = `${leadPad}${text}${trailPad}`;
+      // Restore cursor position after React re-renders.
+      const nextCursor = before.length + insertion.length - trailPad.length;
+      requestAnimationFrame(() => {
+        if (inputTextareaRef.current) {
+          inputTextareaRef.current.focus();
+          inputTextareaRef.current.setSelectionRange(nextCursor, nextCursor);
+        }
+      });
+      return `${before}${insertion}${after}`;
+    });
+  };
   const [showScrollButton, setShowScrollButton] = useState(false);
 
   useEffect(() => {
@@ -972,6 +1006,11 @@ export default function App() {
           setVoiceInputEnabled(enabled);
           localStorage.setItem('zynkbot_voice_input_enabled', enabled.toString());
         }}
+        voiceInputSource={voiceInputSource}
+        onVoiceSourceChange={(source) => {
+          setVoiceInputSource(source);
+          localStorage.setItem('zynkbot_voice_input_source', source);
+        }}
       >
         <ContainmentModeSelector
           currentMode={containmentMode}
@@ -1630,6 +1669,7 @@ export default function App() {
               {/* Left: Textarea with KB button inside */}
               <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
                 <textarea
+                  ref={inputTextareaRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -1782,7 +1822,7 @@ export default function App() {
                 {/* Mobile: circular mic button, bottom-right of textarea */}
                 {isMobile && voiceInputEnabled && (
                   <VoiceButton
-                    onTranscript={(text) => setInput(text)}
+                    onTranscript={insertTranscriptAtCursor}
                     disabled={isLoading}
                     style={{
                       position: 'absolute',
@@ -1813,7 +1853,7 @@ export default function App() {
                 {/* Desktop-only: Voice in grid (mobile has circular button on textarea) */}
                 {!isMobile && (voiceInputEnabled ? (
                   <VoiceButton
-                    onTranscript={(text) => setInput(text)}
+                    onTranscript={insertTranscriptAtCursor}
                     disabled={isLoading}
                     style={{
                       width: '85px',

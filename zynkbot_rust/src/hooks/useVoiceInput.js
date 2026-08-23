@@ -9,7 +9,9 @@ export function useVoiceInput() {
   const streamRef = useRef(null);
   const audioBufferRef = useRef([]);
 
-  const isAndroidVosk = () => !!window.VoskBridge;
+  const isAndroid = () => !!window.VoskBridge;
+  // 'vosk' (offline, no punctuation) or 'openai' (cloud Whisper). Persists in localStorage.
+  const getSource = () => localStorage.getItem('zynkbot_voice_input_source') || 'vosk';
 
   // ── Android / Vosk path ──────────────────────────────────────────────────
 
@@ -107,6 +109,8 @@ export function useVoiceInput() {
     }
   };
 
+  // WebAudio → WAV → OpenAI Whisper. Used by Android when source === 'openai'.
+  // On desktop, both engines use the Rust mic path (this function is unused there).
   const stopRecordingDesktop = async () => {
     setIsRecording(false);
     setIsTranscribing(true);
@@ -137,15 +141,54 @@ export function useVoiceInput() {
 
   // ── Public API ───────────────────────────────────────────────────────────
 
+  // Desktop dictation: both engines capture mic via Rust (cpal), bypassing the
+  // WebView getUserMedia problem on Linux. Only the stop command differs.
+  const startRecordingDesktopRust = async (source) => {
+    const cmd = source === 'openai' ? 'start_openai_recording' : 'start_vosk_recording';
+    try {
+      await invoke(cmd);
+      setIsRecording(true);
+    } catch (error) {
+      console.error('[VoiceInput] Desktop start failed:', error);
+      alert('Voice input failed to start: ' + error);
+    }
+  };
+
+  const stopRecordingDesktopRust = async (source) => {
+    const cmd = source === 'openai' ? 'stop_openai_recording' : 'stop_vosk_recording';
+    setIsRecording(false);
+    setIsTranscribing(true);
+    try {
+      return await invoke(cmd);
+    } catch (error) {
+      console.error('[VoiceInput] Desktop stop failed:', error);
+      alert('Transcription failed: ' + error);
+      return '';
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
   const startRecording = async () => {
-    if (isAndroidVosk()) return startRecordingVosk();
-    return startRecordingDesktop();
+    const source = getSource();
+    if (isAndroid()) {
+      // Android WebView is Chromium — getUserMedia works, so OpenAI uses the
+      // same WebAudio path as pre-Vosk. Vosk still goes through the Kotlin bridge.
+      if (source === 'openai') return startRecordingDesktop();
+      return startRecordingVosk();
+    }
+    // Desktop: both engines go through Rust mic capture (bypasses Linux WebView bug).
+    return startRecordingDesktopRust(source);
   };
 
   const stopRecording = async () => {
     if (!isRecording) return '';
-    if (isAndroidVosk()) return stopRecordingVosk();
-    return stopRecordingDesktop();
+    const source = getSource();
+    if (isAndroid()) {
+      if (source === 'openai') return stopRecordingDesktop();
+      return stopRecordingVosk();
+    }
+    return stopRecordingDesktopRust(source);
   };
 
   return { isRecording, isTranscribing, startRecording, stopRecording };

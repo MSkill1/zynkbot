@@ -64,6 +64,7 @@ directory_structure.txt
 *.o
 *.d
 *.so
+!zynkbot_rust/src-tauri/lib/vosk/libvosk.so
 *.a
 *.out
 *.exe
