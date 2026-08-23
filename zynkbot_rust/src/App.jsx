@@ -933,6 +933,21 @@ export default function App() {
     return <AccessGate />;
   }
 
+  // Still checking whether first-run setup is needed — show spinner to avoid blank flash
+  if (needsSetup === null) {
+    return (
+      <div style={{
+        display: 'flex', justifyContent: 'center', alignItems: 'center',
+        height: '100vh', background: '#181a20', color: '#f8f8f2'
+      }}>
+        <div style={{textAlign: 'center'}}>
+          <h2 style={{color: '#8be9fd'}}>Loading Zynkbot...</h2>
+          <p style={{color: '#9aa5c4'}}>Memory without surveillance, intelligence without manipulation.</p>
+        </div>
+      </div>
+    );
+  }
+
   // Show setup wizard on first run
   if (needsSetup === true) {
     return <SetupWizard onComplete={async () => {

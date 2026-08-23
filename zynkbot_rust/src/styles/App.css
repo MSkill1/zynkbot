@@ -1,5 +1,11 @@
 /* Zynkbot Dark Theme */
 
+html, body, #root {
+  background: #181a20;
+  margin: 0;
+  padding: 0;
+}
+
 .app.dark-theme {
   background: #181a20;
   color: #ececec;
