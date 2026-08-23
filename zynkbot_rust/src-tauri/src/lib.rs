@@ -22,6 +22,8 @@ mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod conversation_history;  // Persistent conversation log with full-text search
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
+#[cfg(not(target_os = "android"))]
+mod vosk_desktop; // Offline dictation on desktop (cpal + vosk)
 
 use serde::{Deserialize, Serialize};
 // use chrono::Utc;  // Unused - commented out
@@ -1344,6 +1346,59 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
         .ok_or_else(|| "No text field in OpenAI response".to_string())
 }
 
+/// Desktop dictation — cpal mic capture, Vosk engine. Bypasses the WebView
+/// getUserMedia problem on Linux by handling audio in Rust.
+#[tauri::command]
+async fn start_vosk_recording() -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    { return Err("This command is desktop-only; Android uses the VoskBridge Kotlin interface.".to_string()); }
+    #[cfg(not(target_os = "android"))]
+    {
+        tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::Vosk))
+            .await
+            .map_err(|e| format!("start task join failed: {e}"))?
+    }
+}
+
+#[tauri::command]
+async fn stop_vosk_recording() -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    { return Err("This command is desktop-only.".to_string()); }
+    #[cfg(not(target_os = "android"))]
+    {
+        tokio::task::spawn_blocking(vosk_desktop::stop)
+            .await
+            .map_err(|e| format!("stop task join failed: {e}"))?
+    }
+}
+
+/// Desktop dictation — cpal mic capture, OpenAI Whisper cloud engine. Same mic
+/// pipeline as Vosk (bypasses Linux WebView mic bug); differs only in what
+/// stop_openai_recording does with the buffered samples.
+#[tauri::command]
+async fn start_openai_recording() -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    { return Err("This command is desktop-only.".to_string()); }
+    #[cfg(not(target_os = "android"))]
+    {
+        tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::OpenAI))
+            .await
+            .map_err(|e| format!("start task join failed: {e}"))?
+    }
+}
+
+#[tauri::command]
+async fn stop_openai_recording() -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    { return Err("This command is desktop-only.".to_string()); }
+    #[cfg(not(target_os = "android"))]
+    {
+        tokio::task::spawn_blocking(vosk_desktop::stop)
+            .await
+            .map_err(|e| format!("stop task join failed: {e}"))?
+    }
+}
+
 // ============================================================================
 // NEW: RUST-BASED NLP COMMANDS (Phases 1-3)
 // ============================================================================
@@ -2064,9 +2119,9 @@ async fn auto_start_http_server() -> Result<(), String> {
 
 /// Save sync state to file
 pub async fn save_sync_state(enabled: bool) -> Result<(), String> {
-    let state_dir = dirs::data_dir()
-        .ok_or("Failed to get data directory".to_string())?
-        .join("zynkbot");
+    // Use the app data dir (Android-aware) rather than dirs::data_dir() which returns
+    // None on Android — that's why sync state wasn't persisting across restarts.
+    let state_dir = crate::db::get_app_data_dir();
 
     std::fs::create_dir_all(&state_dir)
         .map_err(|e| format!("Failed to create state directory: {}", e))?;
@@ -2082,12 +2137,7 @@ pub async fn save_sync_state(enabled: bool) -> Result<(), String> {
 
 /// Load sync state from file
 async fn load_sync_state() -> bool {
-    let state_dir = match dirs::data_dir() {
-        Some(dir) => dir.join("zynkbot"),
-        None => return false,
-    };
-
-    let state_file = state_dir.join("sync_state.json");
+    let state_file = crate::db::get_app_data_dir().join("sync_state.json");
 
     match std::fs::read_to_string(&state_file) {
         Ok(content) => {
@@ -2309,6 +2359,10 @@ pub fn run() {
             commands::safety::initialize_safety_models,
             // Whisper: Local speech-to-text
             transcribe_audio,
+            start_vosk_recording,
+            stop_vosk_recording,
+            start_openai_recording,
+            stop_openai_recording,
             // NEW: Rust-based NLP commands (Phases 1-3)
             commands::safety::check_question_worthiness,
             commands::nlp::extract_entities,
