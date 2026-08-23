@@ -5,6 +5,7 @@ use rand::RngCore;
 use sha2::{Sha256, Digest};
 use chrono::Utc;
 use std::collections::BTreeMap;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -278,10 +279,11 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     let rows: Vec<(
         Option<String>, String, Option<String>, Option<String>, Option<String>, String,
         bool, bool, bool, Option<String>, Option<String>, Option<String>, String,
+        Option<Vec<u8>>,
     )> = sqlx::query_as(
         "SELECT title, content, source_type, session_id, user_id, namespace,
                 is_syncable, is_shareable, is_ephemeral, entities_detected,
-                event_type, original_text, CAST(created_at AS TEXT)
+                event_type, original_text, CAST(created_at AS TEXT), embedding
          FROM memories
          WHERE user_id = ? AND namespace != '_zynkbot'
          ORDER BY created_at"
@@ -293,6 +295,7 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
 
     let count = rows.len();
     let memories_json: Vec<serde_json::Value> = rows.into_iter().map(|r| {
+        let embedding_b64 = r.13.as_ref().map(|b| BASE64.encode(b));
         serde_json::json!({
             "title": r.0,
             "content": r.1,
@@ -307,6 +310,7 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
             "event_type": r.10,
             "original_text": r.11,
             "created_at": r.12,
+            "embedding_b64": embedding_b64,
         })
     }).collect();
 
@@ -441,13 +445,28 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
 
         if exists { skipped += 1; continue; }
 
+        // Resolve embedding: use the backup's embedding_b64 if present; otherwise
+        // regenerate locally from content so semantic recall works after restore.
+        let embedding_bytes: Option<Vec<u8>> = mem["embedding_b64"]
+            .as_str()
+            .and_then(|s| BASE64.decode(s).ok())
+            .or_else(|| {
+                match crate::llm::local_embeddings::generate_local_embedding(&content) {
+                    Ok(vec) => Some(vec.iter().flat_map(|f| f.to_le_bytes()).collect()),
+                    Err(e) => {
+                        eprintln!("[Backup] Embedding regen failed for restored memory: {}", e);
+                        None
+                    }
+                }
+            });
+
         let now = Utc::now().to_rfc3339();
         let result = sqlx::query(
             "INSERT INTO memories (
                 title, content, source_type, session_id, user_id, namespace,
                 is_syncable, is_shareable, is_ephemeral, entities_detected,
-                event_type, original_text, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                event_type, original_text, created_at, updated_at, embedding
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(mem["title"].as_str())
         .bind(&content)
@@ -463,6 +482,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         .bind(mem["original_text"].as_str())
         .bind(mem["created_at"].as_str())
         .bind(&now)
+        .bind(&embedding_bytes)
         .execute(&pool)
         .await;
 
