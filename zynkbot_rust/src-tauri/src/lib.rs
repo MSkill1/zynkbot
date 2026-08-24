@@ -22,8 +22,8 @@ mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod conversation_history;  // Persistent conversation log with full-text search
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
-#[cfg(not(target_os = "android"))]
-mod vosk_desktop; // Offline dictation on desktop (cpal + vosk)
+#[cfg(target_os = "linux")]
+mod vosk_desktop; // Offline dictation on Linux desktop (cpal + vosk)
 
 use serde::{Deserialize, Serialize};
 // use chrono::Utc;  // Unused - commented out
@@ -1346,57 +1346,64 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
         .ok_or_else(|| "No text field in OpenAI response".to_string())
 }
 
-/// Desktop dictation — cpal mic capture, Vosk engine. Bypasses the WebView
-/// getUserMedia problem on Linux by handling audio in Rust.
+/// Desktop dictation — cpal mic capture, Vosk engine (Linux only).
+/// libvosk.so is only available for Linux x86_64; Windows/macOS fall back to browser audio.
 #[tauri::command]
 async fn start_vosk_recording() -> Result<(), String> {
     #[cfg(target_os = "android")]
-    { return Err("This command is desktop-only; Android uses the VoskBridge Kotlin interface.".to_string()); }
-    #[cfg(not(target_os = "android"))]
+    { return Err("Android uses the VoskBridge Kotlin interface.".to_string()); }
+    #[cfg(target_os = "linux")]
     {
-        tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::Vosk))
+        return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::Vosk))
             .await
-            .map_err(|e| format!("start task join failed: {e}"))?
+            .map_err(|e| format!("start task join failed: {e}"))?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
+    Err("Offline dictation via Vosk is only available on Linux in this release.".to_string())
 }
 
 #[tauri::command]
 async fn stop_vosk_recording() -> Result<String, String> {
     #[cfg(target_os = "android")]
-    { return Err("This command is desktop-only.".to_string()); }
-    #[cfg(not(target_os = "android"))]
+    { return Err("Android uses the VoskBridge Kotlin interface.".to_string()); }
+    #[cfg(target_os = "linux")]
     {
-        tokio::task::spawn_blocking(vosk_desktop::stop)
+        return tokio::task::spawn_blocking(vosk_desktop::stop)
             .await
-            .map_err(|e| format!("stop task join failed: {e}"))?
+            .map_err(|e| format!("stop task join failed: {e}"))?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
+    Err("Offline dictation via Vosk is only available on Linux in this release.".to_string())
 }
 
-/// Desktop dictation — cpal mic capture, OpenAI Whisper cloud engine. Same mic
-/// pipeline as Vosk (bypasses Linux WebView mic bug); differs only in what
-/// stop_openai_recording does with the buffered samples.
+/// Desktop dictation — cpal mic capture, OpenAI Whisper cloud engine (Linux only).
+/// Bypasses the broken Linux Tauri WebView getUserMedia; Windows uses browser audio instead.
 #[tauri::command]
 async fn start_openai_recording() -> Result<(), String> {
     #[cfg(target_os = "android")]
-    { return Err("This command is desktop-only.".to_string()); }
-    #[cfg(not(target_os = "android"))]
+    { return Err("Android uses the WebAudio path for OpenAI Whisper.".to_string()); }
+    #[cfg(target_os = "linux")]
     {
-        tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::OpenAI))
+        return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::OpenAI))
             .await
-            .map_err(|e| format!("start task join failed: {e}"))?
+            .map_err(|e| format!("start task join failed: {e}"))?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
+    Err("Rust mic capture is only available on Linux; use browser audio on Windows/macOS.".to_string())
 }
 
 #[tauri::command]
 async fn stop_openai_recording() -> Result<String, String> {
     #[cfg(target_os = "android")]
-    { return Err("This command is desktop-only.".to_string()); }
-    #[cfg(not(target_os = "android"))]
+    { return Err("Android uses the WebAudio path for OpenAI Whisper.".to_string()); }
+    #[cfg(target_os = "linux")]
     {
-        tokio::task::spawn_blocking(vosk_desktop::stop)
+        return tokio::task::spawn_blocking(vosk_desktop::stop)
             .await
-            .map_err(|e| format!("stop task join failed: {e}"))?
+            .map_err(|e| format!("stop task join failed: {e}"))?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
+    Err("Rust mic capture is only available on Linux; use browser audio on Windows/macOS.".to_string())
 }
 
 // ============================================================================

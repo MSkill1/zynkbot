@@ -108,11 +108,14 @@ ndarray = "0.16"
 # Local LLM inference (GGUF models) - desktop only; Android uses API backends (Phase 2)
 [target.'cfg(not(target_os = "android"))'.dependencies]
 llama-cpp-2 = "0.1"
-# Offline dictation (Vosk) - desktop only; Android uses vosk-android AAR via Kotlin bridge.
-# libvosk.so must be present at src-tauri/lib/vosk/ (v0.3.45, sha256 above); see build.rs.
-vosk = "0.3"
 # Cross-platform mic capture, bypassing WebView getUserMedia (broken on Linux Tauri).
 cpal = "0.15"
+
+# Offline dictation (Vosk) - Linux desktop only; libvosk.so is Linux x86_64.
+# Android uses vosk-android AAR via Kotlin bridge (not this crate).
+# Windows/macOS: libvosk.dll/.dylib not bundled; dictation falls back to OpenAI or browser.
+[target.'cfg(target_os = "linux")'.dependencies]
+vosk = "0.3"
 
 [target.'cfg(target_os = "android")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }

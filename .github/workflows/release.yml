@@ -61,7 +61,8 @@ jobs:
             build-essential \
             curl \
             wget \
-            file
+            file \
+            libasound2-dev
 
       - name: Install frontend dependencies
         working-directory: zynkbot_rust

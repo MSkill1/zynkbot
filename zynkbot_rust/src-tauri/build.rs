@@ -4,7 +4,9 @@ fn main() {
     // Desktop-only: point the linker at bundled libvosk.so for offline dictation.
     // libvosk.so from alphacep/vosk-api v0.3.45 (Linux x86_64)
     // sha256: 85c4654de3acdeb99abab86eeb2a6e603927d37089597c0fcc33d8638dc2ccaf
-    #[cfg(not(target_os = "android"))]
+    // libvosk.so is only available for Linux x86_64; gate all Vosk linker flags
+    // to Linux so the Windows build doesn't try to find a non-existent libvosk.lib.
+    #[cfg(target_os = "linux")]
     {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let vosk_lib_dir = format!("{}/lib/vosk", manifest_dir);
