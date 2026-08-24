@@ -627,4 +627,4 @@ See the `LICENSE` file in the project root for full terms.
 
 ---
 
-*Last Updated: May 2026 — Tested on Ubuntu 22.04*
+*Last Updated: August 2026 — Tested on Ubuntu 22.04*

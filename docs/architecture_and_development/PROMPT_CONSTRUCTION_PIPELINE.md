@@ -2,7 +2,7 @@
 
 **File:** `src-tauri/src/conversation_engine.rs`
 
-*Last Updated: June 2026*
+*Last Updated: August 2026*
 
 ---
 

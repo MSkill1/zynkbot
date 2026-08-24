@@ -19,9 +19,9 @@ Not artificial. Aligned. And recursive.
 
 ---
 
-## Current State: Desktop Application (v0.9)
+## Current State: Desktop + Android (v0.9.5-beta1)
 
-**Feature-complete (v0.9, hardening):**
+**Feature-complete (v0.9.5-beta1):**
 - ✅ Persistent semantic memory (local SQLite, in-process vector search)
 - ✅ Persistent conversation history (searchable, date-grouped, resume support, disabled in HIPAA mode)
 - ✅ Hybrid search (entity extraction + semantic similarity)
@@ -33,10 +33,11 @@ Not artificial. Aligned. And recursive.
 - ✅ Transparent, editable memory
 
 **Platform support:**
-- ✅ Windows 10/11 (tested, v0.9)
-- ✅ Linux (Ubuntu, Arch, Fedora - tested, v0.9)
+- ✅ Windows 10/11 (tested)
+- ✅ Linux (Ubuntu, Arch, Fedora - tested)
+- ✅ Android (open beta, v0.9.5-beta1)
 - 🔄 macOS (untested, should work)
-- 📱 Android/iOS (planned via Tauri Mobile)
+- 📱 iOS (planned)
 
 **License:**
 - Community source license for permitted free uses

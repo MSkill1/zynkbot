@@ -1,7 +1,7 @@
 # Zynkbot Development Roadmap
 
 **Last Updated:** August 2026
-**Current Version:** v0.9 (Android internal testing, Desktop production-ready)
+**Current Version:** v0.9.5-beta1 (Android + Desktop open beta)
 
 This roadmap outlines planned features and enhancements. Timelines are estimates and subject to change based on community feedback and development priorities.
 
@@ -9,7 +9,7 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ## v0.9.5 — Offline Voice + Wake Word + Timer
 
-**Status:** In progress on `graphene-dictation` branch.
+**Status:** Vosk offline dictation (Part 0) merged to main as v0.9.5-beta1. Parts 1–3 (wake word, timer, voice memory query) not yet started.
 
 **Goal:** Fully offline voice input on all platforms (Linux, Android), "Hey Zynk" wake-word detection, and a working timer/alarm as the first concrete wake-word action. Also includes voice memory query ("What do I know about X?").
 
@@ -110,12 +110,12 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - Memory Manager UI
 - Camera/image input on Android
 - Android app on Play Console (internal testing)
-- Voice dictation via OpenAI Whisper on Android (`graphene-dictation` branch)
+- Offline voice dictation via Vosk on Linux and Android (v0.9.5-beta1)
 
 ### Remaining for v1.0
 
 - ~~**Cloud backup (R2)**~~ ✅ — merged to main (v0.9.4). Encrypted R2 backup includes memories + conversation history. Tombstone-safe restore propagates to peers.
-- **Vosk offline dictation** — shipping in v0.9.5 on `graphene-dictation` branch alongside wake-word. Fixes Linux dictation (previously API-dependent). Required before `graphene-dictation` merges to main.
+- ~~**Vosk offline dictation**~~ ✅ — merged to main (v0.9.5-beta1). Linux (cpal + vosk crate) and Android (Kotlin bridge) both ship. Wake-word, timer, and voice memory query deferred to a later v0.9.x release.
 - **Play Store public release** — promote from internal testing to production track.
 - **Write-time memory consolidation** — multi-turn conversations produce near-duplicate memories. Extend the existing relationship-detection LLM call to return a three-way decision (fresh fact / rephrasing / elaboration) and skip or overwrite redundant memories. Zero new API calls. High impact, low cost.
 - **Scroll-to-bottom button on Android** — floating ↓ button when user scrolls up in a long conversation; auto-dismisses at bottom.

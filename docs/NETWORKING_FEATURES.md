@@ -1,4 +1,4 @@
-# Zynkbot Networking Features (v0.9)
+# Zynkbot Networking Features (v0.9.5)
 
 **Local-first, privacy-preserving networking across your devices**
 
@@ -278,7 +278,7 @@ All networking features share common infrastructure:
 
 ## Security Considerations
 
-### Current (v0.9 Production)
+### Current (v0.9.5 Production)
 
 - ✅ **TLS transport** for ZynkSync, ZynkLink, and ZChat LAN traffic.
 - ✅ **mTLS device authentication for ZynkSync protected routes** — sync-paired devices present a certificate during the TLS handshake, and the server verifies it against the pinned certificate in the device database. This also protects the paired-desktop Ollama proxy and API-key propagation routes.
@@ -422,7 +422,7 @@ sudo firewall-cmd --reload
 
 ## Platform Support
 
-**Current (v0.9):**
+**Current (v0.9.5):**
 - ✅ Windows 10/11
 - ✅ Linux (Ubuntu, Arch, Fedora)
 - ✅ Android (beta — APK via [GitHub Releases](https://github.com/MSkill1/zynkbot/releases/latest))

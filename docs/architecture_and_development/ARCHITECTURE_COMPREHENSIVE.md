@@ -1,8 +1,8 @@
 # Zynkbot: Comprehensive Architecture Documentation
 
-**Last Updated:** 2026-06-17
+**Last Updated:** 2026-08-23
 **Status:** Pure Rust/Tauri Production Implementation
-**Version:** 0.9
+**Version:** 0.9.5-beta1
 
 ---
 

@@ -322,5 +322,5 @@ Add API keys via: **⚙️ Settings → API Keys**
 
 ---
 
-**Last Updated:** 2026-06-01
+**Last Updated:** 2026-08-23
 **For Issues:** https://github.com/MSkill1/zynkbot/issues
