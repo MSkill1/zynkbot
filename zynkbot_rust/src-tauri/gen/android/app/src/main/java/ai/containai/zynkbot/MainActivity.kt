@@ -453,11 +453,11 @@ class MainActivity : TauriActivity() {
                     modelDir.mkdirs()
                     fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress(0);")
 
+                    val base = "https://github.com/MSkill1/zynkbot/releases/download/wake-word-models"
                     val models = listOf(
-                        "melspectrogram.onnx" to "https://github.com/dscripka/openWakeWord/releases/download/v0.6.0/melspectrogram.onnx",
-                        "embedding_model.onnx" to "https://github.com/dscripka/openWakeWord/releases/download/v0.6.0/embedding_model.onnx",
-                        // hey_zynk.onnx is trained and hosted on our releases — swap URL once model is ready
-                        "hey_zynk.onnx" to "https://github.com/MSkill1/zynkbot/releases/download/wake-word-models/hey_zynk.onnx"
+                        "melspectrogram.onnx" to "$base/melspectrogram.onnx",
+                        "embedding_model.onnx" to "$base/embedding_model.onnx",
+                        "hey_zynk.onnx"        to "$base/hey_zynk.onnx",
                     )
 
                     models.forEachIndexed { idx, (name, url) ->

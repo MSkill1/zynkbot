@@ -26,16 +26,17 @@ class WakeWordService : Service() {
         const val NOTIFICATION_ID = 1003
         const val TAG = "WakeWordService"
 
-        // openWakeWord pipeline constants — verified against model output shapes at load time.
-        // mel model:       [1, 1280] float32  →  [1, 32, 32] (32 time steps × 32 mel bins)
-        // embedding model: [1, 76, 32, 32]    →  [1, 96]
-        // classifier:      [1, 16, 96]         →  [1, 1]  (wake word probability)
+        // openWakeWord pipeline — shapes verified empirically against the ONNX models:
+        //   mel:       [1, 1280] float32  →  [1, 1, 5, 32]  (5 mel frames × 32 bins per 80ms chunk)
+        //   embedding: [1, 76, 32, 1]     →  [1, 1, 1, 96]  (76 mel frames → 96-dim vector)
+        //   classifier:[1, 16, 96]        →  [1, 1]          (16 embeddings → probability)
         const val SAMPLE_RATE = 16000
         const val CHUNK_SAMPLES = 1280      // 80ms per chunk at 16kHz
-        const val MEL_FLOATS_PER_CHUNK = 1024  // 32×32 output from mel model
-        const val MEL_WINDOW = 76           // embedding model context (mel chunks)
-        const val EMB_SIZE = 96             // embedding model output dimension
-        const val EMB_WINDOW = 16           // classifier context (embeddings)
+        const val MEL_FRAMES_PER_CHUNK = 5  // mel frames produced per 1280-sample chunk
+        const val MEL_BINS = 32
+        const val MEL_WINDOW = 76           // frames the embedding model expects
+        const val EMB_SIZE = 96
+        const val EMB_WINDOW = 16           // embeddings the classifier expects
         const val COOLDOWN_CHUNKS = 50      // ~4 seconds before re-triggering
 
         // Set by WakeWordBridge before starting; called on detection.
@@ -164,24 +165,31 @@ class WakeWordService : Service() {
         if (cooldownRemaining > 0) { cooldownRemaining--; return }
 
         try {
-            // Step 1: PCM16 → float32 normalised to [-1, 1]
+            // Step 1: PCM16 → float32 [-1, 1]
             val audioFloat = FloatArray(CHUNK_SAMPLES) { pcm16[it].toFloat() / 32768f }
 
-            // Step 2: Mel model — [1, 1280] → [MEL_FLOATS_PER_CHUNK] (32×32 flattened)
-            val melFeatures = runModel(env, mel, audioFloat, longArrayOf(1, CHUNK_SAMPLES.toLong()))
-            melBuffer.addLast(melFeatures)
-            if (melBuffer.size > MEL_WINDOW) melBuffer.removeFirst()
+            // Step 2: Mel model — input [1, 1280], output [1, 1, 5, 32]
+            // Extract the 5 mel frames (shape [MEL_FRAMES_PER_CHUNK, MEL_BINS]) and add to buffer
+            val melOut = runModel(env, mel, audioFloat, longArrayOf(1, CHUNK_SAMPLES.toLong()))
+            // melOut is flat [1*1*5*32 = 160], reshape into 5 frames of 32 bins
+            for (f in 0 until MEL_FRAMES_PER_CHUNK) {
+                val frame = FloatArray(MEL_BINS) { melOut[f * MEL_BINS + it] }
+                melBuffer.addLast(frame)
+            }
+            while (melBuffer.size > MEL_WINDOW) melBuffer.removeFirst()
             if (melBuffer.size < MEL_WINDOW) return
 
-            // Step 3: Embedding model — [1, 76, 32, 32] → [96]
-            val flatMel = FloatArray(MEL_WINDOW * MEL_FLOATS_PER_CHUNK)
-            melBuffer.forEachIndexed { i, f -> f.copyInto(flatMel, i * MEL_FLOATS_PER_CHUNK) }
-            val embFeatures = runModel(env, emb, flatMel, longArrayOf(1, MEL_WINDOW.toLong(), 32L, 32L))
-            embBuffer.addLast(embFeatures)
-            if (embBuffer.size > EMB_WINDOW) embBuffer.removeFirst()
+            // Step 3: Embedding model — input [1, 76, 32, 1], output [1, 1, 1, 96]
+            // Flatten mel buffer to [76 * 32] then reshape in model as [1, 76, 32, 1]
+            val flatMel = FloatArray(MEL_WINDOW * MEL_BINS)
+            melBuffer.forEachIndexed { i, frame -> frame.copyInto(flatMel, i * MEL_BINS) }
+            val embOut = runModel(env, emb, flatMel, longArrayOf(1, MEL_WINDOW.toLong(), MEL_BINS.toLong(), 1L))
+            // embOut is [96] after flattening [1,1,1,96]
+            embBuffer.addLast(embOut)
+            while (embBuffer.size > EMB_WINDOW) embBuffer.removeFirst()
             if (embBuffer.size < EMB_WINDOW) return
 
-            // Step 4: Classifier — [1, 16, 96] → [1] probability
+            // Step 4: Classifier — input [1, 16, 96], output [1, 1]
             val flatEmb = FloatArray(EMB_WINDOW * EMB_SIZE)
             embBuffer.forEachIndexed { i, e -> e.copyInto(flatEmb, i * EMB_SIZE) }
             val prob = runModel(env, kws, flatEmb, longArrayOf(1, EMB_WINDOW.toLong(), EMB_SIZE.toLong()))
@@ -201,15 +209,13 @@ class WakeWordService : Service() {
     private fun runModel(env: OrtEnvironment, session: OrtSession, data: FloatArray, shape: LongArray): FloatArray {
         val inputName = session.inputNames.iterator().next()
         val buf = FloatBuffer.allocate(data.size)
-        buf.put(data)
-        buf.rewind()
+        buf.put(data); buf.rewind()
         val tensor = OnnxTensor.createTensor(env, buf, shape)
         val results = session.run(Collections.singletonMap(inputName, tensor))
         tensor.close()
         val outTensor = results[0] as OnnxTensor
         val outBuf = outTensor.floatBuffer
-        val out = FloatArray(outBuf.remaining())
-        outBuf.get(out)
+        val out = FloatArray(outBuf.remaining()); outBuf.get(out)
         results.close()
         return out
     }
