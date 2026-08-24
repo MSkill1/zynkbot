@@ -412,6 +412,98 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    inner class WakeWordBridge {
+        private val modelDir get() = File(filesDir, "wake-word-models")
+
+        @JavascriptInterface
+        fun isModelReady(): Boolean {
+            val d = modelDir
+            return File(d, "melspectrogram.onnx").exists() &&
+                   File(d, "embedding_model.onnx").exists() &&
+                   File(d, "hey_zynk.onnx").exists()
+        }
+
+        @JavascriptInterface
+        fun start(threshold: Float) {
+            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+                fire("window.__wakeWordError&&window.__wakeWordError('Microphone permission required');")
+                return
+            }
+            WakeWordService.detectionCallback = {
+                fire("window.__wakeWordDetected&&window.__wakeWordDetected();")
+            }
+            val intent = Intent(this@MainActivity, WakeWordService::class.java).apply {
+                putExtra("threshold", threshold)
+                putExtra("modelDir", modelDir.absolutePath)
+            }
+            ContextCompat.startForegroundService(this@MainActivity, intent)
+        }
+
+        @JavascriptInterface
+        fun stop() {
+            WakeWordService.detectionCallback = null
+            stopService(Intent(this@MainActivity, WakeWordService::class.java))
+        }
+
+        @JavascriptInterface
+        fun downloadModels() {
+            Thread {
+                try {
+                    modelDir.mkdirs()
+                    fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress(0);")
+
+                    val models = listOf(
+                        "melspectrogram.onnx" to "https://github.com/dscripka/openWakeWord/releases/download/v0.6.0/melspectrogram.onnx",
+                        "embedding_model.onnx" to "https://github.com/dscripka/openWakeWord/releases/download/v0.6.0/embedding_model.onnx",
+                        // hey_zynk.onnx is trained and hosted on our releases — swap URL once model is ready
+                        "hey_zynk.onnx" to "https://github.com/MSkill1/zynkbot/releases/download/wake-word-models/hey_zynk.onnx"
+                    )
+
+                    models.forEachIndexed { idx, (name, url) ->
+                        val dest = File(modelDir, name)
+                        if (!dest.exists()) {
+                            downloadFile(url, dest) { pct ->
+                                val overall = (idx * 33 + pct / 3)
+                                fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress($overall);")
+                            }
+                        }
+                    }
+
+                    fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress(100);")
+                    fire("window.__wakeWordModelReady&&window.__wakeWordModelReady();")
+                } catch (e: Exception) {
+                    val msg = (e.message ?: "download failed").replace("'", "\\'")
+                    fire("window.__wakeWordDownloadError&&window.__wakeWordDownloadError('$msg');")
+                }
+            }.start()
+        }
+
+        private fun downloadFile(url: String, dest: File, progress: (Int) -> Unit) {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.connect()
+            val total = conn.contentLength.toLong()
+            var read = 0L
+            FileOutputStream(dest).use { fos ->
+                conn.inputStream.use { inp ->
+                    val buf = ByteArray(8192)
+                    var n = inp.read(buf)
+                    while (n != -1) {
+                        fos.write(buf, 0, n)
+                        read += n
+                        if (total > 0) progress(((read * 100) / total).toInt())
+                        n = inp.read(buf)
+                    }
+                }
+            }
+        }
+
+        private fun fire(js: String) {
+            val wv = webViewRef?.get() ?: return
+            wv.post { wv.evaluateJavascript(js, null) }
+        }
+    }
+
     private fun launchCamera() {
         try {
             val photoFile = File.createTempFile("zynk_photo_", ".jpg", cacheDir)
@@ -465,6 +557,7 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(ZynkbotPathsBridge(), "AndroidPaths")
         webView.addJavascriptInterface(AndroidCameraBridge(), "AndroidCamera")
         webView.addJavascriptInterface(VoskBridge(), "VoskBridge")
+        webView.addJavascriptInterface(WakeWordBridge(), "WakeWordBridge")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

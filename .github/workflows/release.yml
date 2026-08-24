@@ -118,7 +118,7 @@ jobs:
       - name: Setup Rust with Android targets
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+          targets: aarch64-linux-android
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -140,16 +140,16 @@ jobs:
         working-directory: zynkbot_rust
         run: npm ci
 
-      - name: Build Android APK
-        working-directory: zynkbot_rust
-        run: npm run tauri android build -- --apk
+      - name: Build Android APK (arm64 only)
+        working-directory: zynkbot_rust/src-tauri/gen/android
+        run: ./gradlew assembleArm64Release
 
       - name: Upload APK to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./zynkbot_rust/src-tauri/tauri.conf.json').version")
-          cp zynkbot_rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+          cp zynkbot_rust/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk \
             Zynkbot_${VERSION}.apk
           gh release upload ${{ github.ref_name }} Zynkbot_${VERSION}.apk \
             --repo MSkill1/zynkbot --clobber
