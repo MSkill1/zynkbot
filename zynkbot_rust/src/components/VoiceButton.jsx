@@ -1,11 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useImperativeHandle, forwardRef } from 'react';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 
-export default function VoiceButton({ onTranscript, disabled, style }) {
+const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, style }, ref) {
   const isAndroid = !!window.VoskBridge;
   const modelReady = !isAndroid || window.VoskBridge.isModelReady();
   const [noModel, setNoModel] = useState(false);
   const { isRecording, isTranscribing, startRecording, stopRecording } = useVoiceInput();
+
+  useImperativeHandle(ref, () => ({
+    triggerRecord: async () => {
+      if (!isRecording) await startRecording();
+    },
+  }));
 
   const handleClick = async () => {
     if (isAndroid && !modelReady) {
@@ -81,4 +87,6 @@ export default function VoiceButton({ onTranscript, disabled, style }) {
       </button>
     </>
   );
-}
+});
+
+export default VoiceButton;

@@ -194,11 +194,19 @@ export default function App() {
     // 'vosk' = offline (no punctuation), 'openai' = cloud Whisper (has punctuation)
     return localStorage.getItem('zynkbot_voice_input_source') || 'vosk';
   });
+  const [wakeWordModelReady, setWakeWordModelReady] = useState(() =>
+    window.WakeWordBridge ? window.WakeWordBridge.isModelReady() : false
+  );
+  const [wakeWordDownloadProgress, setWakeWordDownloadProgress] = useState(0);
+  const [wakeWordDownloadError, setWakeWordDownloadError] = useState('');
+  const [wakeWordFlash, setWakeWordFlash] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
   const memoryManagerRef = useRef(null);
   const conversationEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const inputTextareaRef = useRef(null);
+  const voiceButtonRef = useRef(null);
+  const wakeWordPendingSendRef = useRef(false);
 
   // Splice transcribed text into the input at the cursor position, padding with
   // spaces when adjacent to non-whitespace so words don't run together.
@@ -228,6 +236,16 @@ export default function App() {
       return `${before}${insertion}${after}`;
     });
   };
+
+  const handleTranscript = (text) => {
+    if (wakeWordPendingSendRef.current) {
+      wakeWordPendingSendRef.current = false;
+      if (text) handleSendMessage(text);
+    } else {
+      insertTranscriptAtCursor(text);
+    }
+  };
+
   const [showScrollButton, setShowScrollButton] = useState(false);
 
   useEffect(() => {
@@ -405,6 +423,40 @@ export default function App() {
       }
     };
   }, []);
+
+  // Wake word service lifecycle — starts/stops with the voice toggle on Android
+  useEffect(() => {
+    if (!window.WakeWordBridge) return;
+
+    window.__wakeWordDetected = () => {
+      setWakeWordFlash(true);
+      setTimeout(() => setWakeWordFlash(false), 2500);
+      wakeWordPendingSendRef.current = true;
+      voiceButtonRef.current?.triggerRecord();
+    };
+    window.__wakeWordModelReady = () => setWakeWordModelReady(true);
+    window.__wakeWordDownloadProgress = (n) => setWakeWordDownloadProgress(n);
+    window.__wakeWordDownloadError = (msg) => {
+      setWakeWordDownloadError(msg);
+      setWakeWordDownloadProgress(0);
+    };
+
+    if (voiceInputEnabled) {
+      if (window.WakeWordBridge.isModelReady()) {
+        window.WakeWordBridge.start(0.5);
+      }
+    } else {
+      window.WakeWordBridge.stop();
+    }
+
+    return () => {
+      window.__wakeWordDetected = null;
+      window.__wakeWordModelReady = null;
+      window.__wakeWordDownloadProgress = null;
+      window.__wakeWordDownloadError = null;
+      if (window.WakeWordBridge) window.WakeWordBridge.stop();
+    };
+  }, [voiceInputEnabled]);
 
   // Play water-drop sound when AI response arrives
   // Auto-scroll: only scroll if user is already near the bottom
@@ -1017,7 +1069,7 @@ export default function App() {
           setShowSnapInModal(false);
           memoryManagerRef.current?.close();
         }}
-        onVoiceToggle={isMobile ? undefined : (enabled) => {
+        onVoiceToggle={(enabled) => {
           setVoiceInputEnabled(enabled);
           localStorage.setItem('zynkbot_voice_input_enabled', enabled.toString());
         }}
@@ -1031,6 +1083,62 @@ export default function App() {
           currentMode={containmentMode}
           onModeChange={setContainmentMode}
         />
+
+        {/* Wake word model download — only shown on Android when voice is on and models aren't cached */}
+        {window.WakeWordBridge && voiceInputEnabled && !wakeWordModelReady && (
+          <div style={{
+            padding: '12px',
+            background: '#1e1f29',
+            borderRadius: '8px',
+            border: '1px solid #8be9fd',
+            marginTop: '12px',
+          }}>
+            <p style={{ color: '#8be9fd', fontSize: '0.85rem', margin: '0 0 8px 0', fontWeight: 'bold' }}>
+              🎙️ Hey Zynk — voice models needed
+            </p>
+            {wakeWordDownloadProgress > 0 ? (
+              <div>
+                <div style={{ background: '#44475a', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
+                  <div style={{
+                    background: '#8be9fd',
+                    height: '100%',
+                    width: `${wakeWordDownloadProgress}%`,
+                    transition: 'width 0.3s ease',
+                  }} />
+                </div>
+                <p style={{ color: '#9aa5c4', fontSize: '0.8rem', margin: '6px 0 0' }}>
+                  Downloading… {wakeWordDownloadProgress}%
+                </p>
+              </div>
+            ) : (
+              <>
+                {wakeWordDownloadError && (
+                  <p style={{ color: '#ff5555', fontSize: '0.8rem', margin: '0 0 6px 0' }}>
+                    {wakeWordDownloadError}
+                  </p>
+                )}
+                <button
+                  onClick={() => {
+                    setWakeWordDownloadError('');
+                    window.WakeWordBridge.downloadModels();
+                  }}
+                  style={{
+                    padding: '6px 14px',
+                    background: '#8be9fd',
+                    color: '#282a36',
+                    border: 'none',
+                    borderRadius: '4px',
+                    fontSize: '0.85rem',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Download (~3 MB)
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="model-selector">
           <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px'}}>
@@ -1837,7 +1945,8 @@ export default function App() {
                 {/* Mobile: circular mic button, bottom-right of textarea */}
                 {isMobile && voiceInputEnabled && (
                   <VoiceButton
-                    onTranscript={insertTranscriptAtCursor}
+                    ref={voiceButtonRef}
+                    onTranscript={handleTranscript}
                     disabled={isLoading}
                     style={{
                       position: 'absolute',
@@ -1868,7 +1977,8 @@ export default function App() {
                 {/* Desktop-only: Voice in grid (mobile has circular button on textarea) */}
                 {!isMobile && (voiceInputEnabled ? (
                   <VoiceButton
-                    onTranscript={insertTranscriptAtCursor}
+                    ref={voiceButtonRef}
+                    onTranscript={handleTranscript}
                     disabled={isLoading}
                     style={{
                       width: '85px',
@@ -2221,6 +2331,24 @@ export default function App() {
               ⏳ Creating 59 memories with embeddings and relationships...
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Wake word detection flash banner */}
+      {wakeWordFlash && (
+        <div style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0,
+          padding: '14px',
+          background: 'rgba(139, 233, 253, 0.93)',
+          color: '#282a36',
+          textAlign: 'center',
+          fontWeight: 'bold',
+          fontSize: '1rem',
+          zIndex: 9998,
+          pointerEvents: 'none',
+        }}>
+          🎙️ Hey Zynk — listening…
         </div>
       )}
 
