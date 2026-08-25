@@ -17,6 +17,23 @@ export default function ZChatModal({
   const [showEmoticons, setShowEmoticons] = useState(false);
   const [clearActive, setClearActive] = useState(false);
   const messagesEndRef = useRef(null);
+  const inputRef = useRef(null);
+
+  const insertTranscriptAtCursor = (text) => {
+    const el = inputRef.current;
+    if (!el) { setInput(v => v ? v + ' ' + text : text); return; }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const before = input.slice(0, start);
+    const after = input.slice(end);
+    const joined = before + (before && !before.endsWith(' ') ? ' ' : '') + text + (after && !after.startsWith(' ') ? ' ' : '') + after;
+    setInput(joined);
+    requestAnimationFrame(() => {
+      const pos = (before + (before && !before.endsWith(' ') ? ' ' : '') + text).length + (after && !after.startsWith(' ') ? 1 : 0);
+      el.setSelectionRange(pos, pos);
+      el.focus();
+    });
+  };
 
   // Standard emoji
   const emoticons = [
@@ -334,7 +351,7 @@ export default function ZChatModal({
             </button>
 
             <VoiceButton
-              onTranscript={(text) => setInput(text)}
+              onTranscript={insertTranscriptAtCursor}
               disabled={isSending}
               style={{
                 minWidth: '45px',
@@ -344,6 +361,7 @@ export default function ZChatModal({
             />
 
             <input
+              ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}

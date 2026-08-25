@@ -157,13 +157,13 @@ zynkbot/
 │   │   │   ├── zchat.rs                 # Device-to-device messaging
 │   │   │   ├── zynksync.rs              # Cross-device memory sync
 │   │   │   ├── zynklink.rs              # Peer-to-peer file transfer
+│   │   │   ├── vosk_desktop.rs          # Offline voice dictation (Linux, Vosk)
 │   │   │   └── llm/                     # LLM backends
 │   │   │       ├── local_models.rs      # Local .gguf inference
 │   │   │       ├── local_embeddings.rs  # all-MiniLM-L6-v2 embeddings
 │   │   │       ├── anthropic.rs
 │   │   │       ├── openai.rs
-│   │   │       ├── xai.rs
-│   │   │       └── whisper.rs           # (planned)
+│   │   │       └── xai.rs
 │   │   ├── migrations/                  # Database schema (sqlx)
 │   │   └── models/                      # ML model weights
 │   │       ├── system/                  # Auto-downloaded: embeddings, NER, safety
@@ -346,6 +346,7 @@ You can connect to any of these cloud providers. Your memory database stays loca
 
 - **Anthropic** (Claude models) — [Get API key](https://console.anthropic.com/settings/keys)
 - **OpenAI** (GPT and o-series models) — [Get API key](https://platform.openai.com/api-keys)
+  > **Note:** Even if you primarily use another provider, an OpenAI key is recommended — it also enables Whisper voice transcription and TTS response dictation.
 - **xAI** (Grok models) — [Get API key](https://console.x.ai/)
 - **Mistral** (Mistral and Codestral models) — [Get API key](https://console.mistral.ai/api-keys)
 

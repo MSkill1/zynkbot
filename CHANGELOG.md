@@ -10,6 +10,32 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
+## [0.9.5-beta1] — 2026-08-23 — Offline Voice Dictation + Stability Fixes
+
+### Highlights
+- Offline voice dictation via Vosk ships on Linux (cpal mic capture) and Android (Kotlin bridge + bundled model)
+- OpenAI Whisper (cloud) available as an alternative voice engine, selectable in Settings
+- Android cold-start black-screen eliminated
+- ZynkSync restart crash (port reuse) fixed
+
+### Features
+- **Vosk offline dictation (Linux)** — `vosk_desktop.rs` + `cpal` mic capture; transcription runs on-device with no internet required
+- **Vosk on Android** — Kotlin bridge in `MainActivity.kt` with bundled `vosk-android` AAR; same command surface as desktop
+- **Voice engine selector** — Settings dropdown chooses between Vosk (offline) and OpenAI Whisper (cloud)
+- **Cloud backup (R2/S3)** — AES-256-GCM encrypted backup includes memories, conversation history, and embeddings; passphrase-derived key; tombstone-safe restore propagates to sync peers
+
+### Bug Fixes
+- **ZynkSync restart crash** — `SO_REUSEADDR` on `TcpListener::bind` (port 57963); rapid stop/restart no longer fails with "address already in use"
+- **Android black-screen cold-start** — CSS `html, body, #root { background: #181a20 }` prevents flash before React mounts; React `needsSetup === null` guard shows a loading screen; Android `windowBackground` theme attribute set to match app background
+
+### Internal
+- Vosk dependency moved to `[target.'cfg(target_os = "linux")'.dependencies]` — Windows CI no longer tries to link `libvosk.lib`
+- `libasound2-dev` added to Linux CI apt-get step (required by `cpal`)
+- `build.rs` rpath/link-search block gated to `#[cfg(target_os = "linux")]` — MSVC no longer rejects `-Wl,-rpath` flags
+- Release workflow: `prerelease` field set automatically from tag name (`beta`/`alpha`/`rc` suffix → prerelease)
+
+---
+
 ## [0.9.3] — 2026-08-01 — Ensemble, Model Picker, and Sync Fixes
 
 ### Highlights

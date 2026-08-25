@@ -497,7 +497,7 @@ Native desktop application with OS integration:
 **What leaves your device (only if YOU enable):**
 - Conversation prompts (if using API models like GPT-4, Claude)
 - Web searches (if using web search)
-- Voice dictation audio (if using Web Speech API - optional)
+- Voice dictation audio (only if using OpenAI Whisper cloud engine — Vosk offline mode sends nothing)
 
 **What NEVER leaves your device:**
 - Memory database

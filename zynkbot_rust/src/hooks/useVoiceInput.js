@@ -16,6 +16,7 @@ export function useVoiceInput() {
   // ── Android / Vosk path ──────────────────────────────────────────────────
 
   const startRecordingVosk = () => {
+    window.__voskPartial = null; // clear any stale wake-word callback before dictation
     setIsRecording(true);
     window.__voskError = (msg) => {
       setIsRecording(false);

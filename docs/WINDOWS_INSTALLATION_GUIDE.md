@@ -342,7 +342,7 @@ See [MODELS.md](MODELS.md) for manual model download instructions.
 2. Click ⚙️ **Settings** icon
 3. Click **API Keys**
 4. Add your API keys:
-   - OpenAI (for GPT models)
+   - OpenAI (for GPT models) — also enables Whisper voice transcription and TTS response dictation
    - Anthropic (for Claude models)
    - xAI (for Grok models)
 

@@ -74,7 +74,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
           ) : (
             <>
               <div className="message-content">{content}</div>
-              <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+              <div className="message-action-row">
                 <button className="message-action-btn" onClick={handleCopy} title="Copy message">
                   {copied ? '✓ Copied' : '📋 Copy'}
                 </button>
@@ -281,7 +281,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
             </details>
           </div>
         )}
-        <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+        <div className="message-action-row">
           <button className="message-action-btn" onClick={handleCopy} title="Copy message">
             {copied ? '✓ Copied' : '📋 Copy'}
           </button>

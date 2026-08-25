@@ -180,6 +180,11 @@ if !errorLevel! equ 0 (
     )
 )
 
+REM Add Vosk DLL to PATH for offline dictation
+if exist "%~dp0zynkbot_rust\src-tauri\lib\vosk\libvosk.dll" (
+    set "PATH=%~dp0zynkbot_rust\src-tauri\lib\vosk;!PATH!"
+)
+
 cd zynkbot_rust
 call npm run tauri -- dev !FEATURES_FLAG!
 

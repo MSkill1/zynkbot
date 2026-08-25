@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.AlarmClock
 import android.provider.DocumentsContract
 import android.provider.Settings
 import android.webkit.JavascriptInterface
@@ -259,7 +260,11 @@ class MainActivity : TauriActivity() {
         private val accumulated = StringBuilder()
 
         private val listener = object : org.vosk.android.RecognitionListener {
-            override fun onPartialResult(h: String?) {}
+            override fun onPartialResult(h: String?) {
+                if (h.isNullOrBlank()) return
+                val partial = try { org.json.JSONObject(h).optString("partial", "") } catch (_: Exception) { "" }
+                if (partial.isNotBlank()) fire("window.__voskPartial&&window.__voskPartial('${esc(partial)}');")
+            }
             override fun onResult(h: String?) {
                 val t = parseText(h)
                 if (t.isNotEmpty()) synchronized(accumulated) {
@@ -412,6 +417,158 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    inner class WakeWordBridge {
+        private val modelDir get() = File(filesDir, "wake-word-models")
+
+        @JavascriptInterface
+        fun isModelReady(): Boolean {
+            val d = modelDir
+            return File(d, "melspectrogram.onnx").exists() &&
+                   File(d, "embedding_model.onnx").exists() &&
+                   File(d, "hey_zynk.onnx").exists()
+        }
+
+        @JavascriptInterface
+        fun start(threshold: Float) {
+            if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+                fire("window.__wakeWordError&&window.__wakeWordError('Microphone permission required');")
+                return
+            }
+            WakeWordService.detectionCallback = {
+                fire("window.__wakeWordDetected&&window.__wakeWordDetected();")
+            }
+            val intent = Intent(this@MainActivity, WakeWordService::class.java).apply {
+                putExtra("threshold", threshold)
+                putExtra("modelDir", modelDir.absolutePath)
+            }
+            ContextCompat.startForegroundService(this@MainActivity, intent)
+        }
+
+        @JavascriptInterface
+        fun stop() {
+            WakeWordService.detectionCallback = null
+            stopService(Intent(this@MainActivity, WakeWordService::class.java))
+        }
+
+        @JavascriptInterface
+        fun downloadModels() {
+            Thread {
+                try {
+                    modelDir.mkdirs()
+                    fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress(0);")
+
+                    val base = "https://github.com/MSkill1/zynkbot/releases/download/wake-word-models"
+                    val models = listOf(
+                        "melspectrogram.onnx" to "$base/melspectrogram.onnx",
+                        "embedding_model.onnx" to "$base/embedding_model.onnx",
+                        "hey_zynk.onnx"        to "$base/hey_zynk.onnx",
+                    )
+
+                    models.forEachIndexed { idx, (name, url) ->
+                        val dest = File(modelDir, name)
+                        if (!dest.exists()) {
+                            downloadFile(url, dest) { pct ->
+                                val overall = (idx * 33 + pct / 3)
+                                fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress($overall);")
+                            }
+                        }
+                    }
+
+                    fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress(100);")
+                    fire("window.__wakeWordModelReady&&window.__wakeWordModelReady();")
+                } catch (e: Exception) {
+                    val msg = (e.message ?: "download failed").replace("'", "\\'")
+                    fire("window.__wakeWordDownloadError&&window.__wakeWordDownloadError('$msg');")
+                }
+            }.start()
+        }
+
+        private fun downloadFile(url: String, dest: File, progress: (Int) -> Unit) {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.connect()
+            val total = conn.contentLength.toLong()
+            var read = 0L
+            FileOutputStream(dest).use { fos ->
+                conn.inputStream.use { inp ->
+                    val buf = ByteArray(8192)
+                    var n = inp.read(buf)
+                    while (n != -1) {
+                        fos.write(buf, 0, n)
+                        read += n
+                        if (total > 0) progress(((read * 100) / total).toInt())
+                        n = inp.read(buf)
+                    }
+                }
+            }
+        }
+
+        private fun fire(js: String) {
+            val wv = webViewRef?.get() ?: return
+            wv.post { wv.evaluateJavascript(js, null) }
+        }
+    }
+
+    inner class VoiceCommandBridge {
+        @JavascriptInterface
+        fun setTimer(seconds: Int) {
+            runOnUiThread {
+                try {
+                    val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+                        putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+                        putExtra(AlarmClock.EXTRA_MESSAGE, "Zynkbot")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    android.util.Log.e("VoiceCmd", "setTimer failed: ${e.message}")
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun setAlarm(hour: Int, minute: Int, label: String) {
+            runOnUiThread {
+                try {
+                    val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                        putExtra(AlarmClock.EXTRA_HOUR, hour)
+                        putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                        putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    android.util.Log.e("VoiceCmd", "setAlarm failed: ${e.message}")
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun startStopwatch() {
+            runOnUiThread {
+                var launched = false
+                // ACTION_START_STOPWATCH string literal (added API 33; use literal to avoid SDK floor issue)
+                if (!launched) try {
+                    val i = Intent("android.intent.action.START_STOPWATCH").apply {
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(i); launched = true
+                } catch (_: Exception) {}
+                // Fallback: open Google Clock or system clock
+                if (!launched) try {
+                    val i = packageManager.getLaunchIntentForPackage("com.google.android.deskclock")
+                        ?: packageManager.getLaunchIntentForPackage("com.android.deskclock")
+                        ?: Intent(Intent.ACTION_MAIN).apply { addCategory("android.intent.category.APP_CLOCK") }
+                    i.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    startActivity(i)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     private fun launchCamera() {
         try {
             val photoFile = File.createTempFile("zynk_photo_", ".jpg", cacheDir)
@@ -465,6 +622,8 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(ZynkbotPathsBridge(), "AndroidPaths")
         webView.addJavascriptInterface(AndroidCameraBridge(), "AndroidCamera")
         webView.addJavascriptInterface(VoskBridge(), "VoskBridge")
+        webView.addJavascriptInterface(WakeWordBridge(), "WakeWordBridge")
+        webView.addJavascriptInterface(VoiceCommandBridge(), "VoiceCommandBridge")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

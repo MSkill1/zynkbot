@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Android 11+ requires explicit intent queries to open URLs in the browser -->
@@ -53,6 +55,11 @@
             android:name=".SyncForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".WakeWordService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

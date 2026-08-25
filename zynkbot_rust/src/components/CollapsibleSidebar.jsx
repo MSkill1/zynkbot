@@ -121,7 +121,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                     accentColor: '#8be9fd'
                   }}
                 />
-                <span>🎤</span>
+                <span>🎤 Voice</span>
               </label>
             )}
             {/* Dictation source dropdown (shown when voice enabled) */}
@@ -168,7 +168,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                   value="openai"
                   title="Cloud transcription with punctuation. OpenAI holds audio 30 days for abuse review only, not training. Needs API key + internet."
                 >
-                  OpenAI Whisper (needs key)
+                  OpenAI Whisper
                 </option>
               </select>
             )}

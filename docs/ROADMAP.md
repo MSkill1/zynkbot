@@ -1,7 +1,7 @@
 # Zynkbot Development Roadmap
 
 **Last Updated:** August 2026
-**Current Version:** v0.9 (Android internal testing, Desktop production-ready)
+**Current Version:** v0.9.5-beta1 (Android + Desktop open beta)
 
 This roadmap outlines planned features and enhancements. Timelines are estimates and subject to change based on community feedback and development priorities.
 
@@ -9,7 +9,7 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ## v0.9.5 — Offline Voice + Wake Word + Timer
 
-**Status:** In progress on `graphene-dictation` branch.
+**Status:** Vosk offline dictation (Part 0) merged to main as v0.9.5-beta1. Parts 1–3 (wake word, timer, voice memory query) not yet started.
 
 **Goal:** Fully offline voice input on all platforms (Linux, Android), "Hey Zynk" wake-word detection, and a working timer/alarm as the first concrete wake-word action. Also includes voice memory query ("What do I know about X?").
 
@@ -19,6 +19,8 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - **Linux/Desktop:** Use the `vosk` Rust crate (C FFI wrapper). The existing mic button routes through a new `transcribe_audio` Tauri command. **This fixes dictation on Linux** — previously broken because it required the OpenAI API; Vosk works fully offline.
 - **Android:** Vosk Java SDK via Kotlin bridge in `MainActivity.kt`, same interface as `AndroidPaths`. Replaces the current Whisper API call on Android.
 - Vosk model (~50MB English) shown as a downloadable item in the model management UI alongside the three LLM models. Same model file works on all platforms.
+- ⚠️ **Known issue — Windows:** Vosk offline dictation is not yet working on Windows. The `vosk` Rust crate requires a platform-native Vosk shared library (`libvosk.dll`) that is not yet bundled in the Windows build. OpenAI Whisper (cloud) remains the fallback on Windows. Fix tracked for a future patch.
+- ⚠️ **Known issue — Memory ID missing on Android:** When opening a memory in the Memory Manager on Android, the memory ID number is not displayed. The ID is shown correctly on desktop. Likely a conditional render or CSS issue in the memory detail view.
 - Android Enter key no longer sends — Enter = line break on Android (send via button only), preserving multi-paragraph input. Desktop behavior unchanged.
 
 ### Part 1 — Wake-word detection
@@ -53,9 +55,22 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
    - Speak response via TTS (Android TTS API / desktop speech synthesis).
    - Displayed in chat as a normal assistant turn so the answer is browsable.
 
+### Part 4 (future) — "Send" voice command in wake-word flow
+
+After wake-word recording, support "send" or "send that" as a terminal command to submit the transcribed text without the silence-detection auto-send. Requires distinguishing the send command from the message body mid-stream, which adds non-trivial parsing complexity. Deferred until the silence-detection flow is stable and user-tested.
+
 **Sequencing note:** Ship Vosk (Part 0) first — it's a prerequisite for reliable wake-word + dictation. Then wake-word + timer as one working slice. Voice memory query follows using the same infrastructure.
 
 **Effort estimate:** Part 0 (Vosk) is the bulk of the engineering (platform wiring). Parts 1–3 are medium; the real time cost is background-service reliability and battery testing on Android hardware.
+
+### Pre-release gate — Power audit (Android)
+
+Before v0.9.5 ships, profile the wake word service's battery impact on a real device with the screen on and no active conversation:
+
+- **Tool:** Android Studio Energy Profiler (CPU, radio, and wakelock tabs) while `WakeWordService` is running.
+- **Measure:** CPU% from ONNX inference loop (3 models, 12.5 cycles/sec); `AudioRecord` wake-lock hold cost; background baseline vs. service-active delta.
+- **Acceptance bar:** Wake word service should account for <5% battery drain per hour of idle listening. If the inference loop is the culprit, quantize or swap to INT8 ONNX models. If `AudioRecord` is the culprit, investigate whether increasing `CHUNK_SAMPLES` (trading latency for CPU budget) reduces drain without meaningfully hurting detection latency.
+- **GrapheneOS note:** Run the same audit on GrapheneOS — its background scheduling may throttle the service differently. If GrapheneOS-specific behavior makes the service unreliable or dramatically worse on battery, escalate before deciding whether GrapheneOS remains a supported target.
 
 ---
 
@@ -110,12 +125,34 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - Memory Manager UI
 - Camera/image input on Android
 - Android app on Play Console (internal testing)
-- Voice dictation via OpenAI Whisper on Android (`graphene-dictation` branch)
+- Offline voice dictation via Vosk on Linux and Android (v0.9.5-beta1)
+
+### Pre-v1.0 Decision — Monetization, distribution, and the zero-trust constraint
+
+This needs to be resolved before Play Store launch. The core tension:
+
+**Zynkbot's identity is zero-trust** — the user's API key goes directly to Anthropic/OpenAI. Matt never touches conversation data. This is not a promise; it is a technical guarantee. A government subpoena to Matt returns nothing. A breach of Matt's infrastructure exposes nothing.
+
+**The distribution problem** is that "bring your own API key" is friction that blocks most mainstream users. The natural solution — a proxy where Matt holds a shared API key and bills users via Stripe — technically puts Matt in the middle of every conversation. Even if the proxy is stateless and never logs, it receives plaintext messages at the network layer before forwarding. That breaks the zero-trust guarantee and contradicts Zynkbot's core positioning. Users would have to trust Matt, not just their chosen AI provider. Given Zynkbot's privacy-first audience (GrapheneOS users, etc.), this reputational cost is real and legal exposure is non-zero.
+
+**Why "opt-in transparency" is not sufficient** — even clear disclosure ("by subscribing, your messages route through Zynkbot's servers") doesn't eliminate the liability. The question isn't whether users consent; it's whether Matt wants to be in a position where he *could* be compelled to produce conversation data.
+
+**Options ranked by zero-trust preservation:**
+
+1. **Guided API key onboarding** *(zero-trust preserved)* — walk users through getting their own key during first-run setup. Zynkbot links to the provider's key page, user pastes it in, done. Reduces friction without introducing a middleman. Can be polished into a one-minute flow. This is the recommended path for v1.0.
+
+2. **Signal-style transparent proxy** *(partial)* — proxy code is open source (Zynkbot already is), stateless with no logging, reproducible server builds, public audit policy. Reduces trust requirement but does not eliminate it — the proxy still receives plaintext. Signal can do this because their E2E encryption means the server never sees message content even in transit. Zynkbot would need a similar cryptographic design to make this claim honestly, which is a significant architecture investment.
+
+3. **Subscription funds user's own key** *(zero-trust preserved, operationally complex)* — user subscribes, Matt's backend programmatically creates a key in the user's name on their provider account (OpenAI supports this via Projects API; Anthropic does not). User's key, user's account, Matt never in the loop. Operationally messy and provider-dependent. Worth revisiting if OpenAI's API key management matures.
+
+4. **Shared proxy with full opt-in disclosure** *(zero-trust broken, maximum friction removed)* — only viable if offered as a clearly-labeled convenience tier alongside the zero-trust self-key path. Never the default. Not recommended for v1.0.
+
+**Recommended resolution for v1.0:** Ship with polished guided key onboarding (option 1). Revisit subscription model post-launch once there is user feedback on how much the key setup actually blocks adoption in practice.
 
 ### Remaining for v1.0
 
 - ~~**Cloud backup (R2)**~~ ✅ — merged to main (v0.9.4). Encrypted R2 backup includes memories + conversation history. Tombstone-safe restore propagates to peers.
-- **Vosk offline dictation** — shipping in v0.9.5 on `graphene-dictation` branch alongside wake-word. Fixes Linux dictation (previously API-dependent). Required before `graphene-dictation` merges to main.
+- ~~**Vosk offline dictation**~~ ✅ — merged to main (v0.9.5-beta1). Linux (cpal + vosk crate) and Android (Kotlin bridge) both ship. Wake-word, timer, and voice memory query deferred to a later v0.9.x release.
 - **Play Store public release** — promote from internal testing to production track.
 - **Write-time memory consolidation** — multi-turn conversations produce near-duplicate memories. Extend the existing relationship-detection LLM call to return a three-way decision (fresh fact / rephrasing / elaboration) and skip or overwrite redundant memories. Zero new API calls. High impact, low cost.
 - **Scroll-to-bottom button on Android** — floating ↓ button when user scrolls up in a long conversation; auto-dismisses at bottom.

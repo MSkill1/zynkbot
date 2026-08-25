@@ -10,6 +10,7 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
   const [memories, setMemories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
 
   const fetchMemories = useCallback(async () => {
     setIsLoading(true);
@@ -54,6 +55,22 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
     return () => { if (unlisten) unlisten(); };
   }, [fetchMemories]);
 
+  // Show spinner placeholder while background memory processing is running
+  useEffect(() => {
+    let unlistenStart, unlistenComplete;
+    listen('memory-processing-started', () => {
+      setPendingCount(n => n + 1);
+    }).then(fn => { unlistenStart = fn; });
+    listen('memory-processing-complete', (e) => {
+      setPendingCount(n => Math.max(0, n - 1));
+      if (e.payload?.status === 'stored') fetchMemories();
+    }).then(fn => { unlistenComplete = fn; });
+    return () => {
+      if (unlistenStart) unlistenStart();
+      if (unlistenComplete) unlistenComplete();
+    };
+  }, [fetchMemories]);
+
   // Expose imperative methods to parent component via ref
   useImperativeHandle(ref, () => ({
     refresh: fetchMemories,
@@ -90,7 +107,7 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
             <span style={{ fontSize: '1.2rem', transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>
               ▶
             </span>
-            <h3 style={{ margin: 0 }}>Recent Memories {!isExpanded && `(${memories.length})`}</h3>
+            <h3 style={{ margin: 0 }}>Recent Memories {!isExpanded && `(${memories.length}${pendingCount > 0 ? ` +${pendingCount}` : ''})`}</h3>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
@@ -139,6 +156,31 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
             </div>
           ) : (
             <div className="memory-list" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              {pendingCount > 0 && Array.from({ length: pendingCount }).map((_, i) => (
+                <div key={`pending-${i}`} style={{
+                  background: 'rgba(139, 233, 253, 0.04)',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  marginBottom: '10px',
+                  border: '1px dashed rgba(139, 233, 253, 0.25)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  animation: 'zynk-pulse 1.4s ease-in-out infinite'
+                }}>
+                  <span style={{
+                    display: 'inline-block',
+                    width: '13px',
+                    height: '13px',
+                    border: '2px solid rgba(139,233,253,0.2)',
+                    borderTopColor: '#8be9fd',
+                    borderRadius: '50%',
+                    animation: 'zynk-spin 0.7s linear infinite',
+                    flexShrink: 0
+                  }} />
+                  <span style={{ color: '#6272a4', fontSize: '0.85rem' }}>Saving memory…</span>
+                </div>
+              ))}
               {memories.map((mem) => (
                 <div key={mem.id} className="memory-item" style={{
                   background: '#282a36',
