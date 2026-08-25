@@ -127,6 +127,28 @@ Before v0.9.5 ships, profile the wake word service's battery impact on a real de
 - Android app on Play Console (internal testing)
 - Offline voice dictation via Vosk on Linux and Android (v0.9.5-beta1)
 
+### Pre-v1.0 Decision — Monetization, distribution, and the zero-trust constraint
+
+This needs to be resolved before Play Store launch. The core tension:
+
+**Zynkbot's identity is zero-trust** — the user's API key goes directly to Anthropic/OpenAI. Matt never touches conversation data. This is not a promise; it is a technical guarantee. A government subpoena to Matt returns nothing. A breach of Matt's infrastructure exposes nothing.
+
+**The distribution problem** is that "bring your own API key" is friction that blocks most mainstream users. The natural solution — a proxy where Matt holds a shared API key and bills users via Stripe — technically puts Matt in the middle of every conversation. Even if the proxy is stateless and never logs, it receives plaintext messages at the network layer before forwarding. That breaks the zero-trust guarantee and contradicts Zynkbot's core positioning. Users would have to trust Matt, not just their chosen AI provider. Given Zynkbot's privacy-first audience (GrapheneOS users, etc.), this reputational cost is real and legal exposure is non-zero.
+
+**Why "opt-in transparency" is not sufficient** — even clear disclosure ("by subscribing, your messages route through Zynkbot's servers") doesn't eliminate the liability. The question isn't whether users consent; it's whether Matt wants to be in a position where he *could* be compelled to produce conversation data.
+
+**Options ranked by zero-trust preservation:**
+
+1. **Guided API key onboarding** *(zero-trust preserved)* — walk users through getting their own key during first-run setup. Zynkbot links to the provider's key page, user pastes it in, done. Reduces friction without introducing a middleman. Can be polished into a one-minute flow. This is the recommended path for v1.0.
+
+2. **Signal-style transparent proxy** *(partial)* — proxy code is open source (Zynkbot already is), stateless with no logging, reproducible server builds, public audit policy. Reduces trust requirement but does not eliminate it — the proxy still receives plaintext. Signal can do this because their E2E encryption means the server never sees message content even in transit. Zynkbot would need a similar cryptographic design to make this claim honestly, which is a significant architecture investment.
+
+3. **Subscription funds user's own key** *(zero-trust preserved, operationally complex)* — user subscribes, Matt's backend programmatically creates a key in the user's name on their provider account (OpenAI supports this via Projects API; Anthropic does not). User's key, user's account, Matt never in the loop. Operationally messy and provider-dependent. Worth revisiting if OpenAI's API key management matures.
+
+4. **Shared proxy with full opt-in disclosure** *(zero-trust broken, maximum friction removed)* — only viable if offered as a clearly-labeled convenience tier alongside the zero-trust self-key path. Never the default. Not recommended for v1.0.
+
+**Recommended resolution for v1.0:** Ship with polished guided key onboarding (option 1). Revisit subscription model post-launch once there is user feedback on how much the key setup actually blocks adoption in practice.
+
 ### Remaining for v1.0
 
 - ~~**Cloud backup (R2)**~~ ✅ — merged to main (v0.9.4). Encrypted R2 backup includes memories + conversation history. Tombstone-safe restore propagates to peers.

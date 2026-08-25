@@ -254,9 +254,7 @@ export default function App() {
     const stored = localStorage.getItem('zynkbot_voice_input_enabled');
     return stored === null ? true : stored === 'true';
   });
-  const [voiceResponseEnabled, setVoiceResponseEnabled] = useState(() =>
-    localStorage.getItem('zynkbot_voice_response_enabled') === 'true'
-  );
+  // TTS response is enabled whenever voice is on (Android only) — no separate toggle needed.
   const [isTtsSpeaking, setIsTtsSpeaking] = useState(false);
   const [voiceInputSource, setVoiceInputSource] = useState(() => {
     // 'vosk' = offline (no punctuation), 'openai' = cloud Whisper (has punctuation)
@@ -995,7 +993,7 @@ export default function App() {
         };
 
         setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-        if (triggeredByWake && voiceResponseEnabled) speakResponse(assistantMessage.content);
+        if (triggeredByWake && voiceInputEnabled && !!window.WakeWordBridge) speakResponse(assistantMessage.content);
         return; // Don't continue with normal processing
       }
 
@@ -1019,7 +1017,7 @@ export default function App() {
       console.log('Recalled memories:', assistantMessage.recalled_memories);
 
       setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-      if (triggeredByWake && voiceResponseEnabled) speakResponse(assistantMessage.content);
+      if (triggeredByWake && voiceInputEnabled && !!window.WakeWordBridge) speakResponse(assistantMessage.content);
 
       console.log('[App] Metadata set:', {
         model_backend: response.model_backend,
@@ -1321,11 +1319,6 @@ export default function App() {
         onVoiceSourceChange={(source) => {
           setVoiceInputSource(source);
           localStorage.setItem('zynkbot_voice_input_source', source);
-        }}
-        voiceResponseEnabled={voiceResponseEnabled}
-        onVoiceResponseToggle={(enabled) => {
-          setVoiceResponseEnabled(enabled);
-          localStorage.setItem('zynkbot_voice_response_enabled', enabled.toString());
         }}
       >
         <ContainmentModeSelector
