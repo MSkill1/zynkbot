@@ -6,7 +6,10 @@ import ai.onnxruntime.OrtSession
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -68,7 +71,32 @@ class WakeWordService : Service() {
     @Volatile private var audioReleased = false
     private var audioThread: Thread? = null
     private var threshold = 0.5f
-    private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLock: PowerManager.WakeLock? = null      // detection wake lock (25s, screen-off flow)
+    private var audioWakeLock: PowerManager.WakeLock? = null // CPU wake lock for audio loop while screen off
+
+    // Keeps the CPU running the ONNX inference loop when the screen is off.
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> acquireAudioWakeLock()
+                Intent.ACTION_SCREEN_ON  -> releaseAudioWakeLock()
+            }
+        }
+    }
+
+    private fun acquireAudioWakeLock() {
+        if (audioWakeLock?.isHeld == true) return
+        val pm = getSystemService(PowerManager::class.java)
+        audioWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "zynkbot:audio_loop")
+        audioWakeLock?.acquire()
+        Log.i(TAG, "Audio loop CPU wake lock acquired")
+    }
+
+    private fun releaseAudioWakeLock() {
+        try { if (audioWakeLock?.isHeld == true) audioWakeLock?.release() } catch (_: Exception) {}
+        audioWakeLock = null
+        Log.i(TAG, "Audio loop CPU wake lock released")
+    }
 
     inner class LocalBinder : android.os.Binder() {
         fun getService(): WakeWordService = this@WakeWordService
@@ -79,6 +107,11 @@ class WakeWordService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        registerReceiver(screenReceiver, filter)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -130,6 +163,8 @@ class WakeWordService : Service() {
     }
 
     override fun onDestroy() {
+        try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
+        releaseAudioWakeLock()
         stop()
         super.onDestroy()
     }
@@ -253,7 +288,9 @@ class WakeWordService : Service() {
     // ── Screen-off wake word path ────────────────────────────────────────────
 
     private fun handleScreenOffDetection() {
-        Log.i(TAG, "Screen-off wake word — acquiring wake lock and playing chime")
+        Log.i(TAG, "Screen-off wake word — handing off to detection wake lock")
+        // Release the indefinite audio-loop wake lock; detection lock covers the next 25s.
+        releaseAudioWakeLock()
         val pm = getSystemService(PowerManager::class.java)
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "zynkbot:screen_off_wake")
         wakeLock?.acquire(25_000L)
@@ -417,6 +454,7 @@ class WakeWordService : Service() {
         melBuffer.clear()
         embBuffer.clear()
         releaseWakeLock()
+        releaseAudioWakeLock()
     }
 
     private fun createNotificationChannel() {
