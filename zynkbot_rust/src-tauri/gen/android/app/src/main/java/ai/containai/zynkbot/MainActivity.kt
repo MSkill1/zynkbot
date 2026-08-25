@@ -7,9 +7,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.DocumentsContract
 import android.provider.Settings
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
@@ -318,6 +321,7 @@ class MainActivity : TauriActivity() {
                         return@Thread
                     }
                     if (voskModel == null) voskModel = org.vosk.Model(modelDir.absolutePath)
+                    WakeWordService.sharedVoskModel = voskModel // share with screen-off dictation
                     val rec = org.vosk.Recognizer(voskModel, 16000.0f)
                     runOnUiThread {
                         try {
@@ -614,6 +618,50 @@ class MainActivity : TauriActivity() {
                 }
             } else null
         } catch (e: Exception) { null }
+    }
+
+    // Class-level helpers used by lifecycle methods (inner class versions are private)
+    private fun fireJs(js: String) {
+        val wv = webViewRef?.get() ?: return
+        wv.post { wv.evaluateJavascript(js, null) }
+    }
+    private fun escJs(s: String) = s.replace("\\", "\\\\").replace("'", "\\'")
+
+    // Handle transcript delivered by WakeWordService after a screen-off detection.
+    // Called from onNewIntent (app already running) and onResume (app just launched).
+    private fun handleScreenOffTranscript(intent: Intent?) {
+        val transcript = intent?.getStringExtra("wake_word_transcript") ?: return
+        // Consume the extra so it doesn't fire twice
+        intent.removeExtra("wake_word_transcript")
+
+        // Wake the screen and dismiss the keyguard so the user sees the response
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            )
+        }
+
+        // Give WebView ~800ms to resume after screen-on before firing the transcript
+        Handler(Looper.getMainLooper()).postDelayed({
+            fireJs("window.__handleScreenOffTranscript&&window.__handleScreenOffTranscript('${escJs(transcript)}');")
+        }, 800)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleScreenOffTranscript(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        handleScreenOffTranscript(intent)
     }
 
     override fun onWebViewCreate(webView: WebView) {

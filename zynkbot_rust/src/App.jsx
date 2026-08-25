@@ -648,6 +648,13 @@ export default function App() {
       setWakeWordDownloadError(msg);
       setWakeWordDownloadProgress(0);
     };
+    // Screen-off path: WakeWordService recorded via Kotlin, delivers transcript here
+    window.__handleScreenOffTranscript = (transcript) => {
+      if (!transcript?.trim()) return;
+      console.log('[WakeWord] screen-off transcript received:', transcript);
+      wakeTriggeredRef.current = true;
+      handleSendMessageRef.current?.(transcript.trim());
+    };
 
     if (voiceInputEnabled) {
       if (window.WakeWordBridge.isModelReady()) {
@@ -662,6 +669,7 @@ export default function App() {
       window.__wakeWordModelReady = null;
       window.__wakeWordDownloadProgress = null;
       window.__wakeWordDownloadError = null;
+      window.__handleScreenOffTranscript = null;
       if (window.WakeWordBridge) window.WakeWordBridge.stop();
     };
   }, [voiceInputEnabled]);
@@ -680,6 +688,21 @@ export default function App() {
       return () => clearTimeout(t);
     }
   }, [isWakeRecording, voiceInputEnabled, isTtsSpeaking]);
+
+  // Restart wake word when app returns to foreground (screen unlock, app switch back).
+  // The service may have stopped while the screen was off; visibilitychange is the
+  // reliable hook for this on Android WebView.
+  useEffect(() => {
+    if (!window.WakeWordBridge) return;
+    const handleVisible = () => {
+      if (!voiceInputEnabled || isWakeRecording || isTtsSpeaking) return;
+      if (window.WakeWordBridge.isModelReady()) {
+        window.WakeWordBridge.start(0.72);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisible);
+    return () => document.removeEventListener('visibilitychange', handleVisible);
+  }, [voiceInputEnabled, isWakeRecording, isTtsSpeaking]);
 
   // Play water-drop sound when AI response arrives
   // Auto-scroll: only scroll if user is already near the bottom

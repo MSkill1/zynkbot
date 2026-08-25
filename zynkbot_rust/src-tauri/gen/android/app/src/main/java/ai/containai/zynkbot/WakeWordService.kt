@@ -10,14 +10,20 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
+import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.io.File
 import java.nio.FloatBuffer
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class WakeWordService : Service() {
 
@@ -39,8 +45,11 @@ class WakeWordService : Service() {
         const val EMB_WINDOW = 16           // embeddings the classifier expects
         const val COOLDOWN_CHUNKS = 50      // ~4 seconds before re-triggering
 
-        // Set by WakeWordBridge before starting; called on detection.
+        // Set by WakeWordBridge before starting; called on detection when screen is on.
         @Volatile var detectionCallback: (() -> Unit)? = null
+
+        // Vosk model shared from VoskBridge so screen-off dictation doesn't reload it.
+        @Volatile var sharedVoskModel: org.vosk.Model? = null
     }
 
     private var ortEnv: OrtEnvironment? = null
@@ -51,13 +60,13 @@ class WakeWordService : Service() {
     private val melBuffer = ArrayDeque<FloatArray>()
     private val embBuffer = ArrayDeque<FloatArray>()
     private var cooldownRemaining = 0
-    // Require 2 consecutive above-threshold scores before firing.
-    // Voice utterances sustain the score; brief transients (keystrokes, clicks) spike once then drop.
     private var consecutiveHighScores = 0
 
     @Volatile private var running = false
+    @Volatile private var audioReleased = false
     private var audioThread: Thread? = null
     private var threshold = 0.5f
+    private var wakeLock: PowerManager.WakeLock? = null
 
     inner class LocalBinder : android.os.Binder() {
         fun getService(): WakeWordService = this@WakeWordService
@@ -94,9 +103,24 @@ class WakeWordService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: SecurityException) {
-            android.util.Log.w("WakeWordService", "App not in foreground, cannot start FGS: ${e.message}")
+            Log.w(TAG, "App not in foreground, cannot start FGS: ${e.message}")
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        // Pre-load Vosk model in background so it's ready for screen-off dictation.
+        if (sharedVoskModel == null) {
+            Thread {
+                val voskDir = File(filesDir, "vosk-model")
+                if (voskDir.exists()) {
+                    try {
+                        sharedVoskModel = org.vosk.Model(voskDir.absolutePath)
+                        Log.i(TAG, "Vosk model pre-loaded for screen-off dictation")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Vosk pre-load failed: ${e.message}")
+                    }
+                }
+            }.start()
         }
 
         Thread { loadAndStart(modelDir) }.start()
@@ -147,6 +171,7 @@ class WakeWordService : Service() {
         }
 
         running = true
+        audioReleased = false
         val chunk = ShortArray(CHUNK_SAMPLES)
         audioRecord.startRecording()
         Log.i(TAG, "Wake word audio capture started")
@@ -160,6 +185,7 @@ class WakeWordService : Service() {
             }
             audioRecord.stop()
             audioRecord.release()
+            audioReleased = true
             Log.i(TAG, "Wake word audio capture stopped")
         }
         audioThread!!.start()
@@ -174,13 +200,9 @@ class WakeWordService : Service() {
         if (cooldownRemaining > 0) { cooldownRemaining--; return }
 
         try {
-            // Step 1: PCM16 → float32 [-1, 1]
             val audioFloat = FloatArray(CHUNK_SAMPLES) { pcm16[it].toFloat() / 32768f }
 
-            // Step 2: Mel model — input [1, 1280], output [1, 1, 5, 32]
-            // Extract the 5 mel frames (shape [MEL_FRAMES_PER_CHUNK, MEL_BINS]) and add to buffer
             val melOut = runModel(env, mel, audioFloat, longArrayOf(1, CHUNK_SAMPLES.toLong()))
-            // melOut is flat [1*1*5*32 = 160], reshape into 5 frames of 32 bins
             for (f in 0 until MEL_FRAMES_PER_CHUNK) {
                 val frame = FloatArray(MEL_BINS) { melOut[f * MEL_BINS + it] }
                 melBuffer.addLast(frame)
@@ -188,17 +210,13 @@ class WakeWordService : Service() {
             while (melBuffer.size > MEL_WINDOW) melBuffer.removeFirst()
             if (melBuffer.size < MEL_WINDOW) return
 
-            // Step 3: Embedding model — input [1, 76, 32, 1], output [1, 1, 1, 96]
-            // Flatten mel buffer to [76 * 32] then reshape in model as [1, 76, 32, 1]
             val flatMel = FloatArray(MEL_WINDOW * MEL_BINS)
             melBuffer.forEachIndexed { i, frame -> frame.copyInto(flatMel, i * MEL_BINS) }
             val embOut = runModel(env, emb, flatMel, longArrayOf(1, MEL_WINDOW.toLong(), MEL_BINS.toLong(), 1L))
-            // embOut is [96] after flattening [1,1,1,96]
             embBuffer.addLast(embOut)
             while (embBuffer.size > EMB_WINDOW) embBuffer.removeFirst()
             if (embBuffer.size < EMB_WINDOW) return
 
-            // Step 4: Classifier — input [1, 16, 96], output [1, 1]
             val flatEmb = FloatArray(EMB_WINDOW * EMB_SIZE)
             embBuffer.forEachIndexed { i, e -> e.copyInto(flatEmb, i * EMB_SIZE) }
             val prob = runModel(env, kws, flatEmb, longArrayOf(1, EMB_WINDOW.toLong(), EMB_SIZE.toLong()))
@@ -212,7 +230,15 @@ class WakeWordService : Service() {
                     consecutiveHighScores = 0
                     cooldownRemaining = COOLDOWN_CHUNKS
                     embBuffer.clear()
-                    detectionCallback?.invoke()
+
+                    val pm = getSystemService(PowerManager::class.java)
+                    if (pm.isInteractive) {
+                        // Screen is on: JS handles the full flow
+                        detectionCallback?.invoke()
+                    } else {
+                        // Screen is off: Kotlin handles chime + dictation, then wakes screen
+                        handleScreenOffDetection()
+                    }
                 }
             } else {
                 consecutiveHighScores = 0
@@ -221,6 +247,128 @@ class WakeWordService : Service() {
             Log.e(TAG, "Inference error: ${e.message}")
         }
     }
+
+    // ── Screen-off wake word path ────────────────────────────────────────────
+
+    private fun handleScreenOffDetection() {
+        Log.i(TAG, "Screen-off wake word — acquiring wake lock and playing chime")
+        val pm = getSystemService(PowerManager::class.java)
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "zynkbot:screen_off_wake")
+        wakeLock?.acquire(25_000L)
+
+        // Signal the ONNX audio loop to stop so Vosk can open the mic
+        running = false
+
+        Thread {
+            // Wait for AudioRecord to release (set by audio loop thread)
+            var waited = 0
+            while (!audioReleased && waited < 2000) { Thread.sleep(50); waited += 50 }
+
+            // Play chime via MediaPlayer (no WebView needed)
+            try {
+                val mp = MediaPlayer.create(this@WakeWordService, R.raw.wake_chime)
+                if (mp != null) {
+                    val latch = CountDownLatch(1)
+                    mp.setOnCompletionListener { it.release(); latch.countDown() }
+                    mp.start()
+                    latch.await(2000, TimeUnit.MILLISECONDS)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Chime playback failed: ${e.message}")
+            }
+
+            startKotlinVoskDictation()
+        }.start()
+    }
+
+    private fun startKotlinVoskDictation() {
+        val model = sharedVoskModel ?: run {
+            Log.w(TAG, "No Vosk model available for screen-off dictation")
+            releaseWakeLock()
+            return
+        }
+
+        val accumulated = StringBuilder()
+        val silenceHandler = Handler(Looper.getMainLooper())
+        var speechService: org.vosk.android.SpeechService? = null
+
+        val listener = object : org.vosk.android.RecognitionListener {
+            override fun onPartialResult(h: String?) {
+                val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
+                if (partial.isNotBlank()) {
+                    silenceHandler.removeCallbacksAndMessages(null)
+                    // 1.5s silence after last speech → stop
+                    silenceHandler.postDelayed({ speechService?.stop() }, 1500)
+                }
+            }
+            override fun onResult(h: String?) {
+                val t = try { org.json.JSONObject(h ?: "").optString("text", "").trim() } catch (_: Exception) { "" }
+                if (t.isNotBlank()) synchronized(accumulated) {
+                    if (accumulated.isNotEmpty()) accumulated.append(" ")
+                    accumulated.append(t)
+                }
+            }
+            override fun onFinalResult(h: String?) {
+                val last = try { org.json.JSONObject(h ?: "").optString("text", "").trim() } catch (_: Exception) { "" }
+                val transcript = synchronized(accumulated) {
+                    buildString {
+                        append(accumulated)
+                        if (accumulated.isNotEmpty() && last.isNotBlank()) append(" ")
+                        append(last)
+                    }.trim().also { accumulated.clear() }
+                }
+                silenceHandler.removeCallbacksAndMessages(null)
+                speechService = null
+                Log.i(TAG, "Screen-off transcript: \"$transcript\"")
+                deliverTranscriptToApp(transcript)
+            }
+            override fun onError(e: Exception?) {
+                Log.e(TAG, "Screen-off Vosk error: ${e?.message}")
+                silenceHandler.removeCallbacksAndMessages(null)
+                releaseWakeLock()
+            }
+            override fun onTimeout() {
+                Log.w(TAG, "Screen-off Vosk timeout — no speech detected")
+                releaseWakeLock()
+            }
+        }
+
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val rec = org.vosk.Recognizer(model, 16000.0f)
+                speechService = org.vosk.android.SpeechService(rec, 16000.0f)
+                speechService!!.startListening(listener)
+                Log.i(TAG, "Screen-off Vosk dictation started")
+                // Safety timeout: stop after 10s regardless
+                silenceHandler.postDelayed({ speechService?.stop() }, 10_000)
+            } catch (e: Exception) {
+                Log.e(TAG, "Screen-off Vosk start failed: ${e.message}")
+                releaseWakeLock()
+            }
+        }
+    }
+
+    private fun deliverTranscriptToApp(transcript: String) {
+        if (transcript.isBlank()) {
+            Log.i(TAG, "Empty transcript — not waking screen")
+            releaseWakeLock()
+            return
+        }
+        Log.i(TAG, "Delivering transcript to app: \"$transcript\"")
+        val intent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            putExtra("wake_word_transcript", transcript)
+        }
+        startActivity(intent)
+        releaseWakeLock()
+    }
+
+    private fun releaseWakeLock() {
+        try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
+        wakeLock = null
+    }
+
+    // ── Shared ONNX inference ────────────────────────────────────────────────
 
     private fun runModel(env: OrtEnvironment, session: OrtSession, data: FloatArray, shape: LongArray): FloatArray {
         val inputName = session.inputNames.iterator().next()
@@ -247,6 +395,7 @@ class WakeWordService : Service() {
         ortEnv?.close(); ortEnv = null
         melBuffer.clear()
         embBuffer.clear()
+        releaseWakeLock()
     }
 
     private fun createNotificationChannel() {
