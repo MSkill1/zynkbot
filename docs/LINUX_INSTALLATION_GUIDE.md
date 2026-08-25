@@ -196,7 +196,7 @@ Zynkbot works offline with local models — API keys are not required. To add cl
 3. Click **API Keys**
 4. Add keys for any providers you want:
    - Anthropic (Claude)
-   - OpenAI (GPT-4)
+   - OpenAI (GPT-4) — also enables Whisper voice transcription and TTS response dictation
    - xAI (Grok)
 
 Get keys from:

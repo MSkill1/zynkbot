@@ -19,6 +19,8 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 - **Linux/Desktop:** Use the `vosk` Rust crate (C FFI wrapper). The existing mic button routes through a new `transcribe_audio` Tauri command. **This fixes dictation on Linux** — previously broken because it required the OpenAI API; Vosk works fully offline.
 - **Android:** Vosk Java SDK via Kotlin bridge in `MainActivity.kt`, same interface as `AndroidPaths`. Replaces the current Whisper API call on Android.
 - Vosk model (~50MB English) shown as a downloadable item in the model management UI alongside the three LLM models. Same model file works on all platforms.
+- ⚠️ **Known issue — Windows:** Vosk offline dictation is not yet working on Windows. The `vosk` Rust crate requires a platform-native Vosk shared library (`libvosk.dll`) that is not yet bundled in the Windows build. OpenAI Whisper (cloud) remains the fallback on Windows. Fix tracked for a future patch.
+- ⚠️ **Known issue — Memory ID missing on Android:** When opening a memory in the Memory Manager on Android, the memory ID number is not displayed. The ID is shown correctly on desktop. Likely a conditional render or CSS issue in the memory detail view.
 - Android Enter key no longer sends — Enter = line break on Android (send via button only), preserving multi-paragraph input. Desktop behavior unchanged.
 
 ### Part 1 — Wake-word detection
@@ -53,9 +55,22 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
    - Speak response via TTS (Android TTS API / desktop speech synthesis).
    - Displayed in chat as a normal assistant turn so the answer is browsable.
 
+### Part 4 (future) — "Send" voice command in wake-word flow
+
+After wake-word recording, support "send" or "send that" as a terminal command to submit the transcribed text without the silence-detection auto-send. Requires distinguishing the send command from the message body mid-stream, which adds non-trivial parsing complexity. Deferred until the silence-detection flow is stable and user-tested.
+
 **Sequencing note:** Ship Vosk (Part 0) first — it's a prerequisite for reliable wake-word + dictation. Then wake-word + timer as one working slice. Voice memory query follows using the same infrastructure.
 
 **Effort estimate:** Part 0 (Vosk) is the bulk of the engineering (platform wiring). Parts 1–3 are medium; the real time cost is background-service reliability and battery testing on Android hardware.
+
+### Pre-release gate — Power audit (Android)
+
+Before v0.9.5 ships, profile the wake word service's battery impact on a real device with the screen on and no active conversation:
+
+- **Tool:** Android Studio Energy Profiler (CPU, radio, and wakelock tabs) while `WakeWordService` is running.
+- **Measure:** CPU% from ONNX inference loop (3 models, 12.5 cycles/sec); `AudioRecord` wake-lock hold cost; background baseline vs. service-active delta.
+- **Acceptance bar:** Wake word service should account for <5% battery drain per hour of idle listening. If the inference loop is the culprit, quantize or swap to INT8 ONNX models. If `AudioRecord` is the culprit, investigate whether increasing `CHUNK_SAMPLES` (trading latency for CPU budget) reduces drain without meaningfully hurting detection latency.
+- **GrapheneOS note:** Run the same audit on GrapheneOS — its background scheduling may throttle the service differently. If GrapheneOS-specific behavior makes the service unreliable or dramatically worse on battery, escalate before deciding whether GrapheneOS remains a supported target.
 
 ---
 

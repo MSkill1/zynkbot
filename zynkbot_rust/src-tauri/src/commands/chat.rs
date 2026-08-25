@@ -1183,6 +1183,18 @@ pub async fn send_message_with_memory(
                 }
             };
 
+            // Emit pending indicator for Memory Manager spinner.
+            // Only fires when there is actually a memory candidate to potentially store.
+            // Local models without MEMORY_EXTRACT have no candidate and run silently.
+            let has_memory_candidate = bg_extracted_text.is_some() || bg_is_api || bg_is_explicit_remember;
+            let pending_id: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            if has_memory_candidate {
+                let _ = bg_app.emit("memory-processing-started", serde_json::json!({ "pending_id": pending_id }));
+            }
+
             // Reconnect to database for memory storage
             let db_url = crate::db::get_db_url();
 
@@ -1270,6 +1282,9 @@ pub async fn send_message_with_memory(
             }
 
             if is_duplicate {
+                if has_memory_candidate {
+                    let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                }
                 db_pool.close().await;
                 return;
             }
@@ -1278,6 +1293,9 @@ pub async fn send_message_with_memory(
             // decision for local. No extracted text means nothing to store.
             // API models: always proceed to Call 2, which makes the should_remember decision.
             if bg_extracted_text.is_none() && !bg_is_api {
+                if has_memory_candidate {
+                    let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                }
                 db_pool.close().await;
                 return;
             }
@@ -1362,6 +1380,7 @@ pub async fn send_message_with_memory(
             };
 
             if !should_remember {
+                let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
                 db_pool.close().await;
                 return;
             }
@@ -1417,6 +1436,7 @@ pub async fn send_message_with_memory(
                         }
 
                         // Don't store memory yet - wait for user decision via resolve_memory_conflict_v2
+                        let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
                         db_pool.close().await;
                         return;
                     }
@@ -1479,10 +1499,12 @@ pub async fn send_message_with_memory(
             ).await {
                 Ok(id) => {
                     println!("[RUST BACKGROUND] ✅ Memory stored with ID: {}", id);
+                    let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
                     id
                 }
                 Err(e) => {
                     println!("[RUST BACKGROUND] ⚠️ Failed to store memory: {}", e);
+                    let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
                     db_pool.close().await;
                     return;
                 }

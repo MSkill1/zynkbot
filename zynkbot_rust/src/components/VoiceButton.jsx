@@ -20,9 +20,11 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, st
       return;
     }
     if (isRecording) {
+      window.__dictationActive = false;
       const text = await stopRecording();
       if (text && onTranscript) onTranscript(text);
     } else {
+      window.__dictationActive = true; // blocks wake-word from hijacking VoskBridge
       await startRecording();
     }
   };

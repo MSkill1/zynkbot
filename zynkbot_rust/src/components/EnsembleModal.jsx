@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -21,6 +21,23 @@ export default function EnsembleModal({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [searchKBEnabled, setSearchKBEnabled] = useState(false);
   const [attachedFile, setAttachedFile] = useState(null);
+  const questionRef = useRef(null);
+
+  const insertTranscriptAtCursor = (text) => {
+    const el = questionRef.current;
+    if (!el) { setQuestion(q => q ? q + ' ' + text : text); return; }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const before = question.slice(0, start);
+    const after = question.slice(end);
+    const joined = before + (before && !before.endsWith(' ') ? ' ' : '') + text + (after && !after.startsWith(' ') ? ' ' : '') + after;
+    setQuestion(joined);
+    requestAnimationFrame(() => {
+      const pos = (before + (before && !before.endsWith(' ') ? ' ' : '') + text).length + (after && !after.startsWith(' ') ? 1 : 0);
+      el.setSelectionRange(pos, pos);
+      el.focus();
+    });
+  };
 
   useEffect(() => {
     if (!isLoading) {
@@ -471,6 +488,7 @@ export default function EnsembleModal({
               <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <textarea
+                    ref={questionRef}
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
                     placeholder="What question do you want the AI models to debate?"
@@ -545,7 +563,7 @@ export default function EnsembleModal({
                   </div>
                 </div>
                 <VoiceButton
-                  onTranscript={(text) => setQuestion(text)}
+                  onTranscript={insertTranscriptAtCursor}
                   disabled={isLoading}
                   style={{
                     minWidth: '45px',

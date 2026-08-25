@@ -7,13 +7,18 @@
   position: relative;
 }
 
-/* Edit / Regenerate action button: absolutely positioned in the bottom-right
-   of the message so it sits in the existing gap between messages instead of
-   adding new vertical space below the content. */
-.message-action-btn {
+/* Action buttons row — floats into the gap below the message content */
+.message-action-row {
   position: absolute;
   bottom: 6px;
   right: 8px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  z-index: 5;
+}
+
+.message-action-btn {
   background: transparent;
   border: 1px solid #44475a;
   color: #8be9fd;
@@ -24,7 +29,6 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  z-index: 5;
 }
 
 .message-action-btn:hover {

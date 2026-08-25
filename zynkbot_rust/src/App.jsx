@@ -28,6 +28,70 @@ import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
 
+// Parse a wake-word transcript into a structured voice command.
+// Returns { type, ...params } or null if no command matched.
+// Vosk produces lowercase, no-punctuation text — regexes are written accordingly.
+function normalizeNumbers(text) {
+  const words = {
+    'zero':'0','one':'1','two':'2','three':'3','four':'4','five':'5',
+    'six':'6','seven':'7','eight':'8','nine':'9','ten':'10',
+    'eleven':'11','twelve':'12','thirteen':'13','fourteen':'14','fifteen':'15',
+    'sixteen':'16','seventeen':'17','eighteen':'18','nineteen':'19',
+    'twenty':'20','thirty':'30','forty':'40','fifty':'50','sixty':'60',
+    'ninety':'90','hundred':'100',
+  };
+  return text.replace(/\b(twenty|thirty|forty|fifty|sixty|ninety)-?(one|two|three|four|five|six|seven|eight|nine)\b/gi, (_, tens, ones) => {
+    return String(parseInt(words[tens.toLowerCase()]) + parseInt(words[ones.toLowerCase()]));
+  }).replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|ninety|hundred)\b/gi, m => words[m.toLowerCase()] || m);
+}
+
+function parseVoiceCommand(text) {
+  const t = normalizeNumbers(text.toLowerCase().trim());
+
+  // Timer: "set a timer for 5 minutes" / "5 minute timer" / "timer 30 seconds"
+  const timerRes = [
+    /(?:set\s+(?:a\s+)?)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)/,
+    /(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)\s+timer/,
+  ];
+  for (const re of timerRes) {
+    const m = t.match(re);
+    if (m) {
+      const val = parseFloat(m[1]);
+      const unit = m[2];
+      let seconds;
+      if (unit.startsWith('hour') || unit.startsWith('hr')) seconds = Math.round(val * 3600);
+      else if (unit.startsWith('min')) seconds = Math.round(val * 60);
+      else seconds = Math.round(val);
+      return { type: 'timer', seconds };
+    }
+  }
+
+  // Alarm: "set an alarm for 7:30" / "wake me up at 7" / "alarm at 7:30 pm"
+  const alarmM = t.match(
+    /(?:set\s+(?:an?\s+)?alarm\s+(?:for|at)|alarm\s+(?:for|at)|wake\s+me\s+up\s+at)\s+(\d{1,2})(?:[:\s](\d{1,2}))?\s*(am|pm)?/
+  );
+  if (alarmM) {
+    let hour = parseInt(alarmM[1]);
+    const minute = parseInt(alarmM[2] || '0');
+    const ampm = (alarmM[3] || '').toLowerCase();
+    if (ampm === 'pm' && hour !== 12) hour += 12;
+    if (ampm === 'am' && hour === 12) hour = 0;
+    return { type: 'alarm', hour, minute };
+  }
+
+  // Stopwatch: "start stopwatch" / "stopwatch"
+  if (/(?:start|begin)\s+(?:the\s+|a\s+)?stopwatch|^stopwatch$/.test(t)) {
+    return { type: 'stopwatch' };
+  }
+
+  // Stop TTS: "zynkbot stop" / "stop talking" / "stop dictating"
+  if (/^(zynkbot\s+)?stop(\s+(talking|dictating|reading))?$/.test(t)) {
+    return { type: 'stop_tts' };
+  }
+
+  return null;
+}
+
 // API Base URL - DEPRECATED: All API calls now use Tauri commands
 // Keeping this for legacy components that haven't been migrated yet (ZynkSync, ZynkLink, etc.)
 const API_BASE_URL = process.env.REACT_APP_API_URL || (window.__TAURI__ ? 'http://localhost:5000' : '');
@@ -190,6 +254,10 @@ export default function App() {
     const stored = localStorage.getItem('zynkbot_voice_input_enabled');
     return stored === null ? true : stored === 'true';
   });
+  const [voiceResponseEnabled, setVoiceResponseEnabled] = useState(() =>
+    localStorage.getItem('zynkbot_voice_response_enabled') === 'true'
+  );
+  const [isTtsSpeaking, setIsTtsSpeaking] = useState(false);
   const [voiceInputSource, setVoiceInputSource] = useState(() => {
     // 'vosk' = offline (no punctuation), 'openai' = cloud Whisper (has punctuation)
     return localStorage.getItem('zynkbot_voice_input_source') || 'vosk';
@@ -206,7 +274,18 @@ export default function App() {
   const chatContainerRef = useRef(null);
   const inputTextareaRef = useRef(null);
   const voiceButtonRef = useRef(null);
-  const wakeWordPendingSendRef = useRef(false);
+
+  // Wake word recording — managed directly, NOT through useVoiceInput hook.
+  // VoiceButton owns useVoiceInput exclusively; wake word owns its own VoskBridge calls.
+  const [isWakeRecording, setIsWakeRecording] = useState(false);
+  const silenceTimerRef = useRef(null);
+  const wakeTriggeredRef = useRef(false);
+  const ttsSourceRef = useRef(null);
+  const ttsAudioCtxRef = useRef(null);
+  // Stable ref to stopWakeRecording so the waveform overlay can call it without stale closure
+  const stopWakeRecordingRef = useRef(null);
+  // Stable ref to handleSendMessage so wake word effect never captures a stale closure
+  const handleSendMessageRef = useRef(null);
 
   // Splice transcribed text into the input at the cursor position, padding with
   // spaces when adjacent to non-whitespace so words don't run together.
@@ -237,13 +316,80 @@ export default function App() {
     });
   };
 
-  const handleTranscript = (text) => {
-    if (wakeWordPendingSendRef.current) {
-      wakeWordPendingSendRef.current = false;
-      if (text) handleSendMessage(text);
-    } else {
-      insertTranscriptAtCursor(text);
+  const stopTts = () => {
+    try { ttsSourceRef.current?.stop(); } catch (_) {}
+    try { ttsAudioCtxRef.current?.close(); } catch (_) {}
+    ttsSourceRef.current = null;
+    ttsAudioCtxRef.current = null;
+    setIsTtsSpeaking(false);
+  };
+
+  const speakResponse = async (text) => {
+    if (!text?.trim()) return;
+    stopTts();
+    try {
+      const keys = await invoke('get_api_keys');
+      const apiKey = keys['OPENAI_API_KEY'];
+      if (!apiKey) return;
+      const res = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'tts-1', input: text.slice(0, 4096), voice: 'alloy' }),
+      });
+      if (!res.ok) return;
+      const audioData = await res.arrayBuffer();
+      const audioCtx = new AudioContext();
+      ttsAudioCtxRef.current = audioCtx;
+      const buffer = await audioCtx.decodeAudioData(audioData);
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+      ttsSourceRef.current = source;
+      setIsTtsSpeaking(true);
+      source.start();
+      source.onended = () => {
+        setIsTtsSpeaking(false);
+        ttsSourceRef.current = null;
+        ttsAudioCtxRef.current = null;
+      };
+    } catch (e) {
+      console.error('[TTS]', e);
+      setIsTtsSpeaking(false);
     }
+  };
+
+  const executeVoiceCommand = (cmd, originalText) => {
+    const now = new Date().toISOString();
+    let confirmation = '';
+    if (cmd.type === 'timer') {
+      window.VoiceCommandBridge.setTimer(cmd.seconds);
+      const h = Math.floor(cmd.seconds / 3600);
+      const m = Math.floor((cmd.seconds % 3600) / 60);
+      const s = cmd.seconds % 60;
+      const parts = [];
+      if (h) parts.push(`${h} hour${h > 1 ? 's' : ''}`);
+      if (m) parts.push(`${m} minute${m > 1 ? 's' : ''}`);
+      if (s && !h) parts.push(`${s} second${s > 1 ? 's' : ''}`);
+      confirmation = `⏱️ Timer set for ${parts.join(' and ')}.`;
+    } else if (cmd.type === 'alarm') {
+      window.VoiceCommandBridge.setAlarm(cmd.hour, cmd.minute, 'Zynkbot');
+      const h12 = cmd.hour % 12 || 12;
+      const ampm = cmd.hour < 12 ? 'AM' : 'PM';
+      const min = cmd.minute.toString().padStart(2, '0');
+      confirmation = `⏰ Alarm set for ${h12}:${min} ${ampm}.`;
+    } else if (cmd.type === 'stopwatch') {
+      window.VoiceCommandBridge.startStopwatch();
+      confirmation = '⏱️ Stopwatch started.';
+    }
+    setMessages(prev => [
+      ...prev,
+      { id: Date.now(), role: 'user', content: originalText, timestamp: now, recalled_memories: [] },
+      { id: Date.now() + 1, role: 'assistant', content: confirmation, timestamp: now, recalled_memories: [], metadata: { model_backend: 'voice command' } },
+    ]);
+  };
+
+  const handleTranscript = (text) => {
+    if (text) insertTranscriptAtCursor(text);
   };
 
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -424,15 +570,79 @@ export default function App() {
     };
   }, []);
 
-  // Wake word service lifecycle — starts/stops with the voice toggle on Android
+  // Wake word service lifecycle — starts/stops with the voice toggle on Android.
+  // Wake recording uses VoskBridge directly — completely separate from useVoiceInput/VoiceButton.
   useEffect(() => {
     if (!window.WakeWordBridge) return;
 
+    const SILENCE_MS = 1000;
+
+    // Stop wake recording and return the transcript. Does NOT go through useVoiceInput.
+    const stopWakeRecording = () => {
+      clearTimeout(silenceTimerRef.current);
+      window.__voskPartial = null;
+      setIsWakeRecording(false);
+      if (!window.VoskBridge) return Promise.resolve('');
+      return new Promise((resolve) => {
+        window.__voskResult = (text) => {
+          window.__voskResult = null;
+          window.__voskError = null;
+          resolve(text || '');
+        };
+        window.__voskError = () => {
+          window.__voskResult = null;
+          window.__voskError = null;
+          resolve('');
+        };
+        window.VoskBridge.stopListening();
+      });
+    };
+    stopWakeRecordingRef.current = stopWakeRecording;
+
+    const autoSendWake = async () => {
+      console.log('[WakeWord] autoSendWake firing');
+      const text = await stopWakeRecording();
+      console.log('[WakeWord] transcript:', text);
+      if (text) {
+        wakeTriggeredRef.current = true;
+        handleSendMessageRef.current?.(text);
+      }
+    };
+
     window.__wakeWordDetected = () => {
+      // Don't hijack VoskBridge while the dictation button is active
+      if (window.__dictationActive) {
+        console.log('[WakeWord] ignored — dictation in progress');
+        return;
+      }
+      console.log('[WakeWord] detected — playing chime then recording');
+      window.WakeWordBridge.stop();
       setWakeWordFlash(true);
       setTimeout(() => setWakeWordFlash(false), 2500);
-      wakeWordPendingSendRef.current = true;
-      voiceButtonRef.current?.triggerRecord();
+
+      // Play acknowledgment chime, then start recording after it finishes
+      const startRecording = () => {
+        window.__voskPartial = (partial) => {
+          console.log('[WakeWord] partial:', partial);
+          if (partial.trim()) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = setTimeout(autoSendWake, SILENCE_MS);
+          }
+        };
+        window.VoskBridge.startListening();
+        setIsWakeRecording(true);
+        console.log('[WakeWord] recording started, safety timer armed');
+        silenceTimerRef.current = setTimeout(autoSendWake, 8000);
+      };
+
+      try {
+        const audio = new Audio('/wake_chime.wav');
+        audio.onended = startRecording;
+        audio.onerror = startRecording; // fall through if audio fails
+        audio.play().catch(startRecording);
+      } catch (_) {
+        startRecording();
+      }
     };
     window.__wakeWordModelReady = () => setWakeWordModelReady(true);
     window.__wakeWordDownloadProgress = (n) => setWakeWordDownloadProgress(n);
@@ -443,7 +653,7 @@ export default function App() {
 
     if (voiceInputEnabled) {
       if (window.WakeWordBridge.isModelReady()) {
-        window.WakeWordBridge.start(0.5);
+        window.WakeWordBridge.start(0.72);
       }
     } else {
       window.WakeWordBridge.stop();
@@ -457,6 +667,21 @@ export default function App() {
       if (window.WakeWordBridge) window.WakeWordBridge.stop();
     };
   }, [voiceInputEnabled]);
+
+  // Pause wake word detection while recording or TTS is playing; resume 5s after both end
+  useEffect(() => {
+    if (!window.WakeWordBridge || !voiceInputEnabled) return;
+    if (isWakeRecording || isTtsSpeaking) {
+      window.WakeWordBridge.stop();
+    } else {
+      const t = setTimeout(() => {
+        if (window.WakeWordBridge && window.WakeWordBridge.isModelReady()) {
+          window.WakeWordBridge.start(0.72);
+        }
+      }, 5000);
+      return () => clearTimeout(t);
+    }
+  }, [isWakeRecording, voiceInputEnabled, isTtsSpeaking]);
 
   // Play water-drop sound when AI response arrives
   // Auto-scroll: only scroll if user is already near the bottom
@@ -621,6 +846,20 @@ export default function App() {
 
   const handleSendMessage = async (message, options = {}) => {
     if (!message.trim()) return;
+
+    // Capture and reset wake flag before any early returns
+    const triggeredByWake = wakeTriggeredRef.current;
+    wakeTriggeredRef.current = false;
+
+    // stop_tts works without VoiceCommandBridge
+    const cmd = parseVoiceCommand(message);
+    if (cmd?.type === 'stop_tts') { stopTts(); setInput(''); return; }
+
+    // Other voice commands require VoiceCommandBridge (Android)
+    if (window.VoiceCommandBridge && cmd) {
+      executeVoiceCommand(cmd, message); setInput(''); return;
+    }
+
     if (isSendingRef.current) return; // prevent re-entrant calls before React re-renders
     isSendingRef.current = true;
     const skipUserMessageAdd = options.skipUserMessageAdd === true;
@@ -756,6 +995,7 @@ export default function App() {
         };
 
         setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
+        if (triggeredByWake && voiceResponseEnabled) speakResponse(assistantMessage.content);
         return; // Don't continue with normal processing
       }
 
@@ -779,6 +1019,7 @@ export default function App() {
       console.log('Recalled memories:', assistantMessage.recalled_memories);
 
       setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
+      if (triggeredByWake && voiceResponseEnabled) speakResponse(assistantMessage.content);
 
       console.log('[App] Metadata set:', {
         model_backend: response.model_backend,
@@ -815,6 +1056,9 @@ export default function App() {
       setIsLoading(false);
     }
   };
+
+  // Keep ref current on every render so wake word effect never holds a stale closure
+  handleSendMessageRef.current = handleSendMessage;
 
   // Stop the currently streaming generation.
   // Optimistically flip UI out of loading state immediately — the backend's
@@ -1077,6 +1321,11 @@ export default function App() {
         onVoiceSourceChange={(source) => {
           setVoiceInputSource(source);
           localStorage.setItem('zynkbot_voice_input_source', source);
+        }}
+        voiceResponseEnabled={voiceResponseEnabled}
+        onVoiceResponseToggle={(enabled) => {
+          setVoiceResponseEnabled(enabled);
+          localStorage.setItem('zynkbot_voice_response_enabled', enabled.toString());
         }}
       >
         <ContainmentModeSelector
@@ -1947,7 +2196,7 @@ export default function App() {
                   <VoiceButton
                     ref={voiceButtonRef}
                     onTranscript={handleTranscript}
-                    disabled={isLoading}
+                    disabled={isLoading || isWakeRecording}
                     style={{
                       position: 'absolute',
                       bottom: '8px',
@@ -1979,7 +2228,7 @@ export default function App() {
                   <VoiceButton
                     ref={voiceButtonRef}
                     onTranscript={handleTranscript}
-                    disabled={isLoading}
+                    disabled={isLoading || isWakeRecording}
                     style={{
                       width: '85px',
                       height: '42px',
@@ -2334,6 +2583,52 @@ export default function App() {
         </div>
       )}
 
+      {/* Waveform recording overlay — shown on mobile when mic is active */}
+      {isWakeRecording && isMobile && (
+        <div
+          onClick={async () => { const text = await stopWakeRecordingRef.current?.(); if (text) { wakeTriggeredRef.current = true; handleSendMessageRef.current?.(text); } }}
+          style={{
+            position: 'fixed',
+            bottom: 0, left: 0, right: 0,
+            background: 'rgba(30, 31, 41, 0.97)',
+            borderTop: '1px solid #44475a',
+            padding: '16px 20px 20px',
+            zIndex: 9997,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '12px',
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          <style>{`
+            @keyframes wv { 0%,100%{height:4px} 50%{height:var(--h)} }
+          `}</style>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '3px', height: '40px', pointerEvents: 'none' }}>
+            {Array.from({ length: 32 }, (_, i) => {
+              const peak = 8 + Math.floor(Math.abs(Math.sin(i * 0.7 + 1.2)) * 32);
+              const delay = (i * 0.06).toFixed(2);
+              const dur = (0.5 + (i % 5) * 0.12).toFixed(2);
+              return (
+                <div key={i} style={{
+                  width: '3px',
+                  borderRadius: '2px',
+                  background: '#8be9fd',
+                  '--h': `${peak}px`,
+                  animation: `wv ${dur}s ${delay}s ease-in-out infinite`,
+                  height: '4px',
+                  alignSelf: 'center',
+                }} />
+              );
+            })}
+          </div>
+          <p style={{ color: '#9aa5c4', fontSize: '0.85rem', margin: 0, pointerEvents: 'none' }}>
+            Listening… tap anywhere to stop and send
+          </p>
+        </div>
+      )}
+
       {/* Wake word detection flash banner */}
       {wakeWordFlash && (
         <div style={{
@@ -2348,7 +2643,7 @@ export default function App() {
           zIndex: 9998,
           pointerEvents: 'none',
         }}>
-          🎙️ Hey Zynk — listening…
+          🎙️ Hey Zynk — speak now, then tap 🎤 to send
         </div>
       )}
 

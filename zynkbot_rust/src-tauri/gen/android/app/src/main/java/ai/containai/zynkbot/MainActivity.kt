@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.provider.AlarmClock
 import android.provider.DocumentsContract
 import android.provider.Settings
 import android.webkit.JavascriptInterface
@@ -259,7 +260,11 @@ class MainActivity : TauriActivity() {
         private val accumulated = StringBuilder()
 
         private val listener = object : org.vosk.android.RecognitionListener {
-            override fun onPartialResult(h: String?) {}
+            override fun onPartialResult(h: String?) {
+                if (h.isNullOrBlank()) return
+                val partial = try { org.json.JSONObject(h).optString("partial", "") } catch (_: Exception) { "" }
+                if (partial.isNotBlank()) fire("window.__voskPartial&&window.__voskPartial('${esc(partial)}');")
+            }
             override fun onResult(h: String?) {
                 val t = parseText(h)
                 if (t.isNotEmpty()) synchronized(accumulated) {
@@ -504,6 +509,66 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    inner class VoiceCommandBridge {
+        @JavascriptInterface
+        fun setTimer(seconds: Int) {
+            runOnUiThread {
+                try {
+                    val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+                        putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+                        putExtra(AlarmClock.EXTRA_MESSAGE, "Zynkbot")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    android.util.Log.e("VoiceCmd", "setTimer failed: ${e.message}")
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun setAlarm(hour: Int, minute: Int, label: String) {
+            runOnUiThread {
+                try {
+                    val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                        putExtra(AlarmClock.EXTRA_HOUR, hour)
+                        putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                        putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    android.util.Log.e("VoiceCmd", "setAlarm failed: ${e.message}")
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun startStopwatch() {
+            runOnUiThread {
+                var launched = false
+                // ACTION_START_STOPWATCH string literal (added API 33; use literal to avoid SDK floor issue)
+                if (!launched) try {
+                    val i = Intent("android.intent.action.START_STOPWATCH").apply {
+                        putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(i); launched = true
+                } catch (_: Exception) {}
+                // Fallback: open Google Clock or system clock
+                if (!launched) try {
+                    val i = packageManager.getLaunchIntentForPackage("com.google.android.deskclock")
+                        ?: packageManager.getLaunchIntentForPackage("com.android.deskclock")
+                        ?: Intent(Intent.ACTION_MAIN).apply { addCategory("android.intent.category.APP_CLOCK") }
+                    i.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    startActivity(i)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
     private fun launchCamera() {
         try {
             val photoFile = File.createTempFile("zynk_photo_", ".jpg", cacheDir)
@@ -558,6 +623,7 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(AndroidCameraBridge(), "AndroidCamera")
         webView.addJavascriptInterface(VoskBridge(), "VoskBridge")
         webView.addJavascriptInterface(WakeWordBridge(), "WakeWordBridge")
+        webView.addJavascriptInterface(VoiceCommandBridge(), "VoiceCommandBridge")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

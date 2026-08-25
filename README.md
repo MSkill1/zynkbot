@@ -346,6 +346,7 @@ You can connect to any of these cloud providers. Your memory database stays loca
 
 - **Anthropic** (Claude models) — [Get API key](https://console.anthropic.com/settings/keys)
 - **OpenAI** (GPT and o-series models) — [Get API key](https://platform.openai.com/api-keys)
+  > **Note:** Even if you primarily use another provider, an OpenAI key is recommended — it also enables Whisper voice transcription and TTS response dictation.
 - **xAI** (Grok models) — [Get API key](https://console.x.ai/)
 - **Mistral** (Mistral and Codestral models) — [Get API key](https://console.mistral.ai/api-keys)
 

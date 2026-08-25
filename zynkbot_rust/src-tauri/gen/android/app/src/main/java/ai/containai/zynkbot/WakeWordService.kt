@@ -51,6 +51,9 @@ class WakeWordService : Service() {
     private val melBuffer = ArrayDeque<FloatArray>()
     private val embBuffer = ArrayDeque<FloatArray>()
     private var cooldownRemaining = 0
+    // Require 2 consecutive above-threshold scores before firing.
+    // Voice utterances sustain the score; brief transients (keystrokes, clicks) spike once then drop.
+    private var consecutiveHighScores = 0
 
     @Volatile private var running = false
     private var audioThread: Thread? = null
@@ -79,15 +82,21 @@ class WakeWordService : Service() {
             .setOngoing(true)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                }
+                startForeground(NOTIFICATION_ID, notification, type)
             } else {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                startForeground(NOTIFICATION_ID, notification)
             }
-            startForeground(NOTIFICATION_ID, notification, type)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            android.util.Log.w("WakeWordService", "App not in foreground, cannot start FGS: ${e.message}")
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         Thread { loadAndStart(modelDir) }.start()
@@ -196,10 +205,17 @@ class WakeWordService : Service() {
 
             val score = prob.firstOrNull() ?: return
             if (score > threshold) {
-                Log.i(TAG, "Wake word detected! score=$score threshold=$threshold")
-                cooldownRemaining = COOLDOWN_CHUNKS
-                embBuffer.clear()
-                detectionCallback?.invoke()
+                consecutiveHighScores++
+                Log.d(TAG, "High score: $score (consecutive=$consecutiveHighScores, need=2)")
+                if (consecutiveHighScores >= 2) {
+                    Log.i(TAG, "Wake word detected! score=$score threshold=$threshold")
+                    consecutiveHighScores = 0
+                    cooldownRemaining = COOLDOWN_CHUNKS
+                    embBuffer.clear()
+                    detectionCallback?.invoke()
+                }
+            } else {
+                consecutiveHighScores = 0
             }
         } catch (e: Exception) {
             Log.e(TAG, "Inference error: ${e.message}")
@@ -222,6 +238,7 @@ class WakeWordService : Service() {
 
     fun stop() {
         running = false
+        consecutiveHighScores = 0
         audioThread?.interrupt()
         audioThread = null
         melSession?.close(); melSession = null

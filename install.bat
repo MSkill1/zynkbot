@@ -639,6 +639,41 @@ if %errorLevel% equ 0 (
 echo.
 
 REM ============================================
+REM Download Vosk Windows SDK (offline dictation)
+REM ============================================
+echo =========================================
+echo Downloading Vosk Speech Recognition Library
+echo =========================================
+echo.
+
+set "VOSK_LIB_DIR=%~dp0zynkbot_rust\src-tauri\lib\vosk"
+if not exist "%VOSK_LIB_DIR%" mkdir "%VOSK_LIB_DIR%"
+
+if exist "%VOSK_LIB_DIR%\libvosk.lib" (
+    echo [OK] Vosk library already present - skipping download
+) else (
+    echo [INFO] Downloading Vosk Windows SDK ^(~24MB^)...
+    set "VOSK_ZIP=%TEMP%\vosk-win64.zip"
+    set "VOSK_URL=https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip"
+
+    powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!VOSK_URL!' -OutFile '!VOSK_ZIP!' -UseBasicParsing"
+    if !errorLevel! equ 0 (
+        echo [INFO] Extracting Vosk library files...
+        powershell -Command "Expand-Archive -Path '!VOSK_ZIP!' -DestinationPath '$env:TEMP\vosk_extract' -Force; Copy-Item '$env:TEMP\vosk_extract\vosk-win64-0.3.45\libvosk.lib' -Destination '!VOSK_LIB_DIR!\libvosk.lib' -Force; Copy-Item '$env:TEMP\vosk_extract\vosk-win64-0.3.45\libvosk.dll' -Destination '!VOSK_LIB_DIR!\libvosk.dll' -Force; Remove-Item '$env:TEMP\vosk_extract' -Recurse -Force; Remove-Item '!VOSK_ZIP!' -Force"
+        if !errorLevel! equ 0 (
+            echo [OK] Vosk library installed - offline dictation enabled
+        ) else (
+            echo [WARNING] Vosk extraction failed - offline dictation unavailable
+            echo           You can still use OpenAI Whisper for cloud dictation
+        )
+    ) else (
+        echo [WARNING] Vosk download failed - offline dictation unavailable
+        echo           You can still use OpenAI Whisper for cloud dictation
+    )
+)
+echo.
+
+REM ============================================
 REM Pre-compile Rust Backend (one-time build)
 REM ============================================
 echo =========================================

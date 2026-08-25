@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, voiceInputSource, onVoiceSourceChange, hideToggle, onOpen }) {
+export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, voiceInputSource, onVoiceSourceChange, voiceResponseEnabled, onVoiceResponseToggle, hideToggle, onOpen }) {
   const [isOpen, setIsOpen] = useState(false);
 
   const handleToggle = () => {
@@ -114,7 +114,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                     accentColor: '#8be9fd'
                   }}
                 />
-                <span>🎤</span>
+                <span>🎤 Voice</span>
               </label>
             )}
             {/* Dictation source dropdown (shown when voice enabled) */}
@@ -151,15 +151,49 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                   value="vosk"
                   title="Runs on-device. No internet. No punctuation, but LLMs handle unpunctuated text fine."
                 >
-                  Offline (no punctuation)
+                  Offline (Vosk)
                 </option>
                 <option
                   value="openai"
                   title="Cloud transcription with punctuation. OpenAI holds audio 30 days for abuse review only, not training. Needs API key + internet."
                 >
-                  OpenAI Whisper (needs key)
+                  OpenAI Whisper
                 </option>
               </select>
+            )}
+            {/* Voice Response Toggle — only on Android (WakeWordBridge) when voice is on */}
+            {onVoiceResponseToggle && window.WakeWordBridge && voiceInputEnabled && (
+              <label
+                title={voiceResponseEnabled
+                  ? "Voice response enabled — Zynkbot will speak replies after Hey Zynk (requires OpenAI key)"
+                  : "Voice response disabled — click to enable spoken replies after Hey Zynk"}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  background: '#44475a',
+                  color: '#50fa7b',
+                  borderRadius: '4px',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  userSelect: 'none',
+                  height: '32px',
+                  boxSizing: 'border-box'
+                }}
+                onMouseOver={(e) => { e.currentTarget.style.background = '#50fa7b'; e.currentTarget.style.color = '#22232a'; }}
+                onMouseOut={(e) => { e.currentTarget.style.background = '#44475a'; e.currentTarget.style.color = '#50fa7b'; }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!voiceResponseEnabled}
+                  onChange={(e) => onVoiceResponseToggle(e.target.checked)}
+                  style={{ width: '14px', height: '14px', cursor: 'pointer', accentColor: '#50fa7b' }}
+                />
+                <span>🔊 Speak</span>
+              </label>
             )}
             {onInfoClick && (
               <button
