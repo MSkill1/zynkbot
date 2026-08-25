@@ -170,6 +170,13 @@ export function useVoiceInput() {
     }
   };
 
+  // Desktop mic capture: Linux must use the Rust cpal path because the WebKitGTK
+  // WebView can't do getUserMedia. Windows/macOS WebViews support getUserMedia, so
+  // they use the browser-audio path → transcribe_audio (OpenAI Whisper). Offline
+  // Vosk has no Windows/macOS library, so a 'vosk' selection there transparently
+  // falls back to OpenAI Whisper (browser audio).
+  const isDesktopLinux = () => navigator.platform.toLowerCase().includes('linux');
+
   const startRecording = async () => {
     const source = getSource();
     if (isAndroid()) {
@@ -178,8 +185,12 @@ export function useVoiceInput() {
       if (source === 'openai') return startRecordingDesktop();
       return startRecordingVosk();
     }
-    // Desktop: both engines go through Rust mic capture (bypasses Linux WebView bug).
-    return startRecordingDesktopRust(source);
+    if (isDesktopLinux()) {
+      // Linux: both engines go through Rust mic capture (bypasses WebKitGTK getUserMedia bug).
+      return startRecordingDesktopRust(source);
+    }
+    // Windows/macOS: browser audio → OpenAI Whisper (offline Vosk unavailable here).
+    return startRecordingDesktop();
   };
 
   const stopRecording = async () => {
@@ -189,7 +200,11 @@ export function useVoiceInput() {
       if (source === 'openai') return stopRecordingDesktop();
       return stopRecordingVosk();
     }
-    return stopRecordingDesktopRust(source);
+    if (isDesktopLinux()) {
+      return stopRecordingDesktopRust(source);
+    }
+    // Windows/macOS: browser audio → OpenAI Whisper.
+    return stopRecordingDesktop();
   };
 
   return { isRecording, isTranscribing, startRecording, stopRecording };

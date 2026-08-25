@@ -3,6 +3,13 @@ import React, { useState } from 'react';
 export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, voiceInputSource, onVoiceSourceChange, hideToggle, onOpen }) {
   const [isOpen, setIsOpen] = useState(false);
 
+  // Offline Vosk dictation only ships for Android + Linux desktop. On Windows/macOS
+  // there's no Vosk library, so the offline option is disabled and OpenAI Whisper is
+  // shown/used instead (see useVoiceInput.js for the matching runtime fallback).
+  const voskAvailable =
+    !!window.VoskBridge || navigator.platform.toLowerCase().includes('linux');
+  const effectiveVoiceSource = voskAvailable ? (voiceInputSource || 'vosk') : 'openai';
+
   const handleToggle = () => {
     if (!isOpen && onOpen) onOpen();
     setIsOpen(!isOpen);
@@ -120,10 +127,10 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
             {/* Dictation source dropdown (shown when voice enabled) */}
             {onVoiceSourceChange && voiceInputEnabled && (
               <select
-                value={voiceInputSource || 'vosk'}
+                value={effectiveVoiceSource}
                 onChange={(e) => onVoiceSourceChange(e.target.value)}
                 title={
-                  (voiceInputSource || 'vosk') === 'vosk'
+                  effectiveVoiceSource === 'vosk'
                     ? 'Offline dictation (Vosk): runs entirely on your device. No internet, nothing leaves your machine. Produces all-lowercase text with no punctuation — modern LLMs handle unpunctuated input well, so responses are still accurate.'
                     : 'OpenAI Whisper: sends audio to OpenAI. Adds punctuation and capitalization. OpenAI keeps the audio for up to 30 days for abuse monitoring only, then deletes it — API data is not used to train their models. Requires OPENAI_API_KEY and internet.'
                 }
@@ -149,9 +156,13 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
               >
                 <option
                   value="vosk"
-                  title="Runs on-device. No internet. No punctuation, but LLMs handle unpunctuated text fine."
+                  disabled={!voskAvailable}
+                  style={!voskAvailable ? { background: '#b0b0b0', color: '#000000' } : undefined}
+                  title={voskAvailable
+                    ? "Runs on-device. No internet. No punctuation, but LLMs handle unpunctuated text fine."
+                    : "Offline dictation (Vosk) is only available on Linux and Android in this release."}
                 >
-                  Offline (Vosk)
+                  {voskAvailable ? 'Offline (no punctuation)' : 'Offline (Linux/Android only)'}
                 </option>
                 <option
                   value="openai"
