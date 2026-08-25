@@ -29,7 +29,9 @@ class WakeWordService : Service() {
 
     companion object {
         const val CHANNEL_ID = "wake_word_channel"
+        const val TRANSCRIPT_CHANNEL_ID = "wake_word_transcript_channel"
         const val NOTIFICATION_ID = 1003
+        const val TRANSCRIPT_NOTIFICATION_ID = 1005
         const val TAG = "WakeWordService"
 
         // openWakeWord pipeline — shapes verified empirically against the ONNX models:
@@ -355,11 +357,30 @@ class WakeWordService : Service() {
             return
         }
         Log.i(TAG, "Delivering transcript to app: \"$transcript\"")
-        val intent = Intent(this, MainActivity::class.java).apply {
+
+        // Android 10+ blocks startActivity() from background components even in foreground
+        // services. Use a full-screen-intent notification — the standard mechanism for
+        // screen-off wake scenarios (alarm apps, incoming calls).
+        val activityIntent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             putExtra("wake_word_transcript", transcript)
         }
-        startActivity(intent)
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            this, TRANSCRIPT_NOTIFICATION_ID, activityIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, TRANSCRIPT_CHANNEL_ID)
+            .setContentTitle("Zynkbot")
+            .setContentText("\"${transcript.take(60)}\"")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setFullScreenIntent(pendingIntent, true)
+            .setAutoCancel(true)
+            .build()
+        getSystemService(NotificationManager::class.java)
+            .notify(TRANSCRIPT_NOTIFICATION_ID, notification)
+
         releaseWakeLock()
     }
 
@@ -400,15 +421,21 @@ class WakeWordService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Hey Zynk",
-                NotificationManager.IMPORTANCE_LOW
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(NotificationChannel(
+                CHANNEL_ID, "Hey Zynk", NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "Listens for the wake word in the background"
                 setShowBadge(false)
-            }
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            })
+            // HIGH importance required for full-screen-intent to fire on the lock screen
+            nm.createNotificationChannel(NotificationChannel(
+                TRANSCRIPT_CHANNEL_ID, "Wake Word Response", NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Wakes the screen to deliver a Hey Zynk voice query"
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+                setShowBadge(false)
+            })
         }
     }
 }
