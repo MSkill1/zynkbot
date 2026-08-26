@@ -69,6 +69,7 @@ class WakeWordService : Service() {
 
     @Volatile private var running = false
     @Volatile private var audioReleased = false
+    @Volatile private var isForegrounded = false // guards against double startForeground on Android 14+
     private var audioThread: Thread? = null
     private var threshold = 0.5f
     private var wakeLock: PowerManager.WakeLock? = null      // detection wake lock (25s, screen-off flow)
@@ -118,29 +119,45 @@ class WakeWordService : Service() {
         threshold = intent?.getFloatExtra("threshold", 0.5f) ?: 0.5f
         val modelDir = intent?.getStringExtra("modelDir") ?: return START_NOT_STICKY
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Zynkbot")
-            .setContentText("Listening for \"Hey Zynk\"")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
-            .build()
+        // Only call startForeground once per service lifecycle. On Android 14+,
+        // calling startForeground(MICROPHONE) from background context throws SecurityException
+        // and kills the service mid-flow (e.g. during screen-off Vosk dictation).
+        if (!isForegrounded) {
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Zynkbot")
+                .setContentText("Listening for \"Hey Zynk\"")
+                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build()
 
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                    } else {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    }
+                    startForeground(NOTIFICATION_ID, notification, type)
                 } else {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    startForeground(NOTIFICATION_ID, notification)
                 }
-                startForeground(NOTIFICATION_ID, notification, type)
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
+                isForegrounded = true
+            } catch (e: SecurityException) {
+                Log.w(TAG, "App not in foreground, cannot start FGS: ${e.message}")
+                stopSelf()
+                return START_NOT_STICKY
             }
-        } catch (e: SecurityException) {
-            Log.w(TAG, "App not in foreground, cannot start FGS: ${e.message}")
-            stopSelf()
-            return START_NOT_STICKY
+        }
+
+        // Stop any existing audio loop before starting a new one (prevents multiple threads).
+        if (running) {
+            Log.i(TAG, "Restarting audio loop (threshold=${threshold})")
+            running = false
+            audioThread?.interrupt()
+            audioThread = null
+            melBuffer.clear()
+            embBuffer.clear()
         }
 
         // Pre-load Vosk model in background so it's ready for screen-off dictation.
@@ -163,6 +180,7 @@ class WakeWordService : Service() {
     }
 
     override fun onDestroy() {
+        isForegrounded = false
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         releaseAudioWakeLock()
         stop()
