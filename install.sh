@@ -444,6 +444,11 @@ export PATH="$HOME/.cargo/bin:$PATH"
 PRECOMPILE_FEATURES=""
 if [ "$GPU_DETECTED" = "1" ]; then
     PRECOMPILE_FEATURES="--features cuda"
+    # Same CUDA env the launcher exports — see START_ZYNKBOT.sh for why these are
+    # set here instead of in .cargo/config.toml.
+    export CUDA_PATH="${CUDA_PATH:-/usr}"
+    export CUDA_LIBRARY_PATH="${CUDA_LIBRARY_PATH:-/usr/lib/x86_64-linux-gnu}"
+    export CUDAFLAGS="${CUDAFLAGS:--Xcompiler -fPIC}"
 fi
 
 cd "$SCRIPT_DIR/zynkbot_rust/src-tauri"
