@@ -1,0 +1,27 @@
+Wake word models bundled with Zynkbot
+=====================================
+
+melspectrogram.onnx
+embedding_model.onnx
+--------------------
+Source:  openWakeWord — https://github.com/dscripka/openWakeWord
+License: Apache License 2.0
+         https://www.apache.org/licenses/LICENSE-2.0
+
+These are the shared Google speech mel-spectrogram and speech-embedding
+front-end models used by openWakeWord. They are redistributed here unmodified
+under the terms of the Apache License 2.0.
+
+hey_zynk.onnx
+-------------
+Source:  Zynkbot (ContainAI) — trained with wake-word-training/train_hey_zynk.py
+         on a 60-voice synthetic TTS corpus, with negatives from the FSD50K
+         background subset published by openWakeWord.
+License: same terms as Zynkbot itself (see LICENSE in the repository root)
+
+Why these files live here
+-------------------------
+They were previously fetched at runtime from a GitHub release, which meant wake
+word could not be enabled without network access and tied the app to a release
+that could never be deleted. Bundling them costs ~3 MB in the APK and makes wake
+word work offline on first launch.

@@ -424,12 +424,38 @@ class MainActivity : TauriActivity() {
     inner class WakeWordBridge {
         private val modelDir get() = File(filesDir, "wake-word-models")
 
+        // The three ONNX models ship inside the APK under assets/wake-word-models/
+        // (~3 MB). They are copied out to filesDir rather than read in place because
+        // ONNX Runtime's createSession needs a real filesystem path, and assets live
+        // inside the APK archive. Bundling means wake word works offline on first
+        // launch instead of requiring a network fetch from a GitHub release.
+        private val modelFiles = listOf("melspectrogram.onnx", "embedding_model.onnx", "hey_zynk.onnx")
+
+        private fun modelsPresent(): Boolean =
+            modelFiles.all { val f = File(modelDir, it); f.exists() && f.length() > 0L }
+
+        /** Copy any missing model out of assets. Idempotent, and small enough to run inline. */
+        private fun extractModelsFromAssets() {
+            modelDir.mkdirs()
+            for (name in modelFiles) {
+                val dest = File(modelDir, name)
+                if (dest.exists() && dest.length() > 0L) continue
+                assets.open("wake-word-models/$name").use { input ->
+                    FileOutputStream(dest).use { output -> input.copyTo(output) }
+                }
+            }
+        }
+
         @JavascriptInterface
         fun isModelReady(): Boolean {
-            val d = modelDir
-            return File(d, "melspectrogram.onnx").exists() &&
-                   File(d, "embedding_model.onnx").exists() &&
-                   File(d, "hey_zynk.onnx").exists()
+            if (modelsPresent()) return true
+            // Extract on demand, so the "voice models needed" panel never has to appear.
+            return try {
+                extractModelsFromAssets()
+                modelsPresent()
+            } catch (_: Exception) {
+                false
+            }
         }
 
         @JavascriptInterface
@@ -455,26 +481,28 @@ class MainActivity : TauriActivity() {
             stopService(Intent(this@MainActivity, WakeWordService::class.java))
         }
 
+        // Kept under its original name because App.jsx calls WakeWordBridge.downloadModels().
+        // Nothing is downloaded in the normal path any more — the models are unpacked from
+        // the APK, which is effectively instant. The remote fetch survives only as a
+        // fallback for a build that somehow shipped without the assets.
         @JavascriptInterface
         fun downloadModels() {
             Thread {
                 try {
-                    modelDir.mkdirs()
                     fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress(0);")
 
-                    val base = "https://github.com/MSkill1/zynkbot/releases/download/wake-word-models"
-                    val models = listOf(
-                        "melspectrogram.onnx" to "$base/melspectrogram.onnx",
-                        "embedding_model.onnx" to "$base/embedding_model.onnx",
-                        "hey_zynk.onnx"        to "$base/hey_zynk.onnx",
-                    )
-
-                    models.forEachIndexed { idx, (name, url) ->
-                        val dest = File(modelDir, name)
-                        if (!dest.exists()) {
-                            downloadFile(url, dest) { pct ->
-                                val overall = (idx * 33 + pct / 3)
-                                fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress($overall);")
+                    try {
+                        extractModelsFromAssets()
+                    } catch (assetError: Exception) {
+                        modelDir.mkdirs()
+                        val base = "https://github.com/MSkill1/zynkbot/releases/download/wake-word-models"
+                        modelFiles.forEachIndexed { idx, name ->
+                            val dest = File(modelDir, name)
+                            if (!dest.exists()) {
+                                downloadFile("$base/$name", dest) { pct ->
+                                    val overall = (idx * 33 + pct / 3)
+                                    fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress($overall);")
+                                }
                             }
                         }
                     }
@@ -482,7 +510,7 @@ class MainActivity : TauriActivity() {
                     fire("window.__wakeWordDownloadProgress&&window.__wakeWordDownloadProgress(100);")
                     fire("window.__wakeWordModelReady&&window.__wakeWordModelReady();")
                 } catch (e: Exception) {
-                    val msg = (e.message ?: "download failed").replace("'", "\\'")
+                    val msg = (e.message ?: "model setup failed").replace("'", "\\'")
                     fire("window.__wakeWordDownloadError&&window.__wakeWordDownloadError('$msg');")
                 }
             }.start()
