@@ -16,7 +16,15 @@ name = "app_lib"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+# llama-cpp-2 has its own cuda feature and has to be forwarded explicitly. Candle
+# and llama.cpp are separate compilation pipelines (Rust-native kernels vs
+# llama.cpp's C++/CUDA core built through CMake), so enabling CUDA for Candle
+# alone left the chat LLM on CPU — and because llama.cpp just builds CPU-only
+# kernels in that case, the build still succeeded with nothing to indicate it.
+# Note this is feature forwarding only: adding features = ["cuda"] to the
+# llama-cpp-2 dependency itself would make CUDA mandatory for every build and
+# break CPU-only installs, which have no nvcc for llama-cpp-sys-2's CMake step.
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda", "llama-cpp-2/cuda"]
 
 [build-dependencies]
 tauri-build = { version = "2.5.1", features = [] }
