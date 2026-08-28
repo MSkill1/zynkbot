@@ -78,7 +78,7 @@ pub async fn send_message_with_memory(
     conversation_history: Option<Vec<ConversationTurn>>,
     skip_containment: Option<bool>,
     skip_memory_storage: Option<bool>,
-    _kb_enabled: Option<bool>,
+    kb_enabled: Option<bool>,
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
 ) -> Result<ReplyResponse, String> {
@@ -401,7 +401,7 @@ pub async fn send_message_with_memory(
 
     // STEP 3: Knowledge Base RAG search (opt-in via UI button)
     // Only searches when user clicks "Search Knowledge Base" button
-    let kb_enabled = _kb_enabled.unwrap_or(false);
+    let kb_enabled = kb_enabled.unwrap_or(false);
     let mut kb_context = String::new();
 
     if kb_enabled {
