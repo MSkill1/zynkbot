@@ -110,13 +110,32 @@ if not defined VS_CPP (
         set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\!MSVC_VERSION!\bin\Hostx64\x64"
         echo [OK] CUDA compiler configured
 
-    REM Set CUDA_PATH for CMake CUDA detection
-    if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6" (
-        set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6"
-        set "CUDA_HOME=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6"
-        echo [OK] CUDA_PATH configured
-    )
 )
+
+REM ============================================================
+REM CUDA toolkit path (bindgen_cuda / CMake)
+REM ============================================================
+REM bindgen_cuda searches only the PARENT install directory
+REM ("C:/Program Files/NVIDIA GPU Computing Toolkit") and never the versioned
+REM subdirectory the Windows CUDA installer actually creates, so it panics with
+REM "Could not find CUDA in standard locations" unless CUDA_PATH points at the
+REM full versioned path. Derive that from wherever nvcc really is rather than
+REM hardcoding a version: RTX 50-series (Blackwell, sm_120) needs CUDA 12.8+, so
+REM a pinned v12.6 silently left newer cards building on CPU.
+if defined CUDA_PATH goto cuda_path_ready
+for /f "delims=" %%i in ('where nvcc 2^>nul') do set "NVCC_EXE=%%i"
+if not defined NVCC_EXE goto cuda_path_ready
+for %%i in ("%NVCC_EXE%") do set "NVCC_BIN_DIR=%%~dpi"
+set "NVCC_BIN_DIR=%NVCC_BIN_DIR:~0,-1%"
+for %%i in ("%NVCC_BIN_DIR%") do set "CUDA_PATH=%%~dpi"
+set "CUDA_PATH=%CUDA_PATH:~0,-1%"
+:cuda_path_ready
+if not defined CUDA_PATH goto cuda_env_done
+set "CUDA_HOME=%CUDA_PATH%"
+REM bindgen_cuda also honours CUDA_ROOT, so set both and either lookup succeeds.
+set "CUDA_ROOT=%CUDA_PATH%"
+echo [OK] CUDA_PATH configured: %CUDA_PATH%
+:cuda_env_done
 
 REM ============================================================
 REM Check .env file
