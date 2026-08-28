@@ -256,6 +256,9 @@ export default function App() {
   });
   // TTS response is enabled whenever voice is on (Android only) — no separate toggle needed.
   const [isTtsSpeaking, setIsTtsSpeaking] = useState(false);
+  // Set from VoiceButton via the 'zynkbot:dictation' event. The dictation button and
+  // the wake word detector share one microphone, and this component owns the detector.
+  const [isDictating, setIsDictating] = useState(false);
   const [voiceInputSource, setVoiceInputSource] = useState(() => {
     // 'vosk' = offline (no punctuation), 'openai' = cloud Whisper (has punctuation)
     return localStorage.getItem('zynkbot_voice_input_source') || 'vosk';
@@ -674,10 +677,24 @@ export default function App() {
     };
   }, [voiceInputEnabled]);
 
-  // Pause wake word detection while recording or TTS is playing; resume 5s after both end
+  // VoiceButton announces when the dictation button is in use. Tracked here because
+  // the wake detector is owned by this component, and VoiceButton's own useVoiceInput
+  // state cannot be read from outside it.
+  useEffect(() => {
+    const onDictation = (e) => setIsDictating(!!e.detail?.active);
+    window.addEventListener('zynkbot:dictation', onDictation);
+    return () => window.removeEventListener('zynkbot:dictation', onDictation);
+  }, []);
+
+  // Pause wake word detection while dictating, wake-recording, or TTS is playing, and
+  // resume only once all three are clear. Dictation has to be included: the detector
+  // and the dictation button share one microphone, so leaving it running meant the
+  // user's own dictation speech could trigger a wake recording the moment they hit
+  // send. The delay before resuming also lets the tail of that speech age out of the
+  // detector's rolling audio buffer.
   useEffect(() => {
     if (!window.WakeWordBridge || !voiceInputEnabled) return;
-    if (isWakeRecording || isTtsSpeaking) {
+    if (isWakeRecording || isTtsSpeaking || isDictating) {
       window.WakeWordBridge.stop();
     } else {
       const t = setTimeout(() => {
@@ -687,7 +704,7 @@ export default function App() {
       }, 5000);
       return () => clearTimeout(t);
     }
-  }, [isWakeRecording, voiceInputEnabled, isTtsSpeaking]);
+  }, [isWakeRecording, voiceInputEnabled, isTtsSpeaking, isDictating]);
 
   // Restart wake word when app returns to foreground (screen unlock, app switch back).
   // The service may have stopped while the screen was off; visibilitychange is the
@@ -695,14 +712,14 @@ export default function App() {
   useEffect(() => {
     if (!window.WakeWordBridge) return;
     const handleVisible = () => {
-      if (!voiceInputEnabled || isWakeRecording || isTtsSpeaking) return;
+      if (!voiceInputEnabled || isWakeRecording || isTtsSpeaking || isDictating) return;
       if (window.WakeWordBridge.isModelReady()) {
         window.WakeWordBridge.start(0.72);
       }
     };
     document.addEventListener('visibilitychange', handleVisible);
     return () => document.removeEventListener('visibilitychange', handleVisible);
-  }, [voiceInputEnabled, isWakeRecording, isTtsSpeaking]);
+  }, [voiceInputEnabled, isWakeRecording, isTtsSpeaking, isDictating]);
 
   // Play water-drop sound when AI response arrives
   // Auto-scroll: only scroll if user is already near the bottom

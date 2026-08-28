@@ -7,9 +7,22 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, st
   const [noModel, setNoModel] = useState(false);
   const { isRecording, isTranscribing, startRecording, stopRecording } = useVoiceInput();
 
+  // Dictation and wake word share a single microphone, so the wake detector has to be
+  // stopped outright while this button is in use — suppressing its callback is not
+  // enough, because a detection triggered by the user's own dictation audio can be
+  // delivered a moment later. App.jsx owns the detector and listens for this event;
+  // VoiceButton's useVoiceInput state is not visible from there.
+  const announceDictation = (active) => {
+    window.__dictationActive = active;
+    window.dispatchEvent(new CustomEvent('zynkbot:dictation', { detail: { active } }));
+  };
+
   useImperativeHandle(ref, () => ({
     triggerRecord: async () => {
-      if (!isRecording) await startRecording();
+      if (!isRecording) {
+        announceDictation(true);
+        await startRecording();
+      }
     },
   }));
 
@@ -20,11 +33,17 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, st
       return;
     }
     if (isRecording) {
-      window.__dictationActive = false;
-      const text = await stopRecording();
-      if (text && onTranscript) onTranscript(text);
+      // Stay active until the transcript has been handed over. Clearing this on tap
+      // left a window in which the wake detector was unguarded while still holding
+      // the user's dictation audio, which started an unrequested wake recording.
+      try {
+        const text = await stopRecording();
+        if (text && onTranscript) onTranscript(text);
+      } finally {
+        announceDictation(false);
+      }
     } else {
-      window.__dictationActive = true; // blocks wake-word from hijacking VoskBridge
+      announceDictation(true);
       await startRecording();
     }
   };
