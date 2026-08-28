@@ -86,31 +86,35 @@ echo.
 REM ============================================================
 REM Check Visual Studio Build Tools (C++) - needed to compile llama.cpp on first launch
 REM ============================================================
+REM Written flat with goto labels rather than nested if/else blocks. The previous
+REM version opened an else block and then jumped out of it with "goto :found_msvc"
+REM from inside a for loop, which left a parenthesis unclosed and made the whole
+REM construct fail to parse ("The syntax of the command is incorrect") as soon as
+REM anything in it changed shape.
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 set "VS_CPP="
-if exist "%VSWHERE%" (
-    for /f "usebackq delims=" %%i in (`"%VSWHERE%" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_CPP=%%i"
-)
-if not defined VS_CPP (
-    echo [WARNING] Visual Studio Build Tools ^(C++^) not detected, or install is incomplete.
-    echo    If this is the FIRST launch, the Rust build will fail when compiling llama.cpp.
-    echo    Install https://aka.ms/vs/17/release/vs_BuildTools.exe ^("Desktop development
-    echo    with C++"^), reboot, then run this again. ^(Already-built installs can ignore this.^)
-    echo.
-) else (
-    echo [OK] Visual Studio Build Tools found
+if not exist "%VSWHERE%" goto vs_missing
+for /f "usebackq delims=" %%i in (`"%VSWHERE%" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_CPP=%%i"
+if not defined VS_CPP goto vs_missing
 
-    REM Set NVCC_CCBIN for CUDA compilation (nvcc needs to find cl.exe)
-    for /f "delims=" %%i in ('dir /b /ad "%VS_CPP%\VC\Tools\MSVC" 2^>nul ^| sort /r') do (
-        set "MSVC_VERSION=%%i"
-        goto :found_msvc
-    )
-    :found_msvc
-    if defined MSVC_VERSION (
-        set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\!MSVC_VERSION!\bin\Hostx64\x64"
-        echo [OK] CUDA compiler configured
+echo [OK] Visual Studio Build Tools found
+REM nvcc needs to find cl.exe. "if not defined" keeps the first line of the
+REM reverse-sorted listing, i.e. the newest MSVC toolset, without a goto.
+set "MSVC_VERSION="
+for /f "delims=" %%i in ('dir /b /ad "%VS_CPP%\VC\Tools\MSVC" 2^>nul ^| sort /r') do if not defined MSVC_VERSION set "MSVC_VERSION=%%i"
+if not defined MSVC_VERSION goto vs_done
+set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\%MSVC_VERSION%\bin\Hostx64\x64"
+echo [OK] CUDA compiler configured
+goto vs_done
 
-)
+:vs_missing
+echo [WARNING] Visual Studio Build Tools ^(C++^) not detected, or install is incomplete.
+echo    If this is the FIRST launch, the Rust build will fail when compiling llama.cpp.
+echo    Install https://aka.ms/vs/17/release/vs_BuildTools.exe ^("Desktop development
+echo    with C++"^), reboot, then run this again. ^(Already-built installs can ignore this.^)
+echo.
+
+:vs_done
 
 REM ============================================================
 REM CUDA toolkit path (bindgen_cuda / CMake)
