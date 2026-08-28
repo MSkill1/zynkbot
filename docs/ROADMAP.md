@@ -151,6 +151,10 @@ This needs to be resolved before Play Store launch. The core tension:
 
 ### Remaining for v1.0
 
+- **ZynkSync outbox architecture** — Replace the current state-sync approach (which requires manual wiring for every new feature) with an event-driven outbox pattern. Every write to any memory-related table inserts a record into a `sync_outbox` table (operation, table, row ID, payload, timestamp). A background process drains the outbox to all paired devices. Offline devices accumulate entries until reconnect. Deletes become soft-deletes (`deleted_at` column) so they propagate as outbox events rather than disappearing silently. New features get sync automatically just by writing to the DB — no per-feature sync wiring needed. Conflict resolution: last-write-wins by timestamp covers ~95% of cases. Outbox TTL: prune entries older than N days; devices offline longer do a full re-sync. This permanently fixes the "clear on one device doesn't propagate" class of bugs and is the prerequisite for all future ZynkSync enhancements. Estimated effort: 2–3 days including schema migration and cross-platform testing.
+
+- **Voice/dictation/audio modularization** — Extract the wake word, Vosk dictation, TTS, and conversation loop logic from App.jsx into a dedicated module/hook. Currently entangled with component state in ways that make the feature set hard to extend. Do after the voice feature set is stable (v0.9.5).
+
 - ~~**Cloud backup (R2)**~~ ✅ — merged to main (v0.9.4). Encrypted R2 backup includes memories + conversation history. Tombstone-safe restore propagates to peers.
 - ~~**Vosk offline dictation**~~ ✅ — merged to main (v0.9.5-beta1). Linux (cpal + vosk crate) and Android (Kotlin bridge) both ship. Wake-word, timer, and voice memory query deferred to a later v0.9.x release.
 - **Play Store public release** — promote from internal testing to production track.
