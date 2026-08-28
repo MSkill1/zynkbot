@@ -295,6 +295,9 @@ export default function App() {
   const stopWakeRecordingRef = useRef(null);
   // Stable ref to handleSendMessage so wake word effect never captures a stale closure
   const handleSendMessageRef = useRef(null);
+  // Conversation loop — true while Hey Zynk is in a multi-turn session
+  const conversationLoopActiveRef = useRef(false);
+  const startListeningLoopRef = useRef(null);
 
   // Splice transcribed text into the input at the cursor position, padding with
   // spaces when adjacent to non-whitespace so words don't run together.
@@ -360,6 +363,9 @@ export default function App() {
         setIsTtsSpeaking(false);
         ttsSourceRef.current = null;
         ttsAudioCtxRef.current = null;
+        if (conversationLoopActiveRef.current) {
+          startListeningLoopRef.current?.();
+        }
       };
     } catch (e) {
       console.error('[TTS]', e);
@@ -601,6 +607,8 @@ export default function App() {
 
     const SILENCE_MS = 1000;
 
+    const CLOSING_PHRASES = /\b(thank(?:\s+you)?\s+zynk|goodbye\s+zynk|zynk\s+stop|stop\s+listening|that'?s?\s+all|close\s+session)\b/i;
+
     // Stop wake recording and return the transcript. Does NOT go through useVoiceInput.
     const stopWakeRecording = () => {
       clearTimeout(silenceTimerRef.current);
@@ -623,15 +631,65 @@ export default function App() {
     };
     stopWakeRecordingRef.current = stopWakeRecording;
 
+    // End the conversation loop: play the closing chime and re-arm the ONNX detector.
+    const endConversationLoop = () => {
+      conversationLoopActiveRef.current = false;
+      try {
+        const audio = new Audio('/wake_chime_close.wav');
+        audio.play().catch(() => {});
+      } catch (_) {}
+      if (window.WakeWordBridge.isModelReady()) {
+        setTimeout(() => window.WakeWordBridge.start(0.72), 1500);
+      }
+    };
+
     const autoSendWake = async () => {
       console.log('[WakeWord] autoSendWake firing');
       const text = await stopWakeRecording();
       console.log('[WakeWord] transcript:', text);
-      if (text) {
-        wakeTriggeredRef.current = true;
-        handleSendMessageRef.current?.(text);
+      if (!text) {
+        // No speech heard — end the loop so ONNX can re-arm
+        conversationLoopActiveRef.current = false;
+        if (window.WakeWordBridge.isModelReady()) {
+          setTimeout(() => window.WakeWordBridge.start(0.72), 1000);
+        }
+        return;
+      }
+      if (conversationLoopActiveRef.current && CLOSING_PHRASES.test(text)) {
+        console.log('[WakeWord] closing phrase detected — ending conversation loop');
+        endConversationLoop();
+        return;
+      }
+      wakeTriggeredRef.current = true;
+      handleSendMessageRef.current?.(text);
+    };
+
+    // Start the chime→Vosk→silence cycle. Used both for the initial wake and for
+    // each subsequent turn of the conversation loop.
+    const startListeningLoop = () => {
+      if (!window.VoskBridge) return;
+      if (window.__dictationActive) return;
+      const startRecording = () => {
+        window.__voskPartial = (partial) => {
+          if (partial.trim()) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = setTimeout(autoSendWake, SILENCE_MS);
+          }
+        };
+        window.VoskBridge.startListening();
+        setIsWakeRecording(true);
+        silenceTimerRef.current = setTimeout(autoSendWake, 8000);
+      };
+      try {
+        const audio = new Audio('/wake_chime.wav');
+        audio.onended = startRecording;
+        audio.onerror = startRecording;
+        audio.play().catch(startRecording);
+      } catch (_) {
+        startRecording();
       }
     };
+    startListeningLoopRef.current = startListeningLoop;
 
     window.__wakeWordDetected = () => {
       // Don't hijack VoskBridge while the dictation button is active
@@ -643,30 +701,10 @@ export default function App() {
       window.WakeWordBridge.stop();
       setWakeWordFlash(true);
       setTimeout(() => setWakeWordFlash(false), 2500);
-
-      // Play acknowledgment chime, then start recording after it finishes
-      const startRecording = () => {
-        window.__voskPartial = (partial) => {
-          console.log('[WakeWord] partial:', partial);
-          if (partial.trim()) {
-            clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(autoSendWake, SILENCE_MS);
-          }
-        };
-        window.VoskBridge.startListening();
-        setIsWakeRecording(true);
-        console.log('[WakeWord] recording started, safety timer armed');
-        silenceTimerRef.current = setTimeout(autoSendWake, 8000);
-      };
-
-      try {
-        const audio = new Audio('/wake_chime.wav');
-        audio.onended = startRecording;
-        audio.onerror = startRecording; // fall through if audio fails
-        audio.play().catch(startRecording);
-      } catch (_) {
-        startRecording();
+      if (conversationModeEnabled) {
+        conversationLoopActiveRef.current = true;
       }
+      startListeningLoop();
     };
     window.__wakeWordModelReady = () => setWakeWordModelReady(true);
     window.__wakeWordDownloadProgress = (n) => setWakeWordDownloadProgress(n);
@@ -674,10 +712,12 @@ export default function App() {
       setWakeWordDownloadError(msg);
       setWakeWordDownloadProgress(0);
     };
-    // Screen-off path: WakeWordService recorded via Kotlin, delivers transcript here
+    // Screen-off path: WakeWordService recorded via Kotlin, delivers transcript here.
+    // Always enters conversation loop mode since the app just unlocked for this session.
     window.__handleScreenOffTranscript = (transcript) => {
       if (!transcript?.trim()) return;
       console.log('[WakeWord] screen-off transcript received:', transcript);
+      conversationLoopActiveRef.current = true;
       wakeTriggeredRef.current = true;
       handleSendMessageRef.current?.(transcript.trim());
     };
@@ -696,9 +736,10 @@ export default function App() {
       window.__wakeWordDownloadProgress = null;
       window.__wakeWordDownloadError = null;
       window.__handleScreenOffTranscript = null;
+      conversationLoopActiveRef.current = false;
       if (window.WakeWordBridge) window.WakeWordBridge.stop();
     };
-  }, [heyZynkEnabled]);
+  }, [heyZynkEnabled, conversationModeEnabled]);
 
   // VoiceButton announces when the dictation button is in use. Tracked here because
   // the wake detector is owned by this component, and VoiceButton's own useVoiceInput
@@ -719,7 +760,7 @@ export default function App() {
     if (!window.WakeWordBridge || !heyZynkEnabled) return;
     if (isWakeRecording || isTtsSpeaking || isDictating) {
       window.WakeWordBridge.stop();
-    } else {
+    } else if (!conversationLoopActiveRef.current) {
       const t = setTimeout(() => {
         if (window.WakeWordBridge && window.WakeWordBridge.isModelReady()) {
           window.WakeWordBridge.start(0.72);
@@ -2583,7 +2624,7 @@ export default function App() {
       {/* Waveform recording overlay — shown on mobile when mic is active */}
       {isWakeRecording && isMobile && (
         <div
-          onClick={async () => { const text = await stopWakeRecordingRef.current?.(); if (text) { wakeTriggeredRef.current = true; handleSendMessageRef.current?.(text); } }}
+          onClick={async () => { const text = await stopWakeRecordingRef.current?.(); if (text) { wakeTriggeredRef.current = true; handleSendMessageRef.current?.(text); } else { conversationLoopActiveRef.current = false; } }}
           style={{
             position: 'fixed',
             bottom: 0, left: 0, right: 0,
