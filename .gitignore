@@ -71,3 +71,7 @@ directory_structure.txt
 *.bak
 *.deb
 *.backup
+
+# Windows Vosk SDK (fetched by install.bat, not committed)
+zynkbot_rust/src-tauri/lib/vosk/libvosk.dll
+zynkbot_rust/src-tauri/lib/vosk/libvosk.lib
