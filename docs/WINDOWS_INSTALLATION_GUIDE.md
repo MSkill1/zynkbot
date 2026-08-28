@@ -49,14 +49,21 @@ START_ZYNKBOT.bat
 >
 > **To enable GPU acceleration:**
 >
+> **Which CUDA version?** Install **12.6 or newer** from the [current CUDA
+> downloads page](https://developer.nvidia.com/cuda-downloads). Do not pin an
+> older release from the archive: RTX 50-series cards (Blackwell, compute
+> capability `sm_120`) require **CUDA 12.8 or newer**, and an older toolkit
+> cannot generate code for them even when everything else is configured
+> correctly. Check what you have with `nvcc --version`.
+>
 > **Option 1: Install CUDA before Zynkbot (Recommended)**
-> 1. Download and install CUDA Toolkit 12.6: https://developer.nvidia.com/cuda-12-6-0-download-archive
+> 1. Download and install the CUDA Toolkit: https://developer.nvidia.com/cuda-downloads
 > 2. Reboot your system
 > 3. Run `install.bat` — it will automatically detect CUDA and build with GPU support
 >
 > **Option 2: Add CUDA to existing CPU-only installation**
 > 1. Run `uninstall.bat` from the zynkbot directory (removes Zynkbot and Rust)
-> 2. Download and install CUDA Toolkit 12.6: https://developer.nvidia.com/cuda-12-6-0-download-archive
+> 2. Download and install the CUDA Toolkit: https://developer.nvidia.com/cuda-downloads
 > 3. Reboot your system
 > 4. Run "install.bat" again — it will rebuild everything with GPU support
 >

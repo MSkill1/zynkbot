@@ -97,6 +97,14 @@ TAURI_FEATURES=""
 if command -v nvidia-smi &> /dev/null || ls /usr/lib/x86_64-linux-gnu/libcuda.so* &> /dev/null 2>&1; then
     if command -v nvcc &> /dev/null; then
         TAURI_FEATURES="--features cuda"
+        # CUDA toolkit installed via apt lands in /usr/lib/x86_64-linux-gnu/ instead of
+        # the standard /usr/local/cuda/ that llama-cpp-sys-2 and find_cuda_helper expect.
+        # These live here rather than in .cargo/config.toml because a Cargo [env] table
+        # is not target-scoped, so the Linux values leaked into Windows/macOS builds.
+        export CUDA_PATH="${CUDA_PATH:-/usr}"
+        export CUDA_LIBRARY_PATH="${CUDA_LIBRARY_PATH:-/usr/lib/x86_64-linux-gnu}"
+        # nvcc needs -fPIC to compile CUDA code for inclusion in a shared library (cdylib)
+        export CUDAFLAGS="${CUDAFLAGS:--Xcompiler -fPIC}"
         echo "⚡ CUDA detected — building with GPU acceleration"
     fi
 fi
