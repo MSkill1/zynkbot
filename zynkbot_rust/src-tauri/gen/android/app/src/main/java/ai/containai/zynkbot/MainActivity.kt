@@ -688,16 +688,48 @@ class MainActivity : TauriActivity() {
         }, 800)
     }
 
+    // Holds a transcript received via onNewIntent() while the activity was stopped.
+    // Delivered in onResume() once the WebView is live, not in onNewIntent() where
+    // the WebView is paused and evaluateJavascript() silently drops.
+    private var pendingWakeTranscript: String? = null
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleScreenOffTranscript(intent)
+        // Store transcript instead of firing immediately — the WebView is paused here.
+        // onResume() will pick it up once the WebView is live.
+        intent.getStringExtra("wake_word_transcript")?.let { transcript ->
+            pendingWakeTranscript = transcript
+            intent.removeExtra("wake_word_transcript")
+            // Re-apply show-when-locked flags on every delivery. The flags set in onCreate()
+            // may not survive the stop→resume cycle, so refresh them here before onResume().
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            } else {
+                @Suppress("DEPRECATION")
+                window.addFlags(
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                )
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
         isInForeground = true
-        handleScreenOffTranscript(intent)
+        // Deliver transcript stored by onNewIntent() (stopped-activity path), or
+        // fall back to checking the creation intent (fresh-launch path).
+        val pending = pendingWakeTranscript
+        pendingWakeTranscript = null
+        if (pending != null) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                fireJs("window.__handleScreenOffTranscript&&window.__handleScreenOffTranscript('${escJs(pending)}');")
+            }, 800)
+        } else {
+            handleScreenOffTranscript(intent)
+        }
     }
 
     override fun onPause() {
@@ -718,6 +750,18 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // Set before super so the window flag is in place before the activity is shown.
+        // Allows the full-screen-intent to launch this activity over a PIN-locked screen.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
             != PackageManager.PERMISSION_GRANTED) {

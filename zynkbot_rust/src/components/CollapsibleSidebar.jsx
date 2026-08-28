@@ -1,14 +1,7 @@
 import React, { useState } from 'react';
 
-export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, voiceInputSource, onVoiceSourceChange, hideToggle, onOpen }) {
+export default function CollapsibleSidebar({ children, icon, title, onInfoClick, onVoiceClick, hideToggle, onOpen }) {
   const [isOpen, setIsOpen] = useState(false);
-
-  // Offline Vosk dictation only ships for Android + Linux desktop. On Windows/macOS
-  // there's no Vosk library, so the offline option is disabled and OpenAI Whisper is
-  // shown/used instead (see useVoiceInput.js for the matching runtime fallback).
-  const voskAvailable =
-    !!window.VoskBridge || navigator.platform.toLowerCase().includes('linux');
-  const effectiveVoiceSource = voskAvailable ? (voiceInputSource || 'vosk') : 'openai';
 
   const handleToggle = () => {
     if (!isOpen && onOpen) onOpen();
@@ -79,98 +72,33 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
             {title}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {/* Voice Input Toggle */}
-            {onVoiceToggle && (
-              <label
-                title={voiceInputEnabled
-                  ? "Voice input enabled\nClick to disable"
-                  : "Voice input disabled\nClick to enable voice dictation"}
+            {onVoiceClick && (
+              <button
+                onClick={onVoiceClick}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '6px 12px',
                   background: '#44475a',
                   color: '#8be9fd',
+                  border: 'none',
+                  padding: '6px 12px',
                   borderRadius: '4px',
                   fontSize: '0.8rem',
                   fontWeight: '600',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
-                  userSelect: 'none',
                   height: '32px',
-                  boxSizing: 'border-box'
+                  boxSizing: 'border-box',
                 }}
                 onMouseOver={(e) => {
-                  e.currentTarget.style.background = '#8be9fd';
-                  e.currentTarget.style.color = '#22232a';
+                  e.target.style.background = '#8be9fd';
+                  e.target.style.color = '#22232a';
                 }}
                 onMouseOut={(e) => {
-                  e.currentTarget.style.background = '#44475a';
-                  e.currentTarget.style.color = '#8be9fd';
+                  e.target.style.background = '#44475a';
+                  e.target.style.color = '#8be9fd';
                 }}
               >
-                <input
-                  type="checkbox"
-                  checked={voiceInputEnabled}
-                  onChange={(e) => onVoiceToggle(e.target.checked)}
-                  style={{
-                    width: '14px',
-                    height: '14px',
-                    cursor: 'pointer',
-                    accentColor: '#8be9fd'
-                  }}
-                />
-                <span>🎤 Voice</span>
-              </label>
-            )}
-            {/* Dictation source dropdown (shown when voice enabled) */}
-            {onVoiceSourceChange && voiceInputEnabled && (
-              <select
-                value={effectiveVoiceSource}
-                onChange={(e) => onVoiceSourceChange(e.target.value)}
-                title={
-                  effectiveVoiceSource === 'vosk'
-                    ? 'Offline dictation (Vosk): runs entirely on your device. No internet, nothing leaves your machine. Produces all-lowercase text with no punctuation — modern LLMs handle unpunctuated input well, so responses are still accurate.'
-                    : 'OpenAI Whisper: sends audio to OpenAI. Adds punctuation and capitalization. OpenAI keeps the audio for up to 30 days for abuse monitoring only, then deletes it — API data is not used to train their models. Requires OPENAI_API_KEY and internet.'
-                }
-                style={{
-                  background: '#44475a',
-                  color: '#8be9fd',
-                  border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '0.8rem',
-                  fontWeight: '600',
-                  padding: '0 24px 0 10px',
-                  height: '32px',
-                  lineHeight: '32px',
-                  cursor: 'pointer',
-                  boxSizing: 'border-box',
-                  appearance: 'none',
-                  WebkitAppearance: 'none',
-                  MozAppearance: 'none',
-                  backgroundImage: 'url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\' viewBox=\'0 0 10 6\'%3E%3Cpath fill=\'%238be9fd\' d=\'M0 0h10L5 6z\'/%3E%3C/svg%3E")',
-                  backgroundRepeat: 'no-repeat',
-                  backgroundPosition: 'right 8px center'
-                }}
-              >
-                <option
-                  value="vosk"
-                  disabled={!voskAvailable}
-                  style={!voskAvailable ? { background: '#b0b0b0', color: '#000000' } : undefined}
-                  title={voskAvailable
-                    ? "Runs on-device. No internet. No punctuation, but LLMs handle unpunctuated text fine."
-                    : "Offline dictation (Vosk) is only available on Linux and Android in this release."}
-                >
-                  {voskAvailable ? 'Offline (no punctuation)' : 'Offline (Linux/Android only)'}
-                </option>
-                <option
-                  value="openai"
-                  title="Cloud transcription with punctuation. OpenAI holds audio 30 days for abuse review only, not training. Needs API key + internet."
-                >
-                  OpenAI Whisper
-                </option>
-              </select>
+                🎙️ Voice
+              </button>
             )}
             {onInfoClick && (
               <button

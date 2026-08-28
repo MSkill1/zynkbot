@@ -27,6 +27,7 @@ import OnboardingModal from "./components/OnboardingModal";
 import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
+import VoiceModal from "./components/VoiceModal";
 
 // Parse a wake-word transcript into a structured voice command.
 // Returns { type, ...params } or null if no command matched.
@@ -249,12 +250,19 @@ export default function App() {
   const [showSnapInsSection, setShowSnapInsSection] = useState(false);
   const [showSnapInModal, setShowSnapInModal] = useState(false);
   const [isLoadingEinstein, setIsLoadingEinstein] = useState(false);
-  const [voiceInputEnabled, setVoiceInputEnabled] = useState(() => {
-    // Default to true (enabled) unless user explicitly disables
-    const stored = localStorage.getItem('zynkbot_voice_input_enabled');
-    return stored === null ? true : stored === 'true';
-  });
-  // TTS response is enabled whenever voice is on (Android only) — no separate toggle needed.
+  const [heyZynkEnabled, setHeyZynkEnabled] = useState(() =>
+    localStorage.getItem('zynkbot_hey_zynk_enabled') !== 'false'
+  );
+  const [ttsEnabled, setTtsEnabled] = useState(() =>
+    localStorage.getItem('zynkbot_tts_enabled') !== 'false'
+  );
+  const [webSearchAutoExecute, setWebSearchAutoExecute] = useState(() =>
+    localStorage.getItem('zynkbot_web_search_auto') === 'true'
+  );
+  const [conversationModeEnabled, setConversationModeEnabled] = useState(() =>
+    localStorage.getItem('zynkbot_conversation_mode') === 'true'
+  );
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [isTtsSpeaking, setIsTtsSpeaking] = useState(false);
   // Set from VoiceButton via the 'zynkbot:dictation' event. The dictation button and
   // the wake word detector share one microphone, and this component owns the detector.
@@ -571,7 +579,22 @@ export default function App() {
     };
   }, []);
 
-  // Wake word service lifecycle — starts/stops with the voice toggle on Android.
+  useEffect(() => {
+    if (!conversationModeEnabled) return;
+    let wakeLock = null;
+    const acquire = async () => {
+      try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (_) {}
+    };
+    acquire();
+    const onVisible = () => { if (document.visibilityState === 'visible') acquire(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      try { wakeLock?.release(); } catch (_) {}
+    };
+  }, [conversationModeEnabled]);
+
+  // Wake word service lifecycle — starts/stops with the Hey Zynk toggle on Android.
   // Wake recording uses VoskBridge directly — completely separate from useVoiceInput/VoiceButton.
   useEffect(() => {
     if (!window.WakeWordBridge) return;
@@ -659,7 +682,7 @@ export default function App() {
       handleSendMessageRef.current?.(transcript.trim());
     };
 
-    if (voiceInputEnabled) {
+    if (heyZynkEnabled) {
       if (window.WakeWordBridge.isModelReady()) {
         window.WakeWordBridge.start(0.72);
       }
@@ -675,7 +698,7 @@ export default function App() {
       window.__handleScreenOffTranscript = null;
       if (window.WakeWordBridge) window.WakeWordBridge.stop();
     };
-  }, [voiceInputEnabled]);
+  }, [heyZynkEnabled]);
 
   // VoiceButton announces when the dictation button is in use. Tracked here because
   // the wake detector is owned by this component, and VoiceButton's own useVoiceInput
@@ -693,7 +716,7 @@ export default function App() {
   // send. The delay before resuming also lets the tail of that speech age out of the
   // detector's rolling audio buffer.
   useEffect(() => {
-    if (!window.WakeWordBridge || !voiceInputEnabled) return;
+    if (!window.WakeWordBridge || !heyZynkEnabled) return;
     if (isWakeRecording || isTtsSpeaking || isDictating) {
       window.WakeWordBridge.stop();
     } else {
@@ -704,7 +727,7 @@ export default function App() {
       }, 5000);
       return () => clearTimeout(t);
     }
-  }, [isWakeRecording, voiceInputEnabled, isTtsSpeaking, isDictating]);
+  }, [isWakeRecording, heyZynkEnabled, isTtsSpeaking, isDictating]);
 
   // Restart wake word when app returns to foreground (screen unlock, app switch back).
   // The service may have stopped while the screen was off; visibilitychange is the
@@ -712,14 +735,14 @@ export default function App() {
   useEffect(() => {
     if (!window.WakeWordBridge) return;
     const handleVisible = () => {
-      if (!voiceInputEnabled || isWakeRecording || isTtsSpeaking || isDictating) return;
+      if (!heyZynkEnabled || isWakeRecording || isTtsSpeaking || isDictating) return;
       if (window.WakeWordBridge.isModelReady()) {
         window.WakeWordBridge.start(0.72);
       }
     };
     document.addEventListener('visibilitychange', handleVisible);
     return () => document.removeEventListener('visibilitychange', handleVisible);
-  }, [voiceInputEnabled, isWakeRecording, isTtsSpeaking, isDictating]);
+  }, [heyZynkEnabled, isWakeRecording, isTtsSpeaking, isDictating]);
 
   // Play water-drop sound when AI response arrives
   // Auto-scroll: only scroll if user is already near the bottom
@@ -1016,6 +1039,11 @@ export default function App() {
         console.log('[WebSearch] Query:', response.web_search_query);
         console.log('[WebSearch] Original query:', response.original_query);
 
+        if (webSearchAutoExecute && triggeredByWake) {
+          await handleExecuteWebSearch(streamId, response.web_search_query, response.original_query);
+          return;
+        }
+
         // Replace streaming placeholder with the web search confirmation message
         const assistantMessage = {
           id: streamId,
@@ -1033,7 +1061,7 @@ export default function App() {
         };
 
         setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-        if (triggeredByWake && voiceInputEnabled && !!window.WakeWordBridge) speakResponse(assistantMessage.content);
+        if (triggeredByWake && ttsEnabled) speakResponse(assistantMessage.content);
         return; // Don't continue with normal processing
       }
 
@@ -1057,7 +1085,7 @@ export default function App() {
       console.log('Recalled memories:', assistantMessage.recalled_memories);
 
       setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-      if (triggeredByWake && voiceInputEnabled && !!window.WakeWordBridge) speakResponse(assistantMessage.content);
+      if (triggeredByWake && ttsEnabled) speakResponse(assistantMessage.content);
 
       console.log('[App] Metadata set:', {
         model_backend: response.model_backend,
@@ -1246,6 +1274,8 @@ export default function App() {
           : msg
       ));
 
+      if (wakeTriggeredRef.current && ttsEnabled) speakResponse(llmResponse.reply_text);
+
       console.log('[WebSearch] Search complete and answer synthesized');
 
     } catch (error) {
@@ -1335,7 +1365,7 @@ export default function App() {
         icon="⚙️"
         title="System Controls"
         onInfoClick={() => setShowUserIdentity(true)}
-        voiceInputEnabled={voiceInputEnabled}
+        onVoiceClick={() => setShowVoiceModal(true)}
         hideToggle={showConversationHistory}
         onOpen={() => {
           setShowAbout(false);
@@ -1351,76 +1381,11 @@ export default function App() {
           setShowSnapInModal(false);
           memoryManagerRef.current?.close();
         }}
-        onVoiceToggle={(enabled) => {
-          setVoiceInputEnabled(enabled);
-          localStorage.setItem('zynkbot_voice_input_enabled', enabled.toString());
-        }}
-        voiceInputSource={voiceInputSource}
-        onVoiceSourceChange={(source) => {
-          setVoiceInputSource(source);
-          localStorage.setItem('zynkbot_voice_input_source', source);
-        }}
       >
         <ContainmentModeSelector
           currentMode={containmentMode}
           onModeChange={setContainmentMode}
         />
-
-        {/* Wake word model download — only shown on Android when voice is on and models aren't cached */}
-        {window.WakeWordBridge && voiceInputEnabled && !wakeWordModelReady && (
-          <div style={{
-            padding: '12px',
-            background: '#1e1f29',
-            borderRadius: '8px',
-            border: '1px solid #8be9fd',
-            marginTop: '12px',
-          }}>
-            <p style={{ color: '#8be9fd', fontSize: '0.85rem', margin: '0 0 8px 0', fontWeight: 'bold' }}>
-              🎙️ Hey Zynk — voice models needed
-            </p>
-            {wakeWordDownloadProgress > 0 ? (
-              <div>
-                <div style={{ background: '#44475a', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-                  <div style={{
-                    background: '#8be9fd',
-                    height: '100%',
-                    width: `${wakeWordDownloadProgress}%`,
-                    transition: 'width 0.3s ease',
-                  }} />
-                </div>
-                <p style={{ color: '#9aa5c4', fontSize: '0.8rem', margin: '6px 0 0' }}>
-                  Downloading… {wakeWordDownloadProgress}%
-                </p>
-              </div>
-            ) : (
-              <>
-                {wakeWordDownloadError && (
-                  <p style={{ color: '#ff5555', fontSize: '0.8rem', margin: '0 0 6px 0' }}>
-                    {wakeWordDownloadError}
-                  </p>
-                )}
-                <button
-                  onClick={() => {
-                    setWakeWordDownloadError('');
-                    window.WakeWordBridge.downloadModels();
-                  }}
-                  style={{
-                    padding: '6px 14px',
-                    background: '#8be9fd',
-                    color: '#282a36',
-                    border: 'none',
-                    borderRadius: '4px',
-                    fontSize: '0.85rem',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Download (~3 MB)
-                </button>
-              </>
-            )}
-          </div>
-        )}
 
         <div className="model-selector">
           <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px'}}>
@@ -2225,7 +2190,7 @@ export default function App() {
                 </div>
 
                 {/* Mobile: circular mic button, bottom-right of textarea */}
-                {isMobile && voiceInputEnabled && (
+                {isMobile && (
                   <VoiceButton
                     ref={voiceButtonRef}
                     onTranscript={handleTranscript}
@@ -2257,7 +2222,7 @@ export default function App() {
                 gap: '10px'
               }}>
                 {/* Desktop-only: Voice in grid (mobile has circular button on textarea) */}
-                {!isMobile && (voiceInputEnabled ? (
+                {!isMobile && (
                   <VoiceButton
                     ref={voiceButtonRef}
                     onTranscript={handleTranscript}
@@ -2274,26 +2239,7 @@ export default function App() {
                       gridRow: 1,
                     }}
                   />
-                ) : (
-                  <div style={{
-                    width: '85px',
-                    height: '42px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    background: '#44475a',
-                    borderRadius: '8px',
-                    color: '#6272a4',
-                    fontSize: '0.7rem',
-                    textAlign: 'center',
-                    padding: '4px',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                    gridColumn: 1,
-                    gridRow: 1,
-                  }}>
-                    Voice Disabled
-                  </div>
-                ))}
+                )}
 
                 {/* Ensemble — mobile: TL (1,1); desktop: TR (1,2) */}
                 <button
@@ -2548,6 +2494,24 @@ export default function App() {
         isOpen={showSnapInModal}
         onClose={() => setShowSnapInModal(false)}
         userId={userId}
+      />
+      <VoiceModal
+        isOpen={showVoiceModal}
+        onClose={() => setShowVoiceModal(false)}
+        voiceInputSource={voiceInputSource}
+        onVoiceSourceChange={(src) => { setVoiceInputSource(src); localStorage.setItem('zynkbot_voice_input_source', src); }}
+        heyZynkEnabled={heyZynkEnabled}
+        onHeyZynkChange={(v) => { setHeyZynkEnabled(v); localStorage.setItem('zynkbot_hey_zynk_enabled', v); }}
+        wakeWordModelReady={wakeWordModelReady}
+        wakeWordDownloadProgress={wakeWordDownloadProgress}
+        wakeWordDownloadError={wakeWordDownloadError}
+        onDownloadModels={() => { setWakeWordDownloadError(''); window.WakeWordBridge?.downloadModels(); }}
+        ttsEnabled={ttsEnabled}
+        onTtsEnabledChange={(v) => { setTtsEnabled(v); localStorage.setItem('zynkbot_tts_enabled', v); }}
+        webSearchAutoExecute={webSearchAutoExecute}
+        onWebSearchAutoExecuteChange={(v) => { setWebSearchAutoExecute(v); localStorage.setItem('zynkbot_web_search_auto', v.toString()); }}
+        conversationModeEnabled={conversationModeEnabled}
+        onConversationModeChange={(v) => { setConversationModeEnabled(v); localStorage.setItem('zynkbot_conversation_mode', v.toString()); }}
       />
 
       {/* Einstein Demo Loading Modal (blocking, no dismiss) */}

@@ -331,15 +331,25 @@ class WakeWordService : Service() {
             var waited = 0
             while (!audioReleased && waited < 2000) { Thread.sleep(50); waited += 50 }
 
-            // Play chime via MediaPlayer (no WebView needed)
+            // Play chime via MediaPlayer using USAGE_ASSISTANT so it respects
+            // assistant/notification volume rather than media volume.
             try {
-                val mp = MediaPlayer.create(this@WakeWordService, R.raw.wake_chime)
-                if (mp != null) {
-                    val latch = CountDownLatch(1)
-                    mp.setOnCompletionListener { it.release(); latch.countDown() }
-                    mp.start()
-                    latch.await(2000, TimeUnit.MILLISECONDS)
+                val mp = MediaPlayer()
+                mp.setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                resources.openRawResourceFd(R.raw.wake_chime)?.let { afd ->
+                    mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    afd.close()
                 }
+                mp.prepare()
+                val latch = CountDownLatch(1)
+                mp.setOnCompletionListener { it.release(); latch.countDown() }
+                mp.start()
+                latch.await(2000, TimeUnit.MILLISECONDS)
             } catch (e: Exception) {
                 Log.w(TAG, "Chime playback failed: ${e.message}")
             }
@@ -423,16 +433,36 @@ class WakeWordService : Service() {
         }
         Log.i(TAG, "Delivering transcript to app: \"$transcript\"")
 
-        // Android 10+ blocks startActivity() from background components even in foreground
-        // services. Use a full-screen-intent notification — the standard mechanism for
-        // screen-off wake scenarios (alarm apps, incoming calls).
         val activityIntent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
             putExtra("wake_word_transcript", transcript)
         }
+
+        val pm = getSystemService(PowerManager::class.java)
+        val screenOn = pm.isInteractive
+
+        // On standard Android, try startActivity() directly when the screen is on and the
+        // app is minimized. Requires SYSTEM_ALERT_WINDOW ("Draw over other apps").
+        // Skip on GrapheneOS — its kernel patches block background activity launches even
+        // with that permission; the notification tap is the correct path there.
+        if (screenOn && !isGrapheneOS()) {
+            try {
+                startActivity(activityIntent)
+                Log.i(TAG, "Direct startActivity succeeded")
+            } catch (e: Exception) {
+                Log.w(TAG, "Direct startActivity failed: ${e.message}")
+            }
+        }
+
+        // Always post the notification: auto-opens for screen-locked (full-screen-intent),
+        // and acts as a tap-to-open fallback for GrapheneOS or when startActivity is blocked.
+        // Use FLAG_CANCEL_CURRENT so each delivery gets a fresh PendingIntent with the
+        // correct transcript. FLAG_UPDATE_CURRENT + FLAG_IMMUTABLE conflict: IMMUTABLE
+        // prevents UPDATE_CURRENT from changing extras, so subsequent deliveries would
+        // carry the first transcript forever.
         val pendingIntent = android.app.PendingIntent.getActivity(
             this, TRANSCRIPT_NOTIFICATION_ID, activityIntent,
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            android.app.PendingIntent.FLAG_CANCEL_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, TRANSCRIPT_CHANNEL_ID)
             .setContentTitle("Zynkbot")
@@ -440,7 +470,8 @@ class WakeWordService : Service() {
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(pendingIntent, true)
+            .setContentIntent(pendingIntent)          // fires when user taps the notification
+            .setFullScreenIntent(pendingIntent, !screenOn) // fires automatically when screen is off
             .setAutoCancel(true)
             .build()
         getSystemService(NotificationManager::class.java)
@@ -448,12 +479,33 @@ class WakeWordService : Service() {
 
         releaseWakeLock()
 
-        // Restart the ONNX audio loop so wake word keeps working without requiring
-        // the user to open the app. visibilitychange in JS will also restart it if
-        // the user opens the app, but that path is redundant and harmless.
-        lastModelDir?.let { dir ->
-            Thread { loadAndStart(dir) }.start()
-        }
+        // Play closing tone (faster/higher pitch = "done") to signal end of listening window.
+        // We do NOT restart the ONNX loop here. The JS side (TTS-aware useEffect +
+        // visibilitychange) restarts it correctly after TTS finishes. Restarting from
+        // Kotlin races with WakeWordBridge.stop()/start() calls and causes the loop to
+        // fire __wakeWordDetected during AI generation before JS can guard it.
+        Thread {
+            try {
+                val mp = MediaPlayer()
+                mp.setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                resources.openRawResourceFd(R.raw.wake_chime_close)?.let { afd ->
+                    mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    afd.close()
+                }
+                mp.prepare()
+                val latch = CountDownLatch(1)
+                mp.setOnCompletionListener { it.release(); latch.countDown() }
+                mp.start()
+                latch.await(2000, TimeUnit.MILLISECONDS)
+            } catch (e: Exception) {
+                Log.w(TAG, "Closing tone failed: ${e.message}")
+            }
+        }.start()
     }
 
     private fun releaseWakeLock() {
@@ -491,6 +543,17 @@ class WakeWordService : Service() {
         embBuffer.clear()
         releaseWakeLock()
         releaseAudioWakeLock()
+    }
+
+    // GrapheneOS blocks background activity launches (startActivity from a foreground
+    // service) even when SYSTEM_ALERT_WINDOW is granted. Detect it via a system property
+    // it exposes; fall back to checking Build.DISPLAY if reflection fails.
+    private fun isGrapheneOS(): Boolean = try {
+        val sp = Class.forName("android.os.SystemProperties")
+        val get = sp.getMethod("get", String::class.java, String::class.java)
+        (get.invoke(null, "org.grapheneos.version", "") as String).isNotEmpty()
+    } catch (_: Exception) {
+        Build.DISPLAY.contains("graphene", ignoreCase = true)
     }
 
     private fun createNotificationChannel() {
