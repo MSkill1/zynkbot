@@ -40,6 +40,13 @@ class MainActivity : TauriActivity() {
         // GrapheneOS enforces it more strictly than stock Android — see hotfix for LAN
         // access on Pixel 10 / Android 16 devices.
         private const val PERM_ACCESS_LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
+
+        // True only while the Activity is in the RESUMED state (app visible to user).
+        // WakeWordService reads this to decide whether to call the JS detection callback
+        // directly or route through the Kotlin-native path (chime + Vosk + notification).
+        // evaluateJavascript() silently drops when the WebView is paused (Activity in
+        // background), so this flag is the only reliable way to know if JS is reachable.
+        @Volatile var isInForeground = false
     }
 
     private var webViewRef: WeakReference<WebView>? = null
@@ -689,7 +696,13 @@ class MainActivity : TauriActivity() {
 
     override fun onResume() {
         super.onResume()
+        isInForeground = true
         handleScreenOffTranscript(intent)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        isInForeground = false
     }
 
     override fun onWebViewCreate(webView: WebView) {

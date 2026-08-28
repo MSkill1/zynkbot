@@ -72,6 +72,7 @@ class WakeWordService : Service() {
     @Volatile private var isForegrounded = false // guards against double startForeground on Android 14+
     private var audioThread: Thread? = null
     private var threshold = 0.5f
+    private var lastModelDir: String? = null     // stored so background detection can restart the loop
     private var wakeLock: PowerManager.WakeLock? = null      // detection wake lock (25s, screen-off flow)
     private var audioWakeLock: PowerManager.WakeLock? = null // CPU wake lock for audio loop while screen off
 
@@ -150,12 +151,20 @@ class WakeWordService : Service() {
             }
         }
 
-        // Stop any existing audio loop before starting a new one (prevents multiple threads).
-        if (running) {
+        // Stop existing audio loop and wait for it to exit before starting a new one.
+        // ONNX Runtime sessions are not safe for concurrent inference — if the old thread
+        // is still mid-inference when the new one starts, both corrupt each other's results.
+        if (running || audioThread?.isAlive == true) {
             Log.i(TAG, "Restarting audio loop (threshold=${threshold})")
             running = false
             audioThread?.interrupt()
+            audioThread?.join(300) // wait up to 300ms (one AudioRecord.read() cycle is 80ms)
             audioThread = null
+            // Close sessions so loadAndStart creates fresh ones without any shared state.
+            melSession?.close(); melSession = null
+            embSession?.close(); embSession = null
+            kwsSession?.close(); kwsSession = null
+            ortEnv?.close(); ortEnv = null
             melBuffer.clear()
             embBuffer.clear()
         }
@@ -175,6 +184,7 @@ class WakeWordService : Service() {
             }.start()
         }
 
+        lastModelDir = modelDir
         Thread { loadAndStart(modelDir) }.start()
         return START_STICKY
     }
@@ -286,12 +296,12 @@ class WakeWordService : Service() {
                     cooldownRemaining = COOLDOWN_CHUNKS
                     embBuffer.clear()
 
-                    val pm = getSystemService(PowerManager::class.java)
-                    if (pm.isInteractive) {
-                        // Screen is on: JS handles the full flow
+                    if (MainActivity.isInForeground) {
+                        // App is visible: JS WebView is live, call directly
                         detectionCallback?.invoke()
                     } else {
-                        // Screen is off: Kotlin handles chime + dictation, then wakes screen
+                        // App is minimized or screen is off: evaluateJavascript() silently
+                        // drops on a paused WebView. Use Kotlin-native path for both cases.
                         handleScreenOffDetection()
                     }
                 }
@@ -437,6 +447,13 @@ class WakeWordService : Service() {
             .notify(TRANSCRIPT_NOTIFICATION_ID, notification)
 
         releaseWakeLock()
+
+        // Restart the ONNX audio loop so wake word keeps working without requiring
+        // the user to open the app. visibilitychange in JS will also restart it if
+        // the user opens the app, but that path is redundant and harmless.
+        lastModelDir?.let { dir ->
+            Thread { loadAndStart(dir) }.start()
+        }
     }
 
     private fun releaseWakeLock() {
@@ -464,6 +481,7 @@ class WakeWordService : Service() {
         running = false
         consecutiveHighScores = 0
         audioThread?.interrupt()
+        audioThread?.join(300)
         audioThread = null
         melSession?.close(); melSession = null
         embSession?.close(); embSession = null
