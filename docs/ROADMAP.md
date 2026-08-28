@@ -159,6 +159,7 @@ This needs to be resolved before Play Store launch. The core tension:
 - **ZynkSync TLS handshake log spam** — downgrade `HandshakeFailure` from known paired IPs to `debug!`; add connection-attempt debounce on the Android client side.
 - **Android push notifications for ZChat** — post a system notification with tone when a ZChat message arrives while the app is backgrounded.
 - **ZynkLink mTLS cert exchange** — ZynkLink and ZChat routes currently use request-level auth (`check_zynklink_authorized`) rather than verified TLS certificates. Fix: exchange certs during `handle_zynklink_verify_code` / `handle_zynklink_accept_code`, store in `zynk_devices.tls_cert_der`, widen `rebuild_http_client` filter to include link-only peers, move ZynkLink/ZChat routes behind `require_verified_device`. Known security gap — must ship before v1.0.
+- **Photo attachments in chat** — attach images directly in the chat input bar (camera capture or gallery picker on Android; file picker on desktop). Image passed to vision-capable models (Claude, GPT-4o, Gemini) as base64 or URL; non-vision models receive a text notice. Lays groundwork for camera/OCR integration in later versions.
 
 ### Technical Debt (deferred to v1.1+)
 - **Real safety classifier** — current `toxic-bert` false-positives on clinical/grief language. Replacement options: Llama Guard 3 (GGUF via existing llama-cpp-2 bindings), LLM-delegated classification, or trust primary model refusals for adult modes. Thresholds raised to suppress false positives for now.
