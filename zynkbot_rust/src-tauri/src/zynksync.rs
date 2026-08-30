@@ -259,6 +259,10 @@ pub struct ZynkSyncService {
     /// In-memory last-heartbeat timestamps per peer device_id (not persisted)
     peer_last_seen: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
 
+    /// Debounce: last time a connection/TLS error was logged per peer device_id.
+    /// Prevents log spam when a known-paired peer is temporarily unreachable.
+    last_conn_error_logged: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+
     /// This device's TLS certificate PEM (for HTTPS server)
     cert_pem: String,
 
@@ -294,6 +298,7 @@ impl ZynkSyncService {
             pairing_code: Arc::new(RwLock::new(None)),
             failed_pairing_attempts: Arc::new(RwLock::new(HashMap::new())),
             peer_last_seen: Arc::new(RwLock::new(HashMap::new())),
+            last_conn_error_logged: Arc::new(RwLock::new(HashMap::new())),
             cert_pem,
             key_pem,
             cert_der,
@@ -2167,6 +2172,9 @@ impl ZynkSyncService {
             // This prevents incomplete transfers when a freshly-synced device has newer timestamp
             if local_inventory.memory_count == 0 && remote_inventory.memory_count == 0 {
                 println!("[ZynkSync] Both devices have no memories, nothing to sync");
+                // Still record the pairing row so future syncs are not treated as first sync.
+                // Without this, is_first_sync() returns true forever when both devices start empty.
+                self.update_sync_timestamp(&peer.device_id, true).await?;
                 return Ok(SyncResult {
                     peer_device_id: peer.device_id,
                     peer_device_name: peer.device_name,
@@ -3064,7 +3072,37 @@ impl ZynkSyncService {
                         }
                     }
                     Err(e) => {
-                        eprintln!("[ZynkSync] ✗ Auto-sync failed with {}: {}", peer.device_name, e);
+                        // Debounce connection/TLS errors: only log once per 30 s per peer to
+                        // avoid flooding logcat when a known-paired device is temporarily
+                        // unreachable (e.g. TLS HandshakeFailure from a paired IP).
+                        let is_conn_error = e.contains("HandshakeFailure")
+                            || e.contains("handshake")
+                            || e.contains("tls")
+                            || e.contains("TLS")
+                            || e.contains("connection")
+                            || e.contains("connect")
+                            || e.contains("tcp")
+                            || e.contains("network")
+                            || e.contains("os error")
+                            || e.contains("unreachable")
+                            || e.contains("refused")
+                            || e.contains("timed out");
+                        if is_conn_error {
+                            let should_log = {
+                                let map = self.last_conn_error_logged.read().await;
+                                match map.get(&peer.device_id) {
+                                    Some(last) => Utc::now().signed_duration_since(*last).num_seconds() >= 30,
+                                    None => true,
+                                }
+                            };
+                            if should_log {
+                                eprintln!("[ZynkSync] ✗ Auto-sync failed with {} (connection error — suppressing repeats for 30 s): {}",
+                                    peer.device_name, e);
+                                self.last_conn_error_logged.write().await.insert(peer.device_id.clone(), Utc::now());
+                            }
+                        } else {
+                            eprintln!("[ZynkSync] ✗ Auto-sync failed with {}: {}", peer.device_name, e);
+                        }
                     }
                 }
             }
@@ -3361,7 +3399,21 @@ impl ZynkSyncService {
                             let tls_stream = match acceptor.accept(tcp_stream).await {
                                 Ok(s) => s,
                                 Err(e) => {
-                                    eprintln!("[ZynkSync] TLS handshake failed from {}: {}", peer_addr, e);
+                                    // HandshakeFailure from a known-paired IP is expected when a
+                                    // peer's cert hasn't been pinned yet or when an unpaired device
+                                    // probes the port. Log at debug level only to avoid logcat spam
+                                    // on Android. Unexpected I/O errors still log at error level.
+                                    let e_str = e.to_string();
+                                    if e_str.contains("HandshakeFailure")
+                                        || e_str.contains("handshake")
+                                        || e_str.contains("AlertReceived")
+                                        || e_str.contains("corrupt message")
+                                    {
+                                        #[cfg(debug_assertions)]
+                                        eprintln!("[ZynkSync] TLS handshake failed from {} (debug): {}", peer_addr, e);
+                                    } else {
+                                        eprintln!("[ZynkSync] TLS accept error from {}: {}", peer_addr, e);
+                                    }
                                     return;
                                 }
                             };

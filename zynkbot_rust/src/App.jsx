@@ -250,6 +250,7 @@ export default function App() {
   const [showSnapInsSection, setShowSnapInsSection] = useState(false);
   const [showSnapInModal, setShowSnapInModal] = useState(false);
   const [isLoadingEinstein, setIsLoadingEinstein] = useState(false);
+  const [copyAllDone, setCopyAllDone] = useState(false);
   const [heyZynkEnabled, setHeyZynkEnabled] = useState(() =>
     localStorage.getItem('zynkbot_hey_zynk_enabled') !== 'false'
   );
@@ -818,6 +819,19 @@ export default function App() {
     if (window.confirm('Clear conversation history? This will remove all messages from the current chat.')) {
       setMessages([]);
     }
+  };
+
+  const handleCopyAll = () => {
+    const text = messages
+      .map(msg => {
+        const label = msg.role === 'user' ? 'You' : 'Zynkbot';
+        return `${label}: ${msg.content}`;
+      })
+      .join('\n\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopyAllDone(true);
+      setTimeout(() => setCopyAllDone(false), 1500);
+    });
   };
 
   const handleResumeSession = ({ sessionId: resumedId, messages: pastMessages }) => {
@@ -1903,6 +1917,27 @@ export default function App() {
                 >
                   ✏️ New
                 </button>
+                {messages.length > 0 && (
+                  <button
+                    onClick={handleCopyAll}
+                    title="Copy entire conversation to clipboard"
+                    style={{
+                      padding: '5px 14px',
+                      background: copyAllDone ? 'rgba(80,250,123,0.2)' : 'rgba(98,114,164,0.25)',
+                      color: copyAllDone ? '#50fa7b' : '#8be9fd',
+                      border: '1px solid ' + (copyAllDone ? '#50fa7b' : '#6272a4'),
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '0.8rem',
+                      fontWeight: '600',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseOver={(e) => { if (!copyAllDone) { e.currentTarget.style.background = 'rgba(98,114,164,0.45)'; } }}
+                    onMouseOut={(e) => { if (!copyAllDone) { e.currentTarget.style.background = 'rgba(98,114,164,0.25)'; } }}
+                  >
+                    {copyAllDone ? 'Copied!' : 'Copy All'}
+                  </button>
+                )}
                 <button
                   onClick={() => setShowConversationHistory(true)}
                   disabled={containmentMode === 'hipaa'}
