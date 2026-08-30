@@ -155,20 +155,24 @@ This needs to be resolved before Play Store launch. The core tension:
 
 ### Remaining for v1.0
 
+- **Response streaming** *(Tier 1 — do first)* — Stream LLM responses token-by-token as they generate rather than waiting for the full response. Use `stream: true` for API backends (Claude/GPT/Grok) and llama.cpp's streaming generation callback for local/Ollama backends. Purely a transport/rendering change — does not touch the memory graph, contradiction detection, or wake-word logic. Noticeable improvement in perceived responsiveness with minimal engineering risk.
+- **Guided API key onboarding** — Resolved pre-v1.0 monetization decision: polish first-run key setup rather than introduce a proxy. Walk users through getting their own API key during first-run (link to provider's key page, paste, done). Preserves the zero-trust architecture. Revisit subscription model post-launch once there is data on how much key setup actually blocks adoption.
+- **F-Droid submission** *(contingent on licensing transition)* — Submit to F-Droid main index or own repo once AGPL-3.0 relicensing is settled and the build is stable. Confirm bundled ONNX/Vosk model assets pass F-Droid automated scanning (data under open licenses — expected OK, but verify with reviewers before submission).
+
 - **ZynkSync outbox architecture** — Replace the current state-sync approach (which requires manual wiring for every new feature) with an event-driven outbox pattern. Every write to any memory-related table inserts a record into a `sync_outbox` table (operation, table, row ID, payload, timestamp). A background process drains the outbox to all paired devices. Offline devices accumulate entries until reconnect. Deletes become soft-deletes (`deleted_at` column) so they propagate as outbox events rather than disappearing silently. New features get sync automatically just by writing to the DB — no per-feature sync wiring needed. Conflict resolution: last-write-wins by timestamp covers ~95% of cases. Outbox TTL: prune entries older than N days; devices offline longer do a full re-sync. This permanently fixes the "clear on one device doesn't propagate" class of bugs and is the prerequisite for all future ZynkSync enhancements. Estimated effort: 2–3 days including schema migration and cross-platform testing.
 
-- **Voice/dictation/audio modularization** — Extract the wake word, Vosk dictation, TTS, and conversation loop logic from App.jsx into a dedicated module/hook. Currently entangled with component state in ways that make the feature set hard to extend. Do after the voice feature set is stable (v0.9.5).
+- ~~**Voice/dictation/audio modularization**~~ ✅ — Extracted wake word, Vosk dictation, TTS, and conversation loop logic from App.jsx into `useVoiceSession` hook (commit `5a3136d`).
 
 - ~~**Cloud backup (R2)**~~ ✅ — merged to main (v0.9.4). Encrypted R2 backup includes memories + conversation history. Tombstone-safe restore propagates to peers.
 - ~~**Vosk offline dictation**~~ ✅ — merged to main (v0.9.5-beta1). Linux (cpal + vosk crate) and Android (Kotlin bridge) both ship. Wake-word, timer, and voice memory query deferred to a later v0.9.x release.
 - **Play Store public release** — promote from internal testing to production track.
 - **Write-time memory consolidation** — multi-turn conversations produce near-duplicate memories. Extend the existing relationship-detection LLM call to return a three-way decision (fresh fact / rephrasing / elaboration) and skip or overwrite redundant memories. Zero new API calls. High impact, low cost.
 - **Scroll-to-bottom button on Android** — floating ↓ button when user scrolls up in a long conversation; auto-dismisses at bottom.
-- **ZynkSync TLS handshake log spam** — downgrade `HandshakeFailure` from known paired IPs to `debug!`; add connection-attempt debounce on the Android client side.
+- ~~**ZynkSync TLS handshake log spam**~~ ✅ — Downgraded `HandshakeFailure` to `debug!` and added connection-attempt debounce on Android client (commit `5aa41a8`).
 - **Android push notifications for ZChat** — post a system notification with tone when a ZChat message arrives while the app is backgrounded.
 - **ZynkLink mTLS cert exchange** — ZynkLink and ZChat routes currently use request-level auth (`check_zynklink_authorized`) rather than verified TLS certificates. Fix: exchange certs during `handle_zynklink_verify_code` / `handle_zynklink_accept_code`, store in `zynk_devices.tls_cert_der`, widen `rebuild_http_client` filter to include link-only peers, move ZynkLink/ZChat routes behind `require_verified_device`. Known security gap — must ship before v1.0.
 - **Photo attachments in chat** — attach images directly in the chat input bar (camera capture or gallery picker on Android; file picker on desktop). Image passed to vision-capable models (Claude, GPT-4o, Gemini) as base64 or URL; non-vision models receive a text notice. Lays groundwork for camera/OCR integration in later versions.
-- **Copy full chat history** — single button to copy an entire conversation to the clipboard as plain text. Per-message copy already exists; this covers the whole session. (Reported by galbicka, issue #5.)
+- ~~**Copy full chat history**~~ ✅ — Single-button copy of entire conversation to clipboard added (commit `5aa41a8`; reported by galbicka, issue #5).
 - **Save to memory conversationally** — detect "remember this" / "save that" phrasing in user input and route directly to memory storage without a full LLM round-trip. Faster, cheaper, and more intuitive than the current flow.
 - **Licensing transition** — relicense from the custom Zynkbot Community Source License to AGPL-3.0 (public/F-Droid distribution) paired with a commercial license for businesses wanting to avoid AGPL copyleft. Prerequisites: (1) dependency license audit (`cargo license` + `npm audit`) to confirm no GPL-incompatible deps before committing to AGPL; (2) CLA in place before any outside PRs are merged. Gate on pre-v1.0 checklist.
 - **Pre-submission code audit** *(final gate before v1.0 ships)* — Three passes: (1) **Structural** — dead code, unused imports, TODO/FIXME comments, inconsistent naming; run `cargo clippy` and ESLint clean; (2) **Security** — API key handling, network input validation, anything crossing a trust boundary; (3) **Professionalism** — module-level doc comments on major Rust files, consistent error handling patterns, no commented-out debug blocks. Primary target is App.jsx (most accumulated complexity); Rust side expected to be cleaner. Required before F-Droid submission and any external code review.
@@ -219,6 +223,20 @@ Zynkbot orchestrates Proton's own official apps via OS-level hand-off (Android i
 - **Drive:** "save this note to Drive" — write into a Drive-synced local folder if one exists, or hand off via Drive's own upload UI.
 - Not Proton-exclusive: same approach works with any calendar/drive app that handles standard intents.
 - Password manager (Proton Pass) integration explicitly out of scope.
+
+### Elder Mode — Reconsider Priority Alongside Parenting Mode
+
+Elder Mode was deprioritized in favor of Child Mode due to a larger addressable user base. Resurfaced via tester feedback (Mike — elderly, retired Linux admin) around Alzheimer's/cognitive-support use cases.
+
+**Why this may deserve higher priority than assumed:** Unlike Child Mode, Elder Mode is cooperative, not adversarial — no requirement to survive an intelligent, motivated user trying to defeat safeguards. Closer to a UX/prompt-design project than a security-enforcement project.
+
+**Design directions to explore with Mike before scoping:**
+- Memory graph as external cognitive support — patient, repeatable answers.
+- Repetition tolerance — same question asked multiple times handled gracefully.
+- Contradiction detection tone — gentle correction framing, distinct from the standard UI.
+- Family visibility with elder-as-principal — consent and control default to the elder user.
+
+**Action:** Talk to Mike directly about what he's picturing before scoping. Decide whether this ships alongside or before Parenting Mode.
 
 ### Notes on Scope
 
@@ -355,6 +373,7 @@ Early groundwork for the developer platform. Full SDK public release is v3.0; v1
 ### Ensemble Enhancements
 - **User-selectable coordinator model** — Currently auto-selected (Anthropic → xAI → OpenAI → local); allow user to manually designate which model acts as coordinator. Critical: the coordinator's training biases shape how the synthesis frames consensus and uncertainty — two coordinators can reach opposite verdicts from identical responses. For sensitive or contested questions, coordinator selection is not cosmetic.
 - **Per-question model presets** — Save favorite model combinations for specific use cases (e.g. "research" preset, "creative" preset)
+- **Ensemble divergence / "Show disagreement" mode** — User-toggleable option for Ensemble queries. Coordinator instruction swaps from "synthesize into a unified voice" to "present each model's independent answer side by side, uncompressed, and analyze why they diverge." Model disagreement is an informative signal on judgment/forecasting questions where the current consensus synthesis structurally suppresses it. Effort: small — a prompt-template variant, not new architecture; the multi-model query infrastructure already exists.
 
 ### ZynkLink Enhancements
 
