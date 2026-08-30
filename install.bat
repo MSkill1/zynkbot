@@ -239,32 +239,53 @@ echo Step 3: Installing Rust Toolchain
 echo =========================================
 echo.
 
-where cargo >nul 2>&1
-if %errorLevel% neq 0 (
+REM Detect Rust from the filesystem first, then fall back to PATH. `where cargo`
+REM alone is not reliable here: an elevated session launched from a parent with a
+REM stale environment block (Explorer caches its environment and does not always
+REM pick up PATH changes) can inherit a PATH without %USERPROFILE%\.cargo\bin even
+REM though Rust is installed -- which sent this step down the install path and tried
+REM to reinstall a perfectly good toolchain.
+set "RUST_PRESENT="
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "RUST_PRESENT=1"
+if not defined RUST_PRESENT (
+    where cargo >nul 2>&1
+    if not errorlevel 1 set "RUST_PRESENT=1"
+)
+if defined RUST_PRESENT goto :rust_already_installed
+
+REM ---- Rust not present: download and install ----
+REM Flattened with goto rather than if/else. Every %errorLevel% in this section used
+REM to be expanded at PARSE time -- before any line inside the block ran -- so the
+REM checks after ping, after the download and after rustup all re-read the stale
+REM value from `where cargo`. That made "[ERROR] Rust installer failed" fire whenever
+REM this branch was entered, whatever rustup actually returned, which is why fixing
+REM the Rust-absent case kept appearing to break the Rust-present case and back again.
     echo [INFO] Installing Rust...
     echo.
     echo [DEBUG] Testing network connectivity to rustup.rs...
     ping -n 1 win.rustup.rs >nul 2>&1
-    if %errorLevel% equ 0 (
-        echo [DEBUG] Network connectivity: OK
-    ) else (
+    REM `if errorlevel N` is evaluated at run time, unlike %errorLevel%
+    if errorlevel 1 (
         echo [DEBUG] Network connectivity: FAILED - Cannot reach win.rustup.rs
+    ) else (
+        echo [DEBUG] Network connectivity: OK
     )
     echo.
 
     echo [DEBUG] Attempting download via PowerShell...
     echo [DEBUG] Target: %~dp0rustup-init.exe
     powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; [System.Net.ServicePointManager]::CheckCertificateRevocationList = $false; Write-Host '[DEBUG] PowerShell: Starting download...'; Invoke-WebRequest -Uri 'https://win.rustup.rs' -OutFile '%~dp0rustup-init.exe' -UseBasicParsing; Write-Host '[DEBUG] PowerShell: Download complete'; exit 0 } catch { Write-Host '[DEBUG] PowerShell ERROR:' $_.Exception.Message -ForegroundColor Red; exit 1 }"
-    set PS_EXIT=%errorLevel%
-    echo [DEBUG] PowerShell exit code: %PS_EXIT%
+    set "PS_EXIT=!errorLevel!"
+    echo [DEBUG] PowerShell exit code: !PS_EXIT!
 
     REM If PowerShell failed, try curl as fallback with relaxed SSL
+    set "CURL_EXIT=not run"
     if not exist "%~dp0rustup-init.exe" (
         echo.
         echo [DEBUG] PowerShell download failed, trying curl...
         echo [DEBUG] Using --ssl-no-revoke flag to bypass certificate checks
         curl --ssl-no-revoke -v -o "%~dp0rustup-init.exe" https://win.rustup.rs
-        set CURL_EXIT=%errorLevel%
+        set "CURL_EXIT=!errorLevel!"
         echo [DEBUG] curl exit code: !CURL_EXIT!
     )
 
@@ -276,7 +297,7 @@ if %errorLevel% neq 0 (
         echo ========================================
         echo DOWNLOAD FAILED - Diagnostic Information
         echo ========================================
-        echo PowerShell exit code: %PS_EXIT%
+        echo PowerShell exit code: !PS_EXIT!
         echo curl exit code: !CURL_EXIT!
         echo.
         echo Possible causes:
@@ -302,9 +323,10 @@ if %errorLevel% neq 0 (
     echo Running Rust installer with default options...
     echo (This may take a few minutes...)
     "%~dp0rustup-init.exe" -y
+    set "RUSTUP_EXIT=!errorLevel!"
 
-    if %errorLevel% neq 0 (
-        echo [ERROR] Rust installer failed
+    if not "!RUSTUP_EXIT!"=="0" (
+        echo [ERROR] Rust installer failed ^(exit code !RUSTUP_EXIT!^)
         echo.
         echo This is usually caused by:
         echo   1. Antivirus quarantining rustup-init.exe
@@ -347,12 +369,21 @@ if %errorLevel% neq 0 (
     echo [INFO] Adding Rust to system PATH...
     powershell -ExecutionPolicy Bypass -File "%~dp0add_rust_to_system_path.ps1"
     echo [OK] Rust added to system PATH
-) else (
-    for /f "tokens=*" %%v in ('rustc --version') do set RUST_VERSION=%%v
+goto :rust_done
+
+:rust_already_installed
+REM Make sure PATH is set even if Rust was already installed -- this is the case that
+REM broke when an elevated session could not see cargo on PATH.
+set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+set "RUST_VERSION="
+for /f "tokens=*" %%v in ('rustc --version 2^>nul') do set "RUST_VERSION=%%v"
+if defined RUST_VERSION (
     echo [OK] Rust already installed: !RUST_VERSION!
-    REM Make sure PATH is set even if Rust was already installed
-    set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+) else (
+    echo [OK] Rust already installed: %USERPROFILE%\.cargo\bin\cargo.exe
 )
+
+:rust_done
 echo.
 
 REM Verify Rust is accessible in current session
