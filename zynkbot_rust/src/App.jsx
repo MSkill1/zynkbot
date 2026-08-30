@@ -28,70 +28,7 @@ import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
 import VoiceModal from "./components/VoiceModal";
-
-// Parse a wake-word transcript into a structured voice command.
-// Returns { type, ...params } or null if no command matched.
-// Vosk produces lowercase, no-punctuation text — regexes are written accordingly.
-function normalizeNumbers(text) {
-  const words = {
-    'zero':'0','one':'1','two':'2','three':'3','four':'4','five':'5',
-    'six':'6','seven':'7','eight':'8','nine':'9','ten':'10',
-    'eleven':'11','twelve':'12','thirteen':'13','fourteen':'14','fifteen':'15',
-    'sixteen':'16','seventeen':'17','eighteen':'18','nineteen':'19',
-    'twenty':'20','thirty':'30','forty':'40','fifty':'50','sixty':'60',
-    'ninety':'90','hundred':'100',
-  };
-  return text.replace(/\b(twenty|thirty|forty|fifty|sixty|ninety)-?(one|two|three|four|five|six|seven|eight|nine)\b/gi, (_, tens, ones) => {
-    return String(parseInt(words[tens.toLowerCase()]) + parseInt(words[ones.toLowerCase()]));
-  }).replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|ninety|hundred)\b/gi, m => words[m.toLowerCase()] || m);
-}
-
-function parseVoiceCommand(text) {
-  const t = normalizeNumbers(text.toLowerCase().trim());
-
-  // Timer: "set a timer for 5 minutes" / "5 minute timer" / "timer 30 seconds"
-  const timerRes = [
-    /(?:set\s+(?:a\s+)?)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)/,
-    /(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)\s+timer/,
-  ];
-  for (const re of timerRes) {
-    const m = t.match(re);
-    if (m) {
-      const val = parseFloat(m[1]);
-      const unit = m[2];
-      let seconds;
-      if (unit.startsWith('hour') || unit.startsWith('hr')) seconds = Math.round(val * 3600);
-      else if (unit.startsWith('min')) seconds = Math.round(val * 60);
-      else seconds = Math.round(val);
-      return { type: 'timer', seconds };
-    }
-  }
-
-  // Alarm: "set an alarm for 7:30" / "wake me up at 7" / "alarm at 7:30 pm"
-  const alarmM = t.match(
-    /(?:set\s+(?:an?\s+)?alarm\s+(?:for|at)|alarm\s+(?:for|at)|wake\s+me\s+up\s+at)\s+(\d{1,2})(?:[:\s](\d{1,2}))?\s*(am|pm)?/
-  );
-  if (alarmM) {
-    let hour = parseInt(alarmM[1]);
-    const minute = parseInt(alarmM[2] || '0');
-    const ampm = (alarmM[3] || '').toLowerCase();
-    if (ampm === 'pm' && hour !== 12) hour += 12;
-    if (ampm === 'am' && hour === 12) hour = 0;
-    return { type: 'alarm', hour, minute };
-  }
-
-  // Stopwatch: "start stopwatch" / "stopwatch"
-  if (/(?:start|begin)\s+(?:the\s+|a\s+)?stopwatch|^stopwatch$/.test(t)) {
-    return { type: 'stopwatch' };
-  }
-
-  // Stop TTS: "zynkbot stop" / "stop talking" / "stop dictating"
-  if (/^(zynkbot\s+)?stop(\s+(talking|dictating|reading))?$/.test(t)) {
-    return { type: 'stop_tts' };
-  }
-
-  return null;
-}
+import { useVoiceSession, parseVoiceCommand } from "./hooks/useVoiceSession";
 
 // API Base URL - DEPRECATED: All API calls now use Tauri commands
 // Keeping this for legacy components that haven't been migrated yet (ZynkSync, ZynkLink, etc.)
@@ -251,33 +188,9 @@ export default function App() {
   const [showSnapInModal, setShowSnapInModal] = useState(false);
   const [isLoadingEinstein, setIsLoadingEinstein] = useState(false);
   const [copyAllDone, setCopyAllDone] = useState(false);
-  const [heyZynkEnabled, setHeyZynkEnabled] = useState(() =>
-    localStorage.getItem('zynkbot_hey_zynk_enabled') !== 'false'
-  );
-  const [ttsEnabled, setTtsEnabled] = useState(() =>
-    localStorage.getItem('zynkbot_tts_enabled') !== 'false'
-  );
   const [webSearchAutoExecute, setWebSearchAutoExecute] = useState(() =>
     localStorage.getItem('zynkbot_web_search_auto') === 'true'
   );
-  const [conversationModeEnabled, setConversationModeEnabled] = useState(() =>
-    localStorage.getItem('zynkbot_conversation_mode') === 'true'
-  );
-  const [showVoiceModal, setShowVoiceModal] = useState(false);
-  const [isTtsSpeaking, setIsTtsSpeaking] = useState(false);
-  // Set from VoiceButton via the 'zynkbot:dictation' event. The dictation button and
-  // the wake word detector share one microphone, and this component owns the detector.
-  const [isDictating, setIsDictating] = useState(false);
-  const [voiceInputSource, setVoiceInputSource] = useState(() => {
-    // 'vosk' = offline (no punctuation), 'openai' = cloud Whisper (has punctuation)
-    return localStorage.getItem('zynkbot_voice_input_source') || 'vosk';
-  });
-  const [wakeWordModelReady, setWakeWordModelReady] = useState(() =>
-    window.WakeWordBridge ? window.WakeWordBridge.isModelReady() : false
-  );
-  const [wakeWordDownloadProgress, setWakeWordDownloadProgress] = useState(0);
-  const [wakeWordDownloadError, setWakeWordDownloadError] = useState('');
-  const [wakeWordFlash, setWakeWordFlash] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
   const memoryManagerRef = useRef(null);
   const conversationEndRef = useRef(null);
@@ -286,22 +199,7 @@ export default function App() {
   const inputTextareaRef = useRef(null);
   const voiceButtonRef = useRef(null);
 
-  // Wake word recording — managed directly, NOT through useVoiceInput hook.
-  // VoiceButton owns useVoiceInput exclusively; wake word owns its own VoskBridge calls.
-  const [isWakeRecording, setIsWakeRecording] = useState(false);
-  const silenceTimerRef = useRef(null);
-  const wakeTriggeredRef = useRef(false);
-  const ttsSourceRef = useRef(null);
-  const ttsAudioCtxRef = useRef(null);
-  // Stable ref to stopWakeRecording so the waveform overlay can call it without stale closure
-  const stopWakeRecordingRef = useRef(null);
-  // Stable ref to handleSendMessage so wake word effect never captures a stale closure
-  const handleSendMessageRef = useRef(null);
-  // Conversation loop — true while Hey Zynk is in a multi-turn session
-  const conversationLoopActiveRef = useRef(false);
-  // Stable ref to endConversationLoop so overlay and other callers can end the loop
-  const endConversationLoopRef = useRef(null);
-  const startListeningLoopRef = useRef(null);
+  const voice = useVoiceSession({ setMessages });
 
   // Splice transcribed text into the input at the cursor position, padding with
   // spaces when adjacent to non-whitespace so words don't run together.
@@ -330,85 +228,6 @@ export default function App() {
       });
       return `${before}${insertion}${after}`;
     });
-  };
-
-  const stopTts = () => {
-    try { ttsSourceRef.current?.stop(); } catch (_) {}
-    try { ttsAudioCtxRef.current?.close(); } catch (_) {}
-    ttsSourceRef.current = null;
-    ttsAudioCtxRef.current = null;
-    setIsTtsSpeaking(false);
-  };
-
-  const speakResponse = async (text) => {
-    if (!text?.trim()) return;
-    stopTts();
-    try {
-      const keys = await invoke('get_api_keys');
-      const apiKey = keys['OPENAI_API_KEY'];
-      if (!apiKey) return;
-      const res = await fetch('https://api.openai.com/v1/audio/speech', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'tts-1', input: text.slice(0, 4096), voice: 'alloy' }),
-      });
-      if (!res.ok) return;
-      const audioData = await res.arrayBuffer();
-      const audioCtx = new AudioContext();
-      ttsAudioCtxRef.current = audioCtx;
-      const buffer = await audioCtx.decodeAudioData(audioData);
-      const source = audioCtx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audioCtx.destination);
-      ttsSourceRef.current = source;
-      setIsTtsSpeaking(true);
-      source.start();
-      source.onended = () => {
-        setIsTtsSpeaking(false);
-        ttsSourceRef.current = null;
-        ttsAudioCtxRef.current = null;
-        if (conversationLoopActiveRef.current) {
-          startListeningLoopRef.current?.();
-        }
-      };
-    } catch (e) {
-      console.error('[TTS]', e);
-      setIsTtsSpeaking(false);
-    }
-  };
-
-  const executeVoiceCommand = (cmd, originalText) => {
-    const now = new Date().toISOString();
-    let confirmation = '';
-    if (cmd.type === 'timer') {
-      window.VoiceCommandBridge.setTimer(cmd.seconds);
-      const h = Math.floor(cmd.seconds / 3600);
-      const m = Math.floor((cmd.seconds % 3600) / 60);
-      const s = cmd.seconds % 60;
-      const parts = [];
-      if (h) parts.push(`${h} hour${h > 1 ? 's' : ''}`);
-      if (m) parts.push(`${m} minute${m > 1 ? 's' : ''}`);
-      if (s && !h) parts.push(`${s} second${s > 1 ? 's' : ''}`);
-      confirmation = `⏱️ Timer set for ${parts.join(' and ')}.`;
-    } else if (cmd.type === 'alarm') {
-      window.VoiceCommandBridge.setAlarm(cmd.hour, cmd.minute, 'Zynkbot');
-      const h12 = cmd.hour % 12 || 12;
-      const ampm = cmd.hour < 12 ? 'AM' : 'PM';
-      const min = cmd.minute.toString().padStart(2, '0');
-      confirmation = `⏰ Alarm set for ${h12}:${min} ${ampm}.`;
-    } else if (cmd.type === 'stopwatch') {
-      window.VoiceCommandBridge.startStopwatch();
-      confirmation = '⏱️ Stopwatch started.';
-    }
-    setMessages(prev => [
-      ...prev,
-      { id: Date.now(), role: 'user', content: originalText, timestamp: now, recalled_memories: [] },
-      { id: Date.now() + 1, role: 'assistant', content: confirmation, timestamp: now, recalled_memories: [], metadata: { model_backend: 'voice command' } },
-    ]);
-  };
-
-  const handleTranscript = (text) => {
-    if (text) insertTranscriptAtCursor(text);
   };
 
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -589,237 +408,8 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!conversationModeEnabled) return;
-    let wakeLock = null;
-    const acquire = async () => {
-      try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (_) {}
-    };
-    acquire();
-    const onVisible = () => { if (document.visibilityState === 'visible') acquire(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      document.removeEventListener('visibilitychange', onVisible);
-      try { wakeLock?.release(); } catch (_) {}
-    };
-  }, [conversationModeEnabled]);
-
-  // Wake word service lifecycle — starts/stops with the Hey Zynk toggle on Android.
-  // Wake recording uses VoskBridge directly — completely separate from useVoiceInput/VoiceButton.
-  useEffect(() => {
-    if (!window.WakeWordBridge) return;
-
-    const SILENCE_MS = 1000;
-
-    const CLOSING_PHRASES = /\b(thank(?:\s+you)?\s+zynk|goodbye\s+zynk|zynk\s+stop|stop\s+listening|that'?s?\s+all|close\s+session)\b/i;
-
-    // Stop wake recording and return the transcript. Does NOT go through useVoiceInput.
-    const stopWakeRecording = () => {
-      clearTimeout(silenceTimerRef.current);
-      window.__voskPartial = null;
-      setIsWakeRecording(false);
-      if (!window.VoskBridge) return Promise.resolve('');
-      return new Promise((resolve) => {
-        window.__voskResult = (text) => {
-          window.__voskResult = null;
-          window.__voskError = null;
-          resolve(text || '');
-        };
-        window.__voskError = () => {
-          window.__voskResult = null;
-          window.__voskError = null;
-          resolve('');
-        };
-        window.VoskBridge.stopListening();
-      });
-    };
-    stopWakeRecordingRef.current = stopWakeRecording;
-
-    // End the conversation loop: play the closing chime and re-arm the ONNX detector.
-    const endConversationLoop = () => {
-      conversationLoopActiveRef.current = false;
-      try {
-        const audio = new Audio('/wake_chime_close.wav');
-        audio.play().catch(() => {});
-      } catch (_) {}
-      if (window.WakeWordBridge.isModelReady()) {
-        setTimeout(() => window.WakeWordBridge.start(0.72), 1500);
-      }
-    };
-    endConversationLoopRef.current = endConversationLoop;
-
-    const autoSendWake = async () => {
-      console.log('[WakeWord] autoSendWake firing');
-      const text = await stopWakeRecording();
-      console.log('[WakeWord] transcript:', text);
-
-      if (!text) {
-        conversationLoopActiveRef.current = false;
-        if (window.WakeWordBridge.isModelReady()) {
-          setTimeout(() => window.WakeWordBridge.start(0.72), 1000);
-        }
-        return;
-      }
-
-      // Check closing / cancel phrases BEFORE the noise threshold so single-word
-      // commands like "stop" or "nevermind" are caught rather than discarded.
-      const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
-      const STOP_ALONE = /^\s*stop\s*$/i;
-      if (conversationLoopActiveRef.current && (CLOSING_PHRASES.test(text) || STOP_ALONE.test(text))) {
-        console.log('[WakeWord] closing phrase detected — ending conversation loop');
-        stopTts();
-        endConversationLoop();
-        return;
-      }
-      if (NEVERMIND.test(text)) {
-        console.log('[WakeWord] nevermind — discarding without sending');
-        endConversationLoop();
-        return;
-      }
-
-      // Noise threshold: fewer than 2 words is almost certainly background noise, not speech.
-      if (text.trim().split(/\s+/).length < 2) {
-        console.log('[WakeWord] transcript too short, treating as noise:', text);
-        conversationLoopActiveRef.current = false;
-        if (window.WakeWordBridge.isModelReady()) {
-          setTimeout(() => window.WakeWordBridge.start(0.72), 1000);
-        }
-        return;
-      }
-
-      wakeTriggeredRef.current = true;
-      handleSendMessageRef.current?.(text);
-    };
-
-    // Start the chime→Vosk→silence cycle. Used both for the initial wake and for
-    // each subsequent turn of the conversation loop.
-    const startListeningLoop = () => {
-      if (!window.VoskBridge) return;
-      if (window.__dictationActive) return;
-      const startRecording = () => {
-        window.__voskPartial = (partial) => {
-          if (partial.trim()) {
-            clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(autoSendWake, SILENCE_MS);
-          }
-        };
-        window.VoskBridge.startListening();
-        setIsWakeRecording(true);
-        silenceTimerRef.current = setTimeout(autoSendWake, 8000);
-      };
-      try {
-        const audio = new Audio('/wake_chime.wav');
-        audio.onended = startRecording;
-        audio.onerror = startRecording;
-        audio.play().catch(startRecording);
-      } catch (_) {
-        startRecording();
-      }
-    };
-    startListeningLoopRef.current = startListeningLoop;
-
-    window.__wakeWordDetected = () => {
-      if (window.__dictationActive) {
-        console.log('[WakeWord] ignored — dictation in progress');
-        return;
-      }
-      // If TTS is currently reading a response, "Hey Zynk" interrupts it and starts
-      // a new listening cycle so the user can speak their next command.
-      if (ttsSourceRef.current) {
-        console.log('[WakeWord] detected during TTS — stopping playback and re-listening');
-        stopTts();
-      }
-      console.log('[WakeWord] detected — playing chime then recording');
-      window.WakeWordBridge.stop();
-      setWakeWordFlash(true);
-      setTimeout(() => setWakeWordFlash(false), 2500);
-      if (conversationModeEnabled) {
-        conversationLoopActiveRef.current = true;
-      }
-      startListeningLoop();
-    };
-    window.__wakeWordModelReady = () => setWakeWordModelReady(true);
-    window.__wakeWordDownloadProgress = (n) => setWakeWordDownloadProgress(n);
-    window.__wakeWordDownloadError = (msg) => {
-      setWakeWordDownloadError(msg);
-      setWakeWordDownloadProgress(0);
-    };
-    // Screen-off path: WakeWordService recorded via Kotlin, delivers transcript here.
-    // Always enters conversation loop mode since the app just unlocked for this session.
-    window.__handleScreenOffTranscript = (transcript) => {
-      if (!transcript?.trim()) return;
-      console.log('[WakeWord] screen-off transcript received:', transcript);
-      conversationLoopActiveRef.current = true;
-      wakeTriggeredRef.current = true;
-      // Delay gives VoiceCommandBridge and other Android bridges time to register
-      // after the app opens from the lock screen. Without this, voice commands like
-      // "start stopwatch" fall through to the LLM because the bridge isn't ready yet.
-      setTimeout(() => handleSendMessageRef.current?.(transcript.trim()), 2000);
-    };
-
-    if (heyZynkEnabled) {
-      if (window.WakeWordBridge.isModelReady()) {
-        window.WakeWordBridge.start(0.72);
-      }
-    } else {
-      window.WakeWordBridge.stop();
-    }
-
-    return () => {
-      window.__wakeWordDetected = null;
-      window.__wakeWordModelReady = null;
-      window.__wakeWordDownloadProgress = null;
-      window.__wakeWordDownloadError = null;
-      window.__handleScreenOffTranscript = null;
-      conversationLoopActiveRef.current = false;
-      if (window.WakeWordBridge) window.WakeWordBridge.stop();
-    };
-  }, [heyZynkEnabled, conversationModeEnabled]);
-
-  // VoiceButton announces when the dictation button is in use. Tracked here because
-  // the wake detector is owned by this component, and VoiceButton's own useVoiceInput
-  // state cannot be read from outside it.
-  useEffect(() => {
-    const onDictation = (e) => setIsDictating(!!e.detail?.active);
-    window.addEventListener('zynkbot:dictation', onDictation);
-    return () => window.removeEventListener('zynkbot:dictation', onDictation);
-  }, []);
-
-  // Pause wake word detection while dictating, wake-recording, or TTS is playing, and
-  // resume only once all three are clear. Dictation has to be included: the detector
-  // and the dictation button share one microphone, so leaving it running meant the
-  // user's own dictation speech could trigger a wake recording the moment they hit
-  // send. The delay before resuming also lets the tail of that speech age out of the
-  // detector's rolling audio buffer.
-  useEffect(() => {
-    if (!window.WakeWordBridge || !heyZynkEnabled) return;
-    // isTtsSpeaking intentionally excluded: ONNX runs during TTS so "Hey Zynk" can interrupt.
-    if (isWakeRecording || isDictating) {
-      window.WakeWordBridge.stop();
-    } else if (!conversationLoopActiveRef.current) {
-      const t = setTimeout(() => {
-        if (window.WakeWordBridge && window.WakeWordBridge.isModelReady()) {
-          window.WakeWordBridge.start(0.72);
-        }
-      }, 5000);
-      return () => clearTimeout(t);
-    }
-  }, [isWakeRecording, heyZynkEnabled, isDictating]);
-
-  // Restart wake word when app returns to foreground (screen unlock, app switch back).
-  // The service may have stopped while the screen was off; visibilitychange is the
-  // reliable hook for this on Android WebView.
-  useEffect(() => {
-    if (!window.WakeWordBridge) return;
-    const handleVisible = () => {
-      if (!heyZynkEnabled || isWakeRecording || isDictating) return;
-      if (window.WakeWordBridge.isModelReady()) {
-        window.WakeWordBridge.start(0.72);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisible);
-    return () => document.removeEventListener('visibilitychange', handleVisible);
-  }, [heyZynkEnabled, isWakeRecording, isDictating]);
+  // (Wake lock, wake word lifecycle, dictation listener, pause/visibility effects
+  //  all live in useVoiceSession — see src/hooks/useVoiceSession.js)
 
   // Auto-scroll: only follow new content if the user hasn't scrolled up intentionally.
   // userScrolledUpRef is set by real scroll events only — never by programmatic scrolls —
@@ -1002,16 +592,16 @@ export default function App() {
     if (!message.trim()) return;
 
     // Capture and reset wake flag before any early returns
-    const triggeredByWake = wakeTriggeredRef.current;
-    wakeTriggeredRef.current = false;
+    const triggeredByWake = voice.wakeTriggeredRef.current;
+    voice.wakeTriggeredRef.current = false;
 
     // stop_tts works without VoiceCommandBridge
     const cmd = parseVoiceCommand(message);
-    if (cmd?.type === 'stop_tts') { stopTts(); setInput(''); return; }
+    if (cmd?.type === 'stop_tts') { voice.stopTts(); setInput(''); return; }
 
     // Other voice commands require VoiceCommandBridge (Android)
     if (window.VoiceCommandBridge && cmd) {
-      executeVoiceCommand(cmd, message); setInput(''); return;
+      voice.executeVoiceCommand(cmd, message); setInput(''); return;
     }
 
     if (isSendingRef.current) return; // prevent re-entrant calls before React re-renders
@@ -1161,7 +751,7 @@ export default function App() {
         };
 
         setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-        if (triggeredByWake && ttsEnabled) speakResponse(assistantMessage.content);
+        if (triggeredByWake && voice.ttsEnabled) voice.speakResponse(assistantMessage.content);
         return; // Don't continue with normal processing
       }
 
@@ -1185,7 +775,7 @@ export default function App() {
       console.log('Recalled memories:', assistantMessage.recalled_memories);
 
       setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-      if (triggeredByWake && ttsEnabled) speakResponse(assistantMessage.content);
+      if (triggeredByWake && voice.ttsEnabled) voice.speakResponse(assistantMessage.content);
 
       console.log('[App] Metadata set:', {
         model_backend: response.model_backend,
@@ -1223,8 +813,8 @@ export default function App() {
     }
   };
 
-  // Keep ref current on every render so wake word effect never holds a stale closure
-  handleSendMessageRef.current = handleSendMessage;
+  // Keep voice session ref current on every render so wake callbacks never hold a stale closure
+  voice.handleSendMessageRef.current = handleSendMessage;
 
   // Stop the currently streaming generation.
   // Optimistically flip UI out of loading state immediately — the backend's
@@ -1232,7 +822,7 @@ export default function App() {
   // the user shouldn't have to wait for it. The re-entrant send guard is also
   // cleared so a fresh Send can be sent right away.
   const handleStopGeneration = async () => {
-    stopTts();
+    voice.stopTts();
     setIsLoading(false);
     isSendingRef.current = false;
     try {
@@ -1375,7 +965,7 @@ export default function App() {
           : msg
       ));
 
-      if (wakeTriggeredRef.current && ttsEnabled) speakResponse(llmResponse.reply_text);
+      if (voice.wakeTriggeredRef.current && voice.ttsEnabled) voice.speakResponse(llmResponse.reply_text);
 
       console.log('[WebSearch] Search complete and answer synthesized');
 
@@ -1466,7 +1056,7 @@ export default function App() {
         icon="⚙️"
         title="System Controls"
         onInfoClick={() => setShowUserIdentity(true)}
-        onVoiceClick={() => setShowVoiceModal(true)}
+        onVoiceClick={() => voice.setShowVoiceModal(true)}
         hideToggle={showConversationHistory}
         onOpen={() => {
           setShowAbout(false);
@@ -2315,8 +1905,8 @@ export default function App() {
                 {isMobile && (
                   <VoiceButton
                     ref={voiceButtonRef}
-                    onTranscript={handleTranscript}
-                    disabled={isLoading || isWakeRecording}
+                    onTranscript={(text) => { if (text) insertTranscriptAtCursor(text); }}
+                    disabled={isLoading || voice.isWakeRecording}
                     style={{
                       position: 'absolute',
                       bottom: '8px',
@@ -2347,8 +1937,8 @@ export default function App() {
                 {!isMobile && (
                   <VoiceButton
                     ref={voiceButtonRef}
-                    onTranscript={handleTranscript}
-                    disabled={isLoading || isWakeRecording}
+                    onTranscript={(text) => { if (text) insertTranscriptAtCursor(text); }}
+                    disabled={isLoading || voice.isWakeRecording}
                     style={{
                       width: '85px',
                       height: '42px',
@@ -2618,22 +2208,22 @@ export default function App() {
         userId={userId}
       />
       <VoiceModal
-        isOpen={showVoiceModal}
-        onClose={() => setShowVoiceModal(false)}
-        voiceInputSource={voiceInputSource}
-        onVoiceSourceChange={(src) => { setVoiceInputSource(src); localStorage.setItem('zynkbot_voice_input_source', src); }}
-        heyZynkEnabled={heyZynkEnabled}
-        onHeyZynkChange={(v) => { setHeyZynkEnabled(v); localStorage.setItem('zynkbot_hey_zynk_enabled', v); }}
-        wakeWordModelReady={wakeWordModelReady}
-        wakeWordDownloadProgress={wakeWordDownloadProgress}
-        wakeWordDownloadError={wakeWordDownloadError}
-        onDownloadModels={() => { setWakeWordDownloadError(''); window.WakeWordBridge?.downloadModels(); }}
-        ttsEnabled={ttsEnabled}
-        onTtsEnabledChange={(v) => { setTtsEnabled(v); localStorage.setItem('zynkbot_tts_enabled', v); }}
+        isOpen={voice.showVoiceModal}
+        onClose={() => voice.setShowVoiceModal(false)}
+        voiceInputSource={voice.voiceInputSource}
+        onVoiceSourceChange={voice.setVoiceInputSource}
+        heyZynkEnabled={voice.heyZynkEnabled}
+        onHeyZynkChange={voice.setHeyZynkEnabled}
+        wakeWordModelReady={voice.wakeWordModelReady}
+        wakeWordDownloadProgress={voice.wakeWordDownloadProgress}
+        wakeWordDownloadError={voice.wakeWordDownloadError}
+        onDownloadModels={() => window.WakeWordBridge?.downloadModels()}
+        ttsEnabled={voice.ttsEnabled}
+        onTtsEnabledChange={voice.setTtsEnabled}
         webSearchAutoExecute={webSearchAutoExecute}
         onWebSearchAutoExecuteChange={(v) => { setWebSearchAutoExecute(v); localStorage.setItem('zynkbot_web_search_auto', v.toString()); }}
-        conversationModeEnabled={conversationModeEnabled}
-        onConversationModeChange={(v) => { setConversationModeEnabled(v); localStorage.setItem('zynkbot_conversation_mode', v.toString()); }}
+        conversationModeEnabled={voice.conversationModeEnabled}
+        onConversationModeChange={voice.setConversationModeEnabled}
       />
 
       {/* Einstein Demo Loading Modal (blocking, no dismiss) */}
@@ -2703,16 +2293,16 @@ export default function App() {
       )}
 
       {/* Waveform recording overlay — shown on mobile when mic is active */}
-      {isWakeRecording && isMobile && (
+      {voice.isWakeRecording && isMobile && (
         <div
           onClick={async () => {
-            const text = await stopWakeRecordingRef.current?.();
+            const text = await voice.stopWakeRecordingRef.current?.();
             const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
             if (!text || NEVERMIND.test(text)) {
-              endConversationLoopRef.current?.();
+              voice.endConversationLoopRef.current?.();
             } else {
-              wakeTriggeredRef.current = true;
-              handleSendMessageRef.current?.(text);
+              voice.wakeTriggeredRef.current = true;
+              voice.handleSendMessageRef.current?.(text);
             }
           }}
           style={{
@@ -2758,7 +2348,7 @@ export default function App() {
       )}
 
       {/* Wake word detection flash banner */}
-      {wakeWordFlash && (
+      {voice.wakeWordFlash && (
         <div style={{
           position: 'fixed',
           top: 0, left: 0, right: 0,
