@@ -111,10 +111,16 @@ llama-cpp-2 = "0.1"
 # Cross-platform mic capture, bypassing WebView getUserMedia (broken on Linux Tauri).
 cpal = "0.15"
 
-# Offline dictation (Vosk) - Linux desktop only; libvosk.so is Linux x86_64.
+# Offline dictation (Vosk) - Linux desktop; libvosk.so is bundled in lib/vosk.
 # Android uses vosk-android AAR via Kotlin bridge (not this crate).
-# Windows/macOS: libvosk.dll/.dylib not bundled; dictation falls back to OpenAI or browser.
+# macOS: libvosk.dylib not bundled; dictation falls back to OpenAI or browser.
 [target.'cfg(target_os = "linux")'.dependencies]
+vosk = "0.3"
+
+# Offline dictation (Vosk) - Windows desktop. libvosk.lib/.dll are NOT committed
+# (~66 MB); install.bat downloads the Windows SDK into lib/vosk. Kept as its own
+# target section rather than widening the Linux cfg so Linux resolution is unchanged.
+[target.'cfg(target_os = "windows")'.dependencies]
 vosk = "0.3"
 
 [target.'cfg(target_os = "android")'.dependencies]

@@ -187,4 +187,40 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 ---
 
+### KI-020 — Enabling Vosk on Windows makes the Vosk SDK a hard build requirement, with no fallback
+**Status:** Open — introduced by the KI-019 fix; decide before v1.0  
+**Affected:** Windows users who build without running `install.bat` first, or whose Vosk SDK download failed  
+**Description:** Un-gating Vosk for Windows (KI-019) adds `cargo:rustc-link-search=native=<manifest>/lib/vosk` in `build.rs` and makes `vosk = "0.3"` a Windows dependency. `lib/vosk/libvosk.lib` therefore becomes a **link-time requirement** on Windows. That file is not committed — the SDK is ~66 MB — so it only exists if `install.bat` downloaded it.
+
+`START_ZYNKBOT.bat` compiles on first launch and does **not** download the SDK; it only prepends `lib\vosk` to `PATH` when `libvosk.dll` already exists. So a user who goes straight to the launcher, or whose earlier Vosk download failed, gets a linker error naming `libvosk.lib` with nothing to indicate that a missing optional SDK is the cause. Before KI-019 this could not happen, because the Windows build ignored Vosk entirely.
+
+**Options:**
+1. **Download the SDK from `START_ZYNKBOT.bat` too** when `libvosk.lib` is absent, mirroring how the launcher already auto-detects CUDA. Makes the build self-healing and keeps dictation on by default. *Preferred.*
+2. Document `install.bat` as mandatory on Windows and leave the launcher alone. Cheapest, but the failure mode stays cryptic.
+3. Put Windows Vosk behind an opt-in cargo feature, so a default Windows build never breaks. Safest for the build, but offline dictation is then off by default, which defeats the purpose of KI-019.
+
+**Fix target:** Pick one before v1.0. Option 1 is the recommendation; the launcher already has the conditional `PATH` plumbing to hang it off.
+
+---
+
+## Build
+
+### KI-021 — `import_persona_collection` references a module that does not exist, so `cargo build` always fails
+**Status:** Open  
+**Affected:** Everyone who runs `install.bat`, on every platform  
+**Description:** `src/bin/import_persona_collection.rs:19` calls `app_lib::commands::persona_memory::import_persona_memory_collection(...)`, but there is no `persona_memory` module — `commands/mod.rs` declares 17 modules and that is not among them, and nothing else in the tree defines it. The build fails with:
+
+```
+error[E0433]: cannot find `persona_memory` in `commands`
+error: could not compile `app` (bin "import_persona_collection") due to 1 previous error
+```
+
+**Why it goes unnoticed in normal use:** `START_ZYNKBOT.bat` runs `tauri dev`, which builds only `--bin app` and never touches the broken binary. `install.bat` runs a plain `cargo build`, which builds *all* targets and therefore always hits it. The main application and library compile fine — `app.exe` links successfully — so the failure is limited to this one auxiliary binary.
+
+**User-visible effect:** `install.bat` prints `[WARNING] Build failed - see errors above` and then, a few lines later, `[OK] Installation Complete`. The app does work afterwards, but the installer contradicts itself and the failure looks fatal. A new tester would reasonably conclude the install is broken.
+
+**Fix target:** Three options — add the missing `commands::persona_memory` module (if the persona-collection feature is still intended; note `migrations/0009_persona_memory_collections.sql` exists, suggesting it was started), delete the stale binary, or keep it out of default builds with `required-features` in `Cargo.toml`. Whichever is chosen, `install.bat` should not report both a failed build and a successful installation in the same run.
+
+---
+
 *Last updated: 2026-08-12*

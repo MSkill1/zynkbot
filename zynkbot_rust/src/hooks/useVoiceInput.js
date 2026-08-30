@@ -176,6 +176,8 @@ export function useVoiceInput() {
   // Vosk has no Windows/macOS library, so a 'vosk' selection there transparently
   // falls back to OpenAI Whisper (browser audio).
   const isDesktopLinux = () => navigator.platform.toLowerCase().includes('linux');
+  // navigator.platform reports "Win32" on 64-bit Windows too.
+  const isDesktopWindows = () => navigator.platform.toLowerCase().includes('win');
 
   const startRecording = async () => {
     const source = getSource();
@@ -189,7 +191,13 @@ export function useVoiceInput() {
       // Linux: both engines go through Rust mic capture (bypasses WebKitGTK getUserMedia bug).
       return startRecordingDesktopRust(source);
     }
-    // Windows/macOS: browser audio → OpenAI Whisper (offline Vosk unavailable here).
+    // Windows: offline Vosk uses the Rust mic path (cpal + vosk). OpenAI Whisper stays on
+    // browser audio, because start_openai_recording is still Linux-only — routing it
+    // through Rust here would return "not available on this platform".
+    if (isDesktopWindows() && source !== 'openai') {
+      return startRecordingDesktopRust(source);
+    }
+    // macOS, and Windows with OpenAI selected: browser audio → OpenAI Whisper.
     return startRecordingDesktop();
   };
 
@@ -201,6 +209,10 @@ export function useVoiceInput() {
       return stopRecordingVosk();
     }
     if (isDesktopLinux()) {
+      return stopRecordingDesktopRust(source);
+    }
+    // Mirror the start routing: Windows + Vosk stopped via the Rust mic path.
+    if (isDesktopWindows() && source !== 'openai') {
       return stopRecordingDesktopRust(source);
     }
     // Windows/macOS: browser audio → OpenAI Whisper.

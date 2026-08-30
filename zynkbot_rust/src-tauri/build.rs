@@ -22,5 +22,17 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/lib/vosk");
     }
 
+    // Windows: link against libvosk.lib from the Vosk Windows SDK, which install.bat
+    // downloads into lib/vosk (not committed -- the SDK is ~66 MB). There is no rpath
+    // on Windows; libvosk.dll and its three MinGW runtime DLLs are found at run time
+    // via PATH, which START_ZYNKBOT.bat prepends when libvosk.dll is present.
+    #[cfg(target_os = "windows")]
+    {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let vosk_lib_dir = format!("{}/lib/vosk", manifest_dir);
+        println!("cargo:rustc-link-search=native={}", vosk_lib_dir);
+        println!("cargo:rerun-if-changed={}/libvosk.lib", vosk_lib_dir);
+    }
+
     tauri_build::build()
 }

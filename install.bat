@@ -693,13 +693,27 @@ if exist "%VOSK_LIB_DIR%\libvosk.lib" (
 ) else (
     echo [INFO] Downloading Vosk Windows SDK ^(~24MB^)...
     set "VOSK_ZIP=%TEMP%\vosk-win64.zip"
+    set "VOSK_EXTRACT=%TEMP%\vosk_extract"
+    set "VOSK_SDK_SUB=vosk-win64-0.3.45"
     set "VOSK_URL=https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip"
 
     powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!VOSK_URL!' -OutFile '!VOSK_ZIP!' -UseBasicParsing"
     if !errorLevel! equ 0 (
         echo [INFO] Extracting Vosk library files...
-        powershell -Command "Expand-Archive -Path '!VOSK_ZIP!' -DestinationPath '$env:TEMP\vosk_extract' -Force; Copy-Item '$env:TEMP\vosk_extract\vosk-win64-0.3.45\libvosk.lib' -Destination '!VOSK_LIB_DIR!\libvosk.lib' -Force; Copy-Item '$env:TEMP\vosk_extract\vosk-win64-0.3.45\libvosk.dll' -Destination '!VOSK_LIB_DIR!\libvosk.dll' -Force; Remove-Item '$env:TEMP\vosk_extract' -Recurse -Force; Remove-Item '!VOSK_ZIP!' -Force"
-        if !errorLevel! equ 0 (
+        REM Copy every file the SDK needs, not just libvosk.lib/.dll. The Windows Vosk
+        REM build is MinGW-based and libvosk.dll depends on libstdc++-6, libwinpthread-1
+        REM and libgcc_s_seh-1; without those it fails to load at run time even though
+        REM the build links fine.
+        REM
+        REM Every path is passed in from a batch variable. Writing '$env:TEMP\...' inside
+        REM a single-quoted PowerShell string does NOT expand it -- PowerShell then treats
+        REM it as a path on a drive literally named '$env' and extraction failed every
+        REM time, silently leaving zero files behind. Parentheses are avoided throughout,
+        REM because cmd counts them while parsing this if-block even inside quotes.
+        powershell -Command "Expand-Archive -Path '!VOSK_ZIP!' -DestinationPath '!VOSK_EXTRACT!' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libvosk.lib' -Destination '!VOSK_LIB_DIR!\libvosk.lib' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libvosk.dll' -Destination '!VOSK_LIB_DIR!\libvosk.dll' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libstdc++-6.dll' -Destination '!VOSK_LIB_DIR!\libstdc++-6.dll' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libwinpthread-1.dll' -Destination '!VOSK_LIB_DIR!\libwinpthread-1.dll' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libgcc_s_seh-1.dll' -Destination '!VOSK_LIB_DIR!\libgcc_s_seh-1.dll' -Force; Remove-Item '!VOSK_EXTRACT!' -Recurse -Force; Remove-Item '!VOSK_ZIP!' -Force"
+        REM Check the artifact rather than the exit code: Copy-Item failures are
+        REM non-terminating, so PowerShell can exit 0 having copied nothing.
+        if exist "!VOSK_LIB_DIR!\libvosk.lib" (
             echo [OK] Vosk library installed - offline dictation enabled
         ) else (
             echo [WARNING] Vosk extraction failed - offline dictation unavailable

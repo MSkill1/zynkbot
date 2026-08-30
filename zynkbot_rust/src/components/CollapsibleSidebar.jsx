@@ -3,11 +3,13 @@ import React, { useState } from 'react';
 export default function CollapsibleSidebar({ children, icon, title, onInfoClick, voiceInputEnabled, onVoiceToggle, voiceInputSource, onVoiceSourceChange, hideToggle, onOpen }) {
   const [isOpen, setIsOpen] = useState(false);
 
-  // Offline Vosk dictation only ships for Android + Linux desktop. On Windows/macOS
-  // there's no Vosk library, so the offline option is disabled and OpenAI Whisper is
-  // shown/used instead (see useVoiceInput.js for the matching runtime fallback).
+  // Offline Vosk dictation ships for Android, Linux desktop and Windows desktop.
+  // macOS is still excluded: libvosk.dylib is not bundled, so the offline option is
+  // disabled there and OpenAI Whisper is shown/used instead (see useVoiceInput.js for
+  // the matching runtime routing).
+  const platform = navigator.platform.toLowerCase();
   const voskAvailable =
-    !!window.VoskBridge || navigator.platform.toLowerCase().includes('linux');
+    !!window.VoskBridge || platform.includes('linux') || platform.includes('win');
   const effectiveVoiceSource = voskAvailable ? (voiceInputSource || 'vosk') : 'openai';
 
   const handleToggle = () => {
@@ -160,9 +162,9 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                   style={!voskAvailable ? { background: '#b0b0b0', color: '#000000' } : undefined}
                   title={voskAvailable
                     ? "Runs on-device. No internet. No punctuation, but LLMs handle unpunctuated text fine."
-                    : "Offline dictation (Vosk) is only available on Linux and Android in this release."}
+                    : "Offline dictation (Vosk) is not available on macOS in this release."}
                 >
-                  {voskAvailable ? 'Offline (no punctuation)' : 'Offline (Linux/Android only)'}
+                  {voskAvailable ? 'Offline (no punctuation)' : 'Offline (not on macOS)'}
                 </option>
                 <option
                   value="openai"

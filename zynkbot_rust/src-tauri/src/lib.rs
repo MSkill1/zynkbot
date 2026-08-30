@@ -22,8 +22,8 @@ mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod conversation_history;  // Persistent conversation log with full-text search
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
-#[cfg(target_os = "linux")]
-mod vosk_desktop; // Offline dictation on Linux desktop (cpal + vosk)
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod vosk_desktop; // Offline dictation on Linux and Windows desktop (cpal + vosk)
 
 use serde::{Deserialize, Serialize};
 // use chrono::Utc;  // Unused - commented out
@@ -1350,28 +1350,28 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
 async fn start_vosk_recording() -> Result<(), String> {
     #[cfg(target_os = "android")]
     { return Err("Android uses the VoskBridge Kotlin interface.".to_string()); }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
         return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::Vosk))
             .await
             .map_err(|e| format!("start task join failed: {e}"))?;
     }
-    #[cfg(not(any(target_os = "android", target_os = "linux")))]
-    Err("Offline dictation via Vosk is only available on Linux in this release.".to_string())
+    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+    Err("Offline dictation via Vosk is not available on this platform.".to_string())
 }
 
 #[tauri::command]
 async fn stop_vosk_recording() -> Result<String, String> {
     #[cfg(target_os = "android")]
     { return Err("Android uses the VoskBridge Kotlin interface.".to_string()); }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
         return tokio::task::spawn_blocking(vosk_desktop::stop)
             .await
             .map_err(|e| format!("stop task join failed: {e}"))?;
     }
-    #[cfg(not(any(target_os = "android", target_os = "linux")))]
-    Err("Offline dictation via Vosk is only available on Linux in this release.".to_string())
+    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+    Err("Offline dictation via Vosk is not available on this platform.".to_string())
 }
 
 /// Desktop dictation — cpal mic capture, OpenAI Whisper cloud engine (Linux only).
