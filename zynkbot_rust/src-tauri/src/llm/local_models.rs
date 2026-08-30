@@ -10,6 +10,7 @@ use llama_cpp_2::{
 use once_cell::sync::Lazy;
 use std::path::PathBuf;
 use std::num::NonZeroU32;
+use std::sync::Mutex;
 
 /// Detect model type and build appropriate prompt format
 fn build_prompt_for_model(model_path: &str, messages: &[Message]) -> String {
@@ -230,6 +231,28 @@ static BACKEND: Lazy<LlamaBackend> = Lazy::new(|| {
     backend.void_logs();
     backend
 });
+
+static MODEL_CACHE: Lazy<Mutex<Option<LocalModelSession>>> = Lazy::new(|| Mutex::new(None));
+
+/// Run `f` with a cached `LocalModelSession` for `model_path`.
+/// Loads the model on first call or when the path changes; reuses otherwise.
+pub fn with_cached_session<F, R>(model_path: &str, f: F) -> Result<R, LLMError>
+where
+    F: FnOnce(&LocalModelSession) -> Result<R, LLMError>,
+{
+    let mut cache = MODEL_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let needs_load = match &*cache {
+        Some(session) => session.model_path != model_path,
+        None => true,
+    };
+    if needs_load {
+        if cache.is_some() {
+            println!("[Rust Local Models] Model changed — unloading previous model");
+        }
+        *cache = Some(LocalModelSession::load(model_path)?);
+    }
+    f(cache.as_ref().unwrap())
+}
 
 /// A loaded model that can be reused across multiple generation calls.
 ///
