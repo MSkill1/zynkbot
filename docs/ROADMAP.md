@@ -63,6 +63,10 @@ After wake-word recording, support "send" or "send that" as a terminal command t
 
 **Effort estimate:** Part 0 (Vosk) is the bulk of the engineering (platform wiring). Parts 1–3 are medium; the real time cost is background-service reliability and battery testing on Android hardware.
 
+### Pre-release gate — Wake-word 5-minute limit investigation
+
+The wake-word service appears to stop detecting after ~5 minutes of inactivity. Currently attributed to "Android hardcoding a security limit" — this is not accurate, since wake-word inference is fully on-device with no remote attack surface. Likely candidates: Android Doze/background-service throttling, or a deliberately-written cooldown in the app's own code. Investigate the actual code path (WakeWordService, PARTIAL_WAKE_LOCK lifecycle, AudioRecord behavior under Doze) before treating it as an OS constraint. May overlap with "Bug D: Android wake word does not trigger with screen off" — diagnose together.
+
 ### Pre-release gate — Power audit (Android)
 
 Before v0.9.5 ships, profile the wake word service's battery impact on a real device with the screen on and no active conversation:
@@ -164,6 +168,9 @@ This needs to be resolved before Play Store launch. The core tension:
 - **Android push notifications for ZChat** — post a system notification with tone when a ZChat message arrives while the app is backgrounded.
 - **ZynkLink mTLS cert exchange** — ZynkLink and ZChat routes currently use request-level auth (`check_zynklink_authorized`) rather than verified TLS certificates. Fix: exchange certs during `handle_zynklink_verify_code` / `handle_zynklink_accept_code`, store in `zynk_devices.tls_cert_der`, widen `rebuild_http_client` filter to include link-only peers, move ZynkLink/ZChat routes behind `require_verified_device`. Known security gap — must ship before v1.0.
 - **Photo attachments in chat** — attach images directly in the chat input bar (camera capture or gallery picker on Android; file picker on desktop). Image passed to vision-capable models (Claude, GPT-4o, Gemini) as base64 or URL; non-vision models receive a text notice. Lays groundwork for camera/OCR integration in later versions.
+- **Copy full chat history** — single button to copy an entire conversation to the clipboard as plain text. Per-message copy already exists; this covers the whole session. (Reported by galbicka, issue #5.)
+- **Save to memory conversationally** — detect "remember this" / "save that" phrasing in user input and route directly to memory storage without a full LLM round-trip. Faster, cheaper, and more intuitive than the current flow.
+- **Licensing transition** — relicense from the custom Zynkbot Community Source License to AGPL-3.0 (public/F-Droid distribution) paired with a commercial license for businesses wanting to avoid AGPL copyleft. Prerequisites: (1) dependency license audit (`cargo license` + `npm audit`) to confirm no GPL-incompatible deps before committing to AGPL; (2) CLA in place before any outside PRs are merged. Gate on pre-v1.0 checklist.
 
 ### Technical Debt (deferred to v1.1+)
 - **Real safety classifier** — current `toxic-bert` false-positives on clinical/grief language. Replacement options: Llama Guard 3 (GGUF via existing llama-cpp-2 bindings), LLM-delegated classification, or trust primary model refusals for adult modes. Thresholds raised to suppress false positives for now.
@@ -182,7 +189,7 @@ This needs to be resolved before Play Store launch. The core tension:
 
 ---
 
-## v1.1 — Parenting Mode (Q4 2026)
+## v1.1 — Parenting Mode + Proton Orchestration (Q4 2026)
 
 **Focus:** First domain-specific feature expansion. Zynkbot as a family companion — safe AI interactions for children, family file sharing, and a parental review layer.
 
@@ -202,6 +209,15 @@ This needs to be resolved before Play Store launch. The core tension:
 - **Family ZynkLink group** — extend ZynkLink to support named family groups. Files (homework, photos, documents) shared into the family group are accessible to all paired family members.
 - **Homework flow** — child shares a document from their device; parent's Zynkbot can see it, comment on it, or run KB search against it.
 - **Family ZChat** — group chat across all family-paired devices; message history visible to all members.
+
+### Proton App Orchestration — Calendar + Drive
+
+Zynkbot orchestrates Proton's own official apps via OS-level hand-off (Android intents, standard file formats) rather than integrating with a Proton API — Proton has no stable public API for Calendar/Drive, and unofficial client libraries are too fragile to build on.
+
+- **Calendar:** extract event details via LLM intent parsing (same pattern as timer feature), generate a `.ics` file or fire an intent opening Proton Calendar's "create event" screen pre-filled. One tap to confirm.
+- **Drive:** "save this note to Drive" — write into a Drive-synced local folder if one exists, or hand off via Drive's own upload UI.
+- Not Proton-exclusive: same approach works with any calendar/drive app that handles standard intents.
+- Password manager (Proton Pass) integration explicitly out of scope.
 
 ### Notes on Scope
 
@@ -454,9 +470,16 @@ Early groundwork for the developer platform. Full public SDK is v3.0; v1.3 estab
 - **GPU/CUDA acceleration for embeddings** — offload sentence-transformer embedding model to GPU during document indexing; CPU fallback remains.
 - **Word document (.docx) support** *(carried from v1.0 deferred list)*
 
+### UI Internationalization (i18n)
+
+- **UI text translation (buildable now):** extract hardcoded frontend strings into an i18next-based system with per-language JSON files. Toggle in settings, auto-detect system locale as default.
+- **Voice/dictation language models:** Vosk offers non-English models; on-demand download per language, same pattern as existing model downloads.
+- **Full NER/entity-extraction localization (deferred):** bert-base-NER is English-only; a genuinely multilingual pipeline is a real research project. Defer until there is evidence of demand for a specific language.
+
 ### Snap-in Enhancements
 
 - **Therapist snap-in note export** — export session notes, insights, and conversation excerpts to plain text, Markdown, or PDF.
+- **Google account management snap-in** — orchestrate Google account traffic on the LAN: one device acts as the coordinator, routing which device uses which Google account. Uses Android account management intents and LAN discovery via existing ZynkLink infrastructure. Useful for households with multiple Google accounts across multiple devices.
 
 ---
 
@@ -688,6 +711,7 @@ Hash chain integrity layer on top of the v1.0 conversation history tables. The b
 
 - **Tor Integration** — anonymous remote sync over Tor hidden services (experimental, performance trade-off).
 - **Sneakernet Mode** — USB-based sync for air-gapped environments; export/import memory snapshots.
+- **Delta sync for large model files** — for syncing GB-scale local LLMs between devices that already have a previous version, transfer only changed portions (rsync/zsync principle) rather than the full file. Only helps on updates between devices that already share a baseline; first-time transfer still requires the full file. Low priority; most relevant to the sneakernet/rural-deployment use case.
 
 ### AI Enhancements
 

@@ -283,6 +283,7 @@ export default function App() {
   const chatContainerRef = useRef(null);
   const inputTextareaRef = useRef(null);
   const voiceButtonRef = useRef(null);
+  const userScrolledUpRef = useRef(false);
 
   // Wake word recording — managed directly, NOT through useVoiceInput hook.
   // VoiceButton owns useVoiceInput exclusively; wake word owns its own VoskBridge calls.
@@ -785,13 +786,14 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', handleVisible);
   }, [heyZynkEnabled, isWakeRecording, isTtsSpeaking, isDictating]);
 
-  // Play water-drop sound when AI response arrives
-  // Auto-scroll: only scroll if user is already near the bottom
+  // Auto-scroll: follow the bottom unless the user has manually scrolled up.
+  // userScrolledUpRef is set by the scroll listener below; cleared when they
+  // return to within 80px of the bottom. This prevents streaming tokens from
+  // yanking the view while the user is reading earlier messages.
   useEffect(() => {
     const container = chatContainerRef.current;
     if (!container) return;
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromBottom > 200) return;
+    if (userScrolledUpRef.current) return;
     container.scrollTop = container.scrollHeight;
   }, [messages, isLoading]);
 
@@ -800,7 +802,9 @@ export default function App() {
     if (!container) return;
     const onScroll = () => {
       const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      setShowScrollButton(distanceFromBottom > 80);
+      const scrolledUp = distanceFromBottom > 80;
+      userScrolledUpRef.current = scrolledUp;
+      setShowScrollButton(scrolledUp);
     };
     container.addEventListener('scroll', onScroll);
     // Fire once on mount so button appears immediately if user is already scrolled up
