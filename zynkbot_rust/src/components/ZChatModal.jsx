@@ -17,6 +17,8 @@ export default function ZChatModal({
   const [showEmoticons, setShowEmoticons] = useState(false);
   const [clearActive, setClearActive] = useState(false);
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const userScrolledUpRef = useRef(false);
   const inputRef = useRef(null);
 
   const insertTranscriptAtCursor = (text) => {
@@ -41,13 +43,26 @@ export default function ZChatModal({
     '😕', '😎', '🤓', '😈', '😭', '😆', '❤️'
   ];
 
-  // Scroll to bottom when messages change
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
+  // Attach scroll listener when modal opens; reset intent flag each open.
+  // Uses [isOpen] deps because the modal returns null when closed — containerRef
+  // is only populated after the portal renders, which happens when isOpen becomes true.
   useEffect(() => {
-    scrollToBottom();
+    if (!isOpen) return;
+    userScrolledUpRef.current = false;
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      userScrolledUpRef.current = el.scrollHeight - el.scrollTop - el.clientHeight > 80;
+    };
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [isOpen]);
+
+  // Auto-scroll to bottom on new messages — but not if the user has scrolled up to read history.
+  // The 3-second poll replaces messages on every tick; without this guard it force-scrolls every 3s.
+  useEffect(() => {
+    if (userScrolledUpRef.current) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   const fetchMessages = useCallback(async () => {
@@ -96,6 +111,7 @@ export default function ZChatModal({
   const handleSend = async () => {
     if (!input.trim() || isSending) return;
 
+    userScrolledUpRef.current = false; // user wants to see their sent message
     setIsSending(true);
     const messageText = input.trim();
     setInput(''); // Clear immediately for responsiveness
@@ -234,7 +250,7 @@ export default function ZChatModal({
         </div>
 
         {/* Messages Area */}
-        <div style={{
+        <div ref={messagesContainerRef} style={{
           flex: 1,
           overflowY: 'auto',
           marginBottom: '15px',

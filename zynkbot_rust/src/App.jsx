@@ -281,9 +281,9 @@ export default function App() {
   const memoryManagerRef = useRef(null);
   const conversationEndRef = useRef(null);
   const chatContainerRef = useRef(null);
+  const userScrolledUpRef = useRef(false);
   const inputTextareaRef = useRef(null);
   const voiceButtonRef = useRef(null);
-  const userScrolledUpRef = useRef(false);
 
   // Wake word recording — managed directly, NOT through useVoiceInput hook.
   // VoiceButton owns useVoiceInput exclusively; wake word owns its own VoskBridge calls.
@@ -786,10 +786,9 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', handleVisible);
   }, [heyZynkEnabled, isWakeRecording, isTtsSpeaking, isDictating]);
 
-  // Auto-scroll: follow the bottom unless the user has manually scrolled up.
-  // userScrolledUpRef is set by the scroll listener below; cleared when they
-  // return to within 80px of the bottom. This prevents streaming tokens from
-  // yanking the view while the user is reading earlier messages.
+  // Auto-scroll: only follow new content if the user hasn't scrolled up intentionally.
+  // userScrolledUpRef is set by real scroll events only — never by programmatic scrolls —
+  // so it reflects genuine user intent and can't be cleared by our own auto-scroll.
   useEffect(() => {
     const container = chatContainerRef.current;
     if (!container) return;
@@ -797,6 +796,9 @@ export default function App() {
     container.scrollTop = container.scrollHeight;
   }, [messages, isLoading]);
 
+  // Mount-once scroll listener: tracks user intent and scroll button visibility.
+  // Empty deps — never re-runs — so we never artificially read distanceFromBottom
+  // right after our own programmatic scroll (which was clearing the ref in prior attempts).
   useEffect(() => {
     const container = chatContainerRef.current;
     if (!container) return;
@@ -807,10 +809,8 @@ export default function App() {
       setShowScrollButton(scrolledUp);
     };
     container.addEventListener('scroll', onScroll);
-    // Fire once on mount so button appears immediately if user is already scrolled up
-    onScroll();
     return () => container.removeEventListener('scroll', onScroll);
-  }, [messages.length]);
+  }, []);
 
   // Voice input now handled by VoiceButton component (using whisper.cpp)
 
@@ -969,6 +969,13 @@ export default function App() {
     if (isSendingRef.current) return; // prevent re-entrant calls before React re-renders
     isSendingRef.current = true;
     const skipUserMessageAdd = options.skipUserMessageAdd === true;
+
+    // Scroll to bottom when the user sends — they want to see the response.
+    // Reset the "user scrolled up" flag so auto-scroll follows the new response.
+    userScrolledUpRef.current = false;
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
 
     // Disable send button immediately to prevent double-clicks
     setIsLoading(true);
@@ -1997,7 +2004,7 @@ export default function App() {
               </div>
               {showScrollButton && (
                 <button
-                  onClick={() => conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' })}
+                  onClick={() => { userScrolledUpRef.current = false; conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }}
                   style={{
                     position: 'absolute',
                     bottom: '12px',
