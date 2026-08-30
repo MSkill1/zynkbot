@@ -1938,7 +1938,7 @@ export default function App() {
                   <div className="message bot-message">
                     <div className="message-content">
                       {modelType && modelType.endsWith('.gguf')
-                        ? '⏳ Processing with local model (this may take a minute or two on CPU)...'
+                        ? '⏳ Processing with local model...'
                         : 'Thinking...'}
                     </div>
                   </div>

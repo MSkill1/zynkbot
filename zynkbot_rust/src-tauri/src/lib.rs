@@ -415,7 +415,6 @@ pub(crate) async fn ask_llm_for_relationships(
     extracted_fact: &str,
     similar_memories: &[(i32, String, Option<String>, f32)],
     backend: &str,
-    local_session: Option<llm::local_models::LocalModelSession>,
 ) -> Result<(Option<String>, Vec<RelationshipClassification>), String> {
     let similar_memories_text = if similar_memories.is_empty() {
         "(none)".to_string()
@@ -471,24 +470,24 @@ Return ONLY valid JSON starting with {{:
         call_xai_for_memory_decision(&prompt).await?
     } else if backend == "custom" {
         call_custom_for_memory_decision(&prompt).await?
-    } else if let Some(sess) = local_session {
-        // Paired-call path: use the session loaded for the main conversation call.
-        // No second disk read — the model is already in memory.
-        println!("[Memory Relations] Using pre-loaded model session for Call 2 (no second disk load)");
+    } else if backend.ends_with(".gguf") {
+        println!("[Memory Relations] Using cached model session for Call 2");
+        let backend_clone = backend.to_string();
         let prompt_clone = prompt.clone();
         tokio::task::spawn_blocking(move || {
-            let messages = vec![llm::Message {
-                role: "user".to_string(),
-                content: prompt_clone,
-            }];
-            sess.generate(messages, Some(4096), Some(0.1), Some(RELATIONSHIP_SCHEMA))
+            crate::llm::local_models::with_cached_session(&backend_clone, |sess| {
+                let messages = vec![llm::Message {
+                    role: "user".to_string(),
+                    content: prompt_clone,
+                }];
+                sess.generate(messages, Some(4096), Some(0.1), Some(RELATIONSHIP_SCHEMA))
+            })
         })
         .await
         .map_err(|e| format!("Task panicked: {}", e))?
         .map_err(|e| e.to_string())?
         .content
     } else {
-        // Fresh load fallback (session unavailable or API fallback path)
         call_local_for_memory_decision(&prompt, backend, Some(RELATIONSHIP_SCHEMA)).await?
     };
 
