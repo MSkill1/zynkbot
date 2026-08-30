@@ -91,32 +91,45 @@ set "VS_CPP="
 if exist "%VSWHERE%" (
     for /f "usebackq delims=" %%i in (`"%VSWHERE%" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_CPP=%%i"
 )
-if not defined VS_CPP (
-    echo [WARNING] Visual Studio Build Tools ^(C++^) not detected, or install is incomplete.
-    echo    If this is the FIRST launch, the Rust build will fail when compiling llama.cpp.
-    echo    Install https://aka.ms/vs/17/release/vs_BuildTools.exe ^("Desktop development
-    echo    with C++"^), reboot, then run this again. ^(Already-built installs can ignore this.^)
-    echo.
-) else (
-    echo [OK] Visual Studio Build Tools found
+REM Flattened with goto labels rather than a nested if/else: the previous version left
+REM the "else (" block unclosed and only parsed because a goto jumped out of it.
+if defined VS_CPP goto :vs_found
 
-    REM Set NVCC_CCBIN for CUDA compilation (nvcc needs to find cl.exe)
-    for /f "delims=" %%i in ('dir /b /ad "%VS_CPP%\VC\Tools\MSVC" 2^>nul ^| sort /r') do (
-        set "MSVC_VERSION=%%i"
-        goto :found_msvc
-    )
-    :found_msvc
-    if defined MSVC_VERSION (
-        set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\!MSVC_VERSION!\bin\Hostx64\x64"
-        echo [OK] CUDA compiler configured
+echo [WARNING] Visual Studio Build Tools ^(C++^) not detected, or install is incomplete.
+echo    If this is the FIRST launch, the Rust build will fail when compiling llama.cpp.
+echo    Install https://aka.ms/vs/17/release/vs_BuildTools.exe ^("Desktop development
+echo    with C++"^), reboot, then run this again. ^(Already-built installs can ignore this.^)
+echo.
+goto :vs_done
 
-    REM Set CUDA_PATH for CMake CUDA detection
-    if exist "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6" (
-        set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6"
-        set "CUDA_HOME=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6"
-        echo [OK] CUDA_PATH configured
-    )
+:vs_found
+echo [OK] Visual Studio Build Tools found
+
+REM Set NVCC_CCBIN for CUDA compilation (nvcc needs to find cl.exe).
+REM sort /r puts the newest MSVC first; keep only that one.
+set "MSVC_VERSION="
+for /f "delims=" %%i in ('dir /b /ad "%VS_CPP%\VC\Tools\MSVC" 2^>nul ^| sort /r') do (
+    if not defined MSVC_VERSION set "MSVC_VERSION=%%i"
 )
+if defined MSVC_VERSION (
+    set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\!MSVC_VERSION!\bin\Hostx64\x64"
+    echo [OK] CUDA compiler configured
+)
+
+REM Derive CUDA_PATH from wherever nvcc actually lives so any toolkit version works.
+REM This used to hardcode v12.6, so anyone on a different CUDA release got no
+REM CUDA_PATH at all and the GPU build failed in a confusing way.
+if not defined CUDA_PATH (
+    for %%n in (nvcc.exe) do set "NVCC_BIN_DIR=%%~dp$PATH:n"
+)
+if defined NVCC_BIN_DIR (
+    set "CUDA_ROOT=!NVCC_BIN_DIR:\bin\=!"
+    set "CUDA_PATH=!CUDA_ROOT!"
+    set "CUDA_HOME=!CUDA_ROOT!"
+    echo [OK] CUDA_PATH configured: !CUDA_ROOT!
+)
+
+:vs_done
 
 REM ============================================================
 REM Check .env file
@@ -141,16 +154,18 @@ if not exist "zynkbot_rust\src-tauri\models\user" (
 )
 
 REM ============================================================
-REM Install npm dependencies if missing
+REM Sync npm dependencies
 REM ============================================================
-if not exist "zynkbot_rust\node_modules" (
-    echo [INFO] Installing npm dependencies...
-    cd zynkbot_rust
-    call npm install
-    cd ..
-    echo [OK] npm dependencies installed
-    echo.
-)
+REM Run npm install every launch, not just when node_modules is absent. A pull that
+REM adds a dependency (e.g. @tauri-apps/plugin-opener) otherwise leaves node_modules
+REM stale and the frontend dies with an opaque "Module not found" error that gives no
+REM hint npm install is the fix. This is a ~2s no-op once the lockfile is satisfied.
+echo [INFO] Syncing npm dependencies...
+cd zynkbot_rust
+call npm install --no-audit --no-fund
+cd ..
+echo [OK] npm dependencies up to date
+echo.
 
 REM ============================================================
 REM Start Rust Desktop App

@@ -814,8 +814,7 @@ async fn call_local_for_memory_decision(prompt: &str, backend: &str, json_schema
     let model_path = if backend.ends_with(".gguf") {
         backend.to_string()
     } else {
-        std::env::var("LOCAL_MODEL_PATH")
-            .unwrap_or_else(|_| "models/user/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf".to_string())
+        llm::local_models::resolve_default_model_path().map_err(|e| e.to_string())?
     };
 
     let messages = vec![Message {

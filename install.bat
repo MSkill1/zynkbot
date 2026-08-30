@@ -390,12 +390,20 @@ if %errorLevel% equ 0 (
 
         REM Copy CUDA MSBuild integration files for Visual Studio Build Tools
         REM (Full VS IDE gets these automatically, Build Tools needs manual copy)
-        set "CUDA_INTEGRATION_SRC=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\extras\visual_studio_integration\MSBuildExtensions"
-        set "VS_BUILDTOOLS_DIR=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Microsoft\VC\v170\BuildCustomizations"
+        REM Both paths are derived rather than hardcoded: the CUDA root comes from
+        REM nvcc's own location (was pinned to v12.6) and the VS path from VS_CPP,
+        REM which vswhere resolved above (was pinned to 2022 BuildTools).
+        set "NVCC_BIN_DIR="
+        for %%n in (nvcc.exe) do set "NVCC_BIN_DIR=%%~dp$PATH:n"
+        set "CUDA_ROOT=!NVCC_BIN_DIR:\bin\=!"
+        for %%r in ("!CUDA_ROOT!") do set "CUDA_VER_DIR=%%~nxr"
+        set "CUDA_VER=!CUDA_VER_DIR:v=!"
+        set "CUDA_INTEGRATION_SRC=!CUDA_ROOT!\extras\visual_studio_integration\MSBuildExtensions"
+        set "VS_BUILDTOOLS_DIR=!VS_CPP!\MSBuild\Microsoft\VC\v170\BuildCustomizations"
 
         if exist "!CUDA_INTEGRATION_SRC!" (
             if exist "!VS_BUILDTOOLS_DIR!" (
-                if not exist "!VS_BUILDTOOLS_DIR!\CUDA 12.6.props" (
+                if not exist "!VS_BUILDTOOLS_DIR!\CUDA !CUDA_VER!.props" (
                     echo [INFO] Installing CUDA MSBuild integration for Build Tools...
                     copy /Y "!CUDA_INTEGRATION_SRC!\*" "!VS_BUILDTOOLS_DIR!\" >nul 2>&1
                     if !errorLevel! equ 0 (

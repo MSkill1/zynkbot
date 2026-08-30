@@ -25,12 +25,13 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
-# Check if npm dependencies are installed
-if [ ! -d "node_modules" ]; then
-    echo "📦 Installing npm dependencies..."
-    npm install
-    echo ""
-fi
+# Sync npm dependencies every launch, not just when node_modules is absent: a pull
+# that adds a dependency otherwise leaves node_modules stale and the frontend dies
+# with an opaque "Module not found" error. This is a fast no-op once satisfied.
+# Kept non-fatal (|| echo) so a network hiccup can't block an otherwise working install.
+echo "📦 Syncing npm dependencies..."
+npm install --no-audit --no-fund || echo "⚠️  npm install failed — continuing with existing node_modules"
+echo ""
 
 # Load Rust environment and export PATH for npm subprocesses
 if [ -f "$HOME/.cargo/env" ]; then
@@ -98,6 +99,19 @@ if command -v nvidia-smi &> /dev/null || ls /usr/lib/x86_64-linux-gnu/libcuda.so
     if command -v nvcc &> /dev/null; then
         TAURI_FEATURES="--features cuda"
         echo "⚡ CUDA detected — building with GPU acceleration"
+
+        # CUDA installed via apt lands in /usr/lib/x86_64-linux-gnu/ instead of the
+        # standard /usr/local/cuda/ that llama-cpp-sys-2 and find_cuda_helper expect,
+        # and nvcc needs -fPIC to compile CUDA code into a cdylib.
+        #
+        # These used to live in zynkbot_rust/src-tauri/.cargo/config.toml, but a cargo
+        # [env] block applies on every platform — it was injecting CUDA_PATH=/usr and
+        # -fPIC into Windows and macOS builds. Setting them here keeps them Linux-only.
+        # ${VAR:-default} preserves the old behaviour: a cargo [env] entry without
+        # force=true also yields to a value already present in the environment.
+        export CUDA_PATH="${CUDA_PATH:-/usr}"
+        export CUDA_LIBRARY_PATH="${CUDA_LIBRARY_PATH:-/usr/lib/x86_64-linux-gnu}"
+        export CUDAFLAGS="${CUDAFLAGS:--Xcompiler -fPIC}"
     fi
 fi
 

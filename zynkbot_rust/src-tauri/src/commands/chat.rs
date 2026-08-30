@@ -752,9 +752,9 @@ pub async fn send_message_with_memory(
             // Explicit path provided
             forced_backend.clone()
         } else {
-            // Use default model from environment or fallback
-            std::env::var("LOCAL_MODEL_PATH")
-                .unwrap_or_else(|_| "models/user/Llama-3.2-3B-Instruct-Q4_K_M.gguf".to_string())
+            // LOCAL_MODEL_PATH override, else whichever model is actually installed
+            crate::llm::local_models::resolve_default_model_path()
+                .map_err(|e| e.to_string())?
         };
 
         let messages = vec![crate::llm::Message {
@@ -2074,8 +2074,8 @@ pub async fn run_ensemble(
         let model_path = if coordinator_model.ends_with(".gguf") {
             coordinator_model.clone()
         } else {
-            std::env::var("LOCAL_MODEL_PATH")
-                .unwrap_or_else(|_| "models/user/Llama-3.2-3B-Instruct-Q4_K_M.gguf".to_string())
+            crate::llm::local_models::resolve_default_model_path()
+                .map_err(|e| e.to_string())?
         };
         let messages = vec![crate::llm::Message {
             role: "user".to_string(),

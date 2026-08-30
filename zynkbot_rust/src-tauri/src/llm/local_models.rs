@@ -254,6 +254,53 @@ where
     f(cache.as_ref().unwrap())
 }
 
+/// Resolve which local model to use when the caller didn't name one explicitly.
+///
+/// Order: the `LOCAL_MODEL_PATH` override, then the first `.gguf` present in
+/// `models/user/`. There is deliberately no baked-in filename fallback — the
+/// previous hardcoded defaults disagreed with each other and named models the
+/// setup wizard never downloads, so a fresh machine failed with
+/// "Model file not found" instead of using the model it actually had.
+pub fn resolve_default_model_path() -> Result<String, LLMError> {
+    if let Ok(path) = std::env::var("LOCAL_MODEL_PATH") {
+        if !path.trim().is_empty() {
+            return Ok(path);
+        }
+    }
+
+    let user_dir = crate::db::get_models_dir().join("user");
+    let entries = std::fs::read_dir(&user_dir).map_err(|e| {
+        LLMError::RequestFailed(format!(
+            "No local model configured and {} could not be read: {}",
+            user_dir.display(),
+            e
+        ))
+    })?;
+
+    let mut models: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.extension()
+                .and_then(|ext| ext.to_str())
+                .map_or(false, |ext| ext.eq_ignore_ascii_case("gguf"))
+        })
+        .collect();
+    // Sort so the choice is stable across runs rather than filesystem-order dependent.
+    models.sort();
+
+    match models.first() {
+        Some(path) => {
+            let path = path.to_string_lossy().into_owned();
+            println!("[Rust Local Models] No model specified — using {}", path);
+            Ok(path)
+        }
+        None => Err(LLMError::RequestFailed(format!(
+            "No GGUF model found in {}. Download one from the setup wizard, or set LOCAL_MODEL_PATH.",
+            user_dir.display()
+        ))),
+    }
+}
+
 /// A loaded model that can be reused across multiple generation calls.
 ///
 /// Create with `LocalModelSession::load`, call `generate` one or more times,
