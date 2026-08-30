@@ -299,6 +299,8 @@ export default function App() {
   const handleSendMessageRef = useRef(null);
   // Conversation loop — true while Hey Zynk is in a multi-turn session
   const conversationLoopActiveRef = useRef(false);
+  // Stable ref to endConversationLoop so overlay and other callers can end the loop
+  const endConversationLoopRef = useRef(null);
   const startListeningLoopRef = useRef(null);
 
   // Splice transcribed text into the input at the cursor position, padding with
@@ -644,24 +646,47 @@ export default function App() {
         setTimeout(() => window.WakeWordBridge.start(0.72), 1500);
       }
     };
+    endConversationLoopRef.current = endConversationLoop;
 
     const autoSendWake = async () => {
       console.log('[WakeWord] autoSendWake firing');
       const text = await stopWakeRecording();
       console.log('[WakeWord] transcript:', text);
+
       if (!text) {
-        // No speech heard — end the loop so ONNX can re-arm
         conversationLoopActiveRef.current = false;
         if (window.WakeWordBridge.isModelReady()) {
           setTimeout(() => window.WakeWordBridge.start(0.72), 1000);
         }
         return;
       }
-      if (conversationLoopActiveRef.current && CLOSING_PHRASES.test(text)) {
+
+      // Check closing / cancel phrases BEFORE the noise threshold so single-word
+      // commands like "stop" or "nevermind" are caught rather than discarded.
+      const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
+      const STOP_ALONE = /^\s*stop\s*$/i;
+      if (conversationLoopActiveRef.current && (CLOSING_PHRASES.test(text) || STOP_ALONE.test(text))) {
         console.log('[WakeWord] closing phrase detected — ending conversation loop');
+        stopTts();
         endConversationLoop();
         return;
       }
+      if (NEVERMIND.test(text)) {
+        console.log('[WakeWord] nevermind — discarding without sending');
+        endConversationLoop();
+        return;
+      }
+
+      // Noise threshold: fewer than 2 words is almost certainly background noise, not speech.
+      if (text.trim().split(/\s+/).length < 2) {
+        console.log('[WakeWord] transcript too short, treating as noise:', text);
+        conversationLoopActiveRef.current = false;
+        if (window.WakeWordBridge.isModelReady()) {
+          setTimeout(() => window.WakeWordBridge.start(0.72), 1000);
+        }
+        return;
+      }
+
       wakeTriggeredRef.current = true;
       handleSendMessageRef.current?.(text);
     };
@@ -694,10 +719,15 @@ export default function App() {
     startListeningLoopRef.current = startListeningLoop;
 
     window.__wakeWordDetected = () => {
-      // Don't hijack VoskBridge while the dictation button is active
       if (window.__dictationActive) {
         console.log('[WakeWord] ignored — dictation in progress');
         return;
+      }
+      // If TTS is currently reading a response, "Hey Zynk" interrupts it and starts
+      // a new listening cycle so the user can speak their next command.
+      if (ttsSourceRef.current) {
+        console.log('[WakeWord] detected during TTS — stopping playback and re-listening');
+        stopTts();
       }
       console.log('[WakeWord] detected — playing chime then recording');
       window.WakeWordBridge.stop();
@@ -721,7 +751,10 @@ export default function App() {
       console.log('[WakeWord] screen-off transcript received:', transcript);
       conversationLoopActiveRef.current = true;
       wakeTriggeredRef.current = true;
-      handleSendMessageRef.current?.(transcript.trim());
+      // Delay gives VoiceCommandBridge and other Android bridges time to register
+      // after the app opens from the lock screen. Without this, voice commands like
+      // "start stopwatch" fall through to the LLM because the bridge isn't ready yet.
+      setTimeout(() => handleSendMessageRef.current?.(transcript.trim()), 2000);
     };
 
     if (heyZynkEnabled) {
@@ -760,7 +793,8 @@ export default function App() {
   // detector's rolling audio buffer.
   useEffect(() => {
     if (!window.WakeWordBridge || !heyZynkEnabled) return;
-    if (isWakeRecording || isTtsSpeaking || isDictating) {
+    // isTtsSpeaking intentionally excluded: ONNX runs during TTS so "Hey Zynk" can interrupt.
+    if (isWakeRecording || isDictating) {
       window.WakeWordBridge.stop();
     } else if (!conversationLoopActiveRef.current) {
       const t = setTimeout(() => {
@@ -770,7 +804,7 @@ export default function App() {
       }, 5000);
       return () => clearTimeout(t);
     }
-  }, [isWakeRecording, heyZynkEnabled, isTtsSpeaking, isDictating]);
+  }, [isWakeRecording, heyZynkEnabled, isDictating]);
 
   // Restart wake word when app returns to foreground (screen unlock, app switch back).
   // The service may have stopped while the screen was off; visibilitychange is the
@@ -778,14 +812,14 @@ export default function App() {
   useEffect(() => {
     if (!window.WakeWordBridge) return;
     const handleVisible = () => {
-      if (!heyZynkEnabled || isWakeRecording || isTtsSpeaking || isDictating) return;
+      if (!heyZynkEnabled || isWakeRecording || isDictating) return;
       if (window.WakeWordBridge.isModelReady()) {
         window.WakeWordBridge.start(0.72);
       }
     };
     document.addEventListener('visibilitychange', handleVisible);
     return () => document.removeEventListener('visibilitychange', handleVisible);
-  }, [heyZynkEnabled, isWakeRecording, isTtsSpeaking, isDictating]);
+  }, [heyZynkEnabled, isWakeRecording, isDictating]);
 
   // Auto-scroll: only follow new content if the user hasn't scrolled up intentionally.
   // userScrolledUpRef is set by real scroll events only — never by programmatic scrolls —
@@ -1198,6 +1232,7 @@ export default function App() {
   // the user shouldn't have to wait for it. The re-entrant send guard is also
   // cleared so a fresh Send can be sent right away.
   const handleStopGeneration = async () => {
+    stopTts();
     setIsLoading(false);
     isSendingRef.current = false;
     try {
@@ -2670,7 +2705,16 @@ export default function App() {
       {/* Waveform recording overlay — shown on mobile when mic is active */}
       {isWakeRecording && isMobile && (
         <div
-          onClick={async () => { const text = await stopWakeRecordingRef.current?.(); if (text) { wakeTriggeredRef.current = true; handleSendMessageRef.current?.(text); } else { conversationLoopActiveRef.current = false; } }}
+          onClick={async () => {
+            const text = await stopWakeRecordingRef.current?.();
+            const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
+            if (!text || NEVERMIND.test(text)) {
+              endConversationLoopRef.current?.();
+            } else {
+              wakeTriggeredRef.current = true;
+              handleSendMessageRef.current?.(text);
+            }
+          }}
           style={{
             position: 'fixed',
             bottom: 0, left: 0, right: 0,

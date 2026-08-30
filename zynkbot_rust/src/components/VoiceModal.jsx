@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const voskAvailable =
   !!window.VoskBridge || navigator.platform.toLowerCase().includes('linux');
@@ -108,6 +108,55 @@ function Toggle({ checked, onChange, id }) {
   );
 }
 
+const FLAT_COMMANDS = [
+  { cmd: '"Hey Zynk"', desc: 'Opens a session. Wait for the tone, then speak. Say it again after each response to continue.' },
+  { cmd: '"Thank you Zynk" / "Goodbye Zynk"', desc: 'Ends the conversation and returns to standby.' },
+  { cmd: '"Never mind" / "Cancel"', desc: 'If you accidentally woke it — discards your recording without sending.' },
+  { cmd: '"Stop"', desc: 'Stops the spoken response.' },
+  { cmd: '"Set a timer for 10 minutes"', desc: 'Works with any duration — seconds, minutes, or hours.' },
+  { cmd: '"Set an alarm for 7:30 AM"', desc: 'Sets a system alarm.' },
+  { cmd: '"Start stopwatch"', desc: 'Starts the device stopwatch.' },
+];
+
+function VoiceCommandsModal({ onClose }) {
+  return (
+    <div style={{ ...overlayStyle, zIndex: 2100 }} onClick={onClose}>
+      <div style={{ ...cardStyle, maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h2 style={{ margin: 0, color: '#8be9fd', fontSize: '1.1rem' }}>📋 Voice Commands</h2>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', color: '#6272a4', fontSize: '1.3rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+          >✕</button>
+        </div>
+
+        {FLAT_COMMANDS.map(({ cmd, desc }) => (
+          <div key={cmd} style={{ marginBottom: '12px' }}>
+            <div style={{
+              fontFamily: 'monospace',
+              fontSize: '0.88rem',
+              color: '#50fa7b',
+              background: '#1e1f29',
+              border: '1px solid #44475a',
+              borderRadius: '5px',
+              padding: '5px 10px',
+              display: 'inline-block',
+              marginBottom: '3px',
+            }}>
+              {cmd}
+            </div>
+            <div style={{ color: '#9aa5c4', fontSize: '0.82rem', paddingLeft: '2px' }}>{desc}</div>
+          </div>
+        ))}
+
+        <p style={{ color: '#6272a4', fontSize: '0.78rem', margin: '12px 0 0', borderTop: '1px solid #44475a', paddingTop: '10px' }}>
+          Tap anywhere outside to close.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function VoiceModal({
   isOpen,
   onClose,
@@ -126,6 +175,8 @@ export default function VoiceModal({
   conversationModeEnabled,
   onConversationModeChange,
 }) {
+  const [showCommands, setShowCommands] = useState(false);
+
   if (!isOpen) return null;
 
   const effectiveSource = voskAvailable ? (voiceInputSource || 'vosk') : 'openai';
@@ -153,6 +204,26 @@ export default function VoiceModal({
             ✕
           </button>
         </div>
+
+        {/* How It Works */}
+        {!!window.WakeWordBridge && (
+          <div style={{
+            background: '#1e1f29',
+            border: '1px solid #44475a',
+            borderRadius: '8px',
+            padding: '12px 14px',
+            marginTop: '12px',
+            marginBottom: '4px',
+          }}>
+            <p style={{ ...sectionHeadingStyle, margin: '0 0 8px 0' }}>How It Works</p>
+            <ol style={{ margin: 0, paddingLeft: '18px', color: '#9aa5c4', fontSize: '0.84rem', lineHeight: '1.6' }}>
+              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> and wait for the tone before speaking.</li>
+              <li>Speak your question or command.</li>
+              <li>Stop talking. After ~2 seconds you'll hear a second tone confirming your message was sent.</li>
+              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> again after each response to continue the conversation.</li>
+            </ol>
+          </div>
+        )}
 
         {/* Dictation */}
         <p style={{ ...sectionHeadingStyle, marginTop: '12px' }}>Dictation Engine</p>
@@ -332,7 +403,29 @@ export default function VoiceModal({
           />
         </div>
 
+        {/* Voice Commands reference */}
+        <div style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #44475a', textAlign: 'center' }}>
+          <button
+            onClick={() => setShowCommands(true)}
+            style={{
+              padding: '8px 18px',
+              background: 'rgba(98,114,164,0.2)',
+              color: '#8be9fd',
+              border: '1px solid #6272a4',
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              cursor: 'pointer',
+              width: '100%',
+            }}
+          >
+            📋 View Voice Commands
+          </button>
+        </div>
+
       </div>
+
+      {showCommands && <VoiceCommandsModal onClose={() => setShowCommands(false)} />}
     </div>
   );
 }
