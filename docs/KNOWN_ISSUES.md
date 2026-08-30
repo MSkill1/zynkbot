@@ -161,4 +161,30 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+## Voice & Dictation
+
+### KI-019 — No offline dictation on Windows; Vosk is compiled out rather than unavailable
+**Status:** Open — must fix before v1.0  
+**Affected:** All Windows users. Dictation on Windows requires an OpenAI API key and a network round-trip, so the offline-first guarantee does not hold on Windows.  
+**Description:** Vosk works on Windows — alphacep ships a prebuilt `vosk-win64-0.3.45` SDK containing `libvosk.lib` and `libvosk.dll`. Windows support is partly wired already: `install.bat` downloads that SDK into `zynkbot_rust/src-tauri/lib/vosk/`, and `START_ZYNKBOT.bat` adds that directory to `PATH` when `libvosk.dll` is present. The feature is nevertheless unreachable on Windows because four separate gates compile it out:
+
+1. `Cargo.toml` — `vosk = "0.3"` sits under `[target.'cfg(target_os = "linux")'.dependencies]`, so the crate is never built on Windows.
+2. `build.rs` — every Vosk linker flag is inside `#[cfg(target_os = "linux")]`.
+3. `lib.rs` — `mod vosk_desktop;` is declared under `#[cfg(target_os = "linux")]`.
+4. `lib.rs` — `start_vosk_recording` / `stop_vosk_recording` return an error stub for `cfg(not(any(target_os = "android", target_os = "linux")))`.
+
+The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux so the Windows build doesn't try to find a non-existent libvosk.lib."* That resolved a link error by disabling the feature rather than supplying the library, and the disablement was never revisited once `install.bat` began downloading the SDK.
+
+**Two supporting defects found while investigating:**
+
+- **`install.bat` extracts only 2 of the 5 required files.** The Windows Vosk build is MinGW-based and the zip also ships `libstdc++-6.dll`, `libwinpthread-1.dll` and `libgcc_s_seh-1.dll`. The extract step at `install.bat:701` copies only `libvosk.lib` and `libvosk.dll`, so even a fully successful download leaves `libvosk.dll` unable to load for want of its runtime dependencies.
+- **The Vosk download has no retry and fails quietly.** A failure prints a single `[WARNING]` line in the middle of a long install log and installation continues, so a Windows user ends up with no offline dictation and no clear indication why.
+
+**Workaround:** None on Windows. Dictation falls back to OpenAI Whisper (cloud), which requires an API key and network access.  
+**Fix target:** v1.0. Widen the four gates to `cfg(any(target_os = "linux", target_os = "windows"))`, add a Windows branch in `build.rs` emitting `cargo:rustc-link-search=native=<manifest>/lib/vosk`, and extract all five SDK files in `install.bat`. No `find_model_dir()` change is needed for source builds — its fourth candidate, `<CARGO_MANIFEST_DIR>/gen/android/app/src/main/assets/vosk-model`, already resolves to the model bundled in the repo.  
+**Open risk:** `libvosk.lib` is a MinGW-produced import library and Zynkbot's Windows build is MSVC. This normally links for a plain C API such as Vosk's, but it is unverified. If MSVC rejects the import library, the fallback is runtime `LoadLibrary` binding of `libvosk.dll` instead of link-time binding — a materially larger change.  
+**Related:** Packaged (non-source) builds cannot locate the Vosk model at all, because `find_model_dir()` depends on `CARGO_MANIFEST_DIR`, which is baked in at compile time. This affects Linux `.deb`/AppImage builds as much as Windows and is tracked separately as part of packaging work.
+
+---
+
 *Last updated: 2026-08-12*
