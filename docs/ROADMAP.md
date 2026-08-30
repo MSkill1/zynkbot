@@ -171,6 +171,7 @@ This needs to be resolved before Play Store launch. The core tension:
 - **Copy full chat history** — single button to copy an entire conversation to the clipboard as plain text. Per-message copy already exists; this covers the whole session. (Reported by galbicka, issue #5.)
 - **Save to memory conversationally** — detect "remember this" / "save that" phrasing in user input and route directly to memory storage without a full LLM round-trip. Faster, cheaper, and more intuitive than the current flow.
 - **Licensing transition** — relicense from the custom Zynkbot Community Source License to AGPL-3.0 (public/F-Droid distribution) paired with a commercial license for businesses wanting to avoid AGPL copyleft. Prerequisites: (1) dependency license audit (`cargo license` + `npm audit`) to confirm no GPL-incompatible deps before committing to AGPL; (2) CLA in place before any outside PRs are merged. Gate on pre-v1.0 checklist.
+- **Pre-submission code audit** *(final gate before v1.0 ships)* — Three passes: (1) **Structural** — dead code, unused imports, TODO/FIXME comments, inconsistent naming; run `cargo clippy` and ESLint clean; (2) **Security** — API key handling, network input validation, anything crossing a trust boundary; (3) **Professionalism** — module-level doc comments on major Rust files, consistent error handling patterns, no commented-out debug blocks. Primary target is App.jsx (most accumulated complexity); Rust side expected to be cleaner. Required before F-Droid submission and any external code review.
 
 ### Technical Debt (deferred to v1.1+)
 - **Real safety classifier** — current `toxic-bert` false-positives on clinical/grief language. Replacement options: Llama Guard 3 (GGUF via existing llama-cpp-2 bindings), LLM-delegated classification, or trust primary model refusals for adult modes. Thresholds raised to suppress false positives for now.
@@ -222,23 +223,6 @@ Zynkbot orchestrates Proton's own official apps via OS-level hand-off (Android i
 ### Notes on Scope
 
 The existing containment modes (HIPAA, Guardian, Sovereign, Child) are proofs of concept demonstrating the safety-filter architecture. They are not production-grade for their respective domains. Parenting Mode is the first mode that will be developed to a production standard, as the first paid offering. The others will follow in subsequent releases as their respective use cases are validated.
-
----
-
-## v1.2 — ZynkSync & ZynkLink Modularization (Q4 2026)
-
-**Focus:** Refactor the sync and linking layers into clean, composable internal modules before adding Android-native inference, industry snap-ins, or SDK surface area.
-
-ZynkSync and ZynkLink are currently tightly coupled to the desktop context. Before expanding to mobile-native local inference, industry-specific snap-ins, or the public SDK, these layers need stable internal interface contracts — otherwise each new platform inherits the same coupling. This is a prerequisite milestone, not a feature release.
-
-### Modularization Scope
-
-- **ZynkSync module** — Extract sync protocol, conflict resolution, and namespace filtering into a standalone internal crate with a defined API; decouple from desktop-specific file paths and UI hooks.
-- **ZynkLink module** — Separate file-sharing transport, peer discovery, and permissions model; formalize the `ShareSource` trait that abstracts over desktop direct-fs and Android SAF (prerequisite for Play Store compliance).
-- **Interface contracts** — Document the stable boundary each module exposes; these become the base the SDK Foundation builds on.
-- **Test coverage** — Unit and integration tests against extracted modules.
-
-**Leads to:** v1.2 track — either local instance on Android, Parenting Mode, or SDK Foundation. Direction will be finalized based on community feedback and resource availability after v1.1 ships.
 
 ---
 

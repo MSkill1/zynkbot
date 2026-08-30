@@ -33,7 +33,85 @@ Zynkbot SDK provides:
 
 ---
 
-## Core SDK Modules
+## SDK Modules
+
+Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained modules during the pre-open-source refactor. Each is a candidate for independent SDK extraction. They fall into four dependency layers — core must ship first; feature and network layers depend on it.
+
+### Dependency Layers
+
+| Layer | Modules |
+|-------|---------|
+| **Core** | Database, TLS/mTLS, User Identity, Sync Codes |
+| **AI** | LLM Backends, Local Model Inference, Local Embeddings, Memory System, NLP/Entity Extraction, LLM Fact Extractor |
+| **Feature** | Conversation Engine, Conversation History, Containment Layer, Safety Classifier, Knowledge Base/RAG, Web Search, Ensemble Mode, Backup |
+| **Network** | ZynkSync, ZynkLink, ZChat |
+| **Voice** | Voice/Dictation (pending modularization from App.jsx) |
+
+---
+
+### Core Layer
+
+**Database** (`db.rs`) — SQLite connection pool with WAL mode, foreign keys, 20-connection limit, platform-aware paths (Android-aware). Foundation everything else depends on.
+
+**TLS/mTLS** (`tls.rs`) — Self-signed cert generation, pinned cert verification, optional client auth. Required by all three network modules.
+
+**User Identity** (`user_identity.rs`) — Persistent user/device ID generation and storage, hostname-based device naming. Required for pairing and sync.
+
+**Sync Codes** (`sync_codes.rs`) — One-time 6-digit device pairing codes with 5-minute expiry and single-use enforcement.
+
+---
+
+### AI Layer
+
+**LLM Backends** (`llm/`) — Unified streaming interface for Claude (Anthropic), GPT (OpenAI), Grok (xAI), Ollama/custom endpoints, and local GGUF models. Common `Message`, `LLMResponse`, `Usage` types across all providers.
+
+**Local Model Inference** (`llm/local_models.rs`) — llama-cpp-2 GGUF inference with per-family prompt formatting (ChatML, Llama 3, Mistral, Phi), grammar-constrained JSON output for structured extraction. No Python, no GPU required.
+
+**Local Embeddings** (`llm/local_embeddings.rs`) — Candle all-MiniLM-L6-v2, batched embedding generation, L2-normalized 384-dim output for cosine similarity. Runs fully on-device.
+
+**Memory System** (`memory.rs`) — Hybrid vector + entity search, persistent SQLite storage, relationship graph (`MemoryLink`, `MemoryRelationship`), contradiction detection. The core of Zynkbot's long-term context.
+
+**NLP / Entity Extraction** (`nlp_enhancer.rs`, `question_extractor.rs`) — BERT NER with rule-based fallback, tag/namespace/event detection, fact extraction from natural language queries (possession, family, events, travel, occupation).
+
+**LLM Fact Extractor** (`llm_fact_extractor.rs`) — LLM-delegated fact extraction from Q&A pairs via Claude/GPT-4o/Grok. Currently experimental; designed as a higher-accuracy alternative to pattern-based extraction.
+
+---
+
+### Feature Layer
+
+**Conversation Engine** (`conversation_engine.rs`) — Prompt assembly with memory injection, per-model adaptive context limits (API vs. local GGUF), memory-worthiness filtering.
+
+**Conversation History** (`conversation_history.rs`) — Hash-chain session logging, full-text search across sessions, HIPAA-aware skip logic for ephemeral modes.
+
+**Containment Layer** (`containment.rs`) — 6-mode content safety enforcement: Guardian, Child, HIPAA, Elder, Sovereign, Witness. Gates user input via pattern matching + on-device TinyBERT classifier. Child mode optionally delegates to OpenAI Moderation API.
+
+**Safety Classifier** (`safety_classifier.rs`) — Pure-Rust Candle TinyBERT toxicity classification with configurable thresholds per containment mode. No external API calls required.
+
+**Knowledge Base / RAG** (`knowledge_base.rs`, `kb_rag.rs`) — Document indexing with chunking, hybrid semantic + FTS5 retrieval, filename boosting. Supports PDF, text, and code. Embedding generation via local embeddings module.
+
+**Web Search** (`web_search.rs`) — DuckDuckGo Lite wrapper with page content fetching and HTML text extraction. Privacy-respecting: no API key, no tracking.
+
+**Ensemble Mode** (`commands/chat.rs`) — Multi-model parallel query with synthesis coordination. Coordinator model auto-selected by capability tier; results synthesized into a single response.
+
+**Backup** (`commands/backup.rs`) — Encrypted R2 cloud backup with tombstone-safe restore. Memories + conversation history. Propagates deletes to peers on restore.
+
+---
+
+### Network Layer
+
+**ZynkSync** (`zynksync.rs`) — Cross-device memory sync over local network. mTLS device authentication, TCP sync loop, last-write-wins conflict resolution, namespace filtering. One Tauri dependency (`tauri::Emitter` for UI events — trivial to abstract for standalone use).
+
+**ZynkLink** (`zynklink.rs`) — P2P file sharing between paired devices over mTLS. Directory sharing with read/write access controls, file listing and content serving.
+
+**ZChat** (`zchat.rs`) — Device-to-device messaging with delivery and read tracking. No cloud storage, no relay server. Works on local network only.
+
+---
+
+### Voice Layer
+
+**Voice / Dictation** (pending modularization) — Offline Vosk ASR with OpenAI Whisper fallback, wake-word detection (ONNX), TTS playback, silence-detection auto-send, conversation loop. Currently split between `vosk_desktop.rs` (Rust) and App.jsx (JS). Extraction to a dedicated module is a v1.0 pre-release task.
+
+---
 
 ### 1. Containment Layer
 
