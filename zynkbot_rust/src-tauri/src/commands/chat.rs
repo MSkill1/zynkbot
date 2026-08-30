@@ -91,7 +91,8 @@ pub async fn send_message_with_memory(
     // Normalize brand name misspellings from voice transcription before any processing
     let message = crate::normalize_brand_names(message);
 
-    let _request_start = std::time::Instant::now();
+    let request_start = std::time::Instant::now();
+    println!("[⏱️ PERF] Request start");
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  💬 NEW CHAT REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
@@ -762,6 +763,7 @@ pub async fn send_message_with_memory(
         }];
 
         let model_path_clone = model_path.clone();
+        let inference_start = std::time::Instant::now();
         let response = tokio::task::spawn_blocking(move || {
             crate::llm::local_models::with_cached_session(&model_path_clone, |session| {
                 session.generate(messages, Some(4096), None, None)
@@ -770,6 +772,7 @@ pub async fn send_message_with_memory(
         .await
         .map_err(|e| format!("Failed to run local model task: {}", e))?
         .map_err(|e| e.to_string())?;
+        println!("[⏱️ PERF] Local model inference: {:.2}s", inference_start.elapsed().as_secs_f32());
 
         response.content
 
@@ -1066,6 +1069,8 @@ pub async fn send_message_with_memory(
             final_reply_text.push_str(disclaimer);
         }
     }
+
+    println!("[⏱️ PERF] Total request time: {:.2}s", request_start.elapsed().as_secs_f32());
 
     // STEP 9: RETURN RESPONSE IMMEDIATELY (before memory processing)
     let immediate_response = ReplyResponse {

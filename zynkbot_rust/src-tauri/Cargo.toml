@@ -16,7 +16,7 @@ name = "app_lib"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda", "llama-cpp-2/cuda"]
 
 [build-dependencies]
 tauri-build = { version = "2.5.1", features = [] }
