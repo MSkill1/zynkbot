@@ -335,7 +335,7 @@ pub fn generate_local_embedding(text: &str) -> Result<Vec<f32>, LLMError> {
 /// * `batch_size` - Optional batch size (default: 32). Larger batches are faster but use more memory.
 ///
 /// # Example
-/// ```
+/// ```text
 /// let texts = vec!["Hello world".to_string(), "How are you?".to_string()];
 /// let embeddings = generate_local_embeddings_batch(texts, Some(32))?;
 /// // embeddings[0] = embedding for "Hello world"

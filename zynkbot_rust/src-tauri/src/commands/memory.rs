@@ -862,13 +862,16 @@ pub async fn pre_check_memory(
 /// Resolve conflict between memories — user chooses which to keep or merge
 #[tauri::command]
 pub async fn resolve_conflict(
-    _new_content: String,
+    new_content: String,
     existing_memory_id: i32,
     resolution: String,
     user_id: String,
     explanation: Option<String>,
     new_memory_id: Option<i32>,
 ) -> Result<serde_json::Value, String> {
+    // Accepted for wire-contract parity; resolution paths currently work from
+    // existing_memory_id. Do not rename to `_new_content` — see tests/command_contract.rs
+    let _ = new_content;
     println!("[Rust] resolve_conflict called - resolution: {}, explanation: {:?}", resolution, explanation);
 
     let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())

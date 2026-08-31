@@ -1585,12 +1585,16 @@ pub async fn run_ensemble(
     message: String,
     models: Vec<String>,
     user_id: String,
-    _session_id: String,
+    session_id: String,
     containment_mode: String,
     kb_enabled: Option<bool>,
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
 ) -> Result<serde_json::Value, String> {
+    // Accepted for wire-contract parity with the frontend; ensemble does not yet
+    // thread a session through. Do not rename to `_session_id` — see tests/command_contract.rs
+    let _ = session_id;
+
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  🔀 ENSEMBLE REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");

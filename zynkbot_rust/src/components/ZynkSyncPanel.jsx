@@ -51,7 +51,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       setMessage('Syncing...');
       // Start/resume the service if it was paused
       if (syncStatus !== 'running') {
-        await invoke('start_zynksync', { syncIntervalSecs: 60 });
+        await invoke('start_zynksync');
         setSyncStatus('running');
       }
       await fetchPeers();

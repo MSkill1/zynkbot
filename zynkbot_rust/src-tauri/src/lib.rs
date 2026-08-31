@@ -1874,7 +1874,7 @@ async fn load_einstein_demo_legacy(user_id: String) -> Result<serde_json::Value,
     // RESUME SYNC AFTER EINSTEIN LOAD (if it was running before)
     if sync_was_running {
         println!("[Einstein] ✅ Resuming sync now that Einstein load is complete...");
-        let _ = commands::zynksync::start_zynksync(None).await; // Restart sync with default 60s interval
+        let _ = commands::zynksync::start_zynksync().await; // Restart sync with the service default interval
         println!("[Einstein] 🔄 Sync will now propagate Einstein memories in the background");
     } else {
         println!("[Einstein] ℹ️ Sync was not running before, not restarting");

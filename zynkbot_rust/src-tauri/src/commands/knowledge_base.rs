@@ -33,130 +33,148 @@ pub async fn get_kb_folder_path(user_id: String) -> Result<String, String> {
 /// Open KB folder in file explorer (cross-platform)
 #[tauri::command]
 pub async fn open_kb_folder_in_explorer(user_id: String) -> Result<(), String> {
-    let path = kb_rag::get_kb_folder_path(&user_id)?;
-    let path_str = path.to_string_lossy().to_string();
-
-    #[cfg(target_os = "windows")]
-    let command = "explorer";
-    #[cfg(target_os = "macos")]
-    let command = "open";
-    #[cfg(target_os = "linux")]
-    let command = "xdg-open";
     #[cfg(target_os = "android")]
-    let command = "";
-    #[cfg(target_os = "android")]
-    return Err("Opening folders is not supported on Android".to_string());
+    {
+        let _ = user_id;
+        return Err("Opening folders is not supported on Android".to_string());
+    }
 
-    std::process::Command::new(command)
-        .arg(&path_str)
-        .spawn()
-        .map_err(|e| format!("Failed to open folder with {}: {}", command, e))?;
+    #[cfg(not(target_os = "android"))]
+    {
+        let path = kb_rag::get_kb_folder_path(&user_id)?;
+        let path_str = path.to_string_lossy().to_string();
 
-    println!("[KB] Opened folder: {}", path_str);
-    Ok(())
+        #[cfg(target_os = "windows")]
+        let command = "explorer";
+        #[cfg(target_os = "macos")]
+        let command = "open";
+        #[cfg(target_os = "linux")]
+        let command = "xdg-open";
+
+        std::process::Command::new(command)
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder with {}: {}", command, e))?;
+
+        println!("[KB] Opened folder: {}", path_str);
+        Ok(())
+    }
 }
 
 /// Open an external file in the default system editor
 #[tauri::command]
 pub async fn open_external_file(path: String) -> Result<(), String> {
-    let candidate = std::path::PathBuf::from(&path);
-    let full_path = if candidate.is_absolute() {
-        candidate
-    } else {
-        crate::db::get_app_data_dir().join(&path)
-    };
-
-    if !full_path.exists() {
-        return Err(format!("File not found: {}", full_path.display()));
+    #[cfg(target_os = "android")]
+    {
+        let _ = path;
+        return Err("Opening files externally is not supported on Android".to_string());
     }
 
-    let path_str = full_path.to_string_lossy().to_string();
+    #[cfg(not(target_os = "android"))]
+    {
+        let candidate = std::path::PathBuf::from(&path);
+        let full_path = if candidate.is_absolute() {
+            candidate
+        } else {
+            crate::db::get_app_data_dir().join(&path)
+        };
 
-    #[cfg(target_os = "windows")]
-    let command = "cmd";
-    #[cfg(target_os = "windows")]
-    let args = vec!["/C", "start", "", &path_str];
-    #[cfg(target_os = "macos")]
-    let command = "open";
-    #[cfg(target_os = "macos")]
-    let args = vec![&path_str];
-    #[cfg(target_os = "linux")]
-    let command = "xdg-open";
-    #[cfg(target_os = "linux")]
-    let args = vec![&path_str];
-    #[cfg(target_os = "android")]
-    let command = "";
-    #[cfg(target_os = "android")]
-    let args: Vec<&str> = vec![];
-    #[cfg(target_os = "android")]
-    return Err("Opening files externally is not supported on Android".to_string());
+        if !full_path.exists() {
+            return Err(format!("File not found: {}", full_path.display()));
+        }
 
-    std::process::Command::new(command)
-        .args(&args)
-        .spawn()
-        .map_err(|e| format!("Failed to open file: {}", e))?;
+        let path_str = full_path.to_string_lossy().to_string();
 
-    println!("[External] Opened file: {}", path_str);
-    Ok(())
+        #[cfg(target_os = "windows")]
+        let command = "cmd";
+        #[cfg(target_os = "windows")]
+        let args = vec!["/C", "start", "", &path_str];
+        #[cfg(target_os = "macos")]
+        let command = "open";
+        #[cfg(target_os = "macos")]
+        let args = vec![&path_str];
+        #[cfg(target_os = "linux")]
+        let command = "xdg-open";
+        #[cfg(target_os = "linux")]
+        let args = vec![&path_str];
+
+        std::process::Command::new(command)
+            .args(&args)
+            .spawn()
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+
+        println!("[External] Opened file: {}", path_str);
+        Ok(())
+    }
 }
 
 /// Open an external folder in the system file explorer
 #[tauri::command]
 pub async fn open_external_folder(path: String) -> Result<(), String> {
-    let candidate = std::path::PathBuf::from(&path);
-    let full_path = if candidate.is_absolute() {
-        candidate
-    } else {
-        crate::db::get_app_data_dir().join(&path)
-    };
-
-    if !full_path.exists() {
-        return Err(format!("Folder not found: {}", full_path.display()));
+    #[cfg(target_os = "android")]
+    {
+        let _ = path;
+        return Err("Opening folders is not supported on Android".to_string());
     }
 
-    let path_str = full_path.to_string_lossy().to_string();
+    #[cfg(not(target_os = "android"))]
+    {
+        let candidate = std::path::PathBuf::from(&path);
+        let full_path = if candidate.is_absolute() {
+            candidate
+        } else {
+            crate::db::get_app_data_dir().join(&path)
+        };
 
-    #[cfg(target_os = "windows")]
-    let command = "explorer";
-    #[cfg(target_os = "macos")]
-    let command = "open";
-    #[cfg(target_os = "linux")]
-    let command = "xdg-open";
-    #[cfg(target_os = "android")]
-    let command = "";
-    #[cfg(target_os = "android")]
-    return Err("Opening folders is not supported on Android".to_string());
+        if !full_path.exists() {
+            return Err(format!("Folder not found: {}", full_path.display()));
+        }
 
-    std::process::Command::new(command)
-        .arg(&path_str)
-        .spawn()
-        .map_err(|e| format!("Failed to open folder: {}", e))?;
+        let path_str = full_path.to_string_lossy().to_string();
 
-    println!("[External] Opened folder: {}", path_str);
-    Ok(())
+        #[cfg(target_os = "windows")]
+        let command = "explorer";
+        #[cfg(target_os = "macos")]
+        let command = "open";
+        #[cfg(target_os = "linux")]
+        let command = "xdg-open";
+
+        std::process::Command::new(command)
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+
+        println!("[External] Opened folder: {}", path_str);
+        Ok(())
+    }
 }
 
 /// Open a URL in the default system browser
 #[tauri::command]
 pub async fn open_external_url(url: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    let command = "start";
-    #[cfg(target_os = "macos")]
-    let command = "open";
-    #[cfg(target_os = "linux")]
-    let command = "xdg-open";
     #[cfg(target_os = "android")]
-    let command = "";
-    #[cfg(target_os = "android")]
-    return Err("Opening URLs externally is not supported on Android".to_string());
+    {
+        let _ = url;
+        return Err("Opening URLs externally is not supported on Android".to_string());
+    }
 
-    std::process::Command::new(command)
-        .arg(&url)
-        .spawn()
-        .map_err(|e| format!("Failed to open URL: {}", e))?;
+    #[cfg(not(target_os = "android"))]
+    {
+        #[cfg(target_os = "windows")]
+        let command = "start";
+        #[cfg(target_os = "macos")]
+        let command = "open";
+        #[cfg(target_os = "linux")]
+        let command = "xdg-open";
 
-    println!("[External] Opened URL: {}", url);
-    Ok(())
+        std::process::Command::new(command)
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+
+        println!("[External] Opened URL: {}", url);
+        Ok(())
+    }
 }
 
 /// Index a document: chunk it, generate embeddings, store in vector DB

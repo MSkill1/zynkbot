@@ -37,7 +37,7 @@ pub async fn purge_self_referential_devices(pool: &sqlx::SqlitePool) {
 
 /// Start ZynkSync auto-sync loop (HTTP server already running from app launch)
 #[tauri::command]
-pub async fn start_zynksync(_sync_interval_secs: Option<u64>) -> Result<String, String> {
+pub async fn start_zynksync() -> Result<String, String> {
     println!("[ZynkSync] Starting auto-sync loop...");
 
     let service = {
