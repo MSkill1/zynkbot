@@ -1,0 +1,140 @@
+name: Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fast job: source-level contract guards plus frontend linting.
+  # Needs no ML assets, so it gives a signal in a couple of minutes.
+  guards:
+    name: Contract guards + lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: zynkbot_rust/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: zynkbot_rust/src-tauri -> target
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libasound2-dev
+
+      - name: Install frontend dependencies
+        working-directory: zynkbot_rust
+        run: npm ci
+
+      # Verifies the Tauri command wire contract: no underscore-prefixed command
+      # parameters, and every frontend invoke() resolves to a registered command.
+      # See src-tauri/tests/command_contract.rs for why this exists.
+      - name: Tauri command contract guards
+        working-directory: zynkbot_rust/src-tauri
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/zynkbot_rust/src-tauri/lib/vosk
+        run: cargo test --test command_contract -- --nocapture
+
+      - name: ESLint
+        working-directory: zynkbot_rust
+        run: npx eslint src --ext .js,.jsx --max-warnings=0
+
+  # Full unit suite. Several tests load the bundled ML models, which are not
+  # committed to the repo, so they are fetched here the same way install.sh does.
+  unit-tests:
+    name: Rust unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: zynkbot_rust/src-tauri -> target
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libasound2-dev
+
+      # ~200 MB of safetensors; cached so it is downloaded once per model set.
+      - name: Cache system models
+        id: models-cache
+        uses: actions/cache@v4
+        with:
+          path: zynkbot_rust/src-tauri/models/system
+          key: system-models-minilm-toxicbert-bertner-v1
+
+      - name: Download system models
+        if: steps.models-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          SYSTEM_MODELS_DIR="zynkbot_rust/src-tauri/models/system"
+          download_hf_model() {
+            local repo="$1"; local target_dir="$2"; local files=("${@:3}")
+            mkdir -p "$target_dir"
+            for file in "${files[@]}"; do
+              echo "Downloading $repo/$file"
+              wget -q -O "$target_dir/$file" \
+                "https://huggingface.co/$repo/resolve/main/$file"
+            done
+          }
+          download_hf_model "sentence-transformers/all-MiniLM-L6-v2" \
+            "$SYSTEM_MODELS_DIR/all-MiniLM-L6-v2" \
+            config.json tokenizer.json model.safetensors
+          download_hf_model "unitary/toxic-bert" \
+            "$SYSTEM_MODELS_DIR/toxic-bert" \
+            config.json vocab.txt model.safetensors
+          download_hf_model "dslim/bert-base-NER" \
+            "$SYSTEM_MODELS_DIR/bert-base-NER" \
+            config.json vocab.txt model.safetensors
+
+      # libvosk.so is committed under src-tauri/lib/vosk, but build.rs only sets the
+      # *link* path. The test binary needs it on the runtime loader path too, or it
+      # exits 127 before a single test runs.
+      - name: Run unit tests
+        working-directory: zynkbot_rust/src-tauri
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/zynkbot_rust/src-tauri/lib/vosk
+        run: cargo test --lib
