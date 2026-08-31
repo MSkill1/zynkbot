@@ -25,14 +25,20 @@ pub fn get_app_data_dir() -> PathBuf {
 }
 
 pub fn get_models_dir() -> PathBuf {
-    // Dev mode: exe lives at src-tauri/target/debug/app — always use src-tauri/models/
+    // Dev/test mode: exe lives under src-tauri/target/. The app binary sits at
+    // target/debug/app, but test binaries sit one level deeper at
+    // target/debug/deps/<name>-<hash>, so a fixed parent depth resolves wrongly for
+    // tests. Walk upward instead and take the first real models/ directory found.
     if let Ok(exe) = std::env::current_exe() {
         let exe_str = exe.to_string_lossy();
-        if exe_str.contains("/target/debug/") || exe_str.contains("\\target\\debug\\") {
-            if let Some(exe_dir) = exe.parent() {
-                if let Some(src_tauri) = exe_dir.parent().and_then(|p| p.parent()) {
-                    return src_tauri.join("models");
+        if exe_str.contains("/target/") || exe_str.contains("\\target\\") {
+            let mut dir = exe.parent();
+            while let Some(d) = dir {
+                let candidate = d.join("models");
+                if candidate.is_dir() {
+                    return candidate;
                 }
+                dir = d.parent();
             }
         }
     }

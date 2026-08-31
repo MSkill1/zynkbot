@@ -361,7 +361,7 @@ mod tests {
         let request = OpenAIRequest {
             model: "gpt-4".to_string(),
             messages,
-            max_tokens: Some(100),
+            max_completion_tokens: Some(100),
             temperature: None,
             stream: None,
         };
