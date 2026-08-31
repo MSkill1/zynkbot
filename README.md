@@ -508,6 +508,18 @@ Zynkbot is developed and maintained by one person. If it's useful to you, [spons
 
 ## Acknowledgments
 
+### Beta Testers & Contributors
+
+Zynkbot is maintained by one person, which means the difference between "works on my machine" and "works" is entirely down to people willing to run it on their own hardware and report back honestly.
+
+- **Mike G.** ([@galbicka](https://github.com/galbicka)) — Extensive beta testing across Windows and Linux, including CUDA/GPU acceleration debugging, ZynkLink and knowledge-base issue reports, and ongoing feedback that's directly shaped v0.9.x stability fixes
+
+This is unglamorous work: reinstalling from scratch, reproducing intermittent failures, and describing them precisely enough to act on. Several fixes in the v0.9.x line exist only because a tester noticed something the developer's own machine was configured to hide.
+
+If you've tested Zynkbot and aren't listed here, open an issue or email matt@containai.ai — the omission is an oversight, not a judgment.
+
+### AI Development Tools
+
 Zynkbot was built through a years-long collaboration between its developer and AI coding assistants — beginning with ChatGPT designing Zynkbot as a server-side app in Python with a hosted database in the project's earliest days, then transitioning over time to a fully local Rust port with an embedded SQLite database with help from Claude Code from Anthropic — whose capabilities proved indispensable to bringing the project to completion. The developer gratefully acknowledges both the AI tools and the teams at OpenAI and Anthropic whose work made this possible.
 
 ---

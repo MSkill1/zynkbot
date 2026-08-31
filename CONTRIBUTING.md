@@ -41,6 +41,11 @@ Email **matt@containai.ai** with a description of the issue, steps to reproduce,
 3. **Improve Documentation** — Fix typos, clarify instructions
 4. **Write Code** — Fix bugs or implement features
 5. **Review PRs** — Help review other contributions
+6. **Test on your own hardware** — Run Zynkbot on your setup and report what breaks. Different GPUs, CUDA versions, distros and Windows configurations surface bugs a single developer's machine cannot. This is treated as a first-class contribution.
+
+### Recognition
+
+Contributors and beta testers are credited by name in the [Acknowledgments section of the README](README.md#acknowledgments). If you've reported issues or tested a release and you're not listed, say so in an issue — it's an oversight, not a judgment. If you'd rather not be named, that's fine too; just tell us.
 
 ### Before You Start
 
