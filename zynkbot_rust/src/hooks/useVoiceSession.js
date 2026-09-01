@@ -66,7 +66,10 @@ export function parseVoiceCommand(text) {
 // Separate from useVoiceInput, which owns the dictation mic button.
 export function useVoiceSession({ setMessages }) {
   const [ttsEnabled, setTtsEnabledRaw] = useState(
-    () => localStorage.getItem('zynkbot_tts_enabled') !== 'false'
+    // Off unless explicitly enabled. Spoken responses are intrusive by default and
+    // are wanted mainly for hands-free phone use, so nobody should get audio they
+    // did not ask for. Note this only affects installs with no stored value.
+    () => localStorage.getItem('zynkbot_tts_enabled') === 'true'
   );
   const [heyZynkEnabled, setHeyZynkEnabledRaw] = useState(
     () => localStorage.getItem('zynkbot_hey_zynk_enabled') !== 'false'
@@ -93,6 +96,7 @@ export function useVoiceSession({ setMessages }) {
     setTtsEnabledRaw(val);
     localStorage.setItem('zynkbot_tts_enabled', val);
   };
+
   const setHeyZynkEnabled = (val) => {
     setHeyZynkEnabledRaw(val);
     localStorage.setItem('zynkbot_hey_zynk_enabled', val);

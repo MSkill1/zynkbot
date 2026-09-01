@@ -201,6 +201,7 @@ export default function App() {
 
   const voice = useVoiceSession({ setMessages });
 
+
   // Splice transcribed text into the input at the cursor position, padding with
   // spaces when adjacent to non-whitespace so words don't run together.
   const insertTranscriptAtCursor = (text) => {
@@ -751,7 +752,7 @@ export default function App() {
         };
 
         setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-        if (triggeredByWake && voice.ttsEnabled) voice.speakResponse(assistantMessage.content);
+        if (voice.ttsEnabled) voice.speakResponse(assistantMessage.content);
         return; // Don't continue with normal processing
       }
 
@@ -775,7 +776,7 @@ export default function App() {
       console.log('Recalled memories:', assistantMessage.recalled_memories);
 
       setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-      if (triggeredByWake && voice.ttsEnabled) voice.speakResponse(assistantMessage.content);
+      if (voice.ttsEnabled) voice.speakResponse(assistantMessage.content);
 
       console.log('[App] Metadata set:', {
         model_backend: response.model_backend,
@@ -816,7 +817,12 @@ export default function App() {
   // Keep voice session ref current on every render so wake callbacks never hold a stale closure
   voice.handleSendMessageRef.current = handleSendMessage;
 
-  // Stop the currently streaming generation.
+  // True whenever there is something to stop. isLoading covers generation; TTS
+  // playback starts only AFTER isLoading goes false, which is why a Stop tied to
+  // isLoading alone vanished exactly when Zynkbot began speaking.
+  const canStop = isLoading || voice.isTtsSpeaking;
+
+  // Stop the currently streaming generation and/or spoken playback.
   // Optimistically flip UI out of loading state immediately — the backend's
   // post-stream work (memory extraction, sync) continues in the background but
   // the user shouldn't have to wait for it. The re-entrant send guard is also
@@ -965,7 +971,7 @@ export default function App() {
           : msg
       ));
 
-      if (voice.wakeTriggeredRef.current && voice.ttsEnabled) voice.speakResponse(llmResponse.reply_text);
+      if (voice.ttsEnabled) voice.speakResponse(llmResponse.reply_text);
 
       console.log('[WebSearch] Search complete and answer synthesized');
 
@@ -1989,10 +1995,14 @@ export default function App() {
                   Ensemble
                 </button>
 
-                {/* Send/Stop — same grid slot. Turns into red Stop button while streaming. */}
+                {/* Send. Stopping lives in its own button now, so this no longer
+                    doubles as Stop — a Send that changes meaning mid-request was
+                    unavailable for the case that actually mattered (stopping speech,
+                    which begins after generation finishes). */}
                 <button
-                  onClick={isLoading ? handleStopGeneration : () => handleSendMessage(input)}
-                  title={isLoading ? 'Stop generation' : 'Send message'}
+                  onClick={() => handleSendMessage(input)}
+                  disabled={isLoading}
+                  title={isLoading ? 'Waiting for the current response' : 'Send message'}
                   style={{
                     width: '85px',
                     height: '42px',
@@ -2001,13 +2011,12 @@ export default function App() {
                     minHeight: '42px',
                     maxHeight: '42px',
                     padding: '0',
-                    background: isLoading
-                      ? 'linear-gradient(135deg, #ff5555 0%, #ff6b6b 100%)'
-                      : 'linear-gradient(135deg, #50fa7b 0%, #3dd66b 100%)',
-                    color: isLoading ? '#fff' : '#282a36',
+                    background: 'linear-gradient(135deg, #50fa7b 0%, #3dd66b 100%)',
+                    color: '#282a36',
                     border: 'none',
                     borderRadius: '8px',
-                    cursor: 'pointer',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    opacity: isLoading ? 0.5 : 1,
                     fontWeight: 'bold',
                     fontSize: '0.75rem',
                     transition: 'all 0.2s',
@@ -2022,14 +2031,17 @@ export default function App() {
                   onMouseOver={(e) => (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                 >
-                  {isLoading ? '■ Stop' : 'Send'}
+                  Send
                 </button>
 
-                {/* Clear — mobile: TR (1,2); desktop: BR (2,2) */}
+                {/* Stop — mobile: TR (1,2); desktop: BR (2,2).
+                    Replaces the old Clear button, which duplicated the "New"
+                    button in the Conversation header. Live during generation AND
+                    during spoken playback. */}
                 <button
-                  onClick={handleClearConversation}
-                  disabled={isLoading}
-                  title="Clear conversation"
+                  onClick={handleStopGeneration}
+                  disabled={!canStop}
+                  title={canStop ? 'Stop speaking and stop generating' : 'Nothing to stop'}
                   style={{
                     width: '85px',
                     height: '42px',
@@ -2042,11 +2054,11 @@ export default function App() {
                     color: '#fff',
                     border: 'none',
                     borderRadius: '8px',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    cursor: canStop ? 'pointer' : 'not-allowed',
                     fontWeight: 'bold',
                     fontSize: '0.75rem',
                     transition: 'all 0.2s',
-                    opacity: isLoading ? 0.5 : 1,
+                    opacity: canStop ? 1 : 0.5,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -2055,10 +2067,10 @@ export default function App() {
                     gridColumn: 2,
                     gridRow: isMobile ? 1 : 2,
                   }}
-                  onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
+                  onMouseOver={(e) => canStop && (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                 >
-                  Clear
+                  ■ Stop
                 </button>
 
                 {/* Mobile-only: Memory Manager — BL (2,1); opens the modal via ref */}

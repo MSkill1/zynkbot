@@ -373,7 +373,10 @@ export default function VoiceModal({
           <div>
             <div style={labelStyle}>Speak responses aloud</div>
             {ttsEnabled && (
-              <div style={mutedStyle}>OpenAI TTS (alloy) — requires OPENAI_API_KEY</div>
+              <div style={mutedStyle}>
+                OpenAI TTS (alloy) — requires OPENAI_API_KEY. Speaks every response,
+                typed or spoken. Use the Stop button to interrupt playback.
+              </div>
             )}
           </div>
           <Toggle
@@ -382,6 +385,7 @@ export default function VoiceModal({
             onChange={onTtsEnabledChange}
           />
         </div>
+
 
         {/* Web Search */}
         <p style={sectionHeadingStyle}>Web Search</p>
