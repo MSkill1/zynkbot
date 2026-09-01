@@ -201,6 +201,15 @@ zynkbot/
 
 ## Architecture
 
+### Why Rust
+
+Rust was a constraint, not a preference. Zynkbot has to run on Windows, Linux, and Android with one maintainer, and every platform needs local inference — embeddings, entity extraction, safety classification, and GGUF models all running on-device. Rust is the only stack where every one of those pieces is first-class: [Candle](https://github.com/huggingface/candle) for embeddings and NER, `llama-cpp-2` for GGUF inference, ONNX for wake-word detection, and Vosk for offline speech. Flutter or React Native would have meant a Rust core behind FFI anyway, plus a second runtime to feed it. Kotlin Multiplatform was the real alternative, and it would have cost the desktop build.
+
+The tradeoff is real: with Tauri, the platform-specific work — foreground services, wake locks, lock-screen behavior — is harder than it would be in a native Android project. That cost is explained here.
+
+As of two years ago, I had no experience with Rust and only an interest. When it became apparent the project required it, it became a learning experience.
+
+
 ```
 ┌──────────────────────────────────────────────────────┐
 │      Zynkbot — Desktop (Windows/Linux) + Android      │
