@@ -64,6 +64,14 @@ struct AnthropicResponse {
 struct ContentBlock {
     #[serde(rename = "type")]
     content_type: String,
+    // Only some block types carry `text` — thinking, redacted_thinking and tool_use
+    // blocks do not. Without a default, one such block made serde reject the whole
+    // response with "error decoding response body", which is what dropped Anthropic
+    // out of ensemble Phase 1 while the streaming coordinator path still worked.
+    // The consumer below already filters to content_type == "text"; it just never
+    // got the chance to run. The streaming structs in this file are defensive the
+    // same way.
+    #[serde(default)]
     text: String,
 }
 
@@ -392,3 +400,49 @@ where
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A response mixing a thinking block with a text block must parse, and only the
+    /// text must survive. Guards the ensemble Phase 1 failure documented above.
+    #[test]
+    fn response_with_non_text_block_parses() {
+        let body = r#"{
+            "id": "msg_123",
+            "model": "claude-opus-5",
+            "content": [
+                {"type": "thinking", "thinking": "considering the question"},
+                {"type": "text", "text": "Here is the answer."}
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        }"#;
+
+        let parsed: AnthropicResponse =
+            serde_json::from_str(body).expect("response with a thinking block must deserialize");
+
+        let content = parsed
+            .content
+            .into_iter()
+            .filter(|b| b.content_type == "text")
+            .map(|b| b.text)
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        assert_eq!(content, "Here is the answer.");
+    }
+
+    /// The ordinary all-text case must keep working unchanged.
+    #[test]
+    fn response_with_only_text_blocks_parses() {
+        let body = r#"{
+            "id": "msg_456",
+            "model": "claude-opus-5",
+            "content": [{"type": "text", "text": "Plain answer."}],
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        }"#;
+        let parsed: AnthropicResponse = serde_json::from_str(body).unwrap();
+        assert_eq!(parsed.content.len(), 1);
+        assert_eq!(parsed.content[0].text, "Plain answer.");
+    }
+}
