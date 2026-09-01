@@ -32,6 +32,21 @@ pub mod local_models {
         }
     }
 
+    /// Mirrors the desktop signature so call sites in chat.rs and lib.rs compile
+    /// unchanged. Added because main introduced this function and its callers
+    /// without a matching Android stub, which broke the Android build — main is
+    /// not built for Android, so nothing caught it there.
+    pub fn with_cached_session<F, R>(_model_path: &str, _f: F) -> Result<R, LLMError>
+    where
+        F: FnOnce(&LocalModelSession) -> Result<R, LLMError>,
+    {
+        Err(LLMError::APIError("Local models not supported on Android".to_string()))
+    }
+
+    pub fn resolve_default_model_path() -> Result<String, LLMError> {
+        Err(LLMError::APIError("Local models not supported on Android".to_string()))
+    }
+
     pub fn generate_with_local_model(
         _model_path: &str,
         _messages: Vec<Message>,
