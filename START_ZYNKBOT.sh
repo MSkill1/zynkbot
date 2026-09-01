@@ -69,6 +69,30 @@ if [ ! -f "$SCRIPT_DIR/zynkbot_rust/src-tauri/.env" ]; then
 fi
 
 
+# llama-cpp-sys-2 builds llama.cpp through CMake, and CMakeCache.txt records the
+# absolute path it was configured in. If target/ was copied from another checkout
+# (this project has several: zynkbot, zynkbot-main, zynkbot-voice), the generated
+# makefiles try to cd into a directory that no longer exists and the build dies
+# deep inside gmake. Detect a foreign cache and clear just that crate.
+BUILD_DIR="$SCRIPT_DIR/zynkbot_rust/src-tauri/target/debug/build"
+if [ -d "$BUILD_DIR" ]; then
+    STALE_CMAKE=0
+    for cache in "$BUILD_DIR"/llama-cpp-sys-2-*/out/build/CMakeCache.txt; do
+        [ -f "$cache" ] || continue
+        cached_dir=$(grep -m1 '^CMAKE_CACHEFILE_DIR' "$cache" | cut -d= -f2)
+        case "$cached_dir" in
+            "$SCRIPT_DIR"/*) ;;
+            *) STALE_CMAKE=1 ;;
+        esac
+    done
+    if [ "$STALE_CMAKE" -eq 1 ]; then
+        echo "🧹 Stale CMake cache detected (target/ came from a different checkout)."
+        echo "   Clearing llama-cpp-sys-2 so CMake can reconfigure. This forces a rebuild."
+        ( cd "$SCRIPT_DIR/zynkbot_rust/src-tauri" && cargo clean -p llama-cpp-sys-2 ) || true
+        echo ""
+    fi
+fi
+
 BINARY="$SCRIPT_DIR/zynkbot_rust/src-tauri/target/debug/app"
 if [ ! -f "$BINARY" ]; then
     echo "⚠️  Binary not found — Rust backend has not been compiled yet."
@@ -80,13 +104,20 @@ else
 fi
 echo ""
 
-# Cleanup function to kill port 3000 on exit
+# Cleanup function to kill port 3000 on exit.
+# Preserves the incoming exit status — an earlier `exit 0` here reported success
+# on every failure, so a broken build looked like a silent crash.
+CLEANED_UP=0
 cleanup() {
+    local code=$?
+    # Both the signal traps and the EXIT trap call this, so guard against running twice.
+    [ "$CLEANED_UP" -eq 1 ] && exit $code
+    CLEANED_UP=1
     echo ""
     echo "🛑 Cleaning up..."
     # Kill any process using port 3000
     lsof -ti:3000 | xargs kill -9 2>/dev/null || true
-    exit 0
+    exit $code
 }
 
 # Set trap to cleanup on exit
