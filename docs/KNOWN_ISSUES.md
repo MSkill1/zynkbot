@@ -161,4 +161,17 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-*Last updated: 2026-08-12*
+## Installation
+
+### KI-022 — Linux install fails to build: ALSA development headers not installed
+**Status:** Fixed (installer)
+**Affected:** Every fresh Linux install (all distributions) from the point desktop Vosk dictation landed
+**Description:** `install.sh` never installed ALSA development headers. `cpal` (`Cargo.toml:120`, used for desktop Vosk dictation) depends on `alsa` -> `alsa-sys`, whose build script resolves the `alsa` pkg-config package. Without `libasound2-dev` present, `cargo build` fails during the dependency build and the install aborts.
+**Why it went unnoticed:** Development machines already had `libasound2-dev` installed from earlier work, and `.github/workflows/release.yml` already listed it, so both local builds and CI passed while every clean install broke. The failure was only reachable on a machine that had never built audio code before.
+**Workaround (for anyone on an affected build):** `sudo apt install libasound2-dev` and re-run `./install.sh`.
+**Fix:** Added to all three distribution branches in `install.sh` — `libasound2-dev` (Debian/Ubuntu), `alsa-lib-devel` (Fedora), `alsa-lib` (Arch). Only the Debian case was reported; the Fedora and Arch branches had the same gap and were fixed at the same time.
+**Credit:** Reported by a beta tester, who identified the missing package.
+
+---
+
+*Last updated: 2026-08-31*
