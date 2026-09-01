@@ -216,6 +216,25 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 ---
 
+### KI-023 — Wake-word command is captured but not dispatched until the app is foregrounded
+**Status:** Open — blocks the wake-word feature being usable
+**Affected:** Android, "Hey Zynk" while the app is backgrounded (observed on Pixel 10 Pro XL, 2026-09-01)
+**Description:** Saying "Hey Zynk" while the app is not in the foreground works up to a point — the wake word triggers, dictation runs, and the spoken text is captured correctly. But the message is never sent and no answer is produced. Opening the app causes the queued message to send immediately and Zynkbot to respond, which shows the transcript survived and only the dispatch was deferred.
+**Why this matters:** Hands-free use is the entire point of the wake word. Having to open the app to complete the request removes the feature's reason to exist.
+**Fix target:** The transcript reaches the JS layer but the send path appears to depend on foreground state — likely a suspended timer, a paused WebView, or a send that is queued behind a UI effect that does not run while backgrounded. Dispatch needs to complete from the background service path rather than waiting for the WebView to resume.
+**Impact:** Wake word is demo-only until this is fixed. Screen-off wake word (the separate work in progress) cannot be validated end-to-end while this is outstanding, because a successful screen-off detection would hit the same wall.
+
+---
+
+### KI-024 — Wake word from the Android home screen only shows a popup of the transcript, nothing is sent
+**Status:** Open — likely the same root cause as KI-023
+**Affected:** Android, wake word triggered from the launcher/home screen (observed on OnePlus 12R, 2026-09-01)
+**Description:** Triggering "Hey Zynk" from the home screen produces a popup containing the dictated text and nothing further. No message is sent, and no response is generated or spoken.
+**Relationship to KI-023:** Both are failures of the same step — a captured transcript that never reaches the send path. Filed separately because the observable behaviour differs (silent queue versus a visible popup that leads nowhere), and it is not yet confirmed they share one cause. Fixing KI-023 should be verified against this case explicitly rather than assumed to cover it.
+**Fix target:** Determine whether the popup is the full-screen-intent notification path or a separate toast, then route it into the same dispatch fix as KI-023.
+
+---
+
 ## Build
 
 ### KI-021 — `import_persona_collection` references a module that does not exist, so `cargo build` always fails
@@ -233,6 +252,26 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 **User-visible effect:** `install.bat` prints `[WARNING] Build failed - see errors above` and then, a few lines later, `[OK] Installation Complete`. The app does work afterwards, but the installer contradicts itself and the failure looks fatal. A new tester would reasonably conclude the install is broken.
 
 **Fix target:** Three options — add the missing `commands::persona_memory` module (if the persona-collection feature is still intended; note `migrations/0009_persona_memory_collections.sql` exists, suggesting it was started), delete the stale binary, or keep it out of default builds with `required-features` in `Cargo.toml`. Whichever is chosen, `install.bat` should not report both a failed build and a successful installation in the same run.
+
+---
+
+## Chat & Responses
+
+### KI-025 — LLM responses are not streamed; nothing appears until the full response arrives
+**Status:** Open — Tier 1 v1.0 item
+**Affected:** All platforms, all backends
+**Description:** Asking for a long answer produces no visible output until the entire response has been generated. The response should begin rendering as soon as the first tokens are available.
+**Fix target:** Use `stream: true` for API backends (Claude, OpenAI, Grok) and llama.cpp's streaming generation callback for local and Ollama backends. This is a transport and rendering change only — it does not touch the memory graph, contradiction detection, or wake-word logic.
+**Impact:** Perceived responsiveness. On a long answer the app currently looks frozen, which is the single most visible weakness in normal use. Also compounds KI-026: with no streaming and no stop control, a long spoken answer cannot be interrupted or previewed.
+
+---
+
+### KI-026 — No way to stop speech or output once it starts; Clear should become Stop
+**Status:** Open
+**Affected:** All platforms; most acute on Android with TTS enabled
+**Description:** Once Zynkbot begins speaking a response there is no control to stop it. The existing TTS-stop work is not reachable from the UI in normal use.
+**Fix target:** Replace the Clear button with a Stop button that halts speech and text output together. Clearing is already covered by the new-conversation button next to the history control, so the Clear button is redundant and its position is the natural home for Stop.
+**Impact:** A long spoken response has to be waited out. Reported directly by the maintainer during device testing, 2026-09-01.
 
 ---
 
