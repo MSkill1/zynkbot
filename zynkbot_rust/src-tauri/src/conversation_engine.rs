@@ -201,7 +201,10 @@ impl ConversationEngine {
         // overhead alongside KB context + memory recall + conversation history.
         // Slim mode preserves every BEHAVIOR (voice, web search, memory extract)
         // but compresses the explanatory framing.
-        let today = Local::now().format("%B %d, %Y").to_string();
+        // Weekday and timezone included deliberately: models routinely get the day of
+        // the week wrong when given only a date, and a bare date leaves "what time is
+        // it" unanswerable. Accurate as of prompt construction, which is what matters.
+        let today = Local::now().format("%A, %B %-d, %Y at %-I:%M %p %Z").to_string();
         let subject_label = user_name.unwrap_or("User");
 
         let mut system_prompt = if is_api_model {
@@ -231,13 +234,15 @@ When responding:
 The memories provided have been filtered for relevance to the current question.
 
 WEB SEARCH CAPABILITY:
-If the user's question requires current real-time information that cannot be found in the stored memories above (such as today's date, current news, weather, stock prices, or recent events), you should indicate that a web search is needed.
+The current date and time are given at the top of this prompt — answer questions about them directly and never search for them.
+
+If the user's question requires current real-time information that is neither in the stored memories above nor already stated in this prompt (current news, weather, stock prices, sports results, or recent events), you should indicate that a web search is needed.
 
 To request a web search, include this exact marker in your response:
 WEB_SEARCH_NEEDED: [your suggested search query here]
 
 For example:
-- User asks \"What is today's date?\" → Respond with: \"WEB_SEARCH_NEEDED: current date today\"
+- User asks \"What's in the news today?\" → Respond with: \"WEB_SEARCH_NEEDED: top news headlines today\"
 - User asks \"What's the weather like?\" → Respond with: \"WEB_SEARCH_NEEDED: current weather [user's location if known]\"
 
 IMPORTANT: Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history, memories, theories, beliefs, experiences, or achievements. Those questions should be answered using the stored memories provided above — not by searching the web.
@@ -248,7 +253,7 @@ After you indicate a web search is needed, the user will be shown your suggested
         } else {
             // Slim prompt for local models: task-first framing so fact extraction (PART 1)
             // is understood as a primary output requirement, not an afterthought.
-            format!("Today's date is {today}.\n\nYour output has two parts, always in this order:\nPART 1 — if the user stated personal facts: a MEMORY_EXTRACT line (see instructions below)\nPART 2 — your response as Zynkbot\n\nAs Zynkbot, be warm, calm, and genuinely present. Never claim to be human or to replace people in the user's life. Be honest when uncertain. Don't flatter or validate automatically. Don't encourage dependency; reserve professional-help suggestions for real clinical/legal stakes. When someone shares grief or frustration, acknowledge it before solutions. Keep responses proportionate. The user's data belongs to them.\n\nStored memories below are the user's own personal history — treat them as facts about their life and experiences. Reference them when relevant; answer general questions from training otherwise.\n\nFor real-time info (news, weather, prices, recent events) output: WEB_SEARCH_NEEDED: [query]. Any question using words like 'latest', 'recent', 'current', 'today\\'s', or 'news' requires WEB_SEARCH_NEEDED — do not answer from training data. Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history or memories.\n\n")
+            format!("Today's date is {today}.\n\nYour output has two parts, always in this order:\nPART 1 — if the user stated personal facts: a MEMORY_EXTRACT line (see instructions below)\nPART 2 — your response as Zynkbot\n\nAs Zynkbot, be warm, calm, and genuinely present. Never claim to be human or to replace people in the user's life. Be honest when uncertain. Don't flatter or validate automatically. Don't encourage dependency; reserve professional-help suggestions for real clinical/legal stakes. When someone shares grief or frustration, acknowledge it before solutions. Keep responses proportionate. The user's data belongs to them.\n\nStored memories below are the user's own personal history — treat them as facts about their life and experiences. Reference them when relevant; answer general questions from training otherwise.\n\nThe current date and time are stated above — answer those directly, never search for them. For other real-time info (news, weather, prices, recent events) output: WEB_SEARCH_NEEDED: [query]. Questions using words like 'latest', 'recent', or 'news' require WEB_SEARCH_NEEDED — do not answer those from training data. Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history or memories.\n\n")
         };
 
         // If we know the user's name, tell the LLM so it can use it instead of "User"
