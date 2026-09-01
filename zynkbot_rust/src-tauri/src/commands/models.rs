@@ -307,39 +307,79 @@ pub async fn remove_api_key(key: String) -> Result<(), String> {
 /// Push an API key to all active sync peers over the existing cert-pinned channel.
 #[tauri::command]
 pub async fn propagate_api_key(key: String, value: String) -> Result<serde_json::Value, String> {
-    let guard = crate::ZYNKSYNC_SERVICE.lock().await;
-    let service = guard.as_ref().ok_or("ZynkSync not running — start sync first")?;
+    propagate_api_keys(vec![(key, value)]).await
+}
 
-    let targets: Vec<(String, String)> = service.get_peers().await
-        .into_iter()
-        .filter(|p| p.paired && !p.host.is_empty())
-        .map(|p| (p.device_id.clone(), p.host.clone()))
-        .collect();
+/// Push several keys to every paired peer in one pass.
+///
+/// The UI used to call propagate_api_key once per key, and each call re-ran the
+/// whole peer loop. With the shared client's 30s timeout, a single unreachable
+/// peer cost 30s x number-of-keys — around 8.5 minutes for a full key set, which
+/// read as a frozen button. One pass over the peers with a short timeout instead.
+#[tauri::command]
+pub async fn propagate_api_keys(entries: Vec<(String, String)>) -> Result<serde_json::Value, String> {
+    // Collect what we need and release the lock before doing any network I/O.
+    // Holding ZYNKSYNC_SERVICE across the requests blocked the background sync
+    // loop, which wants the same lock.
+    let (targets, http_client) = {
+        let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+        let service = guard.as_ref().ok_or("ZynkSync not running — start sync first")?;
+        let targets: Vec<(String, String)> = service.get_peers().await
+            .into_iter()
+            .filter(|p| p.paired && !p.host.is_empty())
+            .map(|p| (p.device_id.clone(), p.host.clone()))
+            .collect();
+        (targets, service.get_http_client().await)
+    };
 
-    let http_client = service.get_http_client().await;
-    let payload = serde_json::json!({ "key": &key, "value": &value });
+    // Pushing a key on a LAN is a sub-second operation. The shared client's 30s
+    // timeout exists for large sync payloads and is far too long here.
+    const PUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
     let mut succeeded = 0usize;
     let mut failed = 0usize;
+    let mut unreachable: Vec<String> = Vec::new();
 
     for (device_id, host) in &targets {
+        let short = &device_id[..8.min(device_id.len())];
         let url = format!("https://{}:57963/api/zynksync/push-api-key", host);
-        match http_client.post(&url).json(&payload).send().await {
-            Ok(r) if r.status().is_success() => {
-                println!("[ZynkSync] ✓ API key {} pushed to {}…", key, &device_id[..8.min(device_id.len())]);
-                succeeded += 1;
+        let mut peer_ok = 0usize;
+        let mut peer_failed = false;
+
+        for (key, value) in &entries {
+            let payload = serde_json::json!({ "key": key, "value": value });
+            match http_client.post(&url).timeout(PUSH_TIMEOUT).json(&payload).send().await {
+                Ok(r) if r.status().is_success() => { peer_ok += 1; succeeded += 1; }
+                Ok(r) => {
+                    println!("[ZynkSync] ✗ Push {} to {}… returned {}", key, short, r.status());
+                    failed += 1;
+                }
+                Err(e) => {
+                    println!("[ZynkSync] ✗ Push {} to {}… failed: {}", key, short, e);
+                    failed += 1;
+                    // The peer is down; skip its remaining keys rather than paying
+                    // the timeout once per key.
+                    peer_failed = true;
+                    break;
+                }
             }
-            Ok(r) => {
-                println!("[ZynkSync] ✗ Push {} to {}… returned {}", key, &device_id[..8.min(device_id.len())], r.status());
-                failed += 1;
-            }
-            Err(e) => {
-                println!("[ZynkSync] ✗ Push {} to {}… failed: {}", key, &device_id[..8.min(device_id.len())], e);
-                failed += 1;
-            }
+        }
+
+        if peer_failed {
+            unreachable.push(format!("{} ({})", short, host));
+            failed += entries.len().saturating_sub(peer_ok);
+        } else {
+            println!("[ZynkSync] ✓ {} key(s) pushed to {}…", peer_ok, short);
         }
     }
 
-    Ok(serde_json::json!({ "succeeded": succeeded, "failed": failed, "total": targets.len() }))
+    Ok(serde_json::json!({
+        "succeeded": succeeded,
+        "failed": failed,
+        "total": targets.len() * entries.len(),
+        "peers": targets.len(),
+        "unreachable": unreachable,
+    }))
 }
 
 /// Fetch the list of models from a custom OpenAI-compatible endpoint (Ollama, llama-server, etc.)

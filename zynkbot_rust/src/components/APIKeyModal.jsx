@@ -131,11 +131,16 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       const keys = await invoke('get_api_keys');
       const entries = PUSHABLE_KEYS.map(k => [k, keys[k]]).filter(([, v]) => v && v.trim());
       if (entries.length === 0) { setPushKeysMsg('No keys configured.'); return; }
-      let pushed = 0;
-      for (const [k, v] of entries) {
-        try { await invoke('propagate_api_key', { key: k, value: v }); pushed++; } catch {}
-      }
-      setPushKeysMsg(`✓ Pushed ${pushed} key${pushed !== 1 ? 's' : ''}`);
+      // One call for all keys. Calling propagate_api_key per key re-ran the peer
+      // loop each time, so a single unreachable peer cost its timeout once per
+      // key and the button appeared to hang for minutes.
+      const res = await invoke('propagate_api_keys', { entries });
+      const offline = (res?.unreachable || []).length;
+      setPushKeysMsg(
+        offline
+          ? `✓ Pushed to ${res.peers - offline} of ${res.peers} device(s) — ${offline} offline`
+          : `✓ Pushed ${entries.length} key${entries.length !== 1 ? 's' : ''} to ${res.peers} device(s)`
+      );
       setTimeout(() => setPushKeysMsg(''), 4000);
     } catch (e) {
       setPushKeysMsg('Failed: ' + String(e));
