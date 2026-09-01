@@ -138,3 +138,74 @@ jobs:
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/zynkbot_rust/src-tauri/lib/vosk
         run: cargo test --lib
+
+  # Compiles the Rust library for Android. Desktop jobs never build the
+  # #[cfg(target_os = "android")] branches, so an Android-only break is invisible
+  # until someone runs a full APK build by hand. That is exactly how main shipped
+  # call sites for with_cached_session/resolve_default_model_path without the
+  # matching Android stubs in llm/mod.rs, breaking the APK build.
+  #
+  # cargo check rather than a full APK build: it catches the compile errors this is
+  # meant to catch, in a fraction of the time, without signing or Gradle.
+  android-check:
+    name: Android compile check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: zynkbot_rust/package-lock.json
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34'
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;27.0.12077973"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+
+      - name: Setup Rust with Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: zynkbot_rust/src-tauri -> target
+          key: android-check
+
+      # cargo-ndk supplies the CC/AR/linker environment the NDK needs. Without it
+      # the build scripts for ring, aws-lc-sys and openssl-sys fail before any of
+      # our own code is reached.
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # tauri-build expects the frontend output directory to exist, so the web
+      # assets are built even though this job only type-checks Rust.
+      - name: Build frontend
+        working-directory: zynkbot_rust
+        run: |
+          npm ci
+          npm run build
+
+      - name: Check aarch64 (arm64-v8a)
+        working-directory: zynkbot_rust/src-tauri
+        run: cargo ndk -t arm64-v8a check --lib
+
+      - name: Check armv7 (armeabi-v7a)
+        working-directory: zynkbot_rust/src-tauri
+        run: cargo ndk -t armeabi-v7a check --lib
