@@ -446,8 +446,11 @@ export PATH="$HOME/.cargo/bin:$PATH"
 PRECOMPILE_FEATURES=""
 if [ "$GPU_DETECTED" = "1" ]; then
     PRECOMPILE_FEATURES="--features cuda"
-    # Same CUDA env the launcher exports — see START_ZYNKBOT.sh for why these are
-    # set here instead of in .cargo/config.toml.
+
+    # Point the CUDA build scripts at apt's library layout and give nvcc -fPIC so it
+    # can compile into a cdylib. Previously set in src-tauri/.cargo/config.toml, but a
+    # cargo [env] block is not platform-aware and leaked /usr and -fPIC into Windows
+    # builds. ${VAR:-default} matches the old non-forcing [env] behaviour.
     export CUDA_PATH="${CUDA_PATH:-/usr}"
     export CUDA_LIBRARY_PATH="${CUDA_LIBRARY_PATH:-/usr/lib/x86_64-linux-gnu}"
     export CUDAFLAGS="${CUDAFLAGS:--Xcompiler -fPIC}"

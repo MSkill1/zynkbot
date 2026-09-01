@@ -91,7 +91,8 @@ pub async fn send_message_with_memory(
     // Normalize brand name misspellings from voice transcription before any processing
     let message = crate::normalize_brand_names(message);
 
-    let _request_start = std::time::Instant::now();
+    let request_start = std::time::Instant::now();
+    println!("[⏱️ PERF] Request start");
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  💬 NEW CHAT REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
@@ -538,10 +539,6 @@ pub async fn send_message_with_memory(
     // Local GGUF models are blocking and cannot stream, so they continue to return all at once.
     let _api_start = std::time::Instant::now();
 
-    // Paired-call channel: after the main local model call completes, the loaded model session
-    // is sent here so the background task can reuse it for Call 2 (relationship classification)
-    // without a second disk load. None for API backends.
-    let mut local_session_rx: Option<tokio::sync::oneshot::Receiver<crate::llm::local_models::LocalModelSession>> = None;
 
     let reply_text = if forced_backend.to_lowercase().contains("anthropic") || forced_backend.to_lowercase().contains("claude") {
         // Use Anthropic with streaming
@@ -755,9 +752,9 @@ pub async fn send_message_with_memory(
             // Explicit path provided
             forced_backend.clone()
         } else {
-            // Use default model from environment or fallback
-            std::env::var("LOCAL_MODEL_PATH")
-                .unwrap_or_else(|_| "models/user/Llama-3.2-3B-Instruct-Q4_K_M.gguf".to_string())
+            // LOCAL_MODEL_PATH override, else whichever model is actually installed
+            crate::llm::local_models::resolve_default_model_path()
+                .map_err(|e| e.to_string())?
         };
 
         let messages = vec![crate::llm::Message {
@@ -765,22 +762,17 @@ pub async fn send_message_with_memory(
             content: full_prompt,
         }];
 
-        // Paired-call: load model once, generate main response, pass session to background
-        // task via channel so Call 2 reuses the already-loaded model.
-        let (session_tx, session_rx) = tokio::sync::oneshot::channel::<crate::llm::local_models::LocalModelSession>();
-        local_session_rx = Some(session_rx);
-
         let model_path_clone = model_path.clone();
+        let inference_start = std::time::Instant::now();
         let response = tokio::task::spawn_blocking(move || {
-            let session = crate::llm::local_models::LocalModelSession::load(&model_path_clone)?;
-            let response = session.generate(messages, Some(4096), None, None)?;
-            // Send session to background task — if the receiver was already dropped, ignore.
-            let _ = session_tx.send(session);
-            Ok::<_, crate::llm::LLMError>(response)
+            crate::llm::local_models::with_cached_session(&model_path_clone, |session| {
+                session.generate(messages, Some(4096), None, None)
+            })
         })
         .await
         .map_err(|e| format!("Failed to run local model task: {}", e))?
         .map_err(|e| e.to_string())?;
+        println!("[⏱️ PERF] Local model inference: {:.2}s", inference_start.elapsed().as_secs_f32());
 
         response.content
 
@@ -1078,6 +1070,8 @@ pub async fn send_message_with_memory(
         }
     }
 
+    println!("[⏱️ PERF] Total request time: {:.2}s", request_start.elapsed().as_secs_f32());
+
     // STEP 9: RETURN RESPONSE IMMEDIATELY (before memory processing)
     let immediate_response = ReplyResponse {
         reply_text: final_reply_text.clone(),
@@ -1157,8 +1151,6 @@ pub async fn send_message_with_memory(
         let bg_app = app.clone();
         let bg_is_api = is_api;
         let bg_is_explicit_remember = is_explicit_remember;
-        // Pre-loaded model session for Call 2 (local models only — None for API backends).
-        let bg_local_session = local_session_rx;
 
         // Spawn background task for memory processing
         tokio::spawn(async move {
@@ -1302,28 +1294,10 @@ pub async fn send_message_with_memory(
 
             println!("[RUST BACKGROUND] ✅ Proceeding with relationship classification");
 
-            // Paired-call: receive the pre-loaded model session from the main call.
-            // By the time we reach here, the session was already sent (before the background
-            // task was spawned), so this await completes instantly.
-            let local_session = if let Some(rx) = bg_local_session {
-                match rx.await {
-                    Ok(session) => {
-                        println!("[RUST BACKGROUND] ✅ Received pre-loaded model session for Call 2");
-                        Some(session)
-                    }
-                    Err(_) => {
-                        println!("[RUST BACKGROUND] ⚠️ Model session unavailable — will load fresh for Call 2");
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
             // Local: MEMORY_EXTRACT fired → relationships + title only (should_remember=true).
             // API: full should_remember + relationship classification.
             let (should_remember, llm_title, llm_relationships) = if !bg_is_api {
-                match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend, local_session).await {
+                match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
                     Ok((title, rels)) => {
                         println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
                         (true, title, rels)
@@ -2104,8 +2078,8 @@ pub async fn run_ensemble(
         let model_path = if coordinator_model.ends_with(".gguf") {
             coordinator_model.clone()
         } else {
-            std::env::var("LOCAL_MODEL_PATH")
-                .unwrap_or_else(|_| "models/user/Llama-3.2-3B-Instruct-Q4_K_M.gguf".to_string())
+            crate::llm::local_models::resolve_default_model_path()
+                .map_err(|e| e.to_string())?
         };
         let messages = vec![crate::llm::Message {
             role: "user".to_string(),

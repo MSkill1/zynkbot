@@ -239,16 +239,154 @@ echo Step 3: Installing Rust Toolchain
 echo =========================================
 echo.
 
-REM Rust counts as installed only if cargo actually runs. Written with goto labels
-REM rather than one large if/else block on purpose: cmd.exe parses a parenthesised
-REM block in a single pass and expands every %VAR% inside it up front, so an
-REM %errorLevel% read within such a block reports the value from before the block
-REM started. "if errorlevel N" is evaluated at the moment it runs, so it is immune
-REM to that, and goto keeps each outcome on its own straight path.
+REM Detect Rust from the filesystem first, then fall back to PATH. `where cargo`
+REM alone is not reliable here: an elevated session launched from a parent with a
+REM stale environment block (Explorer caches its environment and does not always
+REM pick up PATH changes) can inherit a PATH without %USERPROFILE%\.cargo\bin even
+REM though Rust is installed -- which sent this step down the install path and tried
+REM to reinstall a perfectly good toolchain.
+set "RUST_PRESENT="
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "RUST_PRESENT=1"
+if not defined RUST_PRESENT (
+    where cargo >nul 2>&1
+    if not errorlevel 1 set "RUST_PRESENT=1"
+)
+if defined RUST_PRESENT goto :rust_already_installed
 
-REM An elevated shell does not inherit the user PATH, so also look in rustup's home.
-if exist "%USERPROFILE%\.cargo\bin" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+REM ---- Rust not present: download and install ----
+REM Flattened with goto rather than if/else. Every %errorLevel% in this section used
+REM to be expanded at PARSE time -- before any line inside the block ran -- so the
+REM checks after ping, after the download and after rustup all re-read the stale
+REM value from `where cargo`. That made "[ERROR] Rust installer failed" fire whenever
+REM this branch was entered, whatever rustup actually returned, which is why fixing
+REM the Rust-absent case kept appearing to break the Rust-present case and back again.
+    echo [INFO] Installing Rust...
+    echo.
+    echo [DEBUG] Testing network connectivity to rustup.rs...
+    ping -n 1 win.rustup.rs >nul 2>&1
+    REM `if errorlevel N` is evaluated at run time, unlike %errorLevel%
+    if errorlevel 1 (
+        echo [DEBUG] Network connectivity: FAILED - Cannot reach win.rustup.rs
+    ) else (
+        echo [DEBUG] Network connectivity: OK
+    )
+    echo.
 
+    echo [DEBUG] Attempting download via PowerShell...
+    echo [DEBUG] Target: %~dp0rustup-init.exe
+    powershell -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; [System.Net.ServicePointManager]::CheckCertificateRevocationList = $false; Write-Host '[DEBUG] PowerShell: Starting download...'; Invoke-WebRequest -Uri 'https://win.rustup.rs' -OutFile '%~dp0rustup-init.exe' -UseBasicParsing; Write-Host '[DEBUG] PowerShell: Download complete'; exit 0 } catch { Write-Host '[DEBUG] PowerShell ERROR:' $_.Exception.Message -ForegroundColor Red; exit 1 }"
+    set "PS_EXIT=!errorLevel!"
+    echo [DEBUG] PowerShell exit code: !PS_EXIT!
+
+    REM If PowerShell failed, try curl as fallback with relaxed SSL
+    set "CURL_EXIT=not run"
+    if not exist "%~dp0rustup-init.exe" (
+        echo.
+        echo [DEBUG] PowerShell download failed, trying curl...
+        echo [DEBUG] Using --ssl-no-revoke flag to bypass certificate checks
+        curl --ssl-no-revoke -v -o "%~dp0rustup-init.exe" https://win.rustup.rs
+        set "CURL_EXIT=!errorLevel!"
+        echo [DEBUG] curl exit code: !CURL_EXIT!
+    )
+
+    echo.
+    echo [DEBUG] Checking if file exists: %~dp0rustup-init.exe
+    if not exist "%~dp0rustup-init.exe" (
+        echo [DEBUG] File does NOT exist
+        echo.
+        echo ========================================
+        echo DOWNLOAD FAILED - Diagnostic Information
+        echo ========================================
+        echo PowerShell exit code: !PS_EXIT!
+        echo curl exit code: !CURL_EXIT!
+        echo.
+        echo Possible causes:
+        echo  1. Windows Defender quarantining the file after download
+        echo  2. Antivirus blocking the download
+        echo  3. Firewall blocking HTTPS connections
+        echo  4. Network connectivity issues
+        echo.
+        echo Please try:
+        echo  1. Add exclusion for: %~dp0
+        echo  2. Temporarily disable Windows Defender real-time protection
+        echo  3. OR manually download from: https://rustup.rs
+        echo.
+        pause
+        exit /b 1
+    )
+
+    REM File exists - success!
+    for %%A in ("%~dp0rustup-init.exe") do echo [DEBUG] File size: %%~zA bytes
+    echo [DEBUG] Download successful!
+    echo [OK] Download complete
+    echo.
+    echo Running Rust installer with default options...
+    echo (This may take a few minutes...)
+    "%~dp0rustup-init.exe" -y
+    set "RUSTUP_EXIT=!errorLevel!"
+
+    if not "!RUSTUP_EXIT!"=="0" (
+        echo [ERROR] Rust installer failed ^(exit code !RUSTUP_EXIT!^)
+        echo.
+        echo This is usually caused by:
+        echo   1. Antivirus quarantining rustup-init.exe
+        echo   2. Network/firewall blocking downloads
+        echo.
+        echo Please:
+        echo   1. Check your antivirus quarantine and restore rustup-init.exe
+        echo   2. Disable antivirus temporarily
+        echo   3. Run install.bat again
+        echo.
+        pause
+        exit /b 1
+    )
+
+    del "%~dp0rustup-init.exe" 2>nul
+
+    REM Add Rust to PATH for this session (rustup adds it permanently, but we need it now)
+    set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+
+    REM Verify Rust was actually installed by checking for cargo
+    if not exist "%USERPROFILE%\.cargo\bin\cargo.exe" (
+        echo [ERROR] Rust installation failed - cargo.exe not found
+        echo.
+        echo This means the Rust installer ran but didn't install files.
+        echo Usually caused by antivirus blocking/deleting files.
+        echo.
+        echo Please:
+        echo   1. Check antivirus logs and quarantine
+        echo   2. Disable antivirus completely
+        echo   3. Run install.bat again
+        echo.
+        pause
+        exit /b 1
+    )
+
+    echo [OK] Rust installed successfully
+    echo [OK] Cargo found at: %USERPROFILE%\.cargo\bin\cargo.exe
+
+    REM Add Rust to SYSTEM PATH permanently so admin sessions can find it
+    echo [INFO] Adding Rust to system PATH...
+    powershell -ExecutionPolicy Bypass -File "%~dp0add_rust_to_system_path.ps1"
+    echo [OK] Rust added to system PATH
+goto :rust_done
+
+:rust_already_installed
+REM Make sure PATH is set even if Rust was already installed -- this is the case that
+REM broke when an elevated session could not see cargo on PATH.
+set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+set "RUST_VERSION="
+for /f "tokens=*" %%v in ('rustc --version 2^>nul') do set "RUST_VERSION=%%v"
+if defined RUST_VERSION (
+    echo [OK] Rust already installed: !RUST_VERSION!
+) else (
+    echo [OK] Rust already installed: %USERPROFILE%\.cargo\bin\cargo.exe
+)
+
+:rust_done
+echo.
+
+REM Verify Rust is accessible in current session
 cargo --version >nul 2>&1
 if not errorlevel 1 goto rust_ready
 
@@ -313,44 +451,38 @@ set "CUDA_AVAILABLE=0"
 where nvidia-smi >nul 2>&1
 if errorlevel 1 goto cuda_none
 
-echo [INFO] NVIDIA GPU detected:
-nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
+        REM Copy CUDA MSBuild integration files for Visual Studio Build Tools
+        REM (Full VS IDE gets these automatically, Build Tools needs manual copy)
+        REM Both paths are derived rather than hardcoded: the CUDA root comes from
+        REM nvcc's own location (was pinned to v12.6) and the VS path from VS_CPP,
+        REM which vswhere resolved above (was pinned to 2022 BuildTools).
+        set "NVCC_BIN_DIR="
+        for %%n in (nvcc.exe) do set "NVCC_BIN_DIR=%%~dp$PATH:n"
+        set "CUDA_ROOT=!NVCC_BIN_DIR:\bin\=!"
+        for %%r in ("!CUDA_ROOT!") do set "CUDA_VER_DIR=%%~nxr"
+        set "CUDA_VER=!CUDA_VER_DIR:v=!"
+        set "CUDA_INTEGRATION_SRC=!CUDA_ROOT!\extras\visual_studio_integration\MSBuildExtensions"
+        set "VS_BUILDTOOLS_DIR=!VS_CPP!\MSBuild\Microsoft\VC\v170\BuildCustomizations"
 
-where nvcc >nul 2>&1
-if errorlevel 1 goto cuda_no_toolkit
-
-set "CUDA_AVAILABLE=1"
-echo [OK] CUDA toolkit found - GPU acceleration will be enabled
-nvcc --version | findstr "release"
-
-REM Build Tools does not ship the CUDA MSBuild integration that the full VS IDE
-REM gets, and CMake needs it. Both sides are discovered rather than hardcoded: the
-REM NVIDIA installer sets CUDA_PATH, VS_CPP came from vswhere in step 2, and the
-REM toolset directory is globbed so this is not pinned to one CUDA or VS version.
-if not defined CUDA_PATH goto cuda_ready
-if not defined VS_CPP goto cuda_ready
-set "CUDA_MSBUILD_SRC=%CUDA_PATH%\extras\visual_studio_integration\MSBuildExtensions"
-if not exist "%CUDA_MSBUILD_SRC%" goto cuda_ready
-set "VS_BUILDCUSTOM="
-for /d %%d in ("%VS_CPP%\MSBuild\Microsoft\VC\v*") do set "VS_BUILDCUSTOM=%%d\BuildCustomizations"
-if not defined VS_BUILDCUSTOM goto cuda_ready
-if not exist "%VS_BUILDCUSTOM%" goto cuda_ready
-echo [INFO] Installing CUDA MSBuild integration for Build Tools...
-copy /Y "%CUDA_MSBUILD_SRC%\*" "%VS_BUILDCUSTOM%\" >nul 2>&1
-if errorlevel 1 echo [WARNING] Could not copy CUDA MSBuild integration - CMake may not find CUDA.
-if not errorlevel 1 echo [OK] CUDA integration installed for CMake compatibility
-goto cuda_ready
-
-:cuda_no_toolkit
-echo [WARNING] NVIDIA GPU found but the CUDA toolkit ^(nvcc^) is not installed.
-echo           Building for CPU. Install the CUDA Toolkit and re-run install.bat
-echo           to enable GPU: https://developer.nvidia.com/cuda-downloads
-goto cuda_ready
-
-:cuda_none
-echo [INFO] No NVIDIA GPU detected - building for CPU mode.
-
-:cuda_ready
+        if exist "!CUDA_INTEGRATION_SRC!" (
+            if exist "!VS_BUILDTOOLS_DIR!" (
+                if not exist "!VS_BUILDTOOLS_DIR!\CUDA !CUDA_VER!.props" (
+                    echo [INFO] Installing CUDA MSBuild integration for Build Tools...
+                    copy /Y "!CUDA_INTEGRATION_SRC!\*" "!VS_BUILDTOOLS_DIR!\" >nul 2>&1
+                    if !errorLevel! equ 0 (
+                        echo [OK] CUDA integration installed for CMake compatibility
+                    )
+                )
+            )
+        )
+    ) else (
+        echo [WARNING] NVIDIA GPU found but CUDA toolkit ^(nvcc^) is not installed.
+        echo           Building for CPU. Install the CUDA Toolkit and re-run install.bat
+        echo           to enable GPU: https://developer.nvidia.com/cuda-downloads
+    )
+) else (
+    echo [INFO] No NVIDIA GPU detected - building for CPU mode.
+)
 echo.
 
 REM ============================================
@@ -595,16 +727,26 @@ if exist "%VOSK_LIB_DIR%\libvosk.lib" (
     set "VOSK_VER=0.3.45"
     set "VOSK_ZIP=%TEMP%\vosk-win64.zip"
     set "VOSK_EXTRACT=%TEMP%\vosk_extract"
-    set "VOSK_URL=https://github.com/alphacep/vosk-api/releases/download/v!VOSK_VER!/vosk-win64-!VOSK_VER!.zip"
+    set "VOSK_SDK_SUB=vosk-win64-0.3.45"
+    set "VOSK_URL=https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip"
 
     powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!VOSK_URL!' -OutFile '!VOSK_ZIP!' -UseBasicParsing"
     if !errorLevel! equ 0 (
         echo [INFO] Extracting Vosk library files...
-        REM Every path here is expanded by cmd (!VAR!), never by PowerShell. A
-        REM '$env:TEMP' in single quotes is a literal string, so PowerShell read
-        REM $env: as a drive qualifier and failed with "Cannot find drive".
-        powershell -Command "Expand-Archive -Path '!VOSK_ZIP!' -DestinationPath '!VOSK_EXTRACT!' -Force; Copy-Item '!VOSK_EXTRACT!\vosk-win64-!VOSK_VER!\libvosk.lib' -Destination '!VOSK_LIB_DIR!\libvosk.lib' -Force; Copy-Item '!VOSK_EXTRACT!\vosk-win64-!VOSK_VER!\libvosk.dll' -Destination '!VOSK_LIB_DIR!\libvosk.dll' -Force; Remove-Item '!VOSK_EXTRACT!' -Recurse -Force; Remove-Item '!VOSK_ZIP!' -Force"
-        if !errorLevel! equ 0 (
+        REM Copy every file the SDK needs, not just libvosk.lib/.dll. The Windows Vosk
+        REM build is MinGW-based and libvosk.dll depends on libstdc++-6, libwinpthread-1
+        REM and libgcc_s_seh-1; without those it fails to load at run time even though
+        REM the build links fine.
+        REM
+        REM Every path is passed in from a batch variable. Writing '$env:TEMP\...' inside
+        REM a single-quoted PowerShell string does NOT expand it -- PowerShell then treats
+        REM it as a path on a drive literally named '$env' and extraction failed every
+        REM time, silently leaving zero files behind. Parentheses are avoided throughout,
+        REM because cmd counts them while parsing this if-block even inside quotes.
+        powershell -Command "Expand-Archive -Path '!VOSK_ZIP!' -DestinationPath '!VOSK_EXTRACT!' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libvosk.lib' -Destination '!VOSK_LIB_DIR!\libvosk.lib' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libvosk.dll' -Destination '!VOSK_LIB_DIR!\libvosk.dll' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libstdc++-6.dll' -Destination '!VOSK_LIB_DIR!\libstdc++-6.dll' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libwinpthread-1.dll' -Destination '!VOSK_LIB_DIR!\libwinpthread-1.dll' -Force; Copy-Item '!VOSK_EXTRACT!\!VOSK_SDK_SUB!\libgcc_s_seh-1.dll' -Destination '!VOSK_LIB_DIR!\libgcc_s_seh-1.dll' -Force; Remove-Item '!VOSK_EXTRACT!' -Recurse -Force; Remove-Item '!VOSK_ZIP!' -Force"
+        REM Check the artifact rather than the exit code: Copy-Item failures are
+        REM non-terminating, so PowerShell can exit 0 having copied nothing.
+        if exist "!VOSK_LIB_DIR!\libvosk.lib" (
             echo [OK] Vosk library installed - offline dictation enabled
         ) else (
             echo [WARNING] Vosk extraction failed - offline dictation unavailable

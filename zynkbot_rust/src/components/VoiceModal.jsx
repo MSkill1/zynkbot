@@ -1,7 +1,15 @@
 import React, { useState } from 'react';
 
+// Offline Vosk dictation ships for Android, Linux desktop and Windows desktop.
+// macOS is still excluded: libvosk.dylib is not bundled, so the offline option is
+// disabled there and OpenAI Whisper is shown/used instead. The matching runtime
+// routing lives in useVoiceInput.js (isDesktopLinux / isDesktopWindows) — keep the
+// two in step, or the UI will refuse an option the backend actually supports.
+// navigator.platform reports "Win32" on 64-bit Windows too.
 const voskAvailable =
-  !!window.VoskBridge || navigator.platform.toLowerCase().includes('linux');
+  !!window.VoskBridge ||
+  navigator.platform.toLowerCase().includes('linux') ||
+  navigator.platform.toLowerCase().includes('win');
 
 const overlayStyle = {
   position: 'fixed',
@@ -253,7 +261,7 @@ export default function VoiceModal({
             <div>
               <div style={{ ...labelStyle, fontWeight: '500' }}>
                 Offline — Vosk
-                {!voskAvailable && <span style={{ color: '#6272a4', fontWeight: '400' }}> (Linux/Android only)</span>}
+                {!voskAvailable && <span style={{ color: '#6272a4', fontWeight: '400' }}> (not available on macOS)</span>}
               </div>
               <div style={mutedStyle}>Runs on device. No internet. No punctuation — LLMs handle it fine.</div>
             </div>

@@ -174,4 +174,66 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-*Last updated: 2026-08-31*
+## Voice & Dictation
+
+### KI-019 — No offline dictation on Windows; Vosk is compiled out rather than unavailable
+**Status:** Open — must fix before v1.0  
+**Affected:** All Windows users. Dictation on Windows requires an OpenAI API key and a network round-trip, so the offline-first guarantee does not hold on Windows.  
+**Description:** Vosk works on Windows — alphacep ships a prebuilt `vosk-win64-0.3.45` SDK containing `libvosk.lib` and `libvosk.dll`. Windows support is partly wired already: `install.bat` downloads that SDK into `zynkbot_rust/src-tauri/lib/vosk/`, and `START_ZYNKBOT.bat` adds that directory to `PATH` when `libvosk.dll` is present. The feature is nevertheless unreachable on Windows because four separate gates compile it out:
+
+1. `Cargo.toml` — `vosk = "0.3"` sits under `[target.'cfg(target_os = "linux")'.dependencies]`, so the crate is never built on Windows.
+2. `build.rs` — every Vosk linker flag is inside `#[cfg(target_os = "linux")]`.
+3. `lib.rs` — `mod vosk_desktop;` is declared under `#[cfg(target_os = "linux")]`.
+4. `lib.rs` — `start_vosk_recording` / `stop_vosk_recording` return an error stub for `cfg(not(any(target_os = "android", target_os = "linux")))`.
+
+The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux so the Windows build doesn't try to find a non-existent libvosk.lib."* That resolved a link error by disabling the feature rather than supplying the library, and the disablement was never revisited once `install.bat` began downloading the SDK.
+
+**Two supporting defects found while investigating:**
+
+- **`install.bat` extracts only 2 of the 5 required files.** The Windows Vosk build is MinGW-based and the zip also ships `libstdc++-6.dll`, `libwinpthread-1.dll` and `libgcc_s_seh-1.dll`. The extract step at `install.bat:701` copies only `libvosk.lib` and `libvosk.dll`, so even a fully successful download leaves `libvosk.dll` unable to load for want of its runtime dependencies.
+- **The Vosk download has no retry and fails quietly.** A failure prints a single `[WARNING]` line in the middle of a long install log and installation continues, so a Windows user ends up with no offline dictation and no clear indication why.
+
+**Workaround:** None on Windows. Dictation falls back to OpenAI Whisper (cloud), which requires an API key and network access.  
+**Fix target:** v1.0. Widen the four gates to `cfg(any(target_os = "linux", target_os = "windows"))`, add a Windows branch in `build.rs` emitting `cargo:rustc-link-search=native=<manifest>/lib/vosk`, and extract all five SDK files in `install.bat`. No `find_model_dir()` change is needed for source builds — its fourth candidate, `<CARGO_MANIFEST_DIR>/gen/android/app/src/main/assets/vosk-model`, already resolves to the model bundled in the repo.  
+**Open risk:** `libvosk.lib` is a MinGW-produced import library and Zynkbot's Windows build is MSVC. This normally links for a plain C API such as Vosk's, but it is unverified. If MSVC rejects the import library, the fallback is runtime `LoadLibrary` binding of `libvosk.dll` instead of link-time binding — a materially larger change.  
+**Related:** Packaged (non-source) builds cannot locate the Vosk model at all, because `find_model_dir()` depends on `CARGO_MANIFEST_DIR`, which is baked in at compile time. This affects Linux `.deb`/AppImage builds as much as Windows and is tracked separately as part of packaging work.
+
+---
+
+### KI-020 — Enabling Vosk on Windows makes the Vosk SDK a hard build requirement, with no fallback
+**Status:** Open — introduced by the KI-019 fix; decide before v1.0  
+**Affected:** Windows users who build without running `install.bat` first, or whose Vosk SDK download failed  
+**Description:** Un-gating Vosk for Windows (KI-019) adds `cargo:rustc-link-search=native=<manifest>/lib/vosk` in `build.rs` and makes `vosk = "0.3"` a Windows dependency. `lib/vosk/libvosk.lib` therefore becomes a **link-time requirement** on Windows. That file is not committed — the SDK is ~66 MB — so it only exists if `install.bat` downloaded it.
+
+`START_ZYNKBOT.bat` compiles on first launch and does **not** download the SDK; it only prepends `lib\vosk` to `PATH` when `libvosk.dll` already exists. So a user who goes straight to the launcher, or whose earlier Vosk download failed, gets a linker error naming `libvosk.lib` with nothing to indicate that a missing optional SDK is the cause. Before KI-019 this could not happen, because the Windows build ignored Vosk entirely.
+
+**Options:**
+1. **Download the SDK from `START_ZYNKBOT.bat` too** when `libvosk.lib` is absent, mirroring how the launcher already auto-detects CUDA. Makes the build self-healing and keeps dictation on by default. *Preferred.*
+2. Document `install.bat` as mandatory on Windows and leave the launcher alone. Cheapest, but the failure mode stays cryptic.
+3. Put Windows Vosk behind an opt-in cargo feature, so a default Windows build never breaks. Safest for the build, but offline dictation is then off by default, which defeats the purpose of KI-019.
+
+**Fix target:** Pick one before v1.0. Option 1 is the recommendation; the launcher already has the conditional `PATH` plumbing to hang it off.
+
+---
+
+## Build
+
+### KI-021 — `import_persona_collection` references a module that does not exist, so `cargo build` always fails
+**Status:** Open  
+**Affected:** Everyone who runs `install.bat`, on every platform  
+**Description:** `src/bin/import_persona_collection.rs:19` calls `app_lib::commands::persona_memory::import_persona_memory_collection(...)`, but there is no `persona_memory` module — `commands/mod.rs` declares 17 modules and that is not among them, and nothing else in the tree defines it. The build fails with:
+
+```
+error[E0433]: cannot find `persona_memory` in `commands`
+error: could not compile `app` (bin "import_persona_collection") due to 1 previous error
+```
+
+**Why it goes unnoticed in normal use:** `START_ZYNKBOT.bat` runs `tauri dev`, which builds only `--bin app` and never touches the broken binary. `install.bat` runs a plain `cargo build`, which builds *all* targets and therefore always hits it. The main application and library compile fine — `app.exe` links successfully — so the failure is limited to this one auxiliary binary.
+
+**User-visible effect:** `install.bat` prints `[WARNING] Build failed - see errors above` and then, a few lines later, `[OK] Installation Complete`. The app does work afterwards, but the installer contradicts itself and the failure looks fatal. A new tester would reasonably conclude the install is broken.
+
+**Fix target:** Three options — add the missing `commands::persona_memory` module (if the persona-collection feature is still intended; note `migrations/0009_persona_memory_collections.sql` exists, suggesting it was started), delete the stale binary, or keep it out of default builds with `required-features` in `Cargo.toml`. Whichever is chosen, `install.bat` should not report both a failed build and a successful installation in the same run.
+
+---
+
+*Last updated: 2026-09-01*

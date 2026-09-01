@@ -93,53 +93,48 @@ REM construct fail to parse ("The syntax of the command is incorrect") as soon a
 REM anything in it changed shape.
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 set "VS_CPP="
-if not exist "%VSWHERE%" goto vs_missing
-for /f "usebackq delims=" %%i in (`"%VSWHERE%" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_CPP=%%i"
-if not defined VS_CPP goto vs_missing
+if exist "%VSWHERE%" (
+    for /f "usebackq delims=" %%i in (`"%VSWHERE%" -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_CPP=%%i"
+)
+REM Flattened with goto labels rather than a nested if/else: the previous version left
+REM the "else (" block unclosed and only parsed because a goto jumped out of it.
+if defined VS_CPP goto :vs_found
 
-echo [OK] Visual Studio Build Tools found
-REM nvcc needs to find cl.exe. "if not defined" keeps the first line of the
-REM reverse-sorted listing, i.e. the newest MSVC toolset, without a goto.
-set "MSVC_VERSION="
-for /f "delims=" %%i in ('dir /b /ad "%VS_CPP%\VC\Tools\MSVC" 2^>nul ^| sort /r') do if not defined MSVC_VERSION set "MSVC_VERSION=%%i"
-if not defined MSVC_VERSION goto vs_done
-set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\%MSVC_VERSION%\bin\Hostx64\x64"
-echo [OK] CUDA compiler configured
-goto vs_done
-
-:vs_missing
 echo [WARNING] Visual Studio Build Tools ^(C++^) not detected, or install is incomplete.
 echo    If this is the FIRST launch, the Rust build will fail when compiling llama.cpp.
 echo    Install https://aka.ms/vs/17/release/vs_BuildTools.exe ^("Desktop development
 echo    with C++"^), reboot, then run this again. ^(Already-built installs can ignore this.^)
 echo.
+goto :vs_done
+
+:vs_found
+echo [OK] Visual Studio Build Tools found
+
+REM Set NVCC_CCBIN for CUDA compilation (nvcc needs to find cl.exe).
+REM sort /r puts the newest MSVC first; keep only that one.
+set "MSVC_VERSION="
+for /f "delims=" %%i in ('dir /b /ad "%VS_CPP%\VC\Tools\MSVC" 2^>nul ^| sort /r') do (
+    if not defined MSVC_VERSION set "MSVC_VERSION=%%i"
+)
+if defined MSVC_VERSION (
+    set "NVCC_CCBIN=%VS_CPP%\VC\Tools\MSVC\!MSVC_VERSION!\bin\Hostx64\x64"
+    echo [OK] CUDA compiler configured
+)
+
+REM Derive CUDA_PATH from wherever nvcc actually lives so any toolkit version works.
+REM This used to hardcode v12.6, so anyone on a different CUDA release got no
+REM CUDA_PATH at all and the GPU build failed in a confusing way.
+if not defined CUDA_PATH (
+    for %%n in (nvcc.exe) do set "NVCC_BIN_DIR=%%~dp$PATH:n"
+)
+if defined NVCC_BIN_DIR (
+    set "CUDA_ROOT=!NVCC_BIN_DIR:\bin\=!"
+    set "CUDA_PATH=!CUDA_ROOT!"
+    set "CUDA_HOME=!CUDA_ROOT!"
+    echo [OK] CUDA_PATH configured: !CUDA_ROOT!
+)
 
 :vs_done
-
-REM ============================================================
-REM CUDA toolkit path (bindgen_cuda / CMake)
-REM ============================================================
-REM bindgen_cuda searches only the PARENT install directory
-REM ("C:/Program Files/NVIDIA GPU Computing Toolkit") and never the versioned
-REM subdirectory the Windows CUDA installer actually creates, so it panics with
-REM "Could not find CUDA in standard locations" unless CUDA_PATH points at the
-REM full versioned path. Derive that from wherever nvcc really is rather than
-REM hardcoding a version: RTX 50-series (Blackwell, sm_120) needs CUDA 12.8+, so
-REM a pinned v12.6 silently left newer cards building on CPU.
-if defined CUDA_PATH goto cuda_path_ready
-for /f "delims=" %%i in ('where nvcc 2^>nul') do set "NVCC_EXE=%%i"
-if not defined NVCC_EXE goto cuda_path_ready
-for %%i in ("%NVCC_EXE%") do set "NVCC_BIN_DIR=%%~dpi"
-set "NVCC_BIN_DIR=%NVCC_BIN_DIR:~0,-1%"
-for %%i in ("%NVCC_BIN_DIR%") do set "CUDA_PATH=%%~dpi"
-set "CUDA_PATH=%CUDA_PATH:~0,-1%"
-:cuda_path_ready
-if not defined CUDA_PATH goto cuda_env_done
-set "CUDA_HOME=%CUDA_PATH%"
-REM bindgen_cuda also honours CUDA_ROOT, so set both and either lookup succeeds.
-set "CUDA_ROOT=%CUDA_PATH%"
-echo [OK] CUDA_PATH configured: %CUDA_PATH%
-:cuda_env_done
 
 REM ============================================================
 REM Check .env file
@@ -164,16 +159,18 @@ if not exist "zynkbot_rust\src-tauri\models\user" (
 )
 
 REM ============================================================
-REM Install npm dependencies if missing
+REM Sync npm dependencies
 REM ============================================================
-if not exist "zynkbot_rust\node_modules" (
-    echo [INFO] Installing npm dependencies...
-    cd zynkbot_rust
-    call npm install
-    cd ..
-    echo [OK] npm dependencies installed
-    echo.
-)
+REM Run npm install every launch, not just when node_modules is absent. A pull that
+REM adds a dependency (e.g. @tauri-apps/plugin-opener) otherwise leaves node_modules
+REM stale and the frontend dies with an opaque "Module not found" error that gives no
+REM hint npm install is the fix. This is a ~2s no-op once the lockfile is satisfied.
+echo [INFO] Syncing npm dependencies...
+cd zynkbot_rust
+call npm install --no-audit --no-fund
+cd ..
+echo [OK] npm dependencies up to date
+echo.
 
 REM ============================================================
 REM Start Rust Desktop App

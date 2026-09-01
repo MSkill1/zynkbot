@@ -62,6 +62,11 @@ Suggested positioning: **"Early Access — API models now, on-device models comi
 - RC11 binary tested and merged to main (current blocker)
 - Tauri v2 Android target set up (`cargo tauri android init`)
 - Android SDK + NDK installed
+- `NDK_HOME` exported, pointing at your own NDK — e.g.
+  `export NDK_HOME="$ANDROID_HOME/ndk/<version>"`. `cargo tauri android` reads this
+  and derives the cross-compilation toolchain from it. The NDK paths are deliberately
+  not committed in `zynkbot_rust/.cargo/config.toml`; they used to be hardcoded to one
+  machine's absolute path, so Android builds failed anywhere else.
 - Decision on minimum Android API level (recommend API 26 / Android 8.0+)
 
 ---
