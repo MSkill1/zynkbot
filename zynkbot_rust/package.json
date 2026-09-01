@@ -1,6 +1,9 @@
 {
   "name": "zynkbot",
   "version": "0.1.0",
+  "engines": {
+    "node": ">=18"
+  },
   "private": true,
   "dependencies": {
     "@tauri-apps/api": "^2.10.0",
@@ -47,6 +50,6 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.4",
-    "cross-env": "^10.1.0"
+    "cross-env": "^7.0.3"
   }
 }
