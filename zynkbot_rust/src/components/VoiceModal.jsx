@@ -130,12 +130,8 @@ function VoiceCommandsModal({ onClose }) {
   return (
     <div style={{ ...overlayStyle, zIndex: 2100 }} onClick={onClose}>
       <div style={{ ...cardStyle, maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+        <div style={{ marginBottom: '16px' }}>
           <h2 style={{ margin: 0, color: '#8be9fd', fontSize: '1.1rem' }}>📋 Voice Commands</h2>
-          <button
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', color: '#6272a4', fontSize: '1.3rem', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
-          >✕</button>
         </div>
 
         {FLAT_COMMANDS.map(({ cmd, desc }) => (
@@ -157,10 +153,20 @@ function VoiceCommandsModal({ onClose }) {
           </div>
         ))}
 
-        <p style={{ color: '#6272a4', fontSize: '0.78rem', margin: '12px 0 0', borderTop: '1px solid #44475a', paddingTop: '10px' }}>
-          Tap anywhere outside to close.
-        </p>
       </div>
+
+      {/* Floating close button - bottom right, like settings panel */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px',
+          width: '56px', height: '56px', borderRadius: '50%',
+          background: '#44475a', color: '#f8f8f2', border: 'none',
+          fontSize: '1.5rem', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          zIndex: 2110, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >✕</button>
     </div>
   );
 }
@@ -194,23 +200,8 @@ export default function VoiceModal({
       <div style={cardStyle} onClick={(e) => e.stopPropagation()}>
 
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <div style={{ marginBottom: '8px' }}>
           <h2 style={{ margin: 0, color: '#8be9fd', fontSize: '1.2rem' }}>🎙️ Voice Settings</h2>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#6272a4',
-              fontSize: '1.3rem',
-              cursor: 'pointer',
-              padding: '0 4px',
-              lineHeight: 1,
-            }}
-            aria-label="Close"
-          >
-            ✕
-          </button>
         </div>
 
         {/* How It Works */}
@@ -435,6 +426,19 @@ export default function VoiceModal({
         </div>
 
       </div>
+
+      {/* Floating close button - bottom right, like settings panel */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px',
+          width: '56px', height: '56px', borderRadius: '50%',
+          background: '#44475a', color: '#f8f8f2', border: 'none',
+          fontSize: '1.5rem', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >✕</button>
 
       {showCommands && <VoiceCommandsModal onClose={() => setShowCommands(false)} />}
     </div>

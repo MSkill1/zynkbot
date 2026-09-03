@@ -201,31 +201,6 @@ export default function EnsembleModal({
           position: 'relative'
         }}
       >
-        {/* X button in top right */}
-        <button
-          onClick={handleCancel}
-          style={{
-            position: 'absolute',
-            top: '15px',
-            right: '15px',
-            background: 'rgba(255, 255, 255, 0.1)',
-            border: 'none',
-            color: '#f8f8f2',
-            fontSize: '1.5rem',
-            cursor: 'pointer',
-            borderRadius: '6px',
-            width: '35px',
-            height: '35px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            transition: 'background 0.2s'
-          }}
-          onMouseOver={(e) => e.target.style.background = 'rgba(255, 85, 85, 0.3)'}
-          onMouseOut={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.1)'}
-        >
-          ✕
-        </button>
         <h2 style={{ color: '#8be9fd', marginBottom: '10px' }}>
           🤝 Multi-Model Ensemble
         </h2>
@@ -804,6 +779,19 @@ export default function EnsembleModal({
         </>
         )}
       </div>
+
+      {/* Floating close button - bottom right, like settings panel */}
+      <button
+        onClick={handleCancel}
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px',
+          width: '56px', height: '56px', borderRadius: '50%',
+          background: '#44475a', color: '#f8f8f2', border: 'none',
+          fontSize: '1.5rem', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >✕</button>
     </div>
   );
 }

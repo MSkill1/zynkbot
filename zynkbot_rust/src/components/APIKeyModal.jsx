@@ -527,8 +527,6 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     <CostGuideModal isOpen={showCostGuide} onClose={() => setShowCostGuide(false)} />
     <div className="modal-overlay" onClick={onClose}>
       <div className="api-key-modal-container" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>×</button>
-
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '4px' }}>
           <h2 style={{ margin: 0 }}>API Key Management</h2>
           <button
@@ -1066,12 +1064,20 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
           Custom endpoint traffic goes directly to your server — no cloud involved.
         </div>
 
-        <div className="modal-footer">
-          <button className="btn-close" onClick={onClose}>
-            Done
-          </button>
-        </div>
       </div>
+
+      {/* Floating close button - bottom right, like settings panel */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px',
+          width: '56px', height: '56px', borderRadius: '50%',
+          background: '#44475a', color: '#f8f8f2', border: 'none',
+          fontSize: '1.5rem', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >✕</button>
     </div>
     </>
   );

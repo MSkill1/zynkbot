@@ -376,7 +376,6 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
         {/* Header */}
         <div className="kb-manager-header">
           <h2>Knowledge Base Document Manager</h2>
-          <button className="kb-close-button" onClick={onClose}>×</button>
         </div>
 
         {/* Loading State */}
@@ -508,6 +507,19 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
           </>
         )}
       </div>
+
+      {/* Floating close button - bottom right, like settings panel */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px',
+          width: '56px', height: '56px', borderRadius: '50%',
+          background: '#44475a', color: '#f8f8f2', border: 'none',
+          fontSize: '1.5rem', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >✕</button>
     </div>
   );
 }

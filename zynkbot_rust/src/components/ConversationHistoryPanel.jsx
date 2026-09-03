@@ -170,7 +170,6 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
       <div className="conv-history-panel" style={panelStyle}>
         <div style={{ padding: "20px", paddingTop: isAndroid ? "calc(env(safe-area-inset-top, 28px) + 12px)" : "20px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ margin: 0, color: "#f8f8f2", fontSize: "1rem" }}>🕐 Conversation History</h2>
-          <button onClick={onClose} className="conv-history-close" style={{ background: "none", border: "none", color: "#6272a4", fontSize: "1.2rem", cursor: "pointer" }}>×</button>
         </div>
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px", textAlign: "center", color: "#6272a4" }}>
           <div>
@@ -179,6 +178,19 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
             <p style={{ fontSize: "0.85rem" }}>No conversation records are stored when HIPAA containment is active.</p>
           </div>
         </div>
+
+      {/* Floating close button - bottom right, like settings panel */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px',
+          width: '56px', height: '56px', borderRadius: '50%',
+          background: '#44475a', color: '#f8f8f2', border: 'none',
+          fontSize: '1.5rem', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >✕</button>
       </div>
     );
   }
@@ -241,7 +253,6 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
               Clear All
             </button>
           )}
-          <button onClick={onClose} className="conv-history-close" style={{ background: "none", border: "none", color: "#6272a4", fontSize: "1.4rem", cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
       </div>
 
@@ -405,6 +416,19 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
           </div>
         )}
       </div>
+
+      {/* Floating close button - bottom right, like settings panel */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px',
+          width: '56px', height: '56px', borderRadius: '50%',
+          background: '#44475a', color: '#f8f8f2', border: 'none',
+          fontSize: '1.5rem', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >✕</button>
     </div>
   );
 }
