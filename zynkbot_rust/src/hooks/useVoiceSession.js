@@ -136,6 +136,27 @@ export function useVoiceSession({ setMessages }) {
   const handsFreeRef = useRef(false);
   const endVoiceSessionRef = useRef(null);
 
+  // Restarting the wake-word listener is scattered across this hook (TTS
+  // finishing, a session ending, silence, an interrupt). Several of those paths
+  // used to call WakeWordBridge.start() directly on a timer with no re-check —
+  // if the user turned "Hey Zynk" off while one was pending, it fired anyway.
+  // heyZynkEnabledRef holds the live value so a deferred restart checks the
+  // toggle at the moment it actually fires, not the moment it was scheduled.
+  // armWakeWord() is the only path allowed to call WakeWordBridge.start(): it
+  // cancels any restart still pending before scheduling a new one, so overlapping
+  // calls collapse into the latest instead of stacking ONNX model reloads.
+  const heyZynkEnabledRef = useRef(heyZynkEnabled);
+  heyZynkEnabledRef.current = heyZynkEnabled;
+  const wakeWordRestartTimerRef = useRef(null);
+  const armWakeWord = (delayMs = 0) => {
+    clearTimeout(wakeWordRestartTimerRef.current);
+    wakeWordRestartTimerRef.current = setTimeout(() => {
+      if (heyZynkEnabledRef.current && window.WakeWordBridge?.isModelReady()) {
+        window.WakeWordBridge.start(0.72);
+      }
+    }, delayMs);
+  };
+
   const stopTts = () => {
     try { ttsSourceRef.current?.stop(); } catch (_) {}
     try { ttsAudioCtxRef.current?.close(); } catch (_) {}
@@ -167,20 +188,17 @@ export function useVoiceSession({ setMessages }) {
       ttsSourceRef.current = source;
       setIsTtsSpeaking(true);
       source.start();
-      // The wake detector must remain armed while TTS is playing so saying
-      // "Hey Zynk, stop" can interrupt a long response.
-      if (heyZynkEnabled && window.WakeWordBridge?.isModelReady()) {
-        window.WakeWordBridge.start(0.72);
-      }
+      // The wake detector stays OFF while TTS plays: the speaker output garbles
+      // the mic, so "Hey Zynk" can't be heard reliably mid-reply anyway. To stop
+      // a reply, tap Stop. It re-arms in onended when playback finishes.
+      window.WakeWordBridge?.stop();
       source.onended = () => {
         setIsTtsSpeaking(false);
         ttsSourceRef.current = null;
         ttsAudioCtxRef.current = null;
         // Every interaction is one-shot: after a reply, return to passive
         // wake-word listening. Never open another dictation window on our own.
-        if (heyZynkEnabled && window.WakeWordBridge?.isModelReady()) {
-          window.WakeWordBridge.start(0.72);
-        }
+        armWakeWord();
       };
     } catch (e) {
       console.error('[TTS]', e);
@@ -251,9 +269,7 @@ export function useVoiceSession({ setMessages }) {
         const audio = new Audio('/wake_chime_close.wav');
         audio.play().catch(() => {});
       } catch (_) {}
-      if (window.WakeWordBridge.isModelReady()) {
-        setTimeout(() => window.WakeWordBridge.start(0.72), 1500);
-      }
+      armWakeWord(1500);
     };
     endVoiceSessionRef.current = endVoiceSession;
 
@@ -263,9 +279,7 @@ export function useVoiceSession({ setMessages }) {
       console.log('[WakeWord] transcript:', text);
 
       if (!text) {
-        if (window.WakeWordBridge.isModelReady()) {
-          setTimeout(() => window.WakeWordBridge.start(0.72), 1000);
-        }
+        armWakeWord(1000);
         return;
       }
 
@@ -285,9 +299,7 @@ export function useVoiceSession({ setMessages }) {
 
       if (text.trim().split(/\s+/).length < 2) {
         console.log('[WakeWord] transcript too short, treating as noise:', text);
-        if (window.WakeWordBridge.isModelReady()) {
-          setTimeout(() => window.WakeWordBridge.start(0.72), 1000);
-        }
+        armWakeWord(1000);
         return;
       }
 
@@ -325,14 +337,10 @@ export function useVoiceSession({ setMessages }) {
         return;
       }
       if (ttsSourceRef.current) {
-        console.log('[WakeWord] detected during TTS — stopping playback');
-        stopTts();
-        // Treat the wake phrase itself as the interrupt. Starting Vosk after
-        // the chime loses the trailing "stop" and used to leave an unwanted
-        // dictation popup open. Return directly to passive wake listening.
-        if (window.WakeWordBridge.isModelReady()) {
-          setTimeout(() => window.WakeWordBridge.start(0.72), 500);
-        }
+        // Detector is stopped during TTS, so this normally can't fire mid-reply.
+        // If a stray detection slips through, ignore it rather than interrupt —
+        // onended re-arms passive listening when the reply finishes on its own.
+        console.log('[WakeWord] detected during TTS — ignoring');
         return;
       }
       console.log('[WakeWord] detected — playing chime then recording');
@@ -358,10 +366,9 @@ export function useVoiceSession({ setMessages }) {
     };
 
     if (heyZynkEnabled) {
-      if (window.WakeWordBridge.isModelReady()) {
-        window.WakeWordBridge.start(0.72);
-      }
+      armWakeWord();
     } else {
+      clearTimeout(wakeWordRestartTimerRef.current);
       window.WakeWordBridge.stop();
     }
 
@@ -371,6 +378,7 @@ export function useVoiceSession({ setMessages }) {
       window.__wakeWordDownloadProgress = null;
       window.__wakeWordDownloadError = null;
       window.__handleScreenOffTranscript = null;
+      clearTimeout(wakeWordRestartTimerRef.current);
       if (window.WakeWordBridge) window.WakeWordBridge.stop();
     };
   }, [heyZynkEnabled]);
@@ -384,30 +392,25 @@ export function useVoiceSession({ setMessages }) {
     return () => window.removeEventListener('zynkbot:dictation', onDictation);
   }, []);
 
-  // Pause wake word detection while recording or dictating; resume after a delay.
-  // ONNX intentionally stays running during TTS so "Hey Zynk" can interrupt playback.
+  // Pause wake word detection while recording, dictating, or speaking a reply;
+  // resume after a delay once all three are clear. The detector is kept off
+  // during TTS because the speaker output garbles the mic.
   useEffect(() => {
     if (!window.WakeWordBridge || !heyZynkEnabled) return;
-    if (isWakeRecording || isDictating) {
+    if (isWakeRecording || isDictating || isTtsSpeaking) {
       window.WakeWordBridge.stop();
     } else {
-      const t = setTimeout(() => {
-        if (window.WakeWordBridge && window.WakeWordBridge.isModelReady()) {
-          window.WakeWordBridge.start(0.72);
-        }
-      }, 5000);
-      return () => clearTimeout(t);
+      armWakeWord(5000);
+      return () => clearTimeout(wakeWordRestartTimerRef.current);
     }
-  }, [isWakeRecording, heyZynkEnabled, isDictating]);
+  }, [isWakeRecording, heyZynkEnabled, isDictating, isTtsSpeaking]);
 
   // Restart wake word when app returns to foreground (screen unlock, app switch).
   useEffect(() => {
     if (!window.WakeWordBridge) return;
     const handleVisible = () => {
       if (!heyZynkEnabled || isWakeRecording || isDictating) return;
-      if (window.WakeWordBridge.isModelReady()) {
-        window.WakeWordBridge.start(0.72);
-      }
+      armWakeWord();
     };
     document.addEventListener('visibilitychange', handleVisible);
     return () => document.removeEventListener('visibilitychange', handleVisible);
