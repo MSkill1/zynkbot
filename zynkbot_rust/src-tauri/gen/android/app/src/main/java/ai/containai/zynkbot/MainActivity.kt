@@ -1,6 +1,7 @@
 package ai.containai.zynkbot
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -12,6 +13,7 @@ import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.DocumentsContract
 import android.provider.Settings
+import android.util.Log
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -34,6 +36,7 @@ class MainActivity : TauriActivity() {
     companion object {
         private const val REQ_WRITE_STORAGE = 100
         private const val REQ_LOCAL_NETWORK = 101
+        private const val REQ_NOTIFICATIONS = 102
         private const val REQ_RECORD_AUDIO = 200
         // ACCESS_LOCAL_NETWORK is Android 16+ (SDK 36). Using string literal because the
         // constant may not be present when compiling against older SDK stubs, and because
@@ -472,6 +475,10 @@ class MainActivity : TauriActivity() {
                 fire("window.__wakeWordError&&window.__wakeWordError('Microphone permission required');")
                 return
             }
+            // A locked-screen "Hey Zynk" reply auto-opens the app via a full-screen
+            // intent. Android 14+ denies that permission by default; without it the
+            // second locked query only posts a notification instead of answering.
+            ensureFullScreenIntentPermission()
             WakeWordService.detectionCallback = {
                 fire("window.__wakeWordDetected&&window.__wakeWordDetected();")
             }
@@ -769,12 +776,24 @@ class MainActivity : TauriActivity() {
         } else {
             ensureShareDir()
         }
-        requestNotificationPermissionIfNeeded()
-        requestLocalNetworkPermissionIfNeeded()
-        requestManageStorageIfNeeded()
-        requestRecordAudioIfNeeded()
+        // Requested one at a time: Android only shows one permission dialog per
+        // Activity at once, and a navigate-away Settings screen (manage storage)
+        // yanks focus from any dialog still pending. Firing all four together
+        // silently dropped the microphone request — the one the wake word needs.
+        // Microphone goes first since it's the most important permission in the app.
+        permissionQueue.addLast { requestRecordAudioIfNeeded() }
+        permissionQueue.addLast { requestNotificationPermissionIfNeeded() }
+        permissionQueue.addLast { requestLocalNetworkPermissionIfNeeded() }
+        permissionQueue.addLast { requestManageStorageIfNeeded() }
+        runNextPermissionRequest()
         extractVoskModelIfNeeded()
         startSyncService()
+    }
+
+    private val permissionQueue = ArrayDeque<() -> Unit>()
+
+    private fun runNextPermissionRequest() {
+        permissionQueue.removeFirstOrNull()?.invoke()
     }
 
     private fun requestManageStorageIfNeeded() {
@@ -800,6 +819,9 @@ class MainActivity : TauriActivity() {
             grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             ensureShareDir()
         }
+        if (requestCode == REQ_RECORD_AUDIO || requestCode == REQ_NOTIFICATIONS || requestCode == REQ_LOCAL_NETWORK) {
+            runNextPermissionRequest()
+        }
     }
 
     private fun zynkShareDir(): File {
@@ -819,9 +841,11 @@ class MainActivity : TauriActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
+                return
             }
         }
+        runNextPermissionRequest()
     }
 
     // Android 16 (SDK 36) makes LAN access a runtime permission. Without an explicit
@@ -829,15 +853,18 @@ class MainActivity : TauriActivity() {
     // silently blocks connections to 192.168.x.x / 10.x.x.x, breaking ZynkSync pairing.
     // Requesting it here converts the compat auto-grant into a user-affirmed grant.
     private fun requestLocalNetworkPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < 36) return
-        try {
-            if (ContextCompat.checkSelfPermission(this, PERM_ACCESS_LOCAL_NETWORK)
-                != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(PERM_ACCESS_LOCAL_NETWORK), REQ_LOCAL_NETWORK)
+        if (Build.VERSION.SDK_INT >= 36) {
+            try {
+                if (ContextCompat.checkSelfPermission(this, PERM_ACCESS_LOCAL_NETWORK)
+                    != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(PERM_ACCESS_LOCAL_NETWORK), REQ_LOCAL_NETWORK)
+                    return
+                }
+            } catch (_: Exception) {
+                // Older devices without the permission constant will throw — ignore.
             }
-        } catch (_: Exception) {
-            // Older devices without the permission constant will throw — ignore.
         }
+        runNextPermissionRequest()
     }
 
     private fun extractVoskModelIfNeeded() {
@@ -865,10 +892,35 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    // Prompt once per app launch for USE_FULL_SCREEN_INTENT if it isn't already
+    // allowed. There is no runtime-permission dialog for it on Android 14+; the app
+    // must send the user to a dedicated Settings page. canUseFullScreenIntent()
+    // means we never nag once it's granted. Wrapped in try/catch because some OEM
+    // ROMs (e.g. ColorOS) have thrown on the appops path historically.
+    private var promptedFullScreenIntent = false
+    private fun ensureFullScreenIntentPermission() {
+        if (promptedFullScreenIntent) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.canUseFullScreenIntent()) { promptedFullScreenIntent = true; return }
+        promptedFullScreenIntent = true
+        try {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+            )
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Could not open full-screen-intent settings: ${e.message}")
+        }
+    }
+
     private fun requestRecordAudioIfNeeded() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_RECORD_AUDIO)
+        } else {
+            runNextPermissionRequest()
         }
     }
 

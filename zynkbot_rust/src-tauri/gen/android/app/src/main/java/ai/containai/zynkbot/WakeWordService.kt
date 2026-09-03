@@ -73,6 +73,7 @@ class WakeWordService : Service() {
     private var audioThread: Thread? = null
     private var threshold = 0.5f
     private var lastModelDir: String? = null     // stored so background detection can restart the loop
+    private var loadedModelDir: String? = null   // dir the resident ONNX sessions were loaded from; null = none loaded
     private var wakeLock: PowerManager.WakeLock? = null      // detection wake lock (25s, screen-off flow)
     private var audioWakeLock: PowerManager.WakeLock? = null // CPU wake lock for audio loop while screen off
 
@@ -158,13 +159,13 @@ class WakeWordService : Service() {
             Log.i(TAG, "Restarting audio loop (threshold=${threshold})")
             running = false
             audioThread?.interrupt()
-            audioThread?.join(300) // wait up to 300ms (one AudioRecord.read() cycle is 80ms)
+            audioThread?.join(500) // wait for the read loop to exit (one cycle is ~80ms)
             audioThread = null
-            // Close sessions so loadAndStart creates fresh ones without any shared state.
-            melSession?.close(); melSession = null
-            embSession?.close(); embSession = null
-            kwsSession?.close(); kwsSession = null
-            ortEnv?.close(); ortEnv = null
+            // Keep the loaded ONNX sessions. Reloading all three models on every
+            // restart was the main source of wake-word churn and raced with the
+            // screen-off Vosk mic handoff (intermittent empty transcripts). The old
+            // audio thread has now exited (join above), so no inference is in flight
+            // and the resident sessions are safe to reuse on the new thread.
             melBuffer.clear()
             embBuffer.clear()
         }
@@ -199,15 +200,21 @@ class WakeWordService : Service() {
 
     private fun loadAndStart(modelDir: String) {
         try {
-            ortEnv = OrtEnvironment.getEnvironment()
-            val env = ortEnv!!
-            val dir = File(modelDir)
-
-            melSession = env.createSession(File(dir, "melspectrogram.onnx").absolutePath)
-            embSession = env.createSession(File(dir, "embedding_model.onnx").absolutePath)
-            kwsSession = env.createSession(File(dir, "hey_zynk.onnx").absolutePath)
-
-            Log.i(TAG, "ONNX models loaded. mel inputs: ${melSession!!.inputNames}, emb inputs: ${embSession!!.inputNames}, kws inputs: ${kwsSession!!.inputNames}")
+            if (melSession == null || embSession == null || kwsSession == null || modelDir != loadedModelDir) {
+                // (Re)load only when the models aren't already resident, or the
+                // directory changed. The common restart path skips this entirely.
+                melSession?.close(); embSession?.close(); kwsSession?.close()
+                ortEnv = OrtEnvironment.getEnvironment()
+                val env = ortEnv!!
+                val dir = File(modelDir)
+                melSession = env.createSession(File(dir, "melspectrogram.onnx").absolutePath)
+                embSession = env.createSession(File(dir, "embedding_model.onnx").absolutePath)
+                kwsSession = env.createSession(File(dir, "hey_zynk.onnx").absolutePath)
+                loadedModelDir = modelDir
+                Log.i(TAG, "ONNX models loaded. mel inputs: ${melSession!!.inputNames}, emb inputs: ${embSession!!.inputNames}, kws inputs: ${kwsSession!!.inputNames}")
+            } else {
+                Log.i(TAG, "Reusing already-loaded ONNX models")
+            }
 
             startAudioLoop()
         } catch (e: Exception) {
@@ -539,6 +546,7 @@ class WakeWordService : Service() {
         embSession?.close(); embSession = null
         kwsSession?.close(); kwsSession = null
         ortEnv?.close(); ortEnv = null
+        loadedModelDir = null   // full stop tears the models down; next start reloads
         melBuffer.clear()
         embBuffer.clear()
         releaseWakeLock()
