@@ -9,11 +9,11 @@ package ai.containai.zynkbot
  * uses (commands::chat::generate_reply), delivering results back through the
  * [Callback] below.
  *
- * NOTE (2026-09): the door is defined and compile-verified on both sides, but is
- * not yet wired to any caller. The planned ZynkAssistantService will invoke
- * nativeSendMessage() so a locked-screen query is answered without the notification
- * path that ColorOS blocks. Until then the app's voice flow still runs through the
- * WebView/Tauri path unchanged.
+ * NOTE (2026-09): called from WakeWordService.answerNatively() for the screen-off
+ * path. If this fails or produces no speakable reply, that caller falls back to
+ * the existing WebView/notification delivery, so a locked-screen query is never
+ * left unanswered while this path is new. The in-app (screen-on, app open) voice
+ * flow is untouched and still goes entirely through the WebView/Tauri path.
  */
 object ZynkCore {
     init {
@@ -27,6 +27,10 @@ object ZynkCore {
      * call from a background thread (the assistant service worker), never the
      * main thread. Tokens arrive on [Callback.onToken]; the run finishes with
      * exactly one of [Callback.onDone] or [Callback.onError].
+     *
+     * Pass "" for [userId] to resolve the persisted device identity automatically,
+     * and "" for [sessionId] to get a fresh generated one — Kotlin does not need
+     * its own copy of that logic.
      */
     @JvmStatic
     external fun nativeSendMessage(

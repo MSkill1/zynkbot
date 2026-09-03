@@ -93,8 +93,8 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
     callback: JObject<'local>,
 ) {
     let message = jstring_to_string(&mut env, &message);
-    let user_id = jstring_to_string(&mut env, &user_id);
-    let session_id = jstring_to_string(&mut env, &session_id);
+    let user_id_arg = jstring_to_string(&mut env, &user_id);
+    let session_id_arg = jstring_to_string(&mut env, &session_id);
     let backend = jstring_to_string(&mut env, &backend);
     let containment_mode = jstring_to_string(&mut env, &containment_mode);
 
@@ -114,9 +114,27 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
             return;
         }
     };
-
     let sink_impl = Arc::new(JniSink { vm, callback });
     let sink: Arc<dyn ResponseSink> = sink_impl.clone();
+
+    // Empty user_id/session_id means "resolve for me" — Kotlin doesn't have (and
+    // shouldn't need) its own copy of identity logic or session bookkeeping.
+    let user_id = if user_id_arg.is_empty() {
+        match crate::user_identity::get_identity() {
+            Ok(identity) => identity.user_id,
+            Err(e) => {
+                sink_impl.error(&format!("failed to resolve user identity: {e}"));
+                return;
+            }
+        }
+    } else {
+        user_id_arg
+    };
+    let session_id = if session_id_arg.is_empty() {
+        format!("voice-native-{}", uuid::Uuid::new_v4())
+    } else {
+        session_id_arg
+    };
 
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,
