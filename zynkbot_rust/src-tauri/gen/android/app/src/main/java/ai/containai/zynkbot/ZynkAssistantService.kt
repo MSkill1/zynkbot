@@ -1,5 +1,6 @@
 package ai.containai.zynkbot
 
+import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.util.Log
 
@@ -24,10 +25,38 @@ import android.util.Log
 class ZynkAssistantService : VoiceInteractionService() {
     companion object {
         private const val TAG = "ZynkAssistantService"
+
+        /**
+         * The running instance while Zynkbot holds the assistant role, else null.
+         * showSession() is an instance method, so WakeWordService needs this to hand
+         * a detected wake word to the session. Same companion-static pattern as
+         * WakeWordService.detectionCallback / sharedVoskModel.
+         */
+        @Volatile var instance: ZynkAssistantService? = null
     }
 
     override fun onReady() {
         super.onReady()
+        instance = this
         Log.i(TAG, "Zynkbot assistant service ready")
+    }
+
+    override fun onShutdown() {
+        instance = null
+        super.onShutdown()
+    }
+
+    /**
+     * Open a session (ZynkAssistantSession.onShow -> dictation -> native answer).
+     * Called from WakeWordService on a detected "Hey Zynk" when the app is not in
+     * front; the OS handles the rest under the assistant-role exemptions.
+     * Returns false if the OS refused, so the caller can fall back.
+     */
+    fun triggerSession(): Boolean = try {
+        showSession(Bundle(), 0)
+        true
+    } catch (e: Exception) {
+        Log.w(TAG, "showSession refused: ${e.message}")
+        false
     }
 }

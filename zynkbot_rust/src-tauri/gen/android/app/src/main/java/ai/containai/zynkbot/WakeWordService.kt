@@ -362,6 +362,19 @@ class WakeWordService : Service() {
                 Log.w(TAG, "Chime playback failed: ${e.message}")
             }
 
+            // Preferred path: hand the turn to the assistant session (the OS-blessed
+            // route — no Activity, no WebView, no notification). Only possible while
+            // Zynkbot holds the digital-assistant role; otherwise, or if the OS
+            // refuses, keep the older in-service dictation path so nothing regresses.
+            // The session does its own Vosk dictation, so the mic must already be
+            // released here (it is: the audio loop was stopped above).
+            val assistant = ZynkAssistantService.instance
+            if (assistant != null && assistant.triggerSession()) {
+                Log.i(TAG, "Wake word handed off to the assistant session")
+                // The 25s detection lock is too short for dictation + network + TTS.
+                try { wakeLock?.acquire(90_000L) } catch (_: Exception) {}
+                return@Thread
+            }
             startKotlinVoskDictation()
         }.start()
     }
