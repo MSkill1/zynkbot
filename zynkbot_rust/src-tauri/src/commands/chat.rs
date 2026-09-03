@@ -1,7 +1,6 @@
 use crate::ConversationTurn;
 use crate::ReplyResponse;
 use crate::Memory;
-use tauri::Emitter;
 
 /// Tauri command: cancel the in-flight LLM generation.
 /// Sets the global GENERATION_CANCELLED flag; the streaming loops in llm/openai.rs

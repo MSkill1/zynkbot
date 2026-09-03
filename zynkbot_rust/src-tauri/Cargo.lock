@@ -183,6 +183,7 @@ dependencies = [
  "hostname",
  "hyper",
  "hyper-util",
+ "jni",
  "lazy_static",
  "llama-cpp-2",
  "log",

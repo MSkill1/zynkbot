@@ -133,3 +133,6 @@ vosk = "0.3"
 
 [target.'cfg(target_os = "android")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
+# Matches the version Tauri's Android layer already pulls in (see Cargo.lock) so
+# there is a single jni in the tree. Used by android_jni.rs for the ZynkCore door.
+jni = "0.21"
