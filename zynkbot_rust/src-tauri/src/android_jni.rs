@@ -95,7 +95,7 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
     let message = jstring_to_string(&mut env, &message);
     let user_id_arg = jstring_to_string(&mut env, &user_id);
     let session_id_arg = jstring_to_string(&mut env, &session_id);
-    let backend = jstring_to_string(&mut env, &backend);
+    let backend_arg = jstring_to_string(&mut env, &backend);
     let containment_mode = jstring_to_string(&mut env, &containment_mode);
 
     // A global ref keeps the callback alive across the async run and across the
@@ -135,6 +135,21 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
     } else {
         session_id_arg
     };
+    // Empty backend means "pick whatever's actually configured" — see
+    // resolve_voice_backend(). Fails closed (reports an error) rather than handing
+    // generate_reply a backend guaranteed to fail, so the caller's fallback to the
+    // WebView/notification path — which the user's own model selection covers — runs.
+    let backend = if backend_arg.is_empty() {
+        match resolve_voice_backend() {
+            Some(b) => b,
+            None => {
+                sink_impl.error("no AI backend is configured (no API key and no custom/Ollama endpoint)");
+                return;
+            }
+        }
+    } else {
+        backend_arg
+    };
 
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,
@@ -165,6 +180,30 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
             Err(e) => sink_impl.error(&format!("failed to serialize reply: {e}")),
         },
         Err(e) => sink_impl.error(&e),
+    }
+}
+
+/// Picks a backend string that will actually work for `generate_reply` on Android.
+/// There is no viable on-device model here (Zynkbot's "local" GGUF backend needs a
+/// downloaded model file that Android setup doesn't provide) — the two real options
+/// are a configured cloud API key or a custom/Ollama endpoint, exactly what the
+/// onboarding flow sets up. Checked in the same provider priority `generate_reply`'s
+/// own has_key fallback uses, then Ollama. Returns None if nothing is configured, so
+/// the caller can fail closed rather than hand generate_reply a backend that errors.
+fn resolve_voice_backend() -> Option<String> {
+    let has = |var: &str| !std::env::var(var).unwrap_or_default().is_empty();
+    if has("ANTHROPIC_API_KEY") {
+        Some("anthropic".to_string())
+    } else if has("OPENAI_API_KEY") {
+        Some("openai".to_string())
+    } else if has("XAI_API_KEY") {
+        Some("xai".to_string())
+    } else if has("MISTRAL_API_KEY") {
+        Some("mistral".to_string())
+    } else if has("CUSTOM_API_URL") && has("CUSTOM_MODEL") {
+        Some("custom".to_string())
+    } else {
+        None
     }
 }
 

@@ -457,11 +457,13 @@ class WakeWordService : Service() {
         Thread {
             var spoke = false
             try {
-                // "" backend picks the app's own default; TODO once the app
-                // persists the user's chosen backend natively (today it lives
-                // only in the WebView's localStorage) pass that here instead.
+                // "" backend picks whatever AI provider is actually configured
+                // (API key or Ollama/custom endpoint) — there is no working
+                // on-device model on Android. TODO once the app persists the
+                // user's in-app model choice natively (today it lives only in
+                // the WebView's localStorage) prefer that instead.
                 ZynkCore.nativeSendMessage(
-                    transcript, "", "", "local", "guardian",
+                    transcript, "", "", "", "guardian",
                     object : ZynkCore.Callback {
                         override fun onToken(token: String) {}
                         override fun onEvent(name: String, payloadJson: String) {}
