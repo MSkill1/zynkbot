@@ -84,6 +84,17 @@
             android:permission="android.permission.BIND_VOICE_INTERACTION"
             android:exported="true" />
 
+        <!-- Required by the assistant role's XML parser even though Zynkbot uses
+             Vosk, not SpeechRecognizer — see ZynkRecognitionService. -->
+        <service
+            android:name=".ZynkRecognitionService"
+            android:permission="android.permission.BIND_RECOGNITION_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"
