@@ -65,11 +65,42 @@ fn format_api_error(backend: &str, raw: &str) -> String {
     }
 }
 
-/// No Flask dependency - handles everything in Rust
+/// Tauri command: builds a WebView-emitting sink and delegates to the
+/// runtime-agnostic core below. Keep this thin — all logic lives in `generate_reply`.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn send_message_with_memory(
     app: tauri::AppHandle,
+    message: String,
+    user_id: String,
+    session_id: String,
+    backend: String,
+    containment_mode: String,
+    conversation_history: Option<Vec<ConversationTurn>>,
+    skip_containment: Option<bool>,
+    skip_memory_storage: Option<bool>,
+    kb_enabled: Option<bool>,
+    user_query: Option<String>,
+    image_data: Option<Vec<crate::llm::ImageAttachment>>,
+) -> Result<ReplyResponse, String> {
+    let sink: std::sync::Arc<dyn crate::response_sink::ResponseSink> =
+        std::sync::Arc::new(crate::response_sink::TauriSink::new(app));
+    generate_reply(
+        sink, message, user_id, session_id, backend, containment_mode,
+        conversation_history, skip_containment, skip_memory_storage,
+        kb_enabled, user_query, image_data,
+    )
+    .await
+}
+
+/// Runtime-agnostic chat core: produces a reply, streaming tokens and side-channel
+/// events to `sink`, with no dependency on Tauri's `AppHandle`. The Tauri command
+/// above passes a `TauriSink`; the planned native Android assistant path passes a
+/// JNI-backed sink so this can run and speak a reply with no WebView present.
+/// No Flask dependency — handles everything in Rust.
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_reply(
+    sink: std::sync::Arc<dyn crate::response_sink::ResponseSink>,
     message: String,
     user_id: String,
     session_id: String,
@@ -87,12 +118,6 @@ pub async fn send_message_with_memory(
     // Reset cancellation flag at the start of every new request so stale
     // cancellations from a previous stopped generation don't leak into this one.
     crate::GENERATION_CANCELLED.store(false, std::sync::atomic::Ordering::SeqCst);
-
-    // Where the streamed reply goes. Today this is the Tauri WebView; the native
-    // Android assistant path will pass a different ResponseSink so the reply can
-    // be produced and spoken with no WebView present. See response_sink.rs.
-    let sink: std::sync::Arc<dyn crate::response_sink::ResponseSink> =
-        std::sync::Arc::new(crate::response_sink::TauriSink::new(app.clone()));
 
     // Normalize brand name misspellings from voice transcription before any processing
     let message = crate::normalize_brand_names(message);
@@ -1154,7 +1179,7 @@ pub async fn send_message_with_memory(
         let bg_session_id = session_id.clone();
         let bg_forced_backend = forced_backend.clone();
         let bg_containment_mode = containment_mode.clone();
-        let bg_app = app.clone();
+        let bg_sink = sink.clone();
         let bg_is_api = is_api;
         let bg_is_explicit_remember = is_explicit_remember;
 
@@ -1190,7 +1215,7 @@ pub async fn send_message_with_memory(
                 .unwrap_or_default()
                 .as_millis() as u64;
             if has_memory_candidate {
-                let _ = bg_app.emit("memory-processing-started", serde_json::json!({ "pending_id": pending_id }));
+                bg_sink.event("memory-processing-started", serde_json::json!({ "pending_id": pending_id }));
             }
 
             // Reconnect to database for memory storage
@@ -1281,7 +1306,7 @@ pub async fn send_message_with_memory(
 
             if is_duplicate {
                 if has_memory_candidate {
-                    let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
                 }
                 db_pool.close().await;
                 return;
@@ -1292,7 +1317,7 @@ pub async fn send_message_with_memory(
             // API models: always proceed to Call 2, which makes the should_remember decision.
             if bg_extracted_text.is_none() && !bg_is_api {
                 if has_memory_candidate {
-                    let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
                 }
                 db_pool.close().await;
                 return;
@@ -1360,7 +1385,7 @@ pub async fn send_message_with_memory(
             };
 
             if !should_remember {
-                let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
                 db_pool.close().await;
                 return;
             }
@@ -1409,14 +1434,11 @@ pub async fn send_message_with_memory(
                         });
 
                         // Emit event to frontend to show modal
-                        if let Err(e) = bg_app.emit("contradiction-detected", payload) {
-                            println!("[RUST BACKGROUND] ⚠️ Failed to emit contradiction event: {}", e);
-                        } else {
-                            println!("[RUST BACKGROUND] 🔔 Contradiction event emitted - modal should appear");
-                        }
+                        bg_sink.event("contradiction-detected", payload);
+                        println!("[RUST BACKGROUND] 🔔 Contradiction event emitted - modal should appear");
 
                         // Don't store memory yet - wait for user decision via resolve_memory_conflict_v2
-                        let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
+                        bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
                         db_pool.close().await;
                         return;
                     }
@@ -1479,12 +1501,12 @@ pub async fn send_message_with_memory(
             ).await {
                 Ok(id) => {
                     println!("[RUST BACKGROUND] ✅ Memory stored with ID: {}", id);
-                    let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
                     id
                 }
                 Err(e) => {
                     println!("[RUST BACKGROUND] ⚠️ Failed to store memory: {}", e);
-                    let _ = bg_app.emit("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
                     db_pool.close().await;
                     return;
                 }
