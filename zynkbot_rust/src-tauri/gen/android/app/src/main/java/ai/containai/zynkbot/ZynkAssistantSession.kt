@@ -1,17 +1,28 @@
 package ai.containai.zynkbot
 
+import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.service.voice.VoiceInteractionSession
 import android.util.Log
+import android.view.Gravity
 import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageView
 
 /**
  * One assistant invocation, start to finish: listen, answer natively, speak, done.
- * No content view — intentionally invisible, matching "no lock-screen text, no
- * notification, just an answer." See ZynkAssistantService for status/caveats.
+ * See ZynkAssistantService for status/caveats.
+ *
+ * UI: no text, no notification — just a pulsing Z at the bottom of the screen (over
+ * the lock screen too) so the user can see the assistant is listening / thinking,
+ * the way Siri's orb does. Pulse speed is the state: slow = listening, fast =
+ * thinking. The overlay disappears when the session hides.
  *
  * Simplification, flagged for later hardening once this is verified on a device:
  * no explicit wake lock is held here (unlike WakeWordService's screen-off path).
@@ -23,23 +34,78 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         private const val TAG = "ZynkAssistantSession"
         private const val SILENCE_MS = 1500L
         private const val SAFETY_TIMEOUT_MS = 10_000L
+        private const val LOGO_DP = 96
+        private const val BOTTOM_MARGIN_DP = 140
+    }
+
+    private enum class State(val pulseMs: Long, val minAlpha: Float) {
+        LISTENING(900L, 0.55f),
+        THINKING(450L, 0.35f),
     }
 
     private var speechService: org.vosk.android.SpeechService? = null
     private val silenceHandler = Handler(Looper.getMainLooper())
+    private val main = Handler(Looper.getMainLooper())
+    private var logo: ImageView? = null
+    private var pulse: AnimatorSet? = null
 
-    override fun onCreateContentView(): View? = null // headless: no visible UI
+    // ── overlay ──────────────────────────────────────────────────────────────
+
+    override fun onCreateContentView(): View {
+        val density = context.resources.displayMetrics.density
+        val root = FrameLayout(context).apply { setBackgroundColor(Color.TRANSPARENT) }
+        val size = (LOGO_DP * density).toInt()
+        val img = ImageView(context).apply {
+            setImageResource(R.mipmap.ic_launcher)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            alpha = 0f
+        }
+        val lp = FrameLayout.LayoutParams(size, size, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        lp.bottomMargin = (BOTTOM_MARGIN_DP * density).toInt()
+        root.addView(img, lp)
+        logo = img
+        return root
+    }
+
+    /** Runs on the main thread. Restarts the pulse at the speed for [state]. */
+    private fun setState(state: State) {
+        val img = logo ?: return
+        pulse?.cancel()
+        val scaleX = ObjectAnimator.ofFloat(img, View.SCALE_X, 1.0f, 1.18f)
+        val scaleY = ObjectAnimator.ofFloat(img, View.SCALE_Y, 1.0f, 1.18f)
+        val alpha = ObjectAnimator.ofFloat(img, View.ALPHA, state.minAlpha, 1.0f)
+        for (a in listOf(scaleX, scaleY, alpha)) {
+            a.repeatMode = ValueAnimator.REVERSE
+            a.repeatCount = ValueAnimator.INFINITE
+        }
+        pulse = AnimatorSet().apply {
+            playTogether(scaleX, scaleY, alpha)
+            duration = state.pulseMs
+            start()
+        }
+    }
+
+    private fun stopPulse() {
+        pulse?.cancel(); pulse = null
+        logo?.alpha = 0f
+    }
+
+    // ── lifecycle ────────────────────────────────────────────────────────────
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         Log.i(TAG, "Session shown — starting dictation")
+        setState(State.LISTENING)
         startListening()
     }
 
     override fun onHide() {
         stopListening()
+        stopPulse()
         super.onHide()
     }
+
+    // ── dictation ────────────────────────────────────────────────────────────
 
     private fun startListening() {
         val model = WakeWordService.sharedVoskModel
@@ -108,11 +174,14 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         speechService = null
     }
 
+    // ── answer ───────────────────────────────────────────────────────────────
+
     private fun answerAndFinish(transcript: String) {
         if (transcript.isBlank()) {
             hide()
             return
         }
+        main.post { setState(State.THINKING) }
         Thread {
             // "Sent" tone: without it the user sits in silence for the whole network
             // round trip thinking nothing happened. Same chime the wake-word path uses.
@@ -121,7 +190,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             // Whether or not it succeeded, the session's job is done either way —
             // WakeWordService's screen-off path is the one with a WebView fallback;
             // this entry point has no equivalent to fall back to yet.
-            Handler(Looper.getMainLooper()).post { hide() }
+            main.post { hide() }
         }.start()
     }
 }

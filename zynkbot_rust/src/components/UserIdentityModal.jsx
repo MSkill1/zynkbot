@@ -102,7 +102,6 @@ export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl, session
       <div className="user-identity-modal-container" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>👤 User Identity</h2>
-          <button onClick={onClose} className="close-button">×</button>
         </div>
 
         <div className="modal-body">
@@ -238,6 +237,19 @@ export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl, session
           </section>
         </div>
       </div>
+
+      {/* Floating close button - bottom right, like settings panel */}
+      <button
+        onClick={onClose}
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px',
+          width: '56px', height: '56px', borderRadius: '50%',
+          background: '#44475a', color: '#f8f8f2', border: 'none',
+          fontSize: '1.5rem', cursor: 'pointer',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
+        }}
+      >✕</button>
     </div>
   );
 }

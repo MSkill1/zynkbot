@@ -151,7 +151,13 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
         backend_arg
     };
 
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    // One runtime for the life of the process, not one per query: building a fresh
+    // multi-thread runtime (and its worker threads) on every hands-free question is
+    // waste, and anything cached per-thread would be cold each time.
+    static RUNTIME: once_cell::sync::OnceCell<tokio::runtime::Runtime> = once_cell::sync::OnceCell::new();
+    let runtime = match RUNTIME.get_or_try_init(|| {
+        tokio::runtime::Builder::new_multi_thread().enable_all().build()
+    }) {
         Ok(rt) => rt,
         Err(e) => {
             sink_impl.error(&format!("failed to start async runtime: {e}"));

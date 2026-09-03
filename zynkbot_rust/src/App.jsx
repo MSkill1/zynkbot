@@ -1073,11 +1073,12 @@ export default function App() {
         title="System Controls"
         onInfoClick={() => setShowUserIdentity(true)}
         onVoiceClick={() => voice.setShowVoiceModal(true)}
-        // Hide the sidebar's floating ⚙️/✕ whenever a modal with its own bottom-right
-        // ✕ is open, so only one close button exists at that corner. Otherwise the
-        // two overlap and the first tap toggles the sidebar instead of closing the
-        // modal (reported on the API Keys modal opened from the sidebar).
-        hideToggle={showConversationHistory || showAPIKeys || showKBManager || showEnsemble || voice.showVoiceModal}
+        // Hide the sidebar's floating ⚙️/✕ whenever ANY overlay is open, so only one
+        // close button exists at that corner. Otherwise the two overlap and the first
+        // tap toggles the sidebar instead of closing the modal (reported on API Keys,
+        // then on the User Identity modal opened from the sidebar's info button).
+        hideToggle={showConversationHistory || showAPIKeys || showKBManager || showEnsemble || voice.showVoiceModal
+          || showUserIdentity || showAbout || showDemoGuide || showWhyZynkbot || showConflictResolution || showZynkCluster}
         onOpen={() => {
           setShowAbout(false);
           setShowDemoGuide(false);

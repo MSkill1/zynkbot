@@ -131,6 +131,15 @@ vosk = "0.3"
 [target.'cfg(target_os = "windows")'.dependencies]
 vosk = "0.3"
 
+# Debug builds (`tauri android build -- --debug`) are needed for run-as/debugging on
+# device, but Rust's dev profile leaves the ML inference in our dependencies
+# (candle BERT embeddings, the toxicity classifier, tokenizers, sqlx) unoptimized:
+# measured on the OnePlus 2026-09-03, that turned a 0.85s Mistral reply into a
+# 14s hands-free answer (embedding 5.0s, safety check 4.4s, db 3.8s — all local).
+# Optimize dependencies only; the app crate itself stays unoptimized/debuggable.
+[profile.dev.package."*"]
+opt-level = 3
+
 [target.'cfg(target_os = "android")'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
 # Matches the version Tauri's Android layer already pulls in (see Cargo.lock) so
