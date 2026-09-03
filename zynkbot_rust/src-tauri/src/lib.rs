@@ -24,6 +24,7 @@ mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod vosk_desktop; // Offline dictation on Linux and Windows desktop (cpal + vosk)
+pub mod response_sink; // Where a chat response goes as it streams (Tauri today, native JNI later)
 
 use serde::{Deserialize, Serialize};
 // use chrono::Utc;  // Unused - commented out

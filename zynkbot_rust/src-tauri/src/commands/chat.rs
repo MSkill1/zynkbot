@@ -88,6 +88,12 @@ pub async fn send_message_with_memory(
     // cancellations from a previous stopped generation don't leak into this one.
     crate::GENERATION_CANCELLED.store(false, std::sync::atomic::Ordering::SeqCst);
 
+    // Where the streamed reply goes. Today this is the Tauri WebView; the native
+    // Android assistant path will pass a different ResponseSink so the reply can
+    // be produced and spoken with no WebView present. See response_sink.rs.
+    let sink: std::sync::Arc<dyn crate::response_sink::ResponseSink> =
+        std::sync::Arc::new(crate::response_sink::TauriSink::new(app.clone()));
+
     // Normalize brand name misspellings from voice transcription before any processing
     let message = crate::normalize_brand_names(message);
 
@@ -549,7 +555,7 @@ pub async fn send_message_with_memory(
             .unwrap_or_else(|_| "claude-sonnet-5".to_string());
         let model_name = model_name_owned.as_str();
 
-        let app_handle = app.clone();
+        let sink_c = sink.clone();
 
         if let Some(ref imgs) = image_data {
             println!("[⏱️ PERF] Calling Anthropic API ({}) with vision streaming...", model_name);
@@ -560,7 +566,7 @@ pub async fn send_message_with_memory(
                 imgs,
                 None,
                 Some(4096),
-                move |token| { app_handle.emit("stream-token", token).ok(); },
+                move |token| { sink_c.token(&token); },
             ).await.map_err(|e| e.to_string())?;
             response.content
         } else {
@@ -576,7 +582,7 @@ pub async fn send_message_with_memory(
                 None,
                 Some(4096),
                 None,
-                move |token| { app_handle.emit("stream-token", token).ok(); },
+                move |token| { sink_c.token(&token); },
             ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
         }
@@ -590,7 +596,7 @@ pub async fn send_message_with_memory(
             .unwrap_or_else(|_| "gpt-5.5".to_string());
         let model_name = openai_model_owned.as_str();
 
-        let app_handle = app.clone();
+        let sink_c = sink.clone();
 
         if let Some(ref imgs) = image_data {
             println!("[⏱️ PERF] Calling OpenAI API ({}) with vision streaming...", model_name);
@@ -600,7 +606,7 @@ pub async fn send_message_with_memory(
                 &full_prompt,
                 imgs,
                 "https://api.openai.com/v1/chat/completions",
-                move |token| { app_handle.emit("stream-token", token).ok(); },
+                move |token| { sink_c.token(&token); },
             ).await.map_err(|e| e.to_string())?;
             response.content
         } else {
@@ -625,7 +631,7 @@ pub async fn send_message_with_memory(
                 None,
                 "https://api.openai.com/v1/chat/completions",
                 crate::llm::openai::default_client(false),
-                move |token| { app_handle.emit("stream-token", token).ok(); },
+                move |token| { sink_c.token(&token); },
             ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
         }
@@ -638,7 +644,7 @@ pub async fn send_message_with_memory(
         let xai_model_owned = std::env::var("XAI_MODEL")
             .unwrap_or_else(|_| "grok-4.5".to_string());
         let xai_model = xai_model_owned.as_str();
-        let app_handle = app.clone();
+        let sink_c = sink.clone();
 
         if let Some(ref imgs) = image_data {
             println!("[⏱️ PERF] Calling xAI API ({}) with vision streaming...", xai_model);
@@ -648,7 +654,7 @@ pub async fn send_message_with_memory(
                 &full_prompt,
                 imgs,
                 "https://api.x.ai/v1/chat/completions",
-                move |token| { app_handle.emit("stream-token", token).ok(); },
+                move |token| { sink_c.token(&token); },
             ).await.map_err(|e| e.to_string())?;
             response.content
         } else {
@@ -665,7 +671,7 @@ pub async fn send_message_with_memory(
                 None,
                 "https://api.x.ai/v1/chat/completions",
                 crate::llm::openai::default_client(false),
-                move |token| { app_handle.emit("stream-token", token).ok(); },
+                move |token| { sink_c.token(&token); },
             ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
         }
@@ -676,7 +682,7 @@ pub async fn send_message_with_memory(
         let mistral_model_owned = std::env::var("MISTRAL_MODEL")
             .unwrap_or_else(|_| "mistral-large-latest".to_string());
         let mistral_model = mistral_model_owned.as_str();
-        let app_handle = app.clone();
+        let sink_c = sink.clone();
 
         if let Some(ref imgs) = image_data {
             println!("[⏱️ PERF] Calling Mistral API ({}) with vision streaming...", mistral_model);
@@ -686,7 +692,7 @@ pub async fn send_message_with_memory(
                 &full_prompt,
                 imgs,
                 "https://api.mistral.ai/v1/chat/completions",
-                move |token| { app_handle.emit("stream-token", token).ok(); },
+                move |token| { sink_c.token(&token); },
             ).await.map_err(|e| e.to_string())?;
             response.content
         } else {
@@ -703,7 +709,7 @@ pub async fn send_message_with_memory(
                 None,
                 "https://api.mistral.ai/v1/chat/completions",
                 crate::llm::openai::default_client(false),
-                move |token| { app_handle.emit("stream-token", token).ok(); },
+                move |token| { sink_c.token(&token); },
             ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
             response.content
         }
@@ -721,7 +727,7 @@ pub async fn send_message_with_memory(
             return Err("Image attachments are not supported with custom/Ollama endpoints.".to_string());
         }
 
-        let app_handle = app.clone();
+        let sink_c = sink.clone();
         let messages = vec![crate::llm::Message {
             role: "user".to_string(),
             content: full_prompt,
@@ -737,7 +743,7 @@ pub async fn send_message_with_memory(
             None,
             &api_url,
             custom_client,
-            move |token| { app_handle.emit("stream-token", token).ok(); },
+            move |token| { sink_c.token(&token); },
         ).await.map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))?;
         response.content
 
