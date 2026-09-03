@@ -1073,7 +1073,11 @@ export default function App() {
         title="System Controls"
         onInfoClick={() => setShowUserIdentity(true)}
         onVoiceClick={() => voice.setShowVoiceModal(true)}
-        hideToggle={showConversationHistory}
+        // Hide the sidebar's floating ⚙️/✕ whenever a modal with its own bottom-right
+        // ✕ is open, so only one close button exists at that corner. Otherwise the
+        // two overlap and the first tap toggles the sidebar instead of closing the
+        // modal (reported on the API Keys modal opened from the sidebar).
+        hideToggle={showConversationHistory || showAPIKeys || showKBManager || showEnsemble || voice.showVoiceModal}
         onOpen={() => {
           setShowAbout(false);
           setShowDemoGuide(false);
