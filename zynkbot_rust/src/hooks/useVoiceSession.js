@@ -54,7 +54,7 @@ export function parseVoiceCommand(text) {
     return { type: 'stopwatch' };
   }
 
-  if (/^(zynkbot\s+)?stop(\s+(talking|dictating|reading))?$/.test(t)) {
+  if (/^(?:(?:hey\s+)?zynk(?:bot)?\s+)?stop(?:\s+(talking|dictating|reading|listening))?$/.test(t)) {
     return { type: 'stop_tts' };
   }
 
@@ -152,12 +152,21 @@ export function useVoiceSession({ setMessages }) {
       ttsSourceRef.current = source;
       setIsTtsSpeaking(true);
       source.start();
+      // The wake detector must remain armed while TTS is playing so saying
+      // "Hey Zynk, stop" can interrupt a long response.
+      if (heyZynkEnabled && window.WakeWordBridge?.isModelReady()) {
+        window.WakeWordBridge.start(0.72);
+      }
       source.onended = () => {
         setIsTtsSpeaking(false);
         ttsSourceRef.current = null;
         ttsAudioCtxRef.current = null;
         if (conversationLoopActiveRef.current) {
           startListeningLoopRef.current?.();
+        } else if (heyZynkEnabled && window.WakeWordBridge?.isModelReady()) {
+          // One-shot mode returns to passive wake-word listening. It must not
+          // open another dictation window after each response.
+          window.WakeWordBridge.start(0.72);
         }
       };
     } catch (e) {
@@ -251,8 +260,8 @@ export function useVoiceSession({ setMessages }) {
 
       const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
       const STOP_ALONE = /^\s*stop\s*$/i;
-      if (conversationLoopActiveRef.current && (CLOSING_PHRASES.test(text) || STOP_ALONE.test(text))) {
-        console.log('[WakeWord] closing phrase detected — ending conversation loop');
+      if (CLOSING_PHRASES.test(text) || STOP_ALONE.test(text)) {
+        console.log('[WakeWord] stop phrase detected — ending voice session');
         stopTts();
         endConversationLoop();
         return;
@@ -307,8 +316,16 @@ export function useVoiceSession({ setMessages }) {
         return;
       }
       if (ttsSourceRef.current) {
-        console.log('[WakeWord] detected during TTS — stopping playback and re-listening');
+        console.log('[WakeWord] detected during TTS — stopping playback');
         stopTts();
+        conversationLoopActiveRef.current = false;
+        // Treat the wake phrase itself as the interrupt. Starting Vosk after
+        // the chime loses the trailing "stop" and used to leave an unwanted
+        // dictation popup open. Return directly to passive wake listening.
+        if (window.WakeWordBridge.isModelReady()) {
+          setTimeout(() => window.WakeWordBridge.start(0.72), 500);
+        }
+        return;
       }
       console.log('[WakeWord] detected — playing chime then recording');
       window.WakeWordBridge.stop();
@@ -328,7 +345,11 @@ export function useVoiceSession({ setMessages }) {
     window.__handleScreenOffTranscript = (transcript) => {
       if (!transcript?.trim()) return;
       console.log('[WakeWord] screen-off transcript received:', transcript);
-      conversationLoopActiveRef.current = true;
+      // Screen-off delivery is always one-shot. It wakes the device solely to
+      // complete the captured request; starting another Vosk session after
+      // TTS is intrusive and makes the lock-screen flow impossible to exit.
+      // Conversation Mode remains available for foreground hands-free use.
+      conversationLoopActiveRef.current = false;
       wakeTriggeredRef.current = true;
       setTimeout(() => handleSendMessageRef.current?.(transcript.trim()), 2000);
     };
