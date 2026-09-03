@@ -2327,6 +2327,7 @@ pub fn run() {
             commands::models::delete_user_model,
             commands::models::get_api_keys,
             commands::models::set_api_key,
+            commands::models::set_preferred_backend,
             commands::models::remove_api_key,
             commands::models::propagate_api_key,
             commands::models::propagate_api_keys,

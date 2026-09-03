@@ -379,9 +379,14 @@ export default function App() {
     }
   }, [messages]);
 
-  // Persist selected model across sessions
+  // Persist selected model across sessions — in localStorage for the UI, and in the
+  // backend's .env (ZYNK_MODEL_BACKEND) so the native Android voice path, which
+  // cannot read localStorage, answers with the same model you picked here.
   useEffect(() => {
     localStorage.setItem('zynkbot_preferred_model', modelType);
+    invoke('set_preferred_backend', { backend: modelType }).catch((e) =>
+      console.warn('[Backend] could not persist preferred backend:', e)
+    );
   }, [modelType]);
 
   // Listen for contradiction detection events from backend

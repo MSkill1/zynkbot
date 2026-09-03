@@ -1,6 +1,8 @@
 package ai.containai.zynkbot
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -9,93 +11,208 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * Shared "answer a transcript entirely natively" logic: call ZynkCore.nativeSendMessage,
- * speak the reply with Android's built-in TextToSpeech. No Activity, no WebView, no
+ * Shared "answer a transcript entirely natively" logic: call ZynkCore.nativeSendMessage
+ * and speak the reply with Android's built-in TextToSpeech. No Activity, no WebView, no
  * notification. Used by both WakeWordService (screen-off wake-word path) and
- * ZynkAssistantSession (the OS assistant-role entry point), so the two triggers share
- * one implementation instead of drifting apart.
+ * ZynkAssistantSession (the OS assistant-role entry point).
  *
- * One TTS engine per process, created lazily on first use and shut down by whichever
- * component owns the process lifecycle (WakeWordService, being the longer-lived
- * foreground service, does this in its onDestroy()).
+ * Streams: tokens are spoken as soon as a sentence completes (QUEUE_ADD), so the user
+ * hears the start of the answer while the rest is still generating — instead of a
+ * silent 15-20s wait for the whole reply. Model-side markers (MEMORY_EXTRACT,
+ * WEB_SEARCH_NEEDED) that the frontend strips are cut here too so they're never read
+ * aloud. A failure is spoken, not swallowed.
  */
 object NativeVoiceAnswerer {
     private const val TAG = "NativeVoiceAnswerer"
+    private const val ERROR_LINE = "Zynkbot couldn't get an answer. Check the A I key in settings."
 
     @Volatile private var tts: TextToSpeech? = null
 
     /** Blocking: run on a background thread, never the main thread. Returns true if a
-     *  reply was produced and spoken; false on any failure (caller should fall back
-     *  to another delivery path rather than leave the request unanswered). */
+     *  reply was produced and spoken. On failure it speaks a short error line and
+     *  returns false so the caller can also fall back to another delivery path. */
     fun answer(context: Context, transcript: String): Boolean {
         if (transcript.isBlank()) return false
-        var spoke = false
+        val engine = engine(context) ?: return false
+        val speaker = SentenceSpeaker(engine)
+        var failure: String? = null
         try {
             ZynkCore.nativeSendMessage(
                 transcript, "", "", "", "guardian",
                 object : ZynkCore.Callback {
-                    override fun onToken(token: String) {}
+                    override fun onToken(token: String) { speaker.feed(token) }
                     override fun onEvent(name: String, payloadJson: String) {}
                     override fun onDone(replyJson: String) {
                         val replyText = try {
                             org.json.JSONObject(replyJson).optString("reply_text", "")
                         } catch (e: Exception) {
-                            Log.w(TAG, "Could not parse native reply: ${e.message}")
-                            ""
+                            Log.w(TAG, "Could not parse native reply: ${e.message}"); ""
                         }
                         Log.i(TAG, "Native reply: \"${replyText.take(80)}\"")
-                        if (replyText.isNotBlank()) {
-                            spoke = speak(context, replyText)
-                        }
+                        speaker.finish(replyText)
                     }
-                    override fun onError(message: String) {
-                        Log.w(TAG, "Native reply failed: $message")
-                    }
+                    override fun onError(message: String) { failure = message }
                 },
             )
         } catch (e: Throwable) {
-            Log.w(TAG, "Native answer path unavailable: ${e.message}")
+            failure = e.message ?: "native path unavailable"
         }
-        return spoke
+        if (failure != null) {
+            Log.w(TAG, "Native reply failed: $failure")
+            speaker.speakNow(ERROR_LINE)
+            return false
+        }
+        return speaker.spokeAnything()
     }
 
-    /** Speaks [text], blocking until it finishes. False (never throws) on any failure. */
-    fun speak(context: Context, text: String): Boolean {
-        val latch = CountDownLatch(1)
-        var ok = false
+    /** Short "your question was sent" tone — the same closing chime WakeWordService
+     *  plays, so hands-free feedback is identical on both paths. Blocking (<=2s). */
+    fun playSentTone(context: Context) {
         try {
-            var engine = tts
-            if (engine == null) {
-                val initLatch = CountDownLatch(1)
-                var initOk = false
-                engine = TextToSpeech(context.applicationContext) { status ->
-                    initOk = status == TextToSpeech.SUCCESS
-                    initLatch.countDown()
-                }
-                initLatch.await(5000, TimeUnit.MILLISECONDS)
-                if (!initOk) { Log.w(TAG, "TTS init failed"); return false }
-                engine.language = Locale.US
-                tts = engine
+            val mp = MediaPlayer()
+            mp.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            context.resources.openRawResourceFd(R.raw.wake_chime_close)?.let { afd ->
+                mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length); afd.close()
             }
-            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
-                override fun onDone(utteranceId: String?) { ok = true; latch.countDown() }
-                @Deprecated("required override") override fun onError(utteranceId: String?) { latch.countDown() }
-                override fun onError(utteranceId: String?, errorCode: Int) { latch.countDown() }
-            })
-            val id = "zynk-native-${System.currentTimeMillis()}"
-            val result = engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
-            if (result != TextToSpeech.SUCCESS) { Log.w(TAG, "speak() rejected"); return false }
-            // Safety cap: don't block forever if the utterance callback never fires.
-            latch.await(60_000, TimeUnit.MILLISECONDS)
+            mp.prepare()
+            val latch = CountDownLatch(1)
+            mp.setOnCompletionListener { it.release(); latch.countDown() }
+            mp.start()
+            latch.await(2000, TimeUnit.MILLISECONDS)
         } catch (e: Exception) {
-            Log.w(TAG, "TTS failed: ${e.message}")
+            Log.w(TAG, "Sent tone failed: ${e.message}")
         }
-        return ok
     }
 
     fun shutdown() {
         try { tts?.shutdown() } catch (_: Exception) {}
         tts = null
+    }
+
+    // ── internals ────────────────────────────────────────────────────────────
+
+    /** One TTS engine per process, created lazily; null if it can't initialise. */
+    private fun engine(context: Context): TextToSpeech? {
+        tts?.let { return it }
+        val initLatch = CountDownLatch(1)
+        var initOk = false
+        val engine = TextToSpeech(context.applicationContext) { status ->
+            initOk = status == TextToSpeech.SUCCESS; initLatch.countDown()
+        }
+        initLatch.await(5000, TimeUnit.MILLISECONDS)
+        if (!initOk) { Log.w(TAG, "TTS init failed"); return null }
+        engine.language = Locale.US
+        tts = engine
+        return engine
+    }
+
+    /**
+     * Feeds streamed tokens, speaking each completed sentence immediately and queuing
+     * the next behind it. finish() speaks any remainder (or the whole reply if nothing
+     * ever streamed, e.g. a non-streaming backend) and blocks until playback ends.
+     */
+    private class SentenceSpeaker(private val engine: TextToSpeech) {
+        private val buffer = StringBuilder()
+        private val pending = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        private val allDone = Object()
+        private var utterances = 0
+        private var stopped = false   // a marker was seen; ignore everything after it
+        private var spokeSomething = false
+
+        init {
+            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+                override fun onDone(utteranceId: String?) { settle(utteranceId) }
+                @Deprecated("required override") override fun onError(utteranceId: String?) { settle(utteranceId) }
+                override fun onError(utteranceId: String?, errorCode: Int) { settle(utteranceId) }
+                private fun settle(id: String?) {
+                    if (id != null) pending.remove(id)
+                    if (pending.isEmpty()) synchronized(allDone) { allDone.notifyAll() }
+                }
+            })
+        }
+
+        @Synchronized fun feed(token: String) {
+            if (stopped) return
+            buffer.append(token)
+            val cut = MARKERS.map { buffer.indexOf(it) }.filter { it >= 0 }.minOrNull()
+            if (cut != null) {
+                buffer.setLength(cut)
+                stopped = true
+            }
+            drainSentences(force = stopped)
+        }
+
+        @Synchronized fun finish(fullReply: String) {
+            if (utterances == 0 && buffer.isBlank()) {
+                // Nothing streamed (non-streaming backend): speak the final text.
+                buffer.append(fullReply)
+            }
+            drainSentences(force = true)
+            awaitIdle(60_000)
+        }
+
+        fun speakNow(text: String) {
+            enqueue(text, flush = true)
+            awaitIdle(15_000)
+        }
+
+        fun spokeAnything() = spokeSomething
+
+        /** Cut on sentence boundaries; with force, speak whatever is left too. */
+        private fun drainSentences(force: Boolean) {
+            while (true) {
+                val idx = sentenceEnd(buffer)
+                if (idx < 0) break
+                val sentence = buffer.substring(0, idx + 1).trim()
+                buffer.delete(0, idx + 1)
+                if (sentence.isNotEmpty()) enqueue(sentence, flush = utterances == 0)
+            }
+            if (force && buffer.isNotBlank()) {
+                enqueue(buffer.toString().trim(), flush = utterances == 0)
+                buffer.setLength(0)
+            }
+        }
+
+        /** Index of a sentence terminator followed by whitespace/end, else -1. Requires a
+         *  few words first so "e.g." / "1." don't trigger a one-word utterance. */
+        private fun sentenceEnd(sb: StringBuilder): Int {
+            var i = 0
+            while (i < sb.length) {
+                val c = sb[i]
+                val term = c == '.' || c == '?' || c == '!' || c == '\n'
+                if (term && (i + 1 >= sb.length || sb[i + 1].isWhitespace()) && i >= 12) return i
+                i++
+            }
+            return -1
+        }
+
+        private fun enqueue(text: String, flush: Boolean) {
+            val id = "zynk-${System.nanoTime()}"
+            pending.add(id)
+            val mode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+            val r = engine.speak(text, mode, null, id)
+            if (r == TextToSpeech.SUCCESS) { utterances++; spokeSomething = true } else pending.remove(id)
+        }
+
+        private fun awaitIdle(timeoutMs: Long) {
+            val deadline = System.currentTimeMillis() + timeoutMs
+            synchronized(allDone) {
+                while (pending.isNotEmpty()) {
+                    val left = deadline - System.currentTimeMillis()
+                    if (left <= 0) { Log.w(TAG, "TTS wait timed out with ${pending.size} pending"); break }
+                    try { allDone.wait(left) } catch (_: InterruptedException) { break }
+                }
+            }
+        }
+
+        companion object {
+            private val MARKERS = listOf("MEMORY_EXTRACT", "WEB_SEARCH_NEEDED")
+        }
     }
 }

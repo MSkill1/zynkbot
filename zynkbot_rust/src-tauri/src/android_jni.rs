@@ -192,6 +192,27 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
 /// the caller can fail closed rather than hand generate_reply a backend that errors.
 fn resolve_voice_backend() -> Option<String> {
     let has = |var: &str| !std::env::var(var).unwrap_or_default().is_empty();
+
+    // First choice: whatever the user selected in the app's model dropdown, persisted
+    // by set_preferred_backend as ZYNK_MODEL_BACKEND. Honored only if it is actually
+    // usable here, so a stale value (e.g. 'local' with no model file on Android) can't
+    // strand hands-free voice — it falls through to the first configured provider.
+    if let Ok(pref) = std::env::var("ZYNK_MODEL_BACKEND") {
+        let p = pref.to_lowercase();
+        let usable = if p.contains("anthropic") || p.contains("claude") { has("ANTHROPIC_API_KEY") }
+            else if p.contains("openai") || p.contains("gpt") { has("OPENAI_API_KEY") }
+            else if p.contains("xai") || p.contains("grok") { has("XAI_API_KEY") }
+            else if p.contains("mistral") { has("MISTRAL_API_KEY") }
+            else if p == "custom" { has("CUSTOM_API_URL") && has("CUSTOM_MODEL") }
+            else if p.contains("local") || p.ends_with(".gguf") {
+                crate::llm::local_models::resolve_default_model_path().is_ok()
+            } else { false };
+        if usable {
+            return Some(pref);
+        }
+        eprintln!("[ZynkCore JNI] preferred backend '{pref}' has no usable credentials here; falling back");
+    }
+
     if has("ANTHROPIC_API_KEY") {
         Some("anthropic".to_string())
     } else if has("OPENAI_API_KEY") {

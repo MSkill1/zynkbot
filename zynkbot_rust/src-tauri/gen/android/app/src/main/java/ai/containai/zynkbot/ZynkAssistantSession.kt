@@ -114,6 +114,9 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             return
         }
         Thread {
+            // "Sent" tone: without it the user sits in silence for the whole network
+            // round trip thinking nothing happened. Same chime the wake-word path uses.
+            NativeVoiceAnswerer.playSentTone(context)
             NativeVoiceAnswerer.answer(context, transcript)
             // Whether or not it succeeded, the session's job is done either way —
             // WakeWordService's screen-off path is the one with a WebView fallback;

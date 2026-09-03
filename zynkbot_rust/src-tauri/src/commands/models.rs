@@ -276,6 +276,32 @@ pub async fn set_api_key(key: String, value: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Persist the model/backend the user selected in the app so paths that cannot see
+/// the WebView's localStorage — the native Android voice pipeline — use the same one.
+/// Stored as ZYNK_MODEL_BACKEND in the same .env set_api_key writes, and applied to the
+/// process env immediately. Called by the frontend whenever the selection changes.
+#[tauri::command]
+pub async fn set_preferred_backend(backend: String) -> Result<(), String> {
+    let backend = backend.trim().to_string();
+    if backend.is_empty() {
+        return Err("backend must not be empty".to_string());
+    }
+    let env_path = crate::db::get_app_data_dir().join(".env");
+    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let prefix = "ZYNK_MODEL_BACKEND=";
+    let line = format!("{}{}", prefix, backend);
+    match lines.iter_mut().find(|l| l.starts_with(prefix)) {
+        Some(existing) => *existing = line,
+        None => lines.push(line),
+    }
+    std::fs::write(&env_path, lines.join("\n"))
+        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
+    std::env::set_var("ZYNK_MODEL_BACKEND", &backend);
+    println!("[Backend] Preferred backend set to '{}'", backend);
+    Ok(())
+}
+
 /// Remove an API key from the .env file
 #[tauri::command]
 pub async fn remove_api_key(key: String) -> Result<(), String> {
