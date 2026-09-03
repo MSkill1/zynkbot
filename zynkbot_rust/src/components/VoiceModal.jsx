@@ -117,8 +117,8 @@ function Toggle({ checked, onChange, id }) {
 }
 
 const FLAT_COMMANDS = [
-  { cmd: '"Hey Zynk"', desc: 'Opens a session. Wait for the tone, then speak. Say it again after each response to continue.' },
-  { cmd: '"Thank you Zynk" / "Goodbye Zynk"', desc: 'Ends the conversation and returns to standby.' },
+  { cmd: '"Hey Zynk"', desc: 'One question per wake. Wait for the tone, then speak. Zynkbot answers, then waits for the next "Hey Zynk" — it never listens on its own.' },
+  { cmd: '"Thank you Zynk" / "Goodbye Zynk"', desc: 'Ends the session and returns to standby.' },
   { cmd: '"Never mind" / "Cancel"', desc: 'If you accidentally woke it — discards your recording without sending.' },
   { cmd: '"Stop"', desc: 'Stops the spoken response.' },
   { cmd: '"Set a timer for 10 minutes"', desc: 'Works with any duration — seconds, minutes, or hours.' },
@@ -180,8 +180,8 @@ export default function VoiceModal({
   onTtsEnabledChange,
   webSearchAutoExecute,
   onWebSearchAutoExecuteChange,
-  conversationModeEnabled,
-  onConversationModeChange,
+  keepScreenAwake,
+  onKeepScreenAwakeChange,
 }) {
   const [showCommands, setShowCommands] = useState(false);
 
@@ -371,13 +371,12 @@ export default function VoiceModal({
         <p style={sectionHeadingStyle}>Voice Response</p>
         <div style={rowStyle}>
           <div>
-            <div style={labelStyle}>Speak responses aloud</div>
-            {ttsEnabled && (
-              <div style={mutedStyle}>
-                OpenAI TTS (alloy) — requires OPENAI_API_KEY. Speaks every response,
-                typed or spoken. Use the Stop button to interrupt playback.
-              </div>
-            )}
+            <div style={labelStyle}>Speak replies in the app</div>
+            <div style={mutedStyle}>
+              Hands-free "Hey Zynk" replies (screen off, app in the background) are
+              always spoken. Turn this on to also hear replies while the app is open.
+              {ttsEnabled && ' Uses OpenAI TTS (alloy) — requires OPENAI_API_KEY. Say "stop" or use the Stop button to interrupt.'}
+            </div>
           </div>
           <Toggle
             id="tts-toggle"
@@ -401,17 +400,17 @@ export default function VoiceModal({
           />
         </div>
 
-        {/* Conversation Mode */}
-        <p style={sectionHeadingStyle}>Conversation Mode</p>
+        {/* Screen */}
+        <p style={sectionHeadingStyle}>Screen</p>
         <div style={{ ...rowStyle, borderBottom: 'none' }}>
           <div>
             <div style={labelStyle}>Keep screen awake</div>
-            <div style={mutedStyle}>Useful for hands-free use during a session.</div>
+            <div style={mutedStyle}>Stops the display sleeping while Zynkbot is open. Does not affect listening.</div>
           </div>
           <Toggle
-            id="conversation-mode-toggle"
-            checked={conversationModeEnabled}
-            onChange={onConversationModeChange}
+            id="keep-screen-awake-toggle"
+            checked={keepScreenAwake}
+            onChange={onKeepScreenAwakeChange}
           />
         </div>
 

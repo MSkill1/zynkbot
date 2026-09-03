@@ -28,7 +28,7 @@ import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
 import VoiceModal from "./components/VoiceModal";
-import { useVoiceSession, parseVoiceCommand } from "./hooks/useVoiceSession";
+import { useVoiceSession, parseVoiceCommand, shouldSpeakReply } from "./hooks/useVoiceSession";
 
 // API Base URL - DEPRECATED: All API calls now use Tauri commands
 // Keeping this for legacy components that haven't been migrated yet (ZynkSync, ZynkLink, etc.)
@@ -592,9 +592,12 @@ export default function App() {
   const handleSendMessage = async (message, options = {}) => {
     if (!message.trim()) return;
 
-    // Capture and reset wake flag before any early returns
+    // Capture and reset wake flags before any early returns
     const triggeredByWake = voice.wakeTriggeredRef.current;
     voice.wakeTriggeredRef.current = false;
+    const handsFree = voice.handsFreeRef.current;
+    voice.handsFreeRef.current = false;
+    const speak = shouldSpeakReply({ handsFree, speakInApp: voice.ttsEnabled });
 
     // stop_tts works without VoiceCommandBridge
     const cmd = parseVoiceCommand(message);
@@ -731,7 +734,7 @@ export default function App() {
         console.log('[WebSearch] Original query:', response.original_query);
 
         if (webSearchAutoExecute && triggeredByWake) {
-          await handleExecuteWebSearch(streamId, response.web_search_query, response.original_query);
+          await handleExecuteWebSearch(streamId, response.web_search_query, response.original_query, speak);
           return;
         }
 
@@ -752,7 +755,7 @@ export default function App() {
         };
 
         setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-        if (voice.ttsEnabled) voice.speakResponse(assistantMessage.content);
+        if (speak) voice.speakResponse(assistantMessage.content);
         return; // Don't continue with normal processing
       }
 
@@ -776,7 +779,7 @@ export default function App() {
       console.log('Recalled memories:', assistantMessage.recalled_memories);
 
       setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-      if (voice.ttsEnabled) voice.speakResponse(assistantMessage.content);
+      if (speak) voice.speakResponse(assistantMessage.content);
 
       console.log('[App] Metadata set:', {
         model_backend: response.model_backend,
@@ -881,7 +884,9 @@ export default function App() {
   };
 
   // Execute web search when user confirms
-  const handleExecuteWebSearch = async (messageId, searchQuery, originalQuery) => {
+  // `speak` is decided by the request that triggered the search; the confirm
+  // button in ChatMessage omits it, so a tapped search follows the in-app setting.
+  const handleExecuteWebSearch = async (messageId, searchQuery, originalQuery, speak = voice.ttsEnabled) => {
     console.log('[WebSearch] User confirmed web search');
     console.log('[WebSearch] Message ID:', messageId);
     console.log('[WebSearch] Search query:', searchQuery);
@@ -971,7 +976,7 @@ export default function App() {
           : msg
       ));
 
-      if (voice.ttsEnabled) voice.speakResponse(llmResponse.reply_text);
+      if (speak) voice.speakResponse(llmResponse.reply_text);
 
       console.log('[WebSearch] Search complete and answer synthesized');
 
@@ -2234,8 +2239,8 @@ export default function App() {
         onTtsEnabledChange={voice.setTtsEnabled}
         webSearchAutoExecute={webSearchAutoExecute}
         onWebSearchAutoExecuteChange={(v) => { setWebSearchAutoExecute(v); localStorage.setItem('zynkbot_web_search_auto', v.toString()); }}
-        conversationModeEnabled={voice.conversationModeEnabled}
-        onConversationModeChange={voice.setConversationModeEnabled}
+        keepScreenAwake={voice.keepScreenAwake}
+        onKeepScreenAwakeChange={voice.setKeepScreenAwake}
       />
 
       {/* Einstein Demo Loading Modal (blocking, no dismiss) */}
@@ -2311,7 +2316,7 @@ export default function App() {
             const text = await voice.stopWakeRecordingRef.current?.();
             const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
             if (!text || NEVERMIND.test(text)) {
-              voice.endConversationLoopRef.current?.();
+              voice.endVoiceSessionRef.current?.();
             } else {
               voice.wakeTriggeredRef.current = true;
               voice.handleSendMessageRef.current?.(text);
