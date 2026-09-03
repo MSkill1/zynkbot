@@ -7,7 +7,10 @@ Assistant — heard, processed, answered by voice — with no notification, noth
 lock screen, and without the user having opened the app first. Android has a formal
 slot for this (`VoiceInteractionService`, API 21+). Zynkbot should be built for it.
 **Target platform:** standard Android. GrapheneOS is an adaptation afterwards, never a
-design driver. Primary test device: OnePlus 12R (ColorOS, Android 14).
+design driver. Primary test device: OnePlus 12R (CPH2611, OxygenOS/ColorOS 16, **Android 16**).
+Checked 2026-09-03 over ADB: the standard assistant picker (`Settings$ManageAssistActivity`)
+exists on this ROM and Google currently holds `android.app.role.ASSISTANT`. Whether a
+sideloaded app is offered in that list is G1 and needs a build.
 
 Everything in §2 was verified by reading the source on the `voice` branch. Everything
 in §6 is *unverified* and must be tested on the OnePlus before Phase 2 begins.
