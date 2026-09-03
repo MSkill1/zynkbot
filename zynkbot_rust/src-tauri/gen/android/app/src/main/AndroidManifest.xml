@@ -63,6 +63,27 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- Digital-assistant role (Settings -> Apps -> Default apps -> Digital
+             assistant app). Both services must be exported and guarded by
+             BIND_VOICE_INTERACTION so only the system can bind them. The
+             metadata resource declares the session service and capabilities. -->
+        <service
+            android:name=".ZynkAssistantService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+        </service>
+
+        <service
+            android:name=".ZynkAssistantSessionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true" />
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

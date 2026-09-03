@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declares Zynkbot as a candidate digital assistant. Referenced from the
+     ZynkAssistantService <meta-data> in AndroidManifest.xml.
+     recognitionService is optional and deliberately omitted: Zynkbot does its own
+     recognition with Vosk rather than Android's SpeechRecognizer framework.
+     supportsLaunchVoiceAssistFromKeyguard lets the session be invoked from the
+     lock screen, which is the whole point of the hands-free flow. -->
+<voice-interaction-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="ai.containai.zynkbot.ZynkAssistantSessionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />

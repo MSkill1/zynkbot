@@ -14,9 +14,6 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaPlayer
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
-import java.util.Locale
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
@@ -78,7 +75,6 @@ class WakeWordService : Service() {
     private var lastModelDir: String? = null     // stored so background detection can restart the loop
     private var loadedModelDir: String? = null   // dir the resident ONNX sessions were loaded from; null = none loaded
     private var wakeLock: PowerManager.WakeLock? = null      // detection wake lock (25s, screen-off flow)
-    @Volatile private var nativeTts: TextToSpeech? = null     // lazily created; speaks native replies
     private var audioWakeLock: PowerManager.WakeLock? = null // CPU wake lock for audio loop while screen off
 
     // Keeps the CPU running the ONNX inference loop when the screen is off.
@@ -199,8 +195,7 @@ class WakeWordService : Service() {
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         releaseAudioWakeLock()
         stop()
-        try { nativeTts?.shutdown() } catch (_: Exception) {}
-        nativeTts = null
+        NativeVoiceAnswerer.shutdown()
         super.onDestroy()
     }
 
@@ -442,6 +437,7 @@ class WakeWordService : Service() {
     // no notification. Falls back to deliverTranscriptToApp() (the WebView/
     // notification path) if anything in the native path fails or produces no
     // speakable reply, so a locked-screen query still gets answered somehow.
+    // Shared with ZynkAssistantSession — see NativeVoiceAnswerer.
     private fun answerNatively(transcript: String) {
         if (transcript.isBlank()) {
             Log.i(TAG, "Empty transcript — not waking screen")
@@ -455,41 +451,7 @@ class WakeWordService : Service() {
         try { wakeLock?.acquire(90_000L) } catch (_: Exception) {}
 
         Thread {
-            var spoke = false
-            try {
-                // "" backend picks whatever AI provider is actually configured
-                // (API key or Ollama/custom endpoint) — there is no working
-                // on-device model on Android. TODO once the app persists the
-                // user's in-app model choice natively (today it lives only in
-                // the WebView's localStorage) prefer that instead.
-                ZynkCore.nativeSendMessage(
-                    transcript, "", "", "", "guardian",
-                    object : ZynkCore.Callback {
-                        override fun onToken(token: String) {}
-                        override fun onEvent(name: String, payloadJson: String) {}
-                        override fun onDone(replyJson: String) {
-                            val replyText = try {
-                                org.json.JSONObject(replyJson).optString("reply_text", "")
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Could not parse native reply: ${e.message}")
-                                ""
-                            }
-                            Log.i(TAG, "Native reply: \"${replyText.take(80)}\"")
-                            if (replyText.isNotBlank()) {
-                                spoke = speakNatively(replyText)
-                            }
-                        }
-                        override fun onError(message: String) {
-                            Log.w(TAG, "Native reply failed: $message")
-                        }
-                    },
-                )
-            } catch (e: Throwable) {
-                // ZynkCore not yet linked into this build, or any other native
-                // failure — degrade to the known-working path rather than go silent.
-                Log.w(TAG, "Native answer path unavailable: ${e.message}")
-            }
-
+            val spoke = NativeVoiceAnswerer.answer(this, transcript)
             if (spoke) {
                 releaseWakeLock()
                 playClosingTone()
@@ -497,39 +459,6 @@ class WakeWordService : Service() {
                 deliverTranscriptToApp(transcript)
             }
         }.start()
-    }
-
-    /** Speaks [text] via Android's TextToSpeech, blocking until it finishes. Returns
-     *  false (without throwing) if TTS could not be initialized or start speaking. */
-    private fun speakNatively(text: String): Boolean {
-        val latch = CountDownLatch(1)
-        var ok = false
-        try {
-            var tts = nativeTts
-            if (tts == null) {
-                val initLatch = CountDownLatch(1)
-                var initOk = false
-                tts = TextToSpeech(this) { status -> initOk = status == TextToSpeech.SUCCESS; initLatch.countDown() }
-                initLatch.await(5000, TimeUnit.MILLISECONDS)
-                if (!initOk) { Log.w(TAG, "Native TTS init failed"); return false }
-                tts.language = Locale.US
-                nativeTts = tts
-            }
-            tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
-                override fun onDone(utteranceId: String?) { ok = true; latch.countDown() }
-                @Deprecated("required override") override fun onError(utteranceId: String?) { latch.countDown() }
-                override fun onError(utteranceId: String?, errorCode: Int) { latch.countDown() }
-            })
-            val id = "zynk-native-${System.currentTimeMillis()}"
-            val result = tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
-            if (result != TextToSpeech.SUCCESS) { Log.w(TAG, "Native TTS speak() rejected"); return false }
-            // Safety cap: don't hold the wake lock forever if the utterance callback never fires.
-            latch.await(60_000, TimeUnit.MILLISECONDS)
-        } catch (e: Exception) {
-            Log.w(TAG, "Native TTS failed: ${e.message}")
-        }
-        return ok
     }
 
     private fun playClosingTone() {
