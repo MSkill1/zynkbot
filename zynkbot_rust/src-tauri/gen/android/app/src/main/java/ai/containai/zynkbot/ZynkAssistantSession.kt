@@ -11,6 +11,7 @@ import android.graphics.PathMeasure
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.service.voice.VoiceInteractionSession
 import android.util.Log
 import android.view.Gravity
@@ -44,7 +45,15 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         private const val SAFETY_TIMEOUT_MS = 10_000L
         private const val LOGO_DP = 120
         private const val BOTTOM_MARGIN_DP = 140
+        /** Upper bound on how long one interaction may hold the screen on. */
+        private const val SCREEN_LOCK_MS = 90_000L
+
+        /** The session currently shown, else null. MainActivity.onResume uses it to
+         *  drop the Z overlay when the app itself comes to the front mid-reply. */
+        @Volatile var current: ZynkAssistantSession? = null
     }
+
+    private var screenLock: PowerManager.WakeLock? = null
 
     @Volatile private var speechService: org.vosk.android.SpeechService? = null
     private val silenceHandler = Handler(Looper.getMainLooper())
@@ -177,16 +186,22 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         super.onShow(args, showFlags)
         Log.i(TAG, "Session shown — starting dictation")
         ZynkAssistantService.sessionActive = true
-        // On a locked phone the display sleeps again a second after the session
-        // appears, so the overlay was only a flicker. Keep the device awake for the
-        // interaction; the OS releases it when the session hides.
+        current = this
+        // The session window draws over the lock screen but nothing turns the display
+        // ON — with the phone asleep the Z was never seen (OnePlus, 2026-09-04: session
+        // shown 13:22:03, screen dark until the power button at 13:22:32). Light it,
+        // the way Google Assistant does, and hold it for the interaction. setKeepAwake
+        // alone only holds a screen that is already lit.
+        wakeScreen()
         try { setKeepAwake(true) } catch (e: Exception) { Log.w(TAG, "setKeepAwake failed: ${e.message}") }
-        zView?.let { it.mode = ZView.Mode.LISTENING; it.start() }
+        zView?.let { it.visibility = View.VISIBLE; it.mode = ZView.Mode.LISTENING; it.start() }
         startListening()
     }
 
     override fun onHide() {
         ZynkAssistantService.sessionActive = false
+        current = null
+        releaseScreen()
         stopListening()
         zView?.stop()
         // Re-arm passive wake-word listening natively; the JS re-arm only runs when
@@ -194,6 +209,46 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         // native voice is still speaking — NativeVoiceAnswerer re-arms afterwards.)
         Thread { try { WakeWordService.instance?.resumeMicAfterSession() } catch (e: Exception) { Log.w(TAG, "re-arm failed: ${e.message}") } }.start()
         super.onHide()
+    }
+
+    /**
+     * The session window spans the whole screen and, by default, swallows every
+     * touch — even over its transparent area. When Matt opened the app mid-reply the
+     * Z sat over the UI and ate the tap on Stop (OnePlus, 2026-09-04). The Z is
+     * display-only, so claim no touchable region at all: everything passes through
+     * to whatever is beneath, and no content inset so apps under it are not resized.
+     */
+    override fun onComputeInsets(outInsets: Insets) {
+        super.onComputeInsets(outInsets)
+        outInsets.contentInsets.top = zView?.rootView?.height ?: 0
+        outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+        outInsets.touchableRegion.setEmpty()
+    }
+
+    /** The app came to the front while this session is still busy: its own Stop
+     *  button takes over, so the Z has no job and would only sit over the UI. The
+     *  session itself carries on (listening or speaking) and hides when done. */
+    fun hideOverlay() {
+        main.post { zView?.let { it.stop(); it.visibility = View.INVISIBLE } }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun wakeScreen() {
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val lock = pm.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+                "zynkbot:assistant_session"
+            )
+            lock.acquire(SCREEN_LOCK_MS)
+            screenLock = lock
+        } catch (e: Exception) { Log.w(TAG, "screen wake failed: ${e.message}") }
+    }
+
+    private fun releaseScreen() {
+        val lock = screenLock ?: return
+        screenLock = null
+        try { if (lock.isHeld) lock.release() } catch (e: Exception) { Log.w(TAG, "screen release failed: ${e.message}") }
     }
 
     // ── dictation ────────────────────────────────────────────────────────────

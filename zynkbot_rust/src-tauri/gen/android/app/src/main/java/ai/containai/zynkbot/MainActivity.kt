@@ -742,6 +742,9 @@ class MainActivity : TauriActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        // Mid-reply and the user opened the app: the in-app Stop button takes over,
+        // so drop the assistant session's Z overlay (it would sit over the UI).
+        ZynkAssistantSession.current?.hideOverlay()
         // Deliver transcript stored by onNewIntent() (stopped-activity path), or
         // fall back to checking the creation intent (fresh-launch path).
         val pending = pendingWakeTranscript
