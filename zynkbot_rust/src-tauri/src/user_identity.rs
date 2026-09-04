@@ -21,6 +21,7 @@ pub struct IdentityManager {
     base_path: PathBuf,
     user_id_file: PathBuf,
     device_id_file: PathBuf,
+    device_name_file: PathBuf,
 }
 
 impl IdentityManager {
@@ -33,8 +34,37 @@ impl IdentityManager {
         Self {
             user_id_file: base.join(".zynk_user_id"),
             device_id_file: base.join(".zynk_device_id"),
+            device_name_file: base.join(".zynk_device_name"),
             base_path: base,
         }
+    }
+
+    /// The name the user chose for this device, if any — set once via the pairing-time
+    /// prompt, changeable any time after from the sync panel. None means "no custom name
+    /// yet, use the hostname/Android-XXXX default from get_device_name()".
+    pub fn get_custom_device_name(&self) -> Option<String> {
+        let raw = fs::read_to_string(&self.device_name_file).ok()?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    }
+
+    pub fn has_custom_device_name(&self) -> bool {
+        self.get_custom_device_name().is_some()
+    }
+
+    /// Persist a user-chosen device name. Trimmed; rejects empty/oversized input so a
+    /// stray client bug can't silently blank the name other devices display.
+    pub fn set_device_name(&self, name: &str) -> Result<(), String> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err("Device name must not be empty".to_string());
+        }
+        if trimmed.chars().count() > 40 {
+            return Err("Device name must be 40 characters or fewer".to_string());
+        }
+        fs::write(&self.device_name_file, trimmed)
+            .map_err(|e| format!("Failed to write device name: {}", e))?;
+        Ok(())
     }
 
     /// Get or create user_id
@@ -202,9 +232,24 @@ pub fn reset_all_identity() -> Result<(String, String), String> {
     IDENTITY_MANAGER.reset_all()
 }
 
-/// Get a human-readable device name.
-/// Falls back to "Android-XXXX" when hostname::get() returns "localhost" (always the case on Android).
+/// The name shown for this device on the sync network: the user's custom name if one
+/// has been set, else the same hostname/Android-XXXX default as before.
 pub fn get_device_name() -> String {
+    IDENTITY_MANAGER.get_custom_device_name().unwrap_or_else(default_device_name)
+}
+
+pub fn has_custom_device_name() -> bool {
+    IDENTITY_MANAGER.has_custom_device_name()
+}
+
+/// Persist a user-chosen device name and push it to the running sync service (if any)
+/// so already-open connections use it immediately, with no restart.
+pub fn set_device_name(name: &str) -> Result<(), String> {
+    IDENTITY_MANAGER.set_device_name(name)
+}
+
+/// Falls back to "Android-XXXX" when hostname::get() returns "localhost" (always the case on Android).
+fn default_device_name() -> String {
     let raw = hostname::get()
         .map(|h| h.to_string_lossy().to_string())
         .unwrap_or_default();

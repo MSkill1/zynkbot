@@ -2041,7 +2041,6 @@ async fn auto_start_http_server() -> Result<(), String> {
     // Use 60 second interval to match UI expectations
     let service = Arc::new(ZynkSyncService::new(
         device_id.clone(),
-        device_name,
         db_pool,
         Some(60), // 60 second sync interval
         cert_pem,
@@ -2328,6 +2327,9 @@ pub fn run() {
             commands::models::get_api_keys,
             commands::models::set_api_key,
             commands::models::set_preferred_backend,
+            commands::user_identity::get_device_name,
+            commands::user_identity::has_custom_device_name,
+            commands::user_identity::set_device_name,
             commands::models::remove_api_key,
             commands::models::propagate_api_key,
             commands::models::propagate_api_keys,

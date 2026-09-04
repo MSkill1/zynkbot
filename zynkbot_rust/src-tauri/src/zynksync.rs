@@ -223,9 +223,6 @@ pub struct ZynkSyncService {
     /// Unique identifier for this device
     device_id: String,
 
-    /// Human-readable device name
-    device_name: String,
-
     /// SQLite connection pool
     db_pool: SqlitePool,
 
@@ -277,7 +274,6 @@ impl ZynkSyncService {
     /// Create a new ZynkSync service instance
     pub fn new(
         device_id: String,
-        device_name: String,
         db_pool: SqlitePool,
         sync_interval_secs: Option<u64>,
         cert_pem: String,
@@ -286,7 +282,6 @@ impl ZynkSyncService {
     ) -> Self {
         Self {
             device_id,
-            device_name,
             db_pool,
             http_client: Arc::new(RwLock::new(HttpClient::new())),
             peers: Arc::new(RwLock::new(HashMap::new())),
@@ -317,10 +312,18 @@ impl ZynkSyncService {
 
         let cert_count = rows.len();
         // Tag every outgoing request with our device ID so the remote can
-        // reject it if we've been removed from their peer list.
+        // reject it if we've been removed from their peer list. x-device-name rides
+        // along the same way so a rename propagates to every already-paired peer at
+        // its next contact, with no unpair/re-pair (which wipes sync state) needed —
+        // check_sync_authorized() below is where a peer updates our name on receipt.
         let mut default_headers = reqwest::header::HeaderMap::new();
         if let Ok(val) = reqwest::header::HeaderValue::from_str(&self.device_id) {
             default_headers.insert("x-device-id", val);
+        }
+        // HeaderValue rejects non-ASCII; an emoji/unicode name just won't propagate this
+        // way and the peer keeps whatever name it captured at pairing — not fatal.
+        if let Ok(val) = reqwest::header::HeaderValue::from_str(&crate::user_identity::get_device_name()) {
+            default_headers.insert("x-device-name", val);
         }
 
         let mut pinned_ders: Vec<Vec<u8>> = Vec::new();
@@ -400,7 +403,7 @@ impl ZynkSyncService {
              SET pairing_code = ?, pairing_code_expires_at = ?"
         )
         .bind(&self.device_id)
-        .bind(&self.device_name)
+        .bind(&crate::user_identity::get_device_name())
         .bind(&code)
         .bind(expires_at)
         .bind(true)  // This device is always paired with itself (it's the host)
@@ -525,7 +528,7 @@ impl ZynkSyncService {
         let mut request_body = serde_json::json!({
             "pairing_code": pairing_code,
             "client_device_id": self.device_id,
-            "client_device_name": self.device_name,
+            "client_device_name": crate::user_identity::get_device_name(),
             "client_memory_count": client_memory_count,
             "client_cert_der": BASE64.encode(&self.cert_der),
         });
@@ -786,7 +789,7 @@ impl ZynkSyncService {
                 // Step 3: send introduce request to each peer (best-effort)
                 let our_cert_b64 = BASE64.encode(&self.cert_der);
                 let our_id = self.device_id.clone();
-                let our_name = self.device_name.clone();
+                let our_name = crate::user_identity::get_device_name();
                 let host_id = device_id.clone(); // the host who introduced us
 
                 for peer_json in &intro_peers {
@@ -3509,7 +3512,7 @@ async fn handle_receive_sync(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     println!("[ZynkSync] Received {} memories from peer", memories.len());
     let local_user_id = user_identity::get_user_id().unwrap_or_default();
@@ -3533,7 +3536,7 @@ async fn handle_device_info(
 ) -> Result<Json<serde_json::Value>, String> {
     Ok(Json(serde_json::json!({
         "device_id": service.device_id,
-        "device_name": service.device_name,
+        "device_name": crate::user_identity::get_device_name(),
         "version": "1.0.0"
     })))
 }
@@ -3858,7 +3861,7 @@ async fn handle_verify_pairing(
                             let url = format!("https://{}:57963/api/zynksync/introduce", peer_ip);
                             let payload = serde_json::json!({
                                 "new_device_id": svc.device_id,
-                                "new_device_name": svc.device_name,
+                                "new_device_name": crate::user_identity::get_device_name(),
                                 "new_device_cert_der": host_cert_b64,
                                 "introducer_device_id": new_id,
                                 // no new_device_ip — addr.ip() on receiver will be the host's IP
@@ -3913,7 +3916,7 @@ async fn handle_verify_pairing(
             // Return this host's device info including TLS cert, user_id, and peer list
             let mut response = serde_json::json!({
                 "device_id": service.device_id,
-                "device_name": service.device_name,
+                "device_name": crate::user_identity::get_device_name(),
                 "cert_der": BASE64.encode(&service.cert_der),
                 "peers": mesh_peers,
             });
@@ -4058,7 +4061,7 @@ async fn handle_introduce(
     // Respond with our own cert so the new device can pin us
     Ok(Json(serde_json::json!({
         "device_id": service.device_id,
-        "device_name": service.device_name,
+        "device_name": crate::user_identity::get_device_name(),
         "cert_der": BASE64.encode(&service.cert_der),
     })))
 }
@@ -4121,7 +4124,7 @@ async fn handle_pause(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     service.stop_auto_sync().await;
     if let Err(e) = crate::save_sync_state(false).await {
@@ -4144,7 +4147,7 @@ async fn handle_resume(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     let was_running = service.is_auto_sync_enabled().await;
 
@@ -4355,7 +4358,7 @@ async fn handle_get_inventory(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     let inventory = service.get_local_inventory(&request.user_id).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
@@ -4371,7 +4374,7 @@ async fn handle_delete_memories(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     println!("[ZynkSync] Delete request for {} memories", ids.len());
     let deleted_count = service.delete_memories_by_ids(&ids).await
@@ -4396,7 +4399,7 @@ async fn handle_fetch_memories(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     println!("[ZynkSync] Fetch request for {} memories", ids.len());
     let memories = service.get_memories_by_ids(&ids).await
@@ -4414,7 +4417,7 @@ async fn handle_delete_by_hash(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     let content_hash = request.get("content_hash")
         .and_then(|v| v.as_str())
@@ -4493,7 +4496,7 @@ async fn handle_clear_tombstones(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     let hashes = request.get("hashes")
         .and_then(|v| v.as_array())
@@ -4524,7 +4527,7 @@ async fn handle_update_memory(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     let memory_id: i32 = request.get("memory_id")
         .and_then(|v| v.as_i64())
@@ -4798,6 +4801,7 @@ async fn handle_zynklink_accept_code(
 async fn check_sync_authorized(
     pool: &sqlx::SqlitePool,
     device_id: &str,
+    headers: &axum::http::HeaderMap,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     // Check zynk_devices (not zynk_device_pairings) because the pairing row is
     // created by the first sync itself — using it as the gate causes a
@@ -4815,6 +4819,24 @@ async fn check_sync_authorized(
     if count == 0 {
         println!("[ZynkSync] Rejected sync from unpaired device {}", &device_id[..device_id.len().min(8)]);
         return Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "Device not paired"}))));
+    }
+
+    // Pick up a rename from the sender's x-device-name header on every authorized
+    // request, so renaming a device propagates to already-paired peers at their next
+    // contact instead of requiring an unpair/re-pair (which wipes sync state and, if
+    // the device is also ZynkLinked, its chat history).
+    if let Some(name) = headers.get("x-device-name").and_then(|v| v.to_str().ok()) {
+        let name = name.trim();
+        if !name.is_empty() {
+            let _ = sqlx::query(
+                "UPDATE zynk_devices SET device_name = ? WHERE device_id = ? AND device_name != ?"
+            )
+            .bind(name)
+            .bind(device_id)
+            .bind(name)
+            .execute(pool)
+            .await;
+        }
     }
     Ok(())
 }
@@ -4985,7 +5007,7 @@ async fn handle_receive_conversations(
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
-    check_sync_authorized(&service.db_pool, device_id).await?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     let (sessions_stored, messages_stored) = service.receive_conversations_from_peer(payload).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;

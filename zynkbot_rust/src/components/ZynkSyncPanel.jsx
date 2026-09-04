@@ -15,6 +15,53 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   const [pairingNumPart, setPairingNumPart] = useState('');
   const [showAddDevice, setShowAddDevice] = useState(false);
 
+  // This device's name on the network. namePromptPurpose is null when the rename
+  // control opened the prompt directly, or 'generate'/'add' when a pairing action
+  // triggered it because no custom name has been set yet — resumed after saving.
+  const [deviceName, setDeviceNameState] = useState('');
+  const [hasCustomName, setHasCustomName] = useState(true); // true until checked, so nothing flashes
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const [namePromptPurpose, setNamePromptPurpose] = useState(null);
+  const [nameDraft, setNameDraft] = useState('');
+
+  const refreshDeviceName = useCallback(async () => {
+    try {
+      const [name, custom] = await Promise.all([
+        invoke('get_device_name'),
+        invoke('has_custom_device_name'),
+      ]);
+      setDeviceNameState(name);
+      setHasCustomName(custom);
+    } catch (error) {
+      console.error('[ZynkSync] Failed to fetch device name:', error);
+    }
+  }, []);
+
+  useEffect(() => { refreshDeviceName(); }, [refreshDeviceName]);
+
+  const openNamePrompt = (purpose) => {
+    setNameDraft(deviceName);
+    setNamePromptPurpose(purpose);
+    setShowNamePrompt(true);
+  };
+
+  const handleSaveDeviceName = async () => {
+    const name = nameDraft.trim();
+    if (!name) { setMessage('✗ Device name must not be empty'); return; }
+    try {
+      await invoke('set_device_name', { name });
+      await refreshDeviceName();
+      setShowNamePrompt(false);
+      const purpose = namePromptPurpose;
+      setNamePromptPurpose(null);
+      // Resume whichever pairing action asked for a name in the first place.
+      if (purpose === 'generate') handleGetPairingCode();
+      else if (purpose === 'add') handleAddDevice();
+    } catch (error) {
+      setMessage(`✗ Failed to save device name: ${error}`);
+    }
+  };
+
   const fetchPeers = useCallback(async () => {
     try {
       const peers = await invoke('get_zynksync_peers');
@@ -125,6 +172,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
 
   // Get pairing code and IP
   const handleGetPairingCode = async () => {
+    if (!hasCustomName) { openNamePrompt('generate'); return; }
     try {
       const [code, ip] = await Promise.all([
         invoke('get_zynksync_pairing_code'),
@@ -147,6 +195,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
 
   // Add a device by entering a pairing code
   const handleAddDevice = async () => {
+    if (!hasCustomName) { openNamePrompt('add'); return; }
     const input = pairingInput.trim();
     if (!input) {
       setMessage('✗ Please enter the pairing code in IP:code format');
@@ -325,6 +374,16 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       padding: '15px',
       marginBottom: '20px'
     }}>
+
+      {/* This device's name, as shown to other devices on the network */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', fontSize: '0.85rem', color: '#9aa5c4' }}>
+        <span>This device: <strong style={{ color: '#f8f8f2' }}>{deviceName || '…'}</strong></span>
+        <button
+          onClick={() => openNamePrompt(null)}
+          title="Rename this device"
+          style={{ background: 'none', border: 'none', color: '#8be9fd', cursor: 'pointer', fontSize: '0.85rem', padding: '2px 4px' }}
+        >✎ Rename</button>
+      </div>
 
       {/* 4-Button Control Row */}
       <div style={{ display: 'flex', flexWrap: isAndroid ? 'wrap' : 'nowrap', gap: '8px', marginBottom: '15px' }}>
@@ -725,6 +784,54 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
           whiteSpace: 'pre-line'
         }}>
           {message}
+        </div>
+      )}
+
+      {showNamePrompt && (
+        <div
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            background: 'rgba(0,0,0,0.6)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', zIndex: 2200, padding: '20px',
+          }}
+          onClick={() => { setShowNamePrompt(false); setNamePromptPurpose(null); }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#282a36', border: '1px solid #44475a', borderRadius: '8px',
+              padding: '20px', maxWidth: '360px', width: '100%',
+            }}
+          >
+            <p style={{ margin: '0 0 8px', color: '#8be9fd', fontWeight: 'bold' }}>
+              What should this device be called on the network?
+            </p>
+            <p style={{ margin: '0 0 12px', color: '#9aa5c4', fontSize: '0.82rem' }}>
+              Other paired devices will show this name instead of a device ID. You can
+              change it again any time from this panel.
+            </p>
+            <input
+              type="text"
+              autoFocus
+              value={nameDraft}
+              maxLength={40}
+              placeholder="e.g. Matt's Pixel"
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveDeviceName(); }}
+              className="search-input"
+              style={{ width: '100%', boxSizing: 'border-box', marginBottom: '14px' }}
+            />
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowNamePrompt(false); setNamePromptPurpose(null); }}
+                style={{ padding: '8px 16px', background: 'none', border: '1px solid #44475a', color: '#9aa5c4', borderRadius: '4px', cursor: 'pointer' }}
+              >Cancel</button>
+              <button
+                onClick={handleSaveDeviceName}
+                style={{ padding: '8px 16px', background: '#50fa7b', color: '#282a36', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
+              >Save</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
