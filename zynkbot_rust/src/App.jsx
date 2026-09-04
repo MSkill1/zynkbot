@@ -196,6 +196,12 @@ export default function App() {
   const conversationEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const userScrolledUpRef = useRef(false);
+  // True while a finger is on the chat (touchstart..touchend). Auto-scroll never
+  // fires during a touch, so a drag is never fought token by token.
+  const touchActiveRef = useRef(false);
+  // Set right before we move scrollTop ourselves, so the scroll event that follows
+  // is not mistaken for the user "returning to the bottom".
+  const programmaticScrollRef = useRef(false);
   const inputTextareaRef = useRef(null);
   const voiceButtonRef = useRef(null);
 
@@ -450,30 +456,70 @@ export default function App() {
   // (Wake lock, wake word lifecycle, dictation listener, pause/visibility effects
   //  all live in useVoiceSession — see src/hooks/useVoiceSession.js)
 
-  // Auto-scroll: only follow new content if the user hasn't scrolled up intentionally.
-  // userScrolledUpRef is set by real scroll events only — never by programmatic scrolls —
-  // so it reflects genuine user intent and can't be cleared by our own auto-scroll.
+  // Auto-scroll: follow new content unless the user has scrolled up, and never while
+  // a finger is on the list.
+  //
+  // Why intent comes from input events, not position (Android, 2026-09-04, third
+  // attempt): during streaming a token lands every few tens of milliseconds. The old
+  // position-only rule needed the user to get more than 80px from the bottom between
+  // two tokens; a slow drag never managed it, each token snapped the list back down,
+  // and the scroll event from OUR snap then read "at bottom" and cleared the flag.
+  // Result: dragged down to the bottom over and over. Now a touch suspends
+  // auto-scroll outright, any upward drag or wheel-up marks "scrolled up" at once, and
+  // scroll events caused by our own snap are ignored.
   useEffect(() => {
     const container = chatContainerRef.current;
     if (!container) return;
-    if (userScrolledUpRef.current) return;
+    if (userScrolledUpRef.current || touchActiveRef.current) return;
+    const target = container.scrollHeight - container.clientHeight;
+    if (container.scrollTop >= target) return;   // already there: no event will follow
+    programmaticScrollRef.current = true;
     container.scrollTop = container.scrollHeight;
   }, [messages, isLoading]);
 
-  // Mount-once scroll listener: tracks user intent and scroll button visibility.
-  // Empty deps — never re-runs — so we never artificially read distanceFromBottom
-  // right after our own programmatic scroll (which was clearing the ref in prior attempts).
+  // Mount-once listeners: user intent + scroll-to-bottom button visibility.
   useEffect(() => {
     const container = chatContainerRef.current;
     if (!container) return;
-    const onScroll = () => {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      const scrolledUp = distanceFromBottom > 80;
-      userScrolledUpRef.current = scrolledUp;
-      setShowScrollButton(scrolledUp);
+    const nearBottom = () =>
+      container.scrollHeight - container.scrollTop - container.clientHeight <= 80;
+    const setScrolledUp = (up) => {
+      userScrolledUpRef.current = up;
+      setShowScrollButton(up);
     };
-    container.addEventListener('scroll', onScroll);
-    return () => container.removeEventListener('scroll', onScroll);
+    let touchStartY = 0;
+    const onScroll = () => {
+      if (programmaticScrollRef.current) { programmaticScrollRef.current = false; return; }
+      setScrolledUp(!nearBottom());
+    };
+    const onTouchStart = (e) => {
+      touchActiveRef.current = true;
+      touchStartY = e.touches?.[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (e) => {
+      const y = e.touches?.[0]?.clientY ?? touchStartY;
+      if (y - touchStartY > 10) setScrolledUp(true);   // finger moving down = reading upward
+    };
+    const onTouchEnd = () => {
+      touchActiveRef.current = false;
+      setScrolledUp(!nearBottom());
+    };
+    const onWheel = (e) => { if (e.deltaY < 0) setScrolledUp(true); };
+    const opts = { passive: true };
+    container.addEventListener('scroll', onScroll, opts);
+    container.addEventListener('touchstart', onTouchStart, opts);
+    container.addEventListener('touchmove', onTouchMove, opts);
+    container.addEventListener('touchend', onTouchEnd, opts);
+    container.addEventListener('touchcancel', onTouchEnd, opts);
+    container.addEventListener('wheel', onWheel, opts);
+    return () => {
+      container.removeEventListener('scroll', onScroll, opts);
+      container.removeEventListener('touchstart', onTouchStart, opts);
+      container.removeEventListener('touchmove', onTouchMove, opts);
+      container.removeEventListener('touchend', onTouchEnd, opts);
+      container.removeEventListener('touchcancel', onTouchEnd, opts);
+      container.removeEventListener('wheel', onWheel, opts);
+    };
   }, []);
 
   // Voice input now handled by VoiceButton component (using whisper.cpp)

@@ -12,6 +12,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
 import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.media.MediaRecorder
@@ -23,6 +25,10 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.io.File
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.nio.FloatBuffer
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
@@ -49,6 +55,8 @@ class WakeWordService : Service() {
         const val EMB_SIZE = 96
         const val EMB_WINDOW = 16           // embeddings the classifier expects
         const val COOLDOWN_CHUNKS = 50      // ~4 seconds before re-triggering
+        const val TRIGGER_CLIP_CHUNKS = 25  // ~2 s of audio kept for the trigger clip
+        const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers
 
         // Set by WakeWordBridge before starting; called on detection when screen is on.
         @Volatile var detectionCallback: (() -> Unit)? = null
@@ -82,6 +90,19 @@ class WakeWordService : Service() {
     private var loadedModelDir: String? = null   // dir the resident ONNX sessions were loaded from; null = none loaded
     private var wakeLock: PowerManager.WakeLock? = null      // detection wake lock (25s, screen-off flow)
     private var audioWakeLock: PowerManager.WakeLock? = null // CPU wake lock for audio loop while screen off
+
+    // ── other apps' recordings ───────────────────────────────────────────────
+    // Zynkbot must never take the microphone away from an app the user is talking to
+    // (OnePlus 2026-09-04 14:13: the Claude app's voice mode started, its start tone
+    // fired the wake word, and our session grabbed the mic). Android reports every
+    // active recording; while any that isn't our own loop is active, detection is
+    // paused and every re-arm is refused, and it resumes when that recording ends.
+    private var recordingCallback: AudioManager.AudioRecordingCallback? = null
+    @Volatile private var pausedForOtherRecording = false
+    @Volatile private var loopSessionId = -1
+
+    // The last ~2 s of microphone audio, so each firing can be saved and listened to.
+    private val recentChunks = ArrayDeque<ShortArray>()
 
     // Keeps the CPU running the ONNX inference loop when the screen is off.
     private val screenReceiver = object : BroadcastReceiver() {
@@ -122,6 +143,7 @@ class WakeWordService : Service() {
             addAction(Intent.ACTION_SCREEN_ON)
         }
         registerReceiver(screenReceiver, filter)
+        registerRecordingWatch()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -164,8 +186,13 @@ class WakeWordService : Service() {
         // as a new question. The web side's timers can't see native speech, so this is
         // enforced here, at the one entry point every start goes through. The re-arm
         // happens from NativeVoiceAnswerer when the speech ends.
-        if (NativeVoiceAnswerer.speaking || ZynkAssistantService.sessionActive) {
-            Log.i(TAG, "Start requested during ${if (NativeVoiceAnswerer.speaking) "native speech" else "an assistant session"} — deferred")
+        if (NativeVoiceAnswerer.speaking || ZynkAssistantService.sessionActive || pausedForOtherRecording) {
+            val why = when {
+                NativeVoiceAnswerer.speaking -> "native speech"
+                ZynkAssistantService.sessionActive -> "an assistant session"
+                else -> "another app's recording"
+            }
+            Log.i(TAG, "Start requested during $why — deferred")
             lastModelDir = modelDir
             return START_STICKY
         }
@@ -211,6 +238,7 @@ class WakeWordService : Service() {
     override fun onDestroy() {
         isForegrounded = false
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
+        unregisterRecordingWatch()
         releaseAudioWakeLock()
         stop()
         NativeVoiceAnswerer.shutdown()
@@ -266,6 +294,7 @@ class WakeWordService : Service() {
         audioReleased = false
         val chunk = ShortArray(CHUNK_SAMPLES)
         audioRecord.startRecording()
+        loopSessionId = audioRecord.audioSessionId
         Log.i(TAG, "Wake word audio capture started")
 
         audioThread = Thread {
@@ -278,6 +307,7 @@ class WakeWordService : Service() {
             audioRecord.stop()
             audioRecord.release()
             audioReleased = true
+            loopSessionId = -1
             Log.i(TAG, "Wake word audio capture stopped")
         }
         audioThread!!.start()
@@ -288,6 +318,11 @@ class WakeWordService : Service() {
         val mel = melSession ?: return
         val emb = embSession ?: return
         val kws = kwsSession ?: return
+
+        // Keep the trailing ~2 s regardless of cooldown, so a clip always ends with
+        // the chunk that fired.
+        recentChunks.addLast(pcm16.copyOf())
+        while (recentChunks.size > TRIGGER_CLIP_CHUNKS) recentChunks.removeFirst()
 
         if (cooldownRemaining > 0) { cooldownRemaining--; return }
 
@@ -319,6 +354,7 @@ class WakeWordService : Service() {
                 Log.d(TAG, "High score: $score (consecutive=$consecutiveHighScores, need=2)")
                 if (consecutiveHighScores >= 2) {
                     Log.i(TAG, "Wake word detected! score=$score threshold=$threshold")
+                    saveTriggerClip(score)
                     consecutiveHighScores = 0
                     cooldownRemaining = COOLDOWN_CHUNKS
                     embBuffer.clear()
@@ -338,6 +374,94 @@ class WakeWordService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Inference error: ${e.message}")
         }
+    }
+
+    // ── Other apps' recordings ───────────────────────────────────────────────
+
+    private fun registerRecordingWatch() {
+        if (recordingCallback != null) return
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val cb = object : AudioManager.AudioRecordingCallback() {
+                override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
+                    onRecordingsChanged(configs)
+                }
+            }
+            am.registerAudioRecordingCallback(cb, Handler(Looper.getMainLooper()))
+            recordingCallback = cb
+            onRecordingsChanged(am.activeRecordingConfigurations)
+        } catch (e: Exception) {
+            Log.w(TAG, "Recording watch unavailable: ${e.message}")
+        }
+    }
+
+    private fun unregisterRecordingWatch() {
+        val cb = recordingCallback ?: return
+        recordingCallback = null
+        try { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioRecordingCallback(cb) } catch (_: Exception) {}
+    }
+
+    /** Anything recording that isn't our own loop — another app, or our own Vosk
+     *  dictation — pauses detection. When the last such recording ends, detection
+     *  resumes here (the other re-arm paths are refused while paused, so this is the
+     *  one that counts). */
+    private fun onRecordingsChanged(configs: List<AudioRecordingConfiguration>) {
+        val mine = loopSessionId
+        val others = configs.filter { it.clientAudioSessionId != mine }
+        if (others.isNotEmpty()) {
+            if (!pausedForOtherRecording) {
+                pausedForOtherRecording = true
+                val what = others.joinToString { "src=${it.clientAudioSource}/session=${it.clientAudioSessionId}" }
+                Log.i(TAG, "Another recording is active ($what) — wake word paused")
+                if (running) { running = false; audioThread?.interrupt() }
+            }
+        } else if (pausedForOtherRecording) {
+            pausedForOtherRecording = false
+            Log.i(TAG, "Other recording ended — wake word resuming")
+            Thread { try { resumeMicAfterSession() } catch (e: Exception) { Log.w(TAG, "resume failed: ${e.message}") } }.start()
+        }
+    }
+
+    // ── Trigger clips ────────────────────────────────────────────────────────
+
+    /** Save the audio that fired the wake word (the last ~2 s, ending with the chunk
+     *  that fired) as 16 kHz mono WAV under files/zynkbot/wake_triggers/, newest
+     *  TRIGGER_CLIPS_KEPT kept. Pull with run-as (debug builds) to hear exactly what the
+     *  model took for "Hey Zynk"; false triggers become training negatives if the model
+     *  is retrained. Called on the audio thread; the file write happens off it. */
+    private fun saveTriggerClip(score: Float) {
+        val snapshot = recentChunks.toList()
+        if (snapshot.isEmpty()) return
+        Thread {
+            try {
+                val dir = File(filesDir, "zynkbot/wake_triggers").apply { mkdirs() }
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+                val file = File(dir, "$stamp-${"%.3f".format(Locale.US, score)}.wav")
+                val dataBytes = snapshot.sumOf { it.size } * 2
+                FileOutputStream(file).use { out ->
+                    out.write(wavHeader(dataBytes, 16000))
+                    val buf = java.nio.ByteBuffer.allocate(dataBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    for (c in snapshot) for (sample in c) buf.putShort(sample)
+                    out.write(buf.array())
+                }
+                dir.listFiles { f -> f.name.endsWith(".wav") }
+                    ?.sortedByDescending { it.name }
+                    ?.drop(TRIGGER_CLIPS_KEPT)
+                    ?.forEach { it.delete() }
+                Log.i(TAG, "Trigger clip saved: ${file.name}")
+            } catch (e: Exception) {
+                Log.w(TAG, "Trigger clip not saved: ${e.message}")
+            }
+        }.start()
+    }
+
+    private fun wavHeader(dataBytes: Int, sampleRate: Int): ByteArray {
+        val b = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        b.put("RIFF".toByteArray()); b.putInt(36 + dataBytes); b.put("WAVE".toByteArray())
+        b.put("fmt ".toByteArray()); b.putInt(16); b.putShort(1); b.putShort(1)
+        b.putInt(sampleRate); b.putInt(sampleRate * 2); b.putShort(2); b.putShort(16)
+        b.put("data".toByteArray()); b.putInt(dataBytes)
+        return b.array()
     }
 
     // ── Screen-off wake word path ────────────────────────────────────────────
@@ -628,6 +752,7 @@ class WakeWordService : Service() {
         if (running || audioThread?.isAlive == true) return
         if (kwsSession == null || melSession == null || embSession == null) return
         if (NativeVoiceAnswerer.speaking) return   // NativeVoiceAnswerer re-arms when speech ends
+        if (pausedForOtherRecording) return         // the recording watch re-arms when it ends
         Log.i(TAG, "Re-arming wake word after the assistant session")
         melBuffer.clear(); embBuffer.clear()
         consecutiveHighScores = 0
