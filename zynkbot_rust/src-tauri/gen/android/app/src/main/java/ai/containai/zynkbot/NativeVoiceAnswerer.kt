@@ -50,6 +50,33 @@ object NativeVoiceAnswerer {
     fun stopSpeaking() {
         abortRequested = true
         try { tts?.stop() } catch (_: Exception) {}
+        currentSpeaker?.abort()
+    }
+
+    @Volatile private var currentSpeaker: SentenceSpeaker? = null
+
+    /** One finished hands-free exchange, queued for the app's chat. */
+    data class Turn(val sessionId: String, val question: String, val answer: String, val at: Long)
+
+    private val pendingTurns = java.util.Collections.synchronizedList(mutableListOf<Turn>())
+
+    /** MainActivity registers this to nudge the page (window.__nativeTurns) when an
+     *  exchange completes; the page then drains via drainTurnsJson(). */
+    @Volatile var onTurnCompleted: (() -> Unit)? = null
+
+    /** Finished exchanges since the last drain, as a JSON array of
+     *  {sessionId, question, answer, at}; cleared on return. */
+    fun drainTurnsJson(): String {
+        val arr = org.json.JSONArray()
+        synchronized(pendingTurns) {
+            for (t in pendingTurns) {
+                arr.put(org.json.JSONObject()
+                    .put("sessionId", t.sessionId).put("question", t.question)
+                    .put("answer", t.answer).put("at", t.at))
+            }
+            pendingTurns.clear()
+        }
+        return arr.toString()
     }
 
     /** Blocking: run on a background thread, never the main thread. Returns true if a
@@ -75,13 +102,19 @@ object NativeVoiceAnswerer {
     private fun answerInner(context: Context, transcript: String): Boolean {
         val engine = engine(context) ?: return false
         val speaker = SentenceSpeaker(engine)
+        currentSpeaker = speaker
         var failure: String? = null
+        var sessionId = ""
         try {
             ZynkCore.nativeSendMessage(
                 transcript, "", "", "", "guardian",
                 object : ZynkCore.Callback {
                     override fun onToken(token: String) { speaker.feed(token) }
-                    override fun onEvent(name: String, payloadJson: String) {}
+                    override fun onEvent(name: String, payloadJson: String) {
+                        if (name == "voice-session") {
+                            sessionId = try { org.json.JSONObject(payloadJson).optString("session_id", "") } catch (_: Exception) { "" }
+                        }
+                    }
                     override fun onDone(replyJson: String) {
                         val replyText = try {
                             org.json.JSONObject(replyJson).optString("reply_text", "")
@@ -89,6 +122,12 @@ object NativeVoiceAnswerer {
                             Log.w(TAG, "Could not parse native reply: ${e.message}"); ""
                         }
                         Log.i(TAG, "Native reply: \"${replyText.take(80)}\"")
+                        if (replyText.isNotBlank()) {
+                            // Queue the exchange for the app's chat now, not after speech:
+                            // if the app is open it shows the answer while it is being read.
+                            pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis()))
+                            try { onTurnCompleted?.invoke() } catch (_: Exception) {}
+                        }
                         speaker.finish(replyText)
                     }
                     override fun onError(message: String) { failure = message }
@@ -97,6 +136,7 @@ object NativeVoiceAnswerer {
         } catch (e: Throwable) {
             failure = e.message ?: "native path unavailable"
         }
+        currentSpeaker = null
         if (failure != null) {
             Log.w(TAG, "Native reply failed: $failure")
             speaker.speakNow(ERROR_LINE)
@@ -172,6 +212,11 @@ object NativeVoiceAnswerer {
                 override fun onDone(utteranceId: String?) { settle(utteranceId) }
                 @Deprecated("required override") override fun onError(utteranceId: String?) { settle(utteranceId) }
                 override fun onError(utteranceId: String?, errorCode: Int) { settle(utteranceId) }
+                // An utterance cut by tts.stop() ends with onStop, not onDone. Without
+                // this, Stop left the sentence "pending" and finish() waited the full
+                // 60 s with `speaking` still true — every mic re-arm refused meanwhile,
+                // so the wake word was deaf for a minute (OnePlus, 2026-09-04 13:55).
+                override fun onStop(utteranceId: String?, interrupted: Boolean) { settle(utteranceId) }
                 private fun settle(id: String?) {
                     if (id != null) pending.remove(id)
                     if (pending.isEmpty()) synchronized(allDone) { allDone.notifyAll() }
@@ -205,6 +250,12 @@ object NativeVoiceAnswerer {
         }
 
         fun spokeAnything() = spokeSomething
+
+        /** Stop pressed: nothing queued matters any more; release finish() at once. */
+        fun abort() {
+            pending.clear()
+            synchronized(allDone) { allDone.notifyAll() }
+        }
 
         /** Cut on sentence boundaries; with force, speak whatever is left too. */
         private fun drainSentences(force: Boolean) {
@@ -246,7 +297,7 @@ object NativeVoiceAnswerer {
         private fun awaitIdle(timeoutMs: Long) {
             val deadline = System.currentTimeMillis() + timeoutMs
             synchronized(allDone) {
-                while (pending.isNotEmpty()) {
+                while (pending.isNotEmpty() && !abortRequested) {
                     val left = deadline - System.currentTimeMillis()
                     if (left <= 0) { Log.w(TAG, "TTS wait timed out with ${pending.size} pending"); break }
                     try { allDone.wait(left) } catch (_: InterruptedException) { break }

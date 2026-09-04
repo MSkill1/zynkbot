@@ -22,6 +22,7 @@ pub struct IdentityManager {
     user_id_file: PathBuf,
     device_id_file: PathBuf,
     device_name_file: PathBuf,
+    current_session_file: PathBuf,
 }
 
 impl IdentityManager {
@@ -35,6 +36,7 @@ impl IdentityManager {
             user_id_file: base.join(".zynk_user_id"),
             device_id_file: base.join(".zynk_device_id"),
             device_name_file: base.join(".zynk_device_name"),
+            current_session_file: base.join(".zynk_current_session"),
             base_path: base,
         }
     }
@@ -50,6 +52,25 @@ impl IdentityManager {
 
     pub fn has_custom_device_name(&self) -> bool {
         self.get_custom_device_name().is_some()
+    }
+
+    /// The conversation thread hands-free ("Hey Zynk") turns continue. The app records
+    /// the thread it has on screen here whenever that changes (new chat, resumed chat,
+    /// fresh launch), so a voice follow-up has the earlier turns behind it instead of
+    /// starting a new thread per question. None until the app has run once.
+    pub fn get_current_session_id(&self) -> Option<String> {
+        let raw = fs::read_to_string(&self.current_session_file).ok()?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    }
+
+    pub fn set_current_session_id(&self, session_id: &str) -> Result<(), String> {
+        let trimmed = session_id.trim();
+        if trimmed.is_empty() || trimmed.chars().count() > 80 {
+            return Err("Session id must be 1-80 characters".to_string());
+        }
+        fs::write(&self.current_session_file, trimmed)
+            .map_err(|e| format!("Failed to write current session: {}", e))
     }
 
     /// Persist a user-chosen device name. Trimmed; rejects empty/oversized input so a
@@ -240,6 +261,15 @@ pub fn get_device_name() -> String {
 
 pub fn has_custom_device_name() -> bool {
     IDENTITY_MANAGER.has_custom_device_name()
+}
+
+/// The thread hands-free turns continue (see IdentityManager::get_current_session_id).
+pub fn get_current_session_id() -> Option<String> {
+    IDENTITY_MANAGER.get_current_session_id()
+}
+
+pub fn set_current_session_id(session_id: &str) -> Result<(), String> {
+    IDENTITY_MANAGER.set_current_session_id(session_id)
 }
 
 /// Persist a user-chosen device name and push it to the running sync service (if any)

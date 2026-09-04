@@ -480,6 +480,13 @@ class MainActivity : TauriActivity() {
         @JavascriptInterface
         fun isNativeSpeaking(): Boolean = NativeVoiceAnswerer.speaking
 
+        /** Hands-free exchanges finished since the page last asked, as a JSON array of
+         *  {sessionId, question, answer, at}. The page appends those belonging to the
+         *  thread on screen. Nudged via window.__nativeTurns when one completes, and
+         *  drained again on resume because a nudge to a paused WebView is lost. */
+        @JavascriptInterface
+        fun drainNativeTurns(): String = NativeVoiceAnswerer.drainTurnsJson()
+
         @JavascriptInterface
         fun start(threshold: Float) {
             if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO)
@@ -491,6 +498,7 @@ class MainActivity : TauriActivity() {
             NativeVoiceAnswerer.onSpeakingChanged = { on ->
                 fire("window.__nativeSpeaking&&window.__nativeSpeaking(${if (on) "true" else "false"});")
             }
+            NativeVoiceAnswerer.onTurnCompleted = { fire("window.__nativeTurns&&window.__nativeTurns();") }
             // A locked-screen "Hey Zynk" reply auto-opens the app via a full-screen
             // intent. Android 14+ denies that permission by default; without it the
             // second locked query only posts a notification instead of answering.

@@ -26,6 +26,26 @@ export function shouldSpeakReply({ handsFree, speakInApp }) {
 // Parse a wake-word transcript into a structured voice command.
 // Returns { type, ...params } or null if no command matched.
 // Vosk produces lowercase, no-punctuation text — regexes are written accordingly.
+/**
+ * Chat messages for hands-free exchanges the native path finished — only those that
+ * belong to the thread on screen (the rest live in Conversation History). Ids are
+ * numeric like every other message; derived from the turn's timestamp so a re-drain
+ * never duplicates.
+ */
+export function nativeTurnsToMessages(turns, sessionId) {
+  if (!Array.isArray(turns) || !sessionId) return [];
+  return turns
+    .filter((t) => t && t.sessionId === sessionId && t.question && t.answer)
+    .flatMap((t) => {
+      const at = Number(t.at) || Date.now();
+      const timestamp = new Date(at).toISOString();
+      return [
+        { id: at, role: 'user', content: t.question, timestamp, source: 'voice' },
+        { id: at + 1, role: 'assistant', content: t.answer, timestamp, source: 'voice' },
+      ];
+    });
+}
+
 export function parseVoiceCommand(text) {
   const t = normalizeNumbers(text.toLowerCase().trim());
 

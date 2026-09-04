@@ -77,6 +77,27 @@ impl ResponseSink for JniSink {
     }
 }
 
+/// The thread's recent turns, oldest first, in the shape generate_reply expects — the
+/// same thing the web app sends from its own message list. Capped at 40 messages
+/// (20 exchanges); generate_reply applies its per-model limit on top. Any failure
+/// means "no history", never a failed answer.
+async fn load_recent_turns(session_id: &str) -> Option<Vec<crate::ConversationTurn>> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.ok()?;
+    let msgs = crate::conversation_history::get_messages(&pool, session_id).await;
+    pool.close().await;
+    let msgs = msgs.ok()?;
+    if msgs.is_empty() {
+        return None;
+    }
+    let start = msgs.len().saturating_sub(40);
+    Some(
+        msgs[start..]
+            .iter()
+            .map(|m| crate::ConversationTurn { role: m.role.clone(), content: m.content.clone() })
+            .collect(),
+    )
+}
+
 /// JNI entry point. Signature must match `ZynkCore.nativeSendMessage`.
 /// Runs the async chat core to completion on a dedicated tokio runtime (so the
 /// core's `tokio::spawn`ed background memory work has a runtime handle), then
@@ -130,11 +151,28 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
     } else {
         user_id_arg
     };
+    // Empty session_id means "the current thread": hands-free turns continue the
+    // conversation the app last had on screen (recorded via set_current_session), so
+    // "what's the capital of Arizona" / "when's a good time to go" hang together.
+    // Before the app has ever recorded one, start a thread and make it current so the
+    // next question lands in the same place.
     let session_id = if session_id_arg.is_empty() {
-        format!("voice-native-{}", uuid::Uuid::new_v4())
+        match crate::user_identity::get_current_session_id() {
+            Some(id) => id,
+            None => {
+                let id = format!("voice-{}", uuid::Uuid::new_v4());
+                if let Err(e) = crate::user_identity::set_current_session_id(&id) {
+                    eprintln!("[ZynkCore JNI] could not persist current session: {e}");
+                }
+                id
+            }
+        }
     } else {
         session_id_arg
     };
+    // Tell Kotlin which thread this turn belongs to, so the finished exchange can be
+    // shown in the app's chat when that thread is the one on screen.
+    sink.event("voice-session", serde_json::json!({ "session_id": session_id }));
     // Empty backend means "pick whatever's actually configured" — see
     // resolve_voice_backend(). Fails closed (reports an error) rather than handing
     // generate_reply a backend guaranteed to fail, so the caller's fallback to the
@@ -165,20 +203,24 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
         }
     };
 
-    let result = runtime.block_on(crate::commands::chat::generate_reply(
-        sink,
-        message,
-        user_id,
-        session_id,
-        backend,
-        containment_mode,
-        None, // conversation_history
-        None, // skip_containment
-        None, // skip_memory_storage
-        None, // kb_enabled
-        None, // user_query
-        None, // image_data
-    ));
+    let result = runtime.block_on(async move {
+        let history = load_recent_turns(&session_id).await;
+        crate::commands::chat::generate_reply(
+            sink,
+            message,
+            user_id,
+            session_id,
+            backend,
+            containment_mode,
+            history,
+            None, // skip_containment
+            None, // skip_memory_storage
+            None, // kb_enabled
+            None, // user_query
+            None, // image_data
+        )
+        .await
+    });
 
     match result {
         Ok(reply) => match serde_json::to_string(&reply) {

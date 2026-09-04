@@ -1,4 +1,4 @@
-import { parseVoiceCommand, shouldSpeakReply } from './useVoiceSession';
+import { parseVoiceCommand, shouldSpeakReply, nativeTurnsToMessages } from './useVoiceSession';
 
 jest.mock('@tauri-apps/api/core', () => ({ invoke: jest.fn() }));
 
@@ -34,5 +34,27 @@ describe('shouldSpeakReply — answer in the channel you used', () => {
 
   test('missing flags mean text only', () => {
     expect(shouldSpeakReply({})).toBe(false);
+  });
+});
+
+describe('nativeTurnsToMessages — hands-free exchanges join the thread on screen', () => {
+  const turn = { sessionId: 's1', question: 'capital of arizona', answer: 'Phoenix.', at: 1000 };
+
+  test('a turn for the current thread becomes a user + assistant pair', () => {
+    const msgs = nativeTurnsToMessages([turn], 's1');
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(msgs[0].content).toBe('capital of arizona');
+    expect(msgs[1].content).toBe('Phoenix.');
+    expect(msgs[1].id).toBe(msgs[0].id + 1);
+  });
+
+  test('turns for another thread are left to Conversation History', () => {
+    expect(nativeTurnsToMessages([turn], 'other')).toEqual([]);
+  });
+
+  test('garbage input never throws', () => {
+    expect(nativeTurnsToMessages(null, 's1')).toEqual([]);
+    expect(nativeTurnsToMessages([null, {}, { sessionId: 's1' }], 's1')).toEqual([]);
+    expect(nativeTurnsToMessages([turn], '')).toEqual([]);
   });
 });

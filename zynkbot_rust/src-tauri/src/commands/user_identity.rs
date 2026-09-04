@@ -59,6 +59,19 @@ pub async fn has_custom_device_name() -> bool {
 /// x-device-name handling in zynksync.rs) — no unpair/re-pair needed. Also rebuilds the
 /// running sync client so its own default headers pick up the new name right away,
 /// rather than waiting for the next pairing or app restart.
+/// Record the conversation thread the app has on screen. Hands-free ("Hey Zynk")
+/// questions answered natively continue this thread — with its history — rather than
+/// each starting a new one. Called whenever the app's session changes.
+#[tauri::command]
+pub async fn set_current_session(session_id: String) -> Result<(), String> {
+    crate::user_identity::set_current_session_id(&session_id)
+}
+
+#[tauri::command]
+pub async fn get_current_session() -> Option<String> {
+    crate::user_identity::get_current_session_id()
+}
+
 #[tauri::command]
 pub async fn set_device_name(name: String) -> Result<(), String> {
     crate::user_identity::set_device_name(&name)?;

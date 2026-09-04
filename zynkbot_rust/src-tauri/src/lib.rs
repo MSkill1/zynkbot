@@ -2330,6 +2330,8 @@ pub fn run() {
             commands::user_identity::get_device_name,
             commands::user_identity::has_custom_device_name,
             commands::user_identity::set_device_name,
+            commands::user_identity::set_current_session,
+            commands::user_identity::get_current_session,
             commands::models::remove_api_key,
             commands::models::propagate_api_key,
             commands::models::propagate_api_keys,

@@ -28,7 +28,7 @@ import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
 import VoiceModal from "./components/VoiceModal";
-import { useVoiceSession, parseVoiceCommand, shouldSpeakReply } from "./hooks/useVoiceSession";
+import { useVoiceSession, parseVoiceCommand, shouldSpeakReply, nativeTurnsToMessages } from './hooks/useVoiceSession';
 
 // API Base URL - DEPRECATED: All API calls now use Tauri commands
 // Keeping this for legacy components that haven't been migrated yet (ZynkSync, ZynkLink, etc.)
@@ -388,6 +388,39 @@ export default function App() {
       console.warn('[Backend] could not persist preferred backend:', e)
     );
   }, [modelType]);
+
+  // The hands-free (native) path shares this thread. Tell the backend which thread is
+  // on screen so "Hey Zynk" questions continue it with its history, and pull finished
+  // hands-free exchanges into the chat when they complete or when the app comes back
+  // to the front (a push to a paused WebView is lost, so resume drains again).
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+    invoke('set_current_session', { sessionId }).catch((e) =>
+      console.warn('[Session] could not record current session:', e)
+    );
+  }, [sessionId]);
+
+  useEffect(() => {
+    const drain = () => {
+      let turns = [];
+      try { turns = JSON.parse(window.WakeWordBridge?.drainNativeTurns?.() || '[]'); } catch (_) { return; }
+      const additions = nativeTurnsToMessages(turns, sessionIdRef.current);
+      if (additions.length === 0) return;
+      setMessages((prev) => {
+        const seen = new Set(prev.map((m) => m.id));
+        return [...prev, ...additions.filter((m) => !seen.has(m.id))];
+      });
+    };
+    window.__nativeTurns = drain;
+    const onVisible = () => { if (document.visibilityState === 'visible') drain(); };
+    document.addEventListener('visibilitychange', onVisible);
+    drain();
+    return () => {
+      window.__nativeTurns = null;
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   // Listen for contradiction detection events from backend
   useEffect(() => {

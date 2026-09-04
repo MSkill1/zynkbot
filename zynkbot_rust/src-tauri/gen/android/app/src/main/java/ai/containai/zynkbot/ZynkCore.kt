@@ -29,8 +29,10 @@ object ZynkCore {
      * exactly one of [Callback.onDone] or [Callback.onError].
      *
      * Pass "" for [userId] to resolve the persisted device identity automatically,
-     * and "" for [sessionId] to get a fresh generated one — Kotlin does not need
-     * its own copy of that logic.
+     * and "" for [sessionId] to continue the current conversation thread (the one
+     * the app last had on screen; see set_current_session) — Kotlin does not need
+     * its own copy of that logic. The thread id comes back as a "voice-session"
+     * event before the first token.
      */
     @JvmStatic
     external fun nativeSendMessage(
