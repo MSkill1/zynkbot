@@ -136,8 +136,52 @@ vosk = "0.3"
 # (candle BERT embeddings, the toxicity classifier, tokenizers, sqlx) unoptimized:
 # measured on the OnePlus 2026-09-03, that turned a 0.85s Mistral reply into a
 # 14s hands-free answer (embedding 5.0s, safety check 4.4s, db 3.8s — all local).
-# Optimize dependencies only; the app crate itself stays unoptimized/debuggable.
-[profile.dev.package."*"]
+# Optimize ONLY the crates that hold the slow kernels (ML inference, tokenizing,
+# SQLite). A blanket `package."*"` override was tried first and broke the build:
+# it changed openssl-sys's cache key, forcing a from-scratch vendored OpenSSL
+# build, which on this machine fails at `make install_dev` (exit 127, empty
+# LIBDIR from util/mkinstallvars.pl). The cached July-14 OpenSSL is what links.
+# Listing packages explicitly leaves openssl-sys (and everything else) untouched.
+# Names taken from `cargo tree`, 2026-09-03.
+[profile.dev.package.candle-core]
+opt-level = 3
+[profile.dev.package.candle-nn]
+opt-level = 3
+[profile.dev.package.candle-transformers]
+opt-level = 3
+[profile.dev.package.gemm]
+opt-level = 3
+[profile.dev.package.gemm-common]
+opt-level = 3
+[profile.dev.package.gemm-f16]
+opt-level = 3
+[profile.dev.package.gemm-f32]
+opt-level = 3
+[profile.dev.package.gemm-f64]
+opt-level = 3
+[profile.dev.package.gemm-c32]
+opt-level = 3
+[profile.dev.package.gemm-c64]
+opt-level = 3
+[profile.dev.package.half]
+opt-level = 3
+[profile.dev.package.matrixmultiply]
+opt-level = 3
+[profile.dev.package.ndarray]
+opt-level = 3
+[profile.dev.package.rayon]
+opt-level = 3
+[profile.dev.package.rayon-core]
+opt-level = 3
+[profile.dev.package.safetensors]
+opt-level = 3
+[profile.dev.package.tokenizers]
+opt-level = 3
+[profile.dev.package.sqlx-core]
+opt-level = 3
+[profile.dev.package.sqlx-sqlite]
+opt-level = 3
+[profile.dev.package.libsqlite3-sys]
 opt-level = 3
 
 [target.'cfg(target_os = "android")'.dependencies]
