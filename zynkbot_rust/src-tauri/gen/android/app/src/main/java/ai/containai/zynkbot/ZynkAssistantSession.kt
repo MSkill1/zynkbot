@@ -24,10 +24,11 @@ import android.widget.ImageView
  * the way Siri's orb does. Pulse speed is the state: slow = listening, fast =
  * thinking. The overlay disappears when the session hides.
  *
- * Simplification, flagged for later hardening once this is verified on a device:
- * no explicit wake lock is held here (unlike WakeWordService's screen-off path).
- * The OS is expected to keep a shown session's host process elevated; if testing
- * shows otherwise, port WakeWordService's wake-lock handling here too.
+ * Microphone discipline (learned on the OnePlus, 2026-09-03): the wake-word ONNX
+ * loop and Vosk must never hold AudioRecord at the same time — a second reader on
+ * the busy mic wedged the session with no timeout ever firing. So: release the
+ * wake-word mic BEFORE starting Vosk, never call Vosk's stop() (which joins its
+ * thread) on the main thread, and re-arm the wake word natively on hide.
  */
 class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) {
     companion object {
@@ -43,7 +44,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         THINKING(450L, 0.35f),
     }
 
-    private var speechService: org.vosk.android.SpeechService? = null
+    @Volatile private var speechService: org.vosk.android.SpeechService? = null
     private val silenceHandler = Handler(Looper.getMainLooper())
     private val main = Handler(Looper.getMainLooper())
     private var logo: ImageView? = null
@@ -67,7 +68,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         return root
     }
 
-    /** Runs on the main thread. Restarts the pulse at the speed for [state]. */
+    /** Main thread only. Restarts the pulse at the speed for [state]. */
     private fun setState(state: State) {
         val img = logo ?: return
         pulse?.cancel()
@@ -102,6 +103,9 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     override fun onHide() {
         stopListening()
         stopPulse()
+        // Re-arm passive wake-word listening natively; the JS re-arm only runs when
+        // the app resumes, which a hands-free flow never does.
+        Thread { try { WakeWordService.instance?.resumeMicAfterSession() } catch (e: Exception) { Log.w(TAG, "re-arm failed: ${e.message}") } }.start()
         super.onHide()
     }
 
@@ -121,7 +125,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
                 val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
                 if (partial.isNotBlank()) {
                     silenceHandler.removeCallbacksAndMessages(null)
-                    silenceHandler.postDelayed({ speechService?.stop() }, SILENCE_MS)
+                    silenceHandler.postDelayed({ stopVoskAsync() }, SILENCE_MS)
                 }
             }
             override fun onResult(h: String?) {
@@ -156,21 +160,33 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             }
         }
 
-        try {
-            val rec = org.vosk.Recognizer(model, 16000.0f)
-            val service = org.vosk.android.SpeechService(rec, 16000.0f)
-            speechService = service
-            service.startListening(listener)
-            silenceHandler.postDelayed({ service.stop() }, SAFETY_TIMEOUT_MS)
-        } catch (e: Exception) {
-            Log.e(TAG, "Vosk start failed: ${e.message}")
-            hide()
-        }
+        // Off the main thread: releasing the wake-word mic can wait up to 2s, and
+        // Vosk callbacks are delivered on the main looper regardless.
+        Thread {
+            val freed = try { WakeWordService.instance?.releaseMicForSession() ?: true } catch (e: Exception) { false }
+            if (!freed) Log.w(TAG, "Wake-word mic not confirmed released; starting Vosk anyway (safety timeout will end it)")
+            try {
+                val rec = org.vosk.Recognizer(model, 16000.0f)
+                val service = org.vosk.android.SpeechService(rec, 16000.0f)
+                speechService = service
+                service.startListening(listener)
+                silenceHandler.postDelayed({ stopVoskAsync() }, SAFETY_TIMEOUT_MS)
+            } catch (e: Exception) {
+                Log.e(TAG, "Vosk start failed: ${e.message}")
+                main.post { hide() }
+            }
+        }.start()
+    }
+
+    /** Vosk's stop() joins its recognizer thread; never do that on the main thread. */
+    private fun stopVoskAsync() {
+        val service = speechService ?: return
+        Thread { try { service.stop() } catch (e: Exception) { Log.w(TAG, "Vosk stop failed: ${e.message}") } }.start()
     }
 
     private fun stopListening() {
         silenceHandler.removeCallbacksAndMessages(null)
-        try { speechService?.stop() } catch (_: Exception) {}
+        stopVoskAsync()
         speechService = null
     }
 

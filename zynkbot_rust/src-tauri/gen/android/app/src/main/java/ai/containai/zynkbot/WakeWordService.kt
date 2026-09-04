@@ -55,6 +55,12 @@ class WakeWordService : Service() {
 
         // Vosk model shared from VoskBridge so screen-off dictation doesn't reload it.
         @Volatile var sharedVoskModel: org.vosk.Model? = null
+
+        // The running service, so ZynkAssistantSession can hand the microphone back
+        // and forth: the ONNX loop must release AudioRecord before Vosk opens it
+        // (a second reader on a busy mic wedged the session on the OnePlus), and
+        // can be re-armed natively when the session hides.
+        @Volatile var instance: WakeWordService? = null
     }
 
     private var ortEnv: OrtEnvironment? = null
@@ -109,6 +115,7 @@ class WakeWordService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -196,6 +203,7 @@ class WakeWordService : Service() {
         releaseAudioWakeLock()
         stop()
         NativeVoiceAnswerer.shutdown()
+        instance = null
         super.onDestroy()
     }
 
@@ -580,6 +588,39 @@ class WakeWordService : Service() {
                 Log.w(TAG, "Closing tone failed: ${e.message}")
             }
         }.start()
+    }
+
+    // ── Microphone hand-off for ZynkAssistantSession ─────────────────────────
+
+    /**
+     * Stop the ONNX audio loop and wait until its AudioRecord is released, so the
+     * assistant session can open the mic for Vosk. Blocking (≤ [timeoutMs]); call
+     * from a background thread. Returns true if the mic is known to be free. The
+     * ONNX sessions stay loaded — this is a pause, not stop(). Mirrors what the
+     * wake-word path already does in handleScreenOffDetection(); the gesture path
+     * skipped it and a second reader on the busy mic wedged the session.
+     */
+    fun releaseMicForSession(timeoutMs: Long = 2000): Boolean {
+        if (!running && audioThread?.isAlive != true) return true
+        Log.i(TAG, "Releasing mic for the assistant session")
+        running = false
+        audioThread?.interrupt()
+        var waited = 0L
+        while (!audioReleased && waited < timeoutMs) { Thread.sleep(50); waited += 50 }
+        return audioReleased
+    }
+
+    /** Re-arm passive wake-word listening after the session hides, without going
+     *  through the WebView (the JS re-arm only runs when the app resumes). No-op if
+     *  the models aren't loaded or the loop is already running. */
+    fun resumeMicAfterSession() {
+        if (running || audioThread?.isAlive == true) return
+        if (kwsSession == null || melSession == null || embSession == null) return
+        Log.i(TAG, "Re-arming wake word after the assistant session")
+        melBuffer.clear(); embBuffer.clear()
+        consecutiveHighScores = 0
+        cooldownRemaining = COOLDOWN_CHUNKS   // don't re-trigger on the tail of the reply
+        startAudioLoop()
     }
 
     private fun releaseWakeLock() {
