@@ -96,6 +96,10 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         Log.i(TAG, "Session shown — starting dictation")
+        // On a locked phone the display sleeps again a second after the session
+        // appears, so the pulsing Z was only a flicker. Keep the device awake for the
+        // interaction; the OS releases it when the session hides.
+        try { setKeepAwake(true) } catch (e: Exception) { Log.w(TAG, "setKeepAwake failed: ${e.message}") }
         setState(State.LISTENING)
         startListening()
     }

@@ -159,6 +159,17 @@ class WakeWordService : Service() {
             }
         }
 
+        // Hard gate: never (re)start the microphone listener while the native voice is
+        // speaking a reply — the detector hears the speaker, fires, and records the reply
+        // as a new question. The web side's timers can't see native speech, so this is
+        // enforced here, at the one entry point every start goes through. The re-arm
+        // happens from NativeVoiceAnswerer when the speech ends.
+        if (NativeVoiceAnswerer.speaking) {
+            Log.i(TAG, "Start requested during native speech — deferred until speech ends")
+            lastModelDir = modelDir
+            return START_STICKY
+        }
+
         // Stop existing audio loop and wait for it to exit before starting a new one.
         // ONNX Runtime sessions are not safe for concurrent inference — if the old thread
         // is still mid-inference when the new one starts, both corrupt each other's results.
@@ -616,6 +627,7 @@ class WakeWordService : Service() {
     fun resumeMicAfterSession() {
         if (running || audioThread?.isAlive == true) return
         if (kwsSession == null || melSession == null || embSession == null) return
+        if (NativeVoiceAnswerer.speaking) return   // NativeVoiceAnswerer re-arms when speech ends
         Log.i(TAG, "Re-arming wake word after the assistant session")
         melBuffer.clear(); embBuffer.clear()
         consecutiveHighScores = 0

@@ -28,11 +28,34 @@ object NativeVoiceAnswerer {
 
     @Volatile private var tts: TextToSpeech? = null
 
+    /**
+     * True from the start of answer() until the reply has finished playing. Hard gate:
+     * WakeWordService refuses to start the microphone listener while this is true, no
+     * matter who asks (the web side's timers, the session's re-arm). Without it the
+     * listener came back mid-reply, heard Zynkbot's own voice, and sent the reply
+     * back as a new question (OnePlus, 2026-09-04).
+     */
+    @Volatile var speaking: Boolean = false
+        private set
+
     /** Blocking: run on a background thread, never the main thread. Returns true if a
      *  reply was produced and spoken. On failure it speaks a short error line and
      *  returns false so the caller can also fall back to another delivery path. */
     fun answer(context: Context, transcript: String): Boolean {
         if (transcript.isBlank()) return false
+        speaking = true
+        try {
+            return answerInner(context, transcript)
+        } finally {
+            speaking = false
+            // Speech is over: hand the microphone back to the wake word. Anything that
+            // tried to re-arm while we were speaking was refused, so this is the one
+            // re-arm that counts.
+            try { WakeWordService.instance?.resumeMicAfterSession() } catch (_: Exception) {}
+        }
+    }
+
+    private fun answerInner(context: Context, transcript: String): Boolean {
         val engine = engine(context) ?: return false
         val speaker = SentenceSpeaker(engine)
         var failure: String? = null
