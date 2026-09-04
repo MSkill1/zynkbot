@@ -2,6 +2,7 @@ package ai.containai.zynkbot
 
 import android.Manifest
 import android.app.NotificationManager
+import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -783,11 +784,41 @@ class MainActivity : TauriActivity() {
         // Microphone goes first since it's the most important permission in the app.
         permissionQueue.addLast { requestRecordAudioIfNeeded() }
         permissionQueue.addLast { requestNotificationPermissionIfNeeded() }
+        permissionQueue.addLast { requestAssistantRoleIfNeeded() }
         permissionQueue.addLast { requestLocalNetworkPermissionIfNeeded() }
         permissionQueue.addLast { requestManageStorageIfNeeded() }
         runNextPermissionRequest()
         extractVoskModelIfNeeded()
         startSyncService()
+    }
+
+    // Ask, once per install, to become the phone's digital assistant. This is what
+    // gives lock-screen answers and lets the wake-word service survive a reboot
+    // without the app being reopened. Uses the launcher API like the other pickers in
+    // this file so the sequenced queue advances on the dialog's result (accept,
+    // decline, or dismiss alike). Skipped if the role is already held or unavailable.
+    private val requestAssistantRole = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { runNextPermissionRequest() }
+
+    private fun requestAssistantRoleIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val prefs = getSharedPreferences("zynkbot_setup", MODE_PRIVATE)
+            val rm = getSystemService(RoleManager::class.java)
+            val asked = prefs.getBoolean("asked_assistant_role", false)
+            if (rm != null && !asked
+                && rm.isRoleAvailable(RoleManager.ROLE_ASSISTANT)
+                && !rm.isRoleHeld(RoleManager.ROLE_ASSISTANT)) {
+                prefs.edit().putBoolean("asked_assistant_role", true).apply()
+                try {
+                    requestAssistantRole.launch(rm.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT))
+                    return
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "Assistant role request failed: ${e.message}")
+                }
+            }
+        }
+        runNextPermissionRequest()
     }
 
     private val permissionQueue = ArrayDeque<() -> Unit>()
