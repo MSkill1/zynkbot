@@ -88,9 +88,11 @@ object NativeVoiceAnswerer {
         return speaker.spokeAnything()
     }
 
-    /** Short "your question was sent" tone — the same closing chime WakeWordService
-     *  plays, so hands-free feedback is identical on both paths. Blocking (<=2s). */
-    fun playSentTone(context: Context) {
+    /** The closing chime WakeWordService plays — used both as "your question was sent"
+     *  and as "nothing heard, closing" so a false trigger that captured only the air
+     *  conditioner still gives audible feedback instead of vanishing silently.
+     *  Blocking (<=2s). */
+    fun playCloseTone(context: Context) {
         try {
             val mp = MediaPlayer()
             mp.setAudioAttributes(

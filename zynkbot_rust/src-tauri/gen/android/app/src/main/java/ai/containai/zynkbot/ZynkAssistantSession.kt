@@ -1,10 +1,13 @@
 package ai.containai.zynkbot
 
-import android.animation.AnimatorSet
-import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.BlurMaskFilter
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PathMeasure
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -12,17 +15,21 @@ import android.service.voice.VoiceInteractionSession
 import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
-import android.widget.ImageView
+import kotlin.math.PI
+import kotlin.math.sin
 
 /**
  * One assistant invocation, start to finish: listen, answer natively, speak, done.
  * See ZynkAssistantService for status/caveats.
  *
- * UI: no text, no notification — just a pulsing Z at the bottom of the screen (over
- * the lock screen too) so the user can see the assistant is listening / thinking,
- * the way Siri's orb does. Pulse speed is the state: slow = listening, fast =
- * thinking. The overlay disappears when the session hides.
+ * UI: no text, no notification — a Z drawn from its three strokes (two horizontals
+ * and the diagonal), in Zynkbot green, at the bottom of the screen over the lock
+ * screen. It draws itself in when the session opens, breathes while listening, and
+ * while thinking a bright pulse runs along the strokes — top bar, diagonal, bottom
+ * bar — on a loop. Gone when the session hides.
  *
  * Microphone discipline (learned on the OnePlus, 2026-09-03): the wake-word ONNX
  * loop and Vosk must never hold AudioRecord at the same time — a second reader on
@@ -35,20 +42,14 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         private const val TAG = "ZynkAssistantSession"
         private const val SILENCE_MS = 1500L
         private const val SAFETY_TIMEOUT_MS = 10_000L
-        private const val LOGO_DP = 96
+        private const val LOGO_DP = 120
         private const val BOTTOM_MARGIN_DP = 140
-    }
-
-    private enum class State(val pulseMs: Long, val minAlpha: Float) {
-        LISTENING(900L, 0.55f),
-        THINKING(450L, 0.35f),
     }
 
     @Volatile private var speechService: org.vosk.android.SpeechService? = null
     private val silenceHandler = Handler(Looper.getMainLooper())
     private val main = Handler(Looper.getMainLooper())
-    private var logo: ImageView? = null
-    private var pulse: AnimatorSet? = null
+    private var zView: ZView? = null
 
     // ── overlay ──────────────────────────────────────────────────────────────
 
@@ -56,39 +57,118 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         val density = context.resources.displayMetrics.density
         val root = FrameLayout(context).apply { setBackgroundColor(Color.TRANSPARENT) }
         val size = (LOGO_DP * density).toInt()
-        val img = ImageView(context).apply {
-            setImageResource(R.mipmap.ic_launcher)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            alpha = 0f
-        }
+        val z = ZView(context)
         val lp = FrameLayout.LayoutParams(size, size, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
         lp.bottomMargin = (BOTTOM_MARGIN_DP * density).toInt()
-        root.addView(img, lp)
-        logo = img
+        root.addView(z, lp)
+        zView = z
         return root
     }
 
-    /** Main thread only. Restarts the pulse at the speed for [state]. */
-    private fun setState(state: State) {
-        val img = logo ?: return
-        pulse?.cancel()
-        val scaleX = ObjectAnimator.ofFloat(img, View.SCALE_X, 1.0f, 1.18f)
-        val scaleY = ObjectAnimator.ofFloat(img, View.SCALE_Y, 1.0f, 1.18f)
-        val alpha = ObjectAnimator.ofFloat(img, View.ALPHA, state.minAlpha, 1.0f)
-        for (a in listOf(scaleX, scaleY, alpha)) {
-            a.repeatMode = ValueAnimator.REVERSE
-            a.repeatCount = ValueAnimator.INFINITE
-        }
-        pulse = AnimatorSet().apply {
-            playTogether(scaleX, scaleY, alpha)
-            duration = state.pulseMs
-            start()
-        }
-    }
+    /**
+     * The Z itself. Three strokes on one path, measured so both the draw-in and the
+     * travelling pulse can be expressed as "the first N% of the path" / "the segment
+     * from A to B along the path" — no per-stroke bookkeeping.
+     */
+    private class ZView(context: Context) : View(context) {
+        enum class Mode { LISTENING, THINKING }
 
-    private fun stopPulse() {
-        pulse?.cancel(); pulse = null
-        logo?.alpha = 0f
+        private val green = 0xFF50FA7B.toInt()
+        private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = green; style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        }
+        private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = green; style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        }
+        private val path = Path()
+        private val measure = PathMeasure()
+        private val segment = Path()
+        private val pulseA = Path()
+        private val pulseB = Path()
+        private var length = 0f
+        private var drawIn = 0f   // 0..1 — the Z drawing itself in when the session opens
+        private var phase = 0f    // 0..1 — looping animation phase
+
+        var mode: Mode = Mode.LISTENING
+            set(value) {
+                field = value
+                loop.duration = if (value == Mode.THINKING) 700L else 1600L
+            }
+
+        private val intro = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 450L
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { drawIn = it.animatedValue as Float; invalidate() }
+        }
+        private val loop = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1600L
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            addUpdateListener { phase = it.animatedValue as Float; invalidate() }
+        }
+
+        init {
+            // BlurMaskFilter (the glow) needs software rendering; the view is tiny.
+            setLayerType(LAYER_TYPE_SOFTWARE, null)
+        }
+
+        fun start() { intro.start(); loop.start() }
+        fun stop() { intro.cancel(); loop.cancel(); drawIn = 0f; invalidate() }
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            val inset = w * 0.18f
+            val left = inset; val right = w - inset
+            val top = inset; val bottom = h - inset
+            path.reset()
+            path.moveTo(left, top)      // top bar
+            path.lineTo(right, top)
+            path.lineTo(left, bottom)   // diagonal
+            path.lineTo(right, bottom)  // bottom bar
+            measure.setPath(path, false)
+            length = measure.length
+            stroke.strokeWidth = w * 0.11f
+            glow.strokeWidth = w * 0.24f
+            glow.maskFilter = BlurMaskFilter(w * 0.12f, BlurMaskFilter.Blur.NORMAL)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            if (length == 0f || drawIn <= 0f) return
+            segment.reset()
+            measure.getSegment(0f, length * drawIn, segment, true)
+
+            when (mode) {
+                Mode.LISTENING -> {
+                    // Slow breathing: the whole Z swells and dims together.
+                    val breathe = 0.55f + 0.45f * ((sin(phase * 2.0 * PI).toFloat() + 1f) / 2f)
+                    glow.alpha = (110 * breathe).toInt()
+                    stroke.alpha = (255 * breathe).toInt()
+                    canvas.drawPath(segment, glow)
+                    canvas.drawPath(segment, stroke)
+                }
+                Mode.THINKING -> {
+                    // Dim base Z, with a bright pulse travelling top bar -> diagonal -> bottom bar.
+                    stroke.alpha = 110
+                    canvas.drawPath(segment, stroke)
+                    val pulseLen = length * 0.22f
+                    val head = phase * length
+                    val tail = head - pulseLen
+                    pulseA.reset(); pulseB.reset()
+                    if (tail >= 0f) {
+                        measure.getSegment(tail, head, pulseA, true)
+                    } else {
+                        // Wrap: the pulse's tail is still on the end of the path.
+                        measure.getSegment(0f, head, pulseA, true)
+                        measure.getSegment(length + tail, length, pulseB, true)
+                    }
+                    glow.alpha = 150
+                    stroke.alpha = 255
+                    canvas.drawPath(pulseA, glow); canvas.drawPath(pulseA, stroke)
+                    canvas.drawPath(pulseB, glow); canvas.drawPath(pulseB, stroke)
+                }
+            }
+        }
     }
 
     // ── lifecycle ────────────────────────────────────────────────────────────
@@ -97,18 +177,19 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         super.onShow(args, showFlags)
         Log.i(TAG, "Session shown — starting dictation")
         // On a locked phone the display sleeps again a second after the session
-        // appears, so the pulsing Z was only a flicker. Keep the device awake for the
+        // appears, so the overlay was only a flicker. Keep the device awake for the
         // interaction; the OS releases it when the session hides.
         try { setKeepAwake(true) } catch (e: Exception) { Log.w(TAG, "setKeepAwake failed: ${e.message}") }
-        setState(State.LISTENING)
+        zView?.let { it.mode = ZView.Mode.LISTENING; it.start() }
         startListening()
     }
 
     override fun onHide() {
         stopListening()
-        stopPulse()
+        zView?.stop()
         // Re-arm passive wake-word listening natively; the JS re-arm only runs when
-        // the app resumes, which a hands-free flow never does.
+        // the app resumes, which a hands-free flow never does. (Refused while the
+        // native voice is still speaking — NativeVoiceAnswerer re-arms afterwards.)
         Thread { try { WakeWordService.instance?.resumeMicAfterSession() } catch (e: Exception) { Log.w(TAG, "re-arm failed: ${e.message}") } }.start()
         super.onHide()
     }
@@ -198,14 +279,19 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
 
     private fun answerAndFinish(transcript: String) {
         if (transcript.isBlank()) {
-            hide()
+            // Nothing heard (a false trigger on the air conditioner, say): close
+            // audibly so the user knows it fired and shut down, rather than vanishing.
+            Thread {
+                NativeVoiceAnswerer.playCloseTone(context)
+                main.post { hide() }
+            }.start()
             return
         }
-        main.post { setState(State.THINKING) }
+        main.post { zView?.mode = ZView.Mode.THINKING }
         Thread {
             // "Sent" tone: without it the user sits in silence for the whole network
             // round trip thinking nothing happened. Same chime the wake-word path uses.
-            NativeVoiceAnswerer.playSentTone(context)
+            NativeVoiceAnswerer.playCloseTone(context)
             NativeVoiceAnswerer.answer(context, transcript)
             // Whether or not it succeeded, the session's job is done either way —
             // WakeWordService's screen-off path is the one with a WebView fallback;
