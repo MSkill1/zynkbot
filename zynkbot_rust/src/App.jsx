@@ -828,7 +828,7 @@ export default function App() {
   // True whenever there is something to stop. isLoading covers generation; TTS
   // playback starts only AFTER isLoading goes false, which is why a Stop tied to
   // isLoading alone vanished exactly when Zynkbot began speaking.
-  const canStop = isLoading || voice.isTtsSpeaking;
+  const canStop = isLoading || voice.isTtsSpeaking || voice.isNativeSpeaking;
 
   // Stop the currently streaming generation and/or spoken playback.
   // Optimistically flip UI out of loading state immediately — the backend's

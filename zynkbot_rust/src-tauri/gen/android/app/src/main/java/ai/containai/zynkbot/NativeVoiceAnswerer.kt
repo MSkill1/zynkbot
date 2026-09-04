@@ -38,16 +38,33 @@ object NativeVoiceAnswerer {
     @Volatile var speaking: Boolean = false
         private set
 
+    /** Set by the user tapping Stop (via WakeWordBridge.stopSpeaking). Cuts the current
+     *  utterance, drops everything queued, and makes the streaming speaker ignore any
+     *  further tokens so the reply ends now rather than at the end of the paragraph. */
+    @Volatile private var abortRequested: Boolean = false
+
+    /** MainActivity registers this to push speaking state into the WebView so the
+     *  app's Stop button lights up during native speech (it only knew about web TTS). */
+    @Volatile var onSpeakingChanged: ((Boolean) -> Unit)? = null
+
+    fun stopSpeaking() {
+        abortRequested = true
+        try { tts?.stop() } catch (_: Exception) {}
+    }
+
     /** Blocking: run on a background thread, never the main thread. Returns true if a
      *  reply was produced and spoken. On failure it speaks a short error line and
      *  returns false so the caller can also fall back to another delivery path. */
     fun answer(context: Context, transcript: String): Boolean {
         if (transcript.isBlank()) return false
+        abortRequested = false
         speaking = true
+        try { onSpeakingChanged?.invoke(true) } catch (_: Exception) {}
         try {
             return answerInner(context, transcript)
         } finally {
             speaking = false
+            try { onSpeakingChanged?.invoke(false) } catch (_: Exception) {}
             // Speech is over: hand the microphone back to the wake word. Anything that
             // tried to re-arm while we were speaking was refused, so this is the one
             // re-arm that counts.
@@ -163,7 +180,7 @@ object NativeVoiceAnswerer {
         }
 
         @Synchronized fun feed(token: String) {
-            if (stopped) return
+            if (stopped || abortRequested) return
             buffer.append(token)
             val cut = MARKERS.map { buffer.indexOf(it) }.filter { it >= 0 }.minOrNull()
             if (cut != null) {
@@ -218,6 +235,7 @@ object NativeVoiceAnswerer {
         }
 
         private fun enqueue(text: String, flush: Boolean) {
+            if (abortRequested) return
             val id = "zynk-${System.nanoTime()}"
             pending.add(id)
             val mode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD

@@ -164,8 +164,8 @@ class WakeWordService : Service() {
         // as a new question. The web side's timers can't see native speech, so this is
         // enforced here, at the one entry point every start goes through. The re-arm
         // happens from NativeVoiceAnswerer when the speech ends.
-        if (NativeVoiceAnswerer.speaking) {
-            Log.i(TAG, "Start requested during native speech — deferred until speech ends")
+        if (NativeVoiceAnswerer.speaking || ZynkAssistantService.sessionActive) {
+            Log.i(TAG, "Start requested during ${if (NativeVoiceAnswerer.speaking) "native speech" else "an assistant session"} — deferred")
             lastModelDir = modelDir
             return START_STICKY
         }

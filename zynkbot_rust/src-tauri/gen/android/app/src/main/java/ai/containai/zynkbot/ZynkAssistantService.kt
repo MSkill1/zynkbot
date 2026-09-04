@@ -33,6 +33,12 @@ class ZynkAssistantService : VoiceInteractionService() {
          * WakeWordService.detectionCallback / sharedVoskModel.
          */
         @Volatile var instance: ZynkAssistantService? = null
+
+        /** True while a ZynkAssistantSession is shown (listening/answering). Gate for
+         *  WakeWordService: the web side's timers restarted the wake-word mic loop
+         *  DURING the session's listening phase (OnePlus, 2026-09-04) — same
+         *  mic-contention hazard as the speech case, different window. */
+        @Volatile var sessionActive: Boolean = false
     }
 
     override fun onReady() {

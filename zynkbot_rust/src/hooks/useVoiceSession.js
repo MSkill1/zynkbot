@@ -157,7 +157,13 @@ export function useVoiceSession({ setMessages }) {
     }, delayMs);
   };
 
+  // Native (Kotlin) speech — a locked-phone reply — is invisible to the web TTS
+  // state above. Kotlin pushes it via window.__nativeSpeaking so Stop can enable,
+  // and stopTts() forwards to the native engine so Stop actually stops it.
+  const [isNativeSpeaking, setIsNativeSpeaking] = useState(false);
+
   const stopTts = () => {
+    try { window.WakeWordBridge?.stopSpeaking?.(); } catch (_) {}
     try { ttsSourceRef.current?.stop(); } catch (_) {}
     try { ttsAudioCtxRef.current?.close(); } catch (_) {}
     ttsSourceRef.current = null;
@@ -355,6 +361,7 @@ export function useVoiceSession({ setMessages }) {
       setWakeWordDownloadError(msg);
       setWakeWordDownloadProgress(0);
     };
+    window.__nativeSpeaking = (on) => setIsNativeSpeaking(!!on);
     window.__handleScreenOffTranscript = (transcript) => {
       if (!transcript?.trim()) return;
       console.log('[WakeWord] screen-off transcript received:', transcript);
@@ -378,6 +385,7 @@ export function useVoiceSession({ setMessages }) {
       window.__wakeWordDownloadProgress = null;
       window.__wakeWordDownloadError = null;
       window.__handleScreenOffTranscript = null;
+      window.__nativeSpeaking = null;
       clearTimeout(wakeWordRestartTimerRef.current);
       if (window.WakeWordBridge) window.WakeWordBridge.stop();
     };
@@ -409,6 +417,8 @@ export function useVoiceSession({ setMessages }) {
   useEffect(() => {
     if (!window.WakeWordBridge) return;
     const handleVisible = () => {
+      // A push sent while the WebView was paused is lost; re-read on resume.
+      try { setIsNativeSpeaking(!!window.WakeWordBridge?.isNativeSpeaking?.()); } catch (_) {}
       if (!heyZynkEnabled || isWakeRecording || isDictating) return;
       armWakeWord();
     };
@@ -442,6 +452,7 @@ export function useVoiceSession({ setMessages }) {
     showVoiceModal, setShowVoiceModal,
     // Status state
     isTtsSpeaking,
+    isNativeSpeaking,
     isDictating,
     isWakeRecording,
     wakeWordModelReady,

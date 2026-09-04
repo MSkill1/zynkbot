@@ -176,6 +176,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
         Log.i(TAG, "Session shown — starting dictation")
+        ZynkAssistantService.sessionActive = true
         // On a locked phone the display sleeps again a second after the session
         // appears, so the overlay was only a flicker. Keep the device awake for the
         // interaction; the OS releases it when the session hides.
@@ -185,6 +186,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     }
 
     override fun onHide() {
+        ZynkAssistantService.sessionActive = false
         stopListening()
         zView?.stop()
         // Re-arm passive wake-word listening natively; the JS re-arm only runs when

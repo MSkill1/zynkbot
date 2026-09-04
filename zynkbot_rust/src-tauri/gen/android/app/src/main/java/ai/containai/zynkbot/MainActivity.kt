@@ -469,12 +469,27 @@ class MainActivity : TauriActivity() {
             }
         }
 
+        /** The app's Stop button: cut native speech now. The web-side stopTts() only
+         *  ever stopped the WebView's own audio, so a native reply was unstoppable
+         *  short of force-closing the app (OnePlus, 2026-09-04). */
+        @JavascriptInterface
+        fun stopSpeaking() {
+            NativeVoiceAnswerer.stopSpeaking()
+        }
+
+        @JavascriptInterface
+        fun isNativeSpeaking(): Boolean = NativeVoiceAnswerer.speaking
+
         @JavascriptInterface
         fun start(threshold: Float) {
             if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
                 fire("window.__wakeWordError&&window.__wakeWordError('Microphone permission required');")
                 return
+            }
+            // Push native speaking state into the WebView so Stop enables/disables with it.
+            NativeVoiceAnswerer.onSpeakingChanged = { on ->
+                fire("window.__nativeSpeaking&&window.__nativeSpeaking(${if (on) "true" else "false"});")
             }
             // A locked-screen "Hey Zynk" reply auto-opens the app via a full-screen
             // intent. Android 14+ denies that permission by default; without it the
