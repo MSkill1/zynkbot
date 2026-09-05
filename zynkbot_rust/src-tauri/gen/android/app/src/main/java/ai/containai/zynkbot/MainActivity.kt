@@ -51,6 +51,12 @@ class MainActivity : TauriActivity() {
         // evaluateJavascript() silently drops when the WebView is paused (Activity in
         // background), so this flag is the only reliable way to know if JS is reachable.
         @Volatile var isInForeground = false
+
+        // Separate tag so onResume/onPause transitions are easy to grep out of a
+        // long test log. Added 2026-09-05: a TV-test run left isInForeground's true
+        // state unverifiable for 16 minutes of screen-off time, with no way to tell
+        // whether it correctly flipped false or got stuck — this closes that gap.
+        private const val TAG_LIFECYCLE = "MainActivityLifecycle"
     }
 
     private var webViewRef: WeakReference<WebView>? = null
@@ -798,6 +804,7 @@ class MainActivity : TauriActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        Log.i(TAG_LIFECYCLE, "onResume — isInForeground=true")
         // Mid-reply and the user opened the app: the in-app Stop button takes over,
         // so drop the assistant session's Z overlay (it would sit over the UI).
         ZynkAssistantSession.current?.hideOverlay()
@@ -817,6 +824,7 @@ class MainActivity : TauriActivity() {
     override fun onPause() {
         super.onPause()
         isInForeground = false
+        Log.i(TAG_LIFECYCLE, "onPause — isInForeground=false")
     }
 
     override fun onWebViewCreate(webView: WebView) {

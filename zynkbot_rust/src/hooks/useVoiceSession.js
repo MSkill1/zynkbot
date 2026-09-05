@@ -266,6 +266,11 @@ export function useVoiceSession({ setMessages }) {
   useEffect(() => {
     if (!window.WakeWordBridge) return;
 
+    // Route through the Kotlin bridge as well as the browser console: the WebView's
+    // own console output was not reaching logcat, so a real TV-test run (2026-09-05)
+    // left nine firings with zero trace of what this in-app path actually did.
+    const trace = (m) => { try { window.WakeWordBridge?.log?.(m); } catch (_) {} console.log(m); };
+
     const SILENCE_MS = 1000;
     // Hard cap on one dictation. The silence timer restarts on every partial, so
     // continuous speech (a TV) kept the mic open until the programme paused.
@@ -305,9 +310,9 @@ export function useVoiceSession({ setMessages }) {
     endVoiceSessionRef.current = endVoiceSession;
 
     const autoSendWake = async () => {
-      console.log('[WakeWord] autoSendWake firing');
+      trace('[WakeWord] autoSendWake firing');
       const text = await stopWakeRecording();
-      console.log('[WakeWord] transcript:', text);
+      trace('[WakeWord] transcript: ' + text);
 
       if (!text) {
         armWakeWord(1000);
@@ -317,20 +322,20 @@ export function useVoiceSession({ setMessages }) {
       const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
       const STOP_ALONE = /^\s*stop\s*$/i;
       if (CLOSING_PHRASES.test(text) || STOP_ALONE.test(text)) {
-        console.log('[WakeWord] stop phrase detected — ending voice session');
+        trace('[WakeWord] stop phrase detected — ending voice session');
         stopTts();
         endVoiceSession();
         return;
       }
       if (NEVERMIND.test(text)) {
-        console.log('[WakeWord] nevermind — discarding without sending');
+        trace('[WakeWord] nevermind — discarding without sending');
         endVoiceSession();
         return;
       }
 
       const wordCount = text.trim().split(/\s+/).length;
       if (wordCount < 2 || wordCount > 60) {
-        console.log('[WakeWord] transcript rejected as noise (' + wordCount + ' words):', text);
+        trace('[WakeWord] transcript rejected as noise (' + wordCount + ' words): ' + text);
         armWakeWord(1000);
         return;
       }
@@ -354,7 +359,7 @@ export function useVoiceSession({ setMessages }) {
         silenceTimerRef.current = setTimeout(autoSendWake, 8000);
         clearTimeout(maxListenTimer);
         maxListenTimer = setTimeout(() => {
-          console.log('[WakeWord] listening cap reached');
+          trace('[WakeWord] listening cap reached');
           autoSendWake();
         }, MAX_LISTEN_MS);
       };
@@ -370,17 +375,17 @@ export function useVoiceSession({ setMessages }) {
 
     window.__wakeWordDetected = () => {
       if (window.__dictationActive) {
-        console.log('[WakeWord] ignored — dictation in progress');
+        trace('[WakeWord] ignored — dictation in progress');
         return;
       }
       if (ttsSourceRef.current) {
         // Detector is stopped during TTS, so this normally can't fire mid-reply.
         // If a stray detection slips through, ignore it rather than interrupt —
         // onended re-arms passive listening when the reply finishes on its own.
-        console.log('[WakeWord] detected during TTS — ignoring');
+        trace('[WakeWord] detected during TTS — ignoring');
         return;
       }
-      console.log('[WakeWord] detected — playing chime then recording');
+      trace('[WakeWord] detected — playing chime then recording; foreground=' + !!window.WakeWordBridge?.isNativeSpeaking);
       window.WakeWordBridge.stop();
       setWakeWordFlash(true);
       setTimeout(() => setWakeWordFlash(false), 2500);
@@ -395,7 +400,7 @@ export function useVoiceSession({ setMessages }) {
     window.__nativeSpeaking = (on) => setIsNativeSpeaking(!!on);
     window.__handleScreenOffTranscript = (transcript) => {
       if (!transcript?.trim()) return;
-      console.log('[WakeWord] screen-off transcript received:', transcript);
+      trace('[WakeWord] screen-off transcript received: ' + transcript);
       // Captured while the app was not in front: the user cannot see the
       // screen, so the reply must be spoken regardless of the in-app setting.
       handsFreeRef.current = true;
