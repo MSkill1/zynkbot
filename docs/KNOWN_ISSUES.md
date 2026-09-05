@@ -275,4 +275,13 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-*Last updated: 2026-09-01*
+### KI-027 — Hands-free "set a timer" is confirmed aloud but no timer is set
+**Status:** Open — must fix before v1.0
+**Affected:** Android, hands-free ("Hey Zynk") path only
+**Description:** Asked hands-free to set a timer, Zynkbot replies with a spoken confirmation including the correct end time, but no timer exists and nothing happens when the time arrives. The in-app dictation path recognises timer, alarm and stopwatch requests (`parseVoiceCommand` in `useVoiceSession.js`) and hands them to the clock app through `VoiceCommandBridge`; the hands-free path (`ZynkAssistantSession` / `WakeWordService` → `NativeVoiceAnswerer`) sends the transcript straight to the language model, which has no clock and invents the confirmation.
+**Fix target:** Port the command parser to Kotlin and run it before the model on the hands-free path; fire the `AlarmClock` intent from the session, and speak a confirmation only after the clock app accepted it, otherwise say it could not be set.
+**Impact:** A confidently wrong answer about a timer is worse than no answer. Reported by the maintainer during device testing, 2026-09-04.
+
+---
+
+*Last updated: 2026-09-05*
