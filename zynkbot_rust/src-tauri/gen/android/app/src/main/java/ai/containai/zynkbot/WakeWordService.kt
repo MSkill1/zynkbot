@@ -335,13 +335,15 @@ class WakeWordService : Service() {
 
             val melOut = runModel(env, mel, audioFloat, longArrayOf(1, CHUNK_SAMPLES.toLong()))
             for (f in 0 until MEL_FRAMES_PER_CHUNK) {
-                // openWakeWord's reference feature transform (mel/10 + 2): the embedding
-                // model expects it. Without it the same 2 s of audio scored 0.96 on the
-                // phone and ~0 in an exact offline replay — the decision depended on the
-                // audio that preceded the phrase, not the phrase (false triggers on beeps
-                // and faint TV, 2026-09-04). With it, "Hey Zynk" scores ~1.0 for six chunks
-                // and the TV clip peaks at 0.52 for one.
-                val frame = FloatArray(MEL_BINS) { melOut[f * MEL_BINS + it] / 10f + 2f }
+                // NOTE on features (2026-09-05): openWakeWord's reference pipeline applies
+                // mel/10 + 2 here. Our classifier (hey_zynk.onnx) was trained WITHOUT it
+                // (wake-word-training/train_hey_zynk.py), and enabling it on the phone
+                // made the classifier saturate on any loud nearby speech (three false
+                // fires in twenty seconds of ordinary talking, Pixel, build23). So the
+                // phone matches the training features, un-normalized, until the classifier
+                // is retrained on the reference features. Do not add the transform here
+                // without retraining.
+                val frame = FloatArray(MEL_BINS) { melOut[f * MEL_BINS + it] }
                 melBuffer.addLast(frame)
             }
             while (melBuffer.size > MEL_WINDOW) melBuffer.removeFirst()
@@ -781,6 +783,7 @@ class WakeWordService : Service() {
         if (kwsSession == null || melSession == null || embSession == null) return
         if (NativeVoiceAnswerer.speaking) return   // NativeVoiceAnswerer re-arms when speech ends
         if (pausedForOtherRecording) return         // the recording watch re-arms when it ends
+        if (ZynkAssistantService.sessionActive) return  // the session re-arms on hide
         Log.i(TAG, "Re-arming wake word after the assistant session")
         melBuffer.clear(); embBuffer.clear()
         consecutiveHighScores = 0

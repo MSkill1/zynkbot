@@ -642,13 +642,33 @@ export default function App() {
   const IMAGE_EXTENSIONS = ['jpg','jpeg','png','gif','webp','bmp'];
   const MIME_TYPES = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', gif:'image/gif', webp:'image/webp', bmp:'image/bmp' };
 
-  const handleAttachFile = async () => {
-    const result = await openFileDialog({
-      multiple: true,
-      filters: [
-        { name: 'Files', extensions: [...IMAGE_EXTENSIONS, 'txt','md','rs','js','jsx','ts','tsx','py','json','toml','yaml','yml','sh','css','html','c','cpp','h','go','java','rb','php','swift','kt'] }
-      ]
-    });
+  // Android: the dialog plugin's generic picker hands back one item from most
+  // galleries. Use the phone's photo picker (checkbox multi-select) for photos and
+  // the documents picker in multi mode for files. Both resolve an array of URIs.
+  const pickOnAndroid = (kind) => new Promise((resolve, reject) => {
+    window.__pickFilesResolve = resolve;
+    window.__pickFilesReject = reject;
+    if (kind === 'images') window.AndroidPaths.pickImages();
+    else window.AndroidPaths.pickDocuments();
+  });
+
+  const handleAttachFile = async (kind) => {
+    let result;
+    if (window.AndroidPaths?.pickDocuments) {
+      try {
+        result = await pickOnAndroid(kind === 'images' ? 'images' : 'documents');
+      } catch (e) {
+        if (e !== 'cancelled') alert(`Could not open the picker: ${e}`);
+        return;
+      }
+    } else {
+      result = await openFileDialog({
+        multiple: true,
+        filters: [
+          { name: 'Files', extensions: [...IMAGE_EXTENSIONS, 'txt','md','rs','js','jsx','ts','tsx','py','json','toml','yaml','yml','sh','css','html','c','cpp','h','go','java','rb','php','swift','kt'] }
+        ]
+      });
+    }
     if (!result) return;
     const paths = Array.isArray(result) ? result : [result];
     const newFiles = [];
@@ -1963,11 +1983,11 @@ export default function App() {
                     {kbLocked ? '📚 KB LOCK' : searchKBEnabled ? '📚 KB ON' : '📚 KB'}
                   </button>
 
-                  {/* Attach File Button */}
+                  {/* Attach File Button (documents; on Android the photo picker is the next button) */}
                   <button
-                    onClick={handleAttachFile}
+                    onClick={() => handleAttachFile('documents')}
                     disabled={isLoading}
-                    title={attachedFiles.length > 0 ? `${attachedFiles.length} file${attachedFiles.length > 1 ? 's' : ''} attached` : "Attach files or images"}
+                    title={attachedFiles.length > 0 ? `${attachedFiles.length} file${attachedFiles.length > 1 ? 's' : ''} attached` : (window.AndroidPaths?.pickImages ? "Attach files" : "Attach files or images")}
                     style={{
                       height: '28px',
                       padding: '0 10px',
@@ -1991,6 +2011,35 @@ export default function App() {
                   >
                     {attachedFiles.length > 0 ? `📎 ${attachedFiles.length} file${attachedFiles.length > 1 ? 's' : ''}` : '📎'}
                   </button>
+
+                  {/* Photos button — Android only: the phone's photo picker, several at once */}
+                  {window.AndroidPaths?.pickImages && (
+                    <button
+                      onClick={() => handleAttachFile('images')}
+                      disabled={isLoading}
+                      title="Choose photos"
+                      style={{
+                        height: '28px',
+                        padding: '0 10px',
+                        background: 'linear-gradient(135deg, #6272a4 0%, #44475a 100%)',
+                        color: '#f8f8f2',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: isLoading ? 'not-allowed' : 'pointer',
+                        fontWeight: 'bold',
+                        fontSize: '0.7rem',
+                        transition: 'all 0.2s',
+                        opacity: isLoading ? 0.5 : 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                      onMouseOver={(e) => !isLoading && (e.currentTarget.style.transform = 'translateY(-1px)')}
+                      onMouseOut={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                    >
+                      🖼️
+                    </button>
+                  )}
 
                   {/* Camera button — Android only */}
                   {window.AndroidCamera && (

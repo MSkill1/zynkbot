@@ -131,6 +131,32 @@ class MainActivity : TauriActivity() {
         }.start()
     }
 
+    // Multi-select pickers for chat attachments. The generic "get content" route the
+    // dialog plugin uses opens whichever gallery the phone prefers, and most of those
+    // hand back one item; the dedicated photo picker (checkboxes) and the documents
+    // picker in multi mode hand back lists (2026-09-05). Both resolve an array of
+    // content:// URIs to the page, which reads them through AndroidPaths.
+    private val pickImagesLauncher = registerForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(20)
+    ) { uris -> deliverPickedUris(uris) }
+
+    private val pickDocumentsLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> deliverPickedUris(uris) }
+
+    private fun deliverPickedUris(uris: List<Uri>?) {
+        val wv = webViewRef?.get() ?: return
+        val script = if (uris.isNullOrEmpty()) {
+            "window.__pickFilesReject&&window.__pickFilesReject('cancelled');window.__pickFilesResolve=null;window.__pickFilesReject=null;"
+        } else {
+            val arr = org.json.JSONArray()
+            uris.forEach { arr.put(it.toString()) }
+            val json = arr.toString().replace("\\", "\\\\").replace("'", "\\'")
+            "window.__pickFilesResolve&&window.__pickFilesResolve(JSON.parse('$json'));window.__pickFilesResolve=null;window.__pickFilesReject=null;"
+        }
+        wv.post { wv.evaluateJavascript(script, null) }
+    }
+
     private val takePictureLauncher = registerForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success ->
@@ -182,6 +208,22 @@ class MainActivity : TauriActivity() {
             runOnUiThread {
                 pickFileLauncher.launch(arrayOf("*/*"))
             }
+        }
+
+        /** Chat attachments: the phone's photo picker, several at once. */
+        @JavascriptInterface
+        fun pickImages() {
+            runOnUiThread {
+                pickImagesLauncher.launch(
+                    androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            }
+        }
+
+        /** Chat attachments: the documents picker in multi-select mode. */
+        @JavascriptInterface
+        fun pickDocuments() {
+            runOnUiThread { pickDocumentsLauncher.launch(arrayOf("*/*")) }
         }
 
         @JavascriptInterface

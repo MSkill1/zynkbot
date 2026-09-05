@@ -92,6 +92,11 @@ object NativeVoiceAnswerer {
         abortRequested = false
         speaking = true
         try { onSpeakingChanged?.invoke(true) } catch (_: Exception) {}
+        // The speaking flag only blocks *starts* of the wake-word loop. If the loop is
+        // already running (the recording watch re-armed it the moment dictation ended,
+        // before this reply began — Pixel, build23), stop it now, or the phone hears
+        // its own answer and fires on it. Re-armed in the finally below.
+        try { WakeWordService.instance?.releaseMicForSession(500) } catch (_: Exception) {}
         try {
             return answerInner(context, transcript)
         } finally {
