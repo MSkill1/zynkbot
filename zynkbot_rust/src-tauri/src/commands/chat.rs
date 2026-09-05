@@ -1115,8 +1115,11 @@ pub async fn generate_reply(
         original_query: Some(query.clone()),
     };
 
-    // STEP 10: LOG EXCHANGE TO CONVERSATION HISTORY (non-blocking, skipped in HIPAA mode)
-    if containment_mode.to_lowercase() != "hipaa" {
+    // STEP 10: LOG EXCHANGE TO CONVERSATION HISTORY (non-blocking, skipped in HIPAA mode,
+    // and skipped when the model answered NO_QUERY to a hands-free fragment — see
+    // android_jni::HANDS_FREE_NOTE — so a TV line never becomes part of the thread)
+    let is_no_query = final_reply_text.trim().starts_with("NO_QUERY");
+    if containment_mode.to_lowercase() != "hipaa" && !is_no_query {
         let ch_session = session_id.clone();
         let ch_user = user_id.clone();
         let ch_message = query.clone();  // Store clean question, not file dump

@@ -55,7 +55,9 @@ class WakeWordService : Service() {
         const val EMB_SIZE = 96
         const val EMB_WINDOW = 16           // embeddings the classifier expects
         const val COOLDOWN_CHUNKS = 50      // ~4 seconds before re-triggering
-        const val TRIGGER_CLIP_CHUNKS = 25  // ~2 s of audio kept for the trigger clip
+        const val TRIGGER_CLIP_CHUNKS = 40  // ~3.2 s: covers the models' full context (~2.5 s)
+        const val MAX_LISTEN_MS = 12_000L   // hard cap on one dictation, ongoing speech cannot extend it
+        const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
         const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers
 
         // Set by WakeWordBridge before starting; called on detection when screen is on.
@@ -101,8 +103,10 @@ class WakeWordService : Service() {
     @Volatile private var pausedForOtherRecording = false
     @Volatile private var loopSessionId = -1
 
-    // The last ~2 s of microphone audio, so each firing can be saved and listened to.
+    // The last ~3 s of microphone audio and the model's score per chunk, so each firing
+    // can be saved, listened to, and replayed offline against the exact same numbers.
     private val recentChunks = ArrayDeque<ShortArray>()
+    private val recentScores = ArrayDeque<Float>()
 
     // Keeps the CPU running the ONNX inference loop when the screen is off.
     private val screenReceiver = object : BroadcastReceiver() {
@@ -331,7 +335,13 @@ class WakeWordService : Service() {
 
             val melOut = runModel(env, mel, audioFloat, longArrayOf(1, CHUNK_SAMPLES.toLong()))
             for (f in 0 until MEL_FRAMES_PER_CHUNK) {
-                val frame = FloatArray(MEL_BINS) { melOut[f * MEL_BINS + it] }
+                // openWakeWord's reference feature transform (mel/10 + 2): the embedding
+                // model expects it. Without it the same 2 s of audio scored 0.96 on the
+                // phone and ~0 in an exact offline replay — the decision depended on the
+                // audio that preceded the phrase, not the phrase (false triggers on beeps
+                // and faint TV, 2026-09-04). With it, "Hey Zynk" scores ~1.0 for six chunks
+                // and the TV clip peaks at 0.52 for one.
+                val frame = FloatArray(MEL_BINS) { melOut[f * MEL_BINS + it] / 10f + 2f }
                 melBuffer.addLast(frame)
             }
             while (melBuffer.size > MEL_WINDOW) melBuffer.removeFirst()
@@ -349,6 +359,8 @@ class WakeWordService : Service() {
             val prob = runModel(env, kws, flatEmb, longArrayOf(1, EMB_WINDOW.toLong(), EMB_SIZE.toLong()))
 
             val score = prob.firstOrNull() ?: return
+            recentScores.addLast(score)
+            while (recentScores.size > TRIGGER_CLIP_CHUNKS) recentScores.removeFirst()
             if (score > threshold) {
                 consecutiveHighScores++
                 Log.d(TAG, "High score: $score (consecutive=$consecutiveHighScores, need=2)")
@@ -431,6 +443,7 @@ class WakeWordService : Service() {
      *  is retrained. Called on the audio thread; the file write happens off it. */
     private fun saveTriggerClip(score: Float) {
         val snapshot = recentChunks.toList()
+        val scoreSnap = recentScores.toList()
         if (snapshot.isEmpty()) return
         Thread {
             try {
@@ -444,10 +457,13 @@ class WakeWordService : Service() {
                     for (c in snapshot) for (sample in c) buf.putShort(sample)
                     out.write(buf.array())
                 }
+                // Per-chunk scores next to the clip (one per line, oldest first).
+                File(dir, file.name.removeSuffix(".wav") + ".scores.txt")
+                    .writeText(scoreSnap.joinToString("\n") { "%.4f".format(Locale.US, it) })
                 dir.listFiles { f -> f.name.endsWith(".wav") }
                     ?.sortedByDescending { it.name }
                     ?.drop(TRIGGER_CLIPS_KEPT)
-                    ?.forEach { it.delete() }
+                    ?.forEach { it.delete(); File(dir, it.name.removeSuffix(".wav") + ".scores.txt").delete() }
                 Log.i(TAG, "Trigger clip saved: ${file.name}")
             } catch (e: Exception) {
                 Log.w(TAG, "Trigger clip not saved: ${e.message}")
@@ -532,14 +548,19 @@ class WakeWordService : Service() {
         val accumulated = StringBuilder()
         val silenceHandler = Handler(Looper.getMainLooper())
         var speechService: org.vosk.android.SpeechService? = null
+        // Two separate timers. The silence timer restarts on every partial transcript;
+        // the cap does not — continuous speech (a TV) used to keep dictation open until
+        // the programme paused, because one removeCallbacksAndMessages(null) cancelled
+        // both (40 s recording, 2026-09-04).
+        val silenceStop = Runnable { speechService?.stop() }
+        val hardStop = Runnable { Log.i(TAG, "Screen-off dictation reached the listening cap"); speechService?.stop() }
 
         val listener = object : org.vosk.android.RecognitionListener {
             override fun onPartialResult(h: String?) {
                 val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
                 if (partial.isNotBlank()) {
-                    silenceHandler.removeCallbacksAndMessages(null)
-                    // 1.5s silence after last speech → stop
-                    silenceHandler.postDelayed({ speechService?.stop() }, 1500)
+                    silenceHandler.removeCallbacks(silenceStop)
+                    silenceHandler.postDelayed(silenceStop, 1500)   // 1.5 s silence after last speech
                 }
             }
             override fun onResult(h: String?) {
@@ -580,8 +601,7 @@ class WakeWordService : Service() {
                 speechService = org.vosk.android.SpeechService(rec, 16000.0f)
                 speechService!!.startListening(listener)
                 Log.i(TAG, "Screen-off Vosk dictation started")
-                // Safety timeout: stop after 10s regardless
-                silenceHandler.postDelayed({ speechService?.stop() }, 10_000)
+                silenceHandler.postDelayed(hardStop, MAX_LISTEN_MS)
             } catch (e: Exception) {
                 Log.e(TAG, "Screen-off Vosk start failed: ${e.message}")
                 releaseWakeLock()
@@ -598,6 +618,14 @@ class WakeWordService : Service() {
         if (transcript.isBlank()) {
             Log.i(TAG, "Empty transcript — not waking screen")
             releaseWakeLock()
+            return
+        }
+        // Local sanity gate, free: one word is noise, sixty is a TV programme.
+        val words = transcript.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.size < 2 || words.size > MAX_QUERY_WORDS) {
+            Log.i(TAG, "Transcript rejected (${words.size} words) — not a question")
+            releaseWakeLock()
+            playClosingTone()
             return
         }
         Log.i(TAG, "Answering natively: \"$transcript\"")

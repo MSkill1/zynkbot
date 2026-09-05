@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { v4 as uuidv4 } from 'uuid';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -477,20 +477,39 @@ export default function App() {
     container.scrollTop = container.scrollHeight;
   }, [messages, isLoading]);
 
-  // Mount-once listeners: user intent + scroll-to-bottom button visibility.
-  useEffect(() => {
-    const container = chatContainerRef.current;
-    if (!container) return;
-    const nearBottom = () =>
-      container.scrollHeight - container.scrollTop - container.clientHeight <= 80;
+  // Listeners follow the chat container element itself, attached through a callback ref
+  // (see attachChatContainer on the element). The previous mount-once effect attached to
+  // whatever element existed at App's first render and returned silently when there was
+  // none; on the phone the chat renders after initialisation, so no listener ever ran,
+  // userScrolledUpRef never became true, and every streamed token snapped the list to the
+  // bottom (build22, 2026-09-04). The console lines are breadcrumbs: on Android they land
+  // in logcat as CONSOLE lines, which is the only trace this bug leaves.
+  const chatListenersCleanupRef = useRef(null);
+  const trace = (m) => { try { window.WakeWordBridge?.log?.(m); } catch (_) {} console.log(m); };
+  const attachChatContainer = useCallback((node) => {
+    if (chatListenersCleanupRef.current) {
+      chatListenersCleanupRef.current();
+      chatListenersCleanupRef.current = null;
+    }
+    chatContainerRef.current = node;
+    if (!node) return;
+    const container = node;
+    const distanceFromBottom = () =>
+      container.scrollHeight - container.scrollTop - container.clientHeight;
     const setScrolledUp = (up) => {
+      if (userScrolledUpRef.current !== up) trace(`[scroll] reading older = ${up}`);
       userScrolledUpRef.current = up;
       setShowScrollButton(up);
     };
     let touchStartY = 0;
     const onScroll = () => {
       if (programmaticScrollRef.current) { programmaticScrollRef.current = false; return; }
-      setScrolledUp(!nearBottom());
+      const up = distanceFromBottom() > 80;
+      // While a finger is down, a scroll event may only ever mark "reading older";
+      // returning to following happens on touchend (at the very bottom) or on the
+      // momentum scroll after it, never mid-drag.
+      if (touchActiveRef.current) { if (up) setScrolledUp(true); return; }
+      setScrolledUp(up);
     };
     const onTouchStart = (e) => {
       touchActiveRef.current = true;
@@ -498,11 +517,11 @@ export default function App() {
     };
     const onTouchMove = (e) => {
       const y = e.touches?.[0]?.clientY ?? touchStartY;
-      if (y - touchStartY > 10) setScrolledUp(true);   // finger moving down = reading upward
+      if (y - touchStartY > 10) setScrolledUp(true);   // finger moving down = reading older
     };
     const onTouchEnd = () => {
       touchActiveRef.current = false;
-      setScrolledUp(!nearBottom());
+      if (distanceFromBottom() <= 8) setScrolledUp(false);
     };
     const onWheel = (e) => { if (e.deltaY < 0) setScrolledUp(true); };
     const opts = { passive: true };
@@ -512,13 +531,15 @@ export default function App() {
     container.addEventListener('touchend', onTouchEnd, opts);
     container.addEventListener('touchcancel', onTouchEnd, opts);
     container.addEventListener('wheel', onWheel, opts);
-    return () => {
+    trace('[scroll] listeners attached to the chat container');
+    chatListenersCleanupRef.current = () => {
       container.removeEventListener('scroll', onScroll, opts);
       container.removeEventListener('touchstart', onTouchStart, opts);
       container.removeEventListener('touchmove', onTouchMove, opts);
       container.removeEventListener('touchend', onTouchEnd, opts);
       container.removeEventListener('touchcancel', onTouchEnd, opts);
       container.removeEventListener('wheel', onWheel, opts);
+      trace('[scroll] listeners detached');
     };
   }, []);
 
@@ -1721,7 +1742,7 @@ export default function App() {
               </div>
             )}
             <div className={isMobile ? 'mobile-conv-history-wrap' : undefined} style={{ position: 'relative' }}>
-              <div className="conversation-history" ref={chatContainerRef} style={{minHeight: 'unset', marginBottom: 0}}>
+              <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
                   <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
                 ) : (

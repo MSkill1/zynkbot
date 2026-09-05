@@ -487,6 +487,12 @@ class MainActivity : TauriActivity() {
         @JavascriptInterface
         fun drainNativeTurns(): String = NativeVoiceAnswerer.drainTurnsJson()
 
+        /** Breadcrumbs from the page into logcat (tag ZynkWeb). WebView console output
+         *  was not reaching logcat on the OnePlus, and some bugs (chat autoscroll) leave
+         *  no other trace. */
+        @JavascriptInterface
+        fun log(message: String) { Log.i("ZynkWeb", message) }
+
         @JavascriptInterface
         fun start(threshold: Float) {
             if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.RECORD_AUDIO)

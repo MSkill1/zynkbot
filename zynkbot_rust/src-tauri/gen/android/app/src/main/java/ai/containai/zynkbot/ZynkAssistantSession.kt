@@ -42,7 +42,8 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     companion object {
         private const val TAG = "ZynkAssistantSession"
         private const val SILENCE_MS = 1500L
-        private const val SAFETY_TIMEOUT_MS = 10_000L
+        private const val SAFETY_TIMEOUT_MS = 12_000L   // hard cap; ongoing speech cannot extend it
+        private const val MAX_QUERY_WORDS = 60
         private const val LOGO_DP = 120
         private const val BOTTOM_MARGIN_DP = 140
         /** Upper bound on how long one interaction may hold the screen on. */
@@ -57,6 +58,11 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
 
     @Volatile private var speechService: org.vosk.android.SpeechService? = null
     private val silenceHandler = Handler(Looper.getMainLooper())
+    // Separate runnables so a partial transcript restarts only the silence timer. One
+    // removeCallbacksAndMessages(null) used to cancel the safety cap too, so continuous
+    // TV speech kept the session listening until the programme paused (2026-09-04).
+    private val silenceStop = Runnable { stopVoskAsync() }
+    private val hardStop = Runnable { Log.i(TAG, "Listening cap reached"); stopVoskAsync() }
     private val main = Handler(Looper.getMainLooper())
     private var zView: ZView? = null
 
@@ -266,8 +272,8 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             override fun onPartialResult(h: String?) {
                 val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
                 if (partial.isNotBlank()) {
-                    silenceHandler.removeCallbacksAndMessages(null)
-                    silenceHandler.postDelayed({ stopVoskAsync() }, SILENCE_MS)
+                    silenceHandler.removeCallbacks(silenceStop)
+                    silenceHandler.postDelayed(silenceStop, SILENCE_MS)
                 }
             }
             override fun onResult(h: String?) {
@@ -312,7 +318,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
                 val service = org.vosk.android.SpeechService(rec, 16000.0f)
                 speechService = service
                 service.startListening(listener)
-                silenceHandler.postDelayed({ stopVoskAsync() }, SAFETY_TIMEOUT_MS)
+                silenceHandler.postDelayed(hardStop, SAFETY_TIMEOUT_MS)
             } catch (e: Exception) {
                 Log.e(TAG, "Vosk start failed: ${e.message}")
                 main.post { hide() }
@@ -335,7 +341,12 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     // ── answer ───────────────────────────────────────────────────────────────
 
     private fun answerAndFinish(transcript: String) {
-        if (transcript.isBlank()) {
+        // Local sanity gate, free: one word is noise, sixty is a TV programme.
+        val words = transcript.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isNotEmpty() && (words.size < 2 || words.size > MAX_QUERY_WORDS)) {
+            Log.i(TAG, "Transcript rejected (${words.size} words) — not a question")
+        }
+        if (transcript.isBlank() || words.size < 2 || words.size > MAX_QUERY_WORDS) {
             // Nothing heard (a false trigger on the air conditioner, say): close
             // audibly so the user knows it fired and shut down, rather than vanishing.
             Thread {

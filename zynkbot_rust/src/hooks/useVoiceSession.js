@@ -267,10 +267,15 @@ export function useVoiceSession({ setMessages }) {
     if (!window.WakeWordBridge) return;
 
     const SILENCE_MS = 1000;
+    // Hard cap on one dictation. The silence timer restarts on every partial, so
+    // continuous speech (a TV) kept the mic open until the programme paused.
+    const MAX_LISTEN_MS = 12000;
+    let maxListenTimer = null;
     const CLOSING_PHRASES = /\b(thank(?:\s+you)?\s+zynk|goodbye\s+zynk|zynk\s+stop|stop\s+listening|that'?s?\s+all|close\s+session)\b/i;
 
     const stopWakeRecording = () => {
       clearTimeout(silenceTimerRef.current);
+      clearTimeout(maxListenTimer);
       window.__voskPartial = null;
       setIsWakeRecording(false);
       if (!window.VoskBridge) return Promise.resolve('');
@@ -323,8 +328,9 @@ export function useVoiceSession({ setMessages }) {
         return;
       }
 
-      if (text.trim().split(/\s+/).length < 2) {
-        console.log('[WakeWord] transcript too short, treating as noise:', text);
+      const wordCount = text.trim().split(/\s+/).length;
+      if (wordCount < 2 || wordCount > 60) {
+        console.log('[WakeWord] transcript rejected as noise (' + wordCount + ' words):', text);
         armWakeWord(1000);
         return;
       }
@@ -346,6 +352,11 @@ export function useVoiceSession({ setMessages }) {
         window.VoskBridge.startListening();
         setIsWakeRecording(true);
         silenceTimerRef.current = setTimeout(autoSendWake, 8000);
+        clearTimeout(maxListenTimer);
+        maxListenTimer = setTimeout(() => {
+          console.log('[WakeWord] listening cap reached');
+          autoSendWake();
+        }, MAX_LISTEN_MS);
       };
       try {
         const audio = new Audio('/wake_chime.wav');

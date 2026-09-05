@@ -26,6 +26,11 @@ object NativeVoiceAnswerer {
     private const val TAG = "NativeVoiceAnswerer"
     private const val ERROR_LINE = "Zynkbot couldn't get an answer. Check the A I key in settings."
 
+    /** The model's fixed reply when a hands-free transcript is not a request (see the
+     *  hands-free note in android_jni.rs). Handled as "nothing to say": close tone, no
+     *  speech, no chat turn, no history entry. */
+    private const val NO_QUERY = "NO_QUERY"
+
     @Volatile private var tts: TextToSpeech? = null
 
     /**
@@ -105,6 +110,7 @@ object NativeVoiceAnswerer {
         currentSpeaker = speaker
         var failure: String? = null
         var sessionId = ""
+        var noQuery = false
         try {
             ZynkCore.nativeSendMessage(
                 transcript, "", "", "", "guardian",
@@ -122,7 +128,11 @@ object NativeVoiceAnswerer {
                             Log.w(TAG, "Could not parse native reply: ${e.message}"); ""
                         }
                         Log.i(TAG, "Native reply: \"${replyText.take(80)}\"")
-                        if (replyText.isNotBlank()) {
+                        if (replyText.trim().startsWith(NO_QUERY)) {
+                            Log.i(TAG, "Model judged the transcript not a request — staying silent")
+                            noQuery = true
+                            speaker.discard()
+                        } else if (replyText.isNotBlank()) {
                             // Queue the exchange for the app's chat now, not after speech:
                             // if the app is open it shows the answer while it is being read.
                             pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis()))
@@ -142,6 +152,7 @@ object NativeVoiceAnswerer {
             speaker.speakNow(ERROR_LINE)
             return false
         }
+        if (noQuery) return true   // handled: nothing to say, and nothing to fall back to
         return speaker.spokeAnything()
     }
 
@@ -189,8 +200,32 @@ object NativeVoiceAnswerer {
         initLatch.await(5000, TimeUnit.MILLISECONDS)
         if (!initOk) { Log.w(TAG, "TTS init failed"); return null }
         engine.language = Locale.US
+        pickBestVoice(engine)
         tts = engine
         return engine
+    }
+
+    /** The engine's default en-US voice is whatever it falls back to when its good voice
+     *  data isn't installed — on the OnePlus an old, wavering synthetic voice. Prefer the
+     *  highest-quality installed English voice; offline over network on a tie. */
+    private fun pickBestVoice(engine: TextToSpeech) {
+        try {
+            val voices = engine.voices ?: return
+            val english = voices.filter {
+                it.locale?.language == "en" && !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)
+            }
+            Log.i(TAG, "TTS voices (en): " + english.joinToString { "${it.name}/q${it.quality}${if (it.isNetworkConnectionRequired) "/net" else ""}" })
+            val best = english.sortedWith(
+                compareByDescending<android.speech.tts.Voice> { it.quality }
+                    .thenByDescending { if (it.isNetworkConnectionRequired) 0 else 1 }
+                    .thenByDescending { if (it.locale == Locale.US) 1 else 0 }
+                    .thenBy { it.latency }
+            ).firstOrNull() ?: return
+            engine.voice = best
+            Log.i(TAG, "TTS voice chosen: ${best.name} (quality=${best.quality}, network=${best.isNetworkConnectionRequired})")
+        } catch (e: Exception) {
+            Log.w(TAG, "Voice pick failed: ${e.message}")
+        }
     }
 
     /**
@@ -250,6 +285,9 @@ object NativeVoiceAnswerer {
         }
 
         fun spokeAnything() = spokeSomething
+
+        /** Nothing to say: drop unspoken text before finish() would voice it. */
+        @Synchronized fun discard() { buffer.setLength(0); stopped = true }
 
         /** Stop pressed: nothing queued matters any more; release finish() at once. */
         fun abort() {

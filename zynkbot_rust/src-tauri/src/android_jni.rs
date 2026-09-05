@@ -77,6 +77,13 @@ impl ResponseSink for JniSink {
     }
 }
 
+/// Appended to the model-facing message for every hands-free turn. A wake-word trigger
+/// can capture a TV line or half a sentence; this gives the model a way to say so that
+/// the phone can act on (NO_QUERY: close tone, no speech, no chat turn, no history).
+/// The clean transcript still travels as `user_query`, which is what history, memory
+/// search, the knowledge base, and the chat display use.
+const HANDS_FREE_NOTE: &str = "[Hands-free voice input: this text was transcribed automatically after a wake word. It may be a fragment, or background speech such as a television or other people, rather than a request to you. If it is clearly not a question or request meant for you, reply with exactly NO_QUERY and nothing else. Otherwise answer normally.]";
+
 /// The thread's recent turns, oldest first, in the shape generate_reply expects — the
 /// same thing the web app sends from its own message list. Capped at 40 messages
 /// (20 exchanges); generate_reply applies its per-model limit on top. Any failure
@@ -203,6 +210,8 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
         }
     };
 
+    let transcript = message;
+    let message = format!("{transcript}\n\n{HANDS_FREE_NOTE}");
     let result = runtime.block_on(async move {
         let history = load_recent_turns(&session_id).await;
         crate::commands::chat::generate_reply(
@@ -216,7 +225,7 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
             None, // skip_containment
             None, // skip_memory_storage
             None, // kb_enabled
-            None, // user_query
+            Some(transcript), // user_query: the clean transcript for history/memory/KB/chat
             None, // image_data
         )
         .await
