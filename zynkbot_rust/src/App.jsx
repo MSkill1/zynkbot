@@ -736,6 +736,12 @@ export default function App() {
     if (isSendingRef.current) return; // prevent re-entrant calls before React re-renders
     isSendingRef.current = true;
     const skipUserMessageAdd = options.skipUserMessageAdd === true;
+    // Regenerate and edit-and-resend pass the history explicitly. They trim the old
+    // reply out of the list with setMessages() and then call this function, but
+    // `messages` here is still the previous render's list, old reply included — so
+    // the model was handed its own answer as context and replied "as I said above,
+    // here it is again" (2026-09-06).
+    const historyBase = Array.isArray(options.history) ? options.history : messages;
 
     // Scroll to bottom when the user sends — they want to see the response.
     // Reset the "user scrolled up" flag so auto-scroll follows the new response.
@@ -807,7 +813,7 @@ export default function App() {
       // Send up to last 50 messages - backend will apply adaptive limits based on model type
       // (Local models: 8 messages, API models: 40 messages)
       // Format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-      const conversationHistory = messages.slice(-50).map(msg => ({
+      const conversationHistory = historyBase.slice(-50).map(msg => ({
         role: msg.role,
         content: msg.content
       }));
@@ -990,8 +996,10 @@ export default function App() {
       i === idx ? { ...m, content: newContent } : m
     );
     setMessages(truncated);
-    // Regenerate response — skip re-adding the user message since it's already in the list
-    await handleSendMessage(newContent, { skipUserMessageAdd: true });
+    // Regenerate response — skip re-adding the user message since it's already in the
+    // list, and send the history up to (not including) the edited message: the
+    // message itself travels separately, and the stale reply must not.
+    await handleSendMessage(newContent, { skipUserMessageAdd: true, history: truncated.slice(0, idx) });
   };
 
   const handleCancelEdit = () => setEditingMessageId(null);
@@ -1004,8 +1012,9 @@ export default function App() {
     }
     if (lastUserIdx === -1) return;
     const prompt = messages[lastUserIdx].content;
-    setMessages(messages.slice(0, lastUserIdx));
-    await handleSendMessage(prompt);
+    const history = messages.slice(0, lastUserIdx);
+    setMessages(history);
+    await handleSendMessage(prompt, { history });
   };
 
   // Execute web search when user confirms
@@ -1663,12 +1672,13 @@ export default function App() {
           <div className={isMobile ? 'mobile-conv-section' : undefined}>
             <div style={{marginBottom: '15px', display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
               <h2 style={{margin: 0, color: '#8be9fd'}}>Conversation</h2>
-              <div style={{ display: 'flex', gap: '6px' }}>
+              <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                 <button
                   onClick={handleClearConversation}
                   title="Start a new conversation"
                   style={{
-                    padding: '5px 14px',
+                    padding: '5px 12px',
+                    whiteSpace: 'nowrap',
                     background: 'rgba(98,114,164,0.25)',
                     color: '#8be9fd',
                     border: '1px solid #6272a4',
@@ -1686,9 +1696,10 @@ export default function App() {
                 {messages.length > 0 && (
                   <button
                     onClick={handleCopyAll}
-                    title="Copy entire conversation to clipboard"
+                    title="Copy the whole conversation"
                     style={{
-                      padding: '5px 14px',
+                      padding: '5px 12px',
+                    whiteSpace: 'nowrap',
                       background: copyAllDone ? 'rgba(80,250,123,0.2)' : 'rgba(98,114,164,0.25)',
                       color: copyAllDone ? '#50fa7b' : '#8be9fd',
                       border: '1px solid ' + (copyAllDone ? '#50fa7b' : '#6272a4'),
@@ -1701,7 +1712,7 @@ export default function App() {
                     onMouseOver={(e) => { if (!copyAllDone) { e.currentTarget.style.background = 'rgba(98,114,164,0.45)'; } }}
                     onMouseOut={(e) => { if (!copyAllDone) { e.currentTarget.style.background = 'rgba(98,114,164,0.25)'; } }}
                   >
-                    {copyAllDone ? 'Copied!' : 'Copy All'}
+                    {copyAllDone ? 'Copied!' : 'Copy'}
                   </button>
                 )}
                 <button
@@ -1709,7 +1720,8 @@ export default function App() {
                   disabled={containmentMode === 'hipaa'}
                   title={containmentMode === 'hipaa' ? 'Conversation history is disabled in HIPAA mode' : 'Browse past conversations'}
                   style={{
-                    padding: '5px 14px',
+                    padding: '5px 12px',
+                    whiteSpace: 'nowrap',
                     background: containmentMode === 'hipaa' ? '#44475a' : 'rgba(98,114,164,0.25)',
                     color: containmentMode === 'hipaa' ? '#6272a4' : '#8be9fd',
                     border: '1px solid ' + (containmentMode === 'hipaa' ? '#44475a' : '#6272a4'),

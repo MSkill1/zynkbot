@@ -1,4 +1,4 @@
-import { parseVoiceCommand, shouldSpeakReply, nativeTurnsToMessages } from './useVoiceSession';
+import { parseVoiceCommand, shouldSpeakReply, nativeTurnsToMessages, cleanForSpeech } from './useVoiceSession';
 
 jest.mock('@tauri-apps/api/core', () => ({ invoke: jest.fn() }));
 
@@ -56,5 +56,20 @@ describe('nativeTurnsToMessages — hands-free exchanges join the thread on scre
     expect(nativeTurnsToMessages(null, 's1')).toEqual([]);
     expect(nativeTurnsToMessages([null, {}, { sessionId: 's1' }], 's1')).toEqual([]);
     expect(nativeTurnsToMessages([turn], '')).toEqual([]);
+  });
+});
+
+describe('cleanForSpeech — what the speech engine is handed', () => {
+  test('markdown and arithmetic symbols become spoken words', () => {
+    expect(cleanForSpeech('470 ÷ 20 = **23.5**')).toBe('470 divided by 20 equals 23.5');
+  });
+
+  test('headings, bullets, bold and links are stripped, text kept', () => {
+    expect(cleanForSpeech('## Steps\n- **First** do [this](http://x)\n- then *that*'))
+      .toBe('Steps\nFirst do this\nthen that');
+  });
+
+  test('plain prose passes through unchanged', () => {
+    expect(cleanForSpeech('The capital of Colorado is Denver.')).toBe('The capital of Colorado is Denver.');
   });
 });

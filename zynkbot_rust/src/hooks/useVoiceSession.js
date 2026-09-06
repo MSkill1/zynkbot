@@ -46,6 +46,32 @@ export function nativeTurnsToMessages(turns, sessionId) {
     });
 }
 
+/**
+ * Text the way a speech engine should receive it: markdown stripped, math symbols as
+ * words. Mirrors NativeVoiceAnswerer.cleanForSpeech on the Kotlin side; this copy
+ * covers the in-app spoken reply, which goes to OpenAI's speech service.
+ */
+export function cleanForSpeech(raw) {
+  if (!raw) return '';
+  let t = String(raw);
+  t = t.replace(/```[\s\S]*?```/g, ' ');
+  t = t.replace(/`([^`]*)`/g, '$1');
+  t = t.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+  t = t.replace(/^\s{0,3}#{1,6}\s+/gm, '');
+  t = t.replace(/^\s*(?:[-*•]|\d+[.)])\s+/gm, '');
+  t = t.replace(/(\*\*|__)(.+?)\1/g, '$2');
+  t = t.replace(/(^|[^\w*])[*_](?=\S)(.+?)(?<=\S)[*_](?![\w*])/g, '$1$2');
+  t = t.replace(/×/g, ' times ').replace(/÷/g, ' divided by ').replace(/−/g, ' minus ')
+    .replace(/±/g, ' plus or minus ').replace(/≈/g, ' approximately ')
+    .replace(/≠/g, ' is not equal to ').replace(/≤/g, ' is at most ')
+    .replace(/≥/g, ' is at least ').replace(/→/g, ' to ');
+  t = t.replace(/(?<=\d)\s*=\s*(?=[\d-])/g, ' equals ');
+  t = t.replace(/(?<=\d)\s*\*\s*(?=\d)/g, ' times ');
+  t = t.replace(/(?<=\d)\s*\/\s*(?=\d)/g, ' divided by ');
+  t = t.replace(/[*_#>|~]+/g, ' ');
+  return t.replace(/[ \t]{2,}/g, ' ').trim();
+}
+
 export function parseVoiceCommand(text) {
   const t = normalizeNumbers(text.toLowerCase().trim());
 
@@ -201,7 +227,7 @@ export function useVoiceSession({ setMessages }) {
       const res = await fetch('https://api.openai.com/v1/audio/speech', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'tts-1', input: text.slice(0, 4096), voice: 'alloy' }),
+        body: JSON.stringify({ model: 'tts-1', input: cleanForSpeech(text).slice(0, 4096), voice: 'alloy' }),
       });
       if (!res.ok) return;
       const audioData = await res.arrayBuffer();

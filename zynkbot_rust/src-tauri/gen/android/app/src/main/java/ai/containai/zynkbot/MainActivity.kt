@@ -829,6 +829,22 @@ class MainActivity : TauriActivity() {
 
     override fun onWebViewCreate(webView: WebView) {
         webViewRef = WeakReference(webView)
+        // Edge-to-edge draws the page under the status bar and the gesture bar, and the
+        // page cannot pad for them itself: env(safe-area-inset-top) is 0 on a phone
+        // without a display cutout, so App.css's fallback never applies. Result: the
+        // Conversation header sat in the same strip as the clock and battery, and the
+        // gesture pill over the Send row (OnePlus, 2026-09-06). Reserve both bars as
+        // padding on the WebView, painted in the app's own background so they blend.
+        webView.setBackgroundColor(0xFF181A20.toInt())
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(webView) { v, insets ->
+            val bars = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(0, bars.top, 0, bars.bottom)
+            insets
+        }
+        androidx.core.view.ViewCompat.requestApplyInsets(webView)
         webView.addJavascriptInterface(FolderPickerBridge(), "AndroidFolderPicker")
         webView.addJavascriptInterface(ZynkbotPathsBridge(), "AndroidPaths")
         webView.addJavascriptInterface(AndroidCameraBridge(), "AndroidCamera")

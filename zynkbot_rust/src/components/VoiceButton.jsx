@@ -55,10 +55,28 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, st
     return '#6272a4';
   };
 
+  // Vector icons instead of an emoji and a text square: emoji render through the
+  // phone's font (different on every device) and the square sat off-centre on its
+  // text baseline (2026-09-06). These centre exactly and stay crisp at any size.
+  const MicIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0" />
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <line x1="8" y1="22" x2="16" y2="22" />
+    </svg>
+  );
+  const StopIcon = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="6" y="6" width="12" height="12" rx="3" />
+    </svg>
+  );
+
   const getLabel = () => {
     if (noModel) return '⚠';
-    if (isRecording) return '■';
-    return '🎤';
+    if (isRecording) return <StopIcon />;
+    return <MicIcon />;
   };
 
   const getTitle = () => {
@@ -71,11 +89,19 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, st
 
   return (
     <>
-      <style>{`@keyframes zynk-spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes zynk-spin { to { transform: rotate(360deg); } }
+        @keyframes zynk-pulse {
+          0% { box-shadow: 0 0 0 0 rgba(255, 85, 85, 0.55); }
+          100% { box-shadow: 0 0 0 14px rgba(255, 85, 85, 0); }
+        }
+        @media (prefers-reduced-motion: reduce) { .zynk-mic-recording { animation: none !important; } }
+      `}</style>
       <button
         onClick={handleClick}
         disabled={disabled || isTranscribing}
         title={getTitle()}
+        className={isRecording ? 'zynk-mic-recording' : undefined}
         style={{
           padding: '8px 12px',
           background: getBg(),
@@ -90,7 +116,9 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, st
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
+          lineHeight: 0,
           transition: 'background 0.2s ease',
+          animation: isRecording ? 'zynk-pulse 1.2s ease-out infinite' : 'none',
           ...style
         }}
       >

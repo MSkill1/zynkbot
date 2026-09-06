@@ -82,7 +82,7 @@ impl ResponseSink for JniSink {
 /// the phone can act on (NO_QUERY: close tone, no speech, no chat turn, no history).
 /// The clean transcript still travels as `user_query`, which is what history, memory
 /// search, the knowledge base, and the chat display use.
-const HANDS_FREE_NOTE: &str = "[Hands-free voice input: this text was transcribed automatically after a wake word. It may be a fragment, or background speech such as a television or other people, rather than a request to you. If it is clearly not a question or request meant for you, reply with exactly NO_QUERY and nothing else. Otherwise answer normally.]";
+const HANDS_FREE_NOTE: &str = "[Hands-free voice input: this text was transcribed automatically after a wake word. It may be a fragment, or background speech such as a television or other people, rather than a request to you. If it is clearly not a question or request meant for you, reply with exactly NO_QUERY and nothing else. Otherwise answer normally. Your reply will be read aloud by a speech engine, so write it as plain spoken sentences: no markdown, headings, bullet points, tables or code, and write numbers, symbols and arithmetic the way they are said, for example 'four hundred seventy divided by twenty equals twenty-three point five'. Keep it brief.]";
 
 /// The thread's recent turns, oldest first, in the shape generate_reply expects — the
 /// same thing the web app sends from its own message list. Capped at 40 messages

@@ -84,6 +84,53 @@ object NativeVoiceAnswerer {
         return arr.toString()
     }
 
+    /** Speak one line outside a model turn (a timer confirmation). Same microphone
+     *  discipline as answer(): stop the wake-word loop first, re-arm afterwards. */
+    fun say(context: Context, text: String) {
+        abortRequested = false
+        speaking = true
+        try { onSpeakingChanged?.invoke(true) } catch (_: Exception) {}
+        try { WakeWordService.instance?.releaseMicForSession(500) } catch (_: Exception) {}
+        try {
+            val engine = engine(context) ?: return
+            val speaker = SentenceSpeaker(engine)
+            currentSpeaker = speaker
+            speaker.speakNow(text)
+            currentSpeaker = null
+        } finally {
+            speaking = false
+            try { onSpeakingChanged?.invoke(false) } catch (_: Exception) {}
+            try { WakeWordService.instance?.resumeMicAfterSession() } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Text the way a speech engine should receive it: no markdown, symbols as words.
+     * Otherwise "470 ÷ 20 = **23.5**" is read as "division sign ... equal asterisk
+     * asterisk" (Pixel, 2026-09-06). Hands-free turns also tell the model its reply
+     * will be spoken (android_jni::HANDS_FREE_NOTE); this is the safety net for
+     * models that ignore that. The chat still receives the original markdown.
+     */
+    fun cleanForSpeech(raw: String): String {
+        var t = raw
+        t = t.replace(Regex("```[\\s\\S]*?```"), " ")
+        t = t.replace(Regex("`([^`]*)`"), "\$1")
+        t = t.replace(Regex("\\[([^\\]]+)\\]\\([^)]*\\)"), "\$1")
+        t = t.replace(Regex("(?m)^\\s{0,3}#{1,6}\\s+"), "")
+        t = t.replace(Regex("(?m)^\\s*(?:[-*•]|\\d+[.)])\\s+"), "")
+        t = t.replace(Regex("(\\*\\*|__)(.+?)\\1"), "\$2")
+        t = t.replace(Regex("(?<![\\w*])[*_](?=\\S)(.+?)(?<=\\S)[*_](?![\\w*])"), "\$1")
+        t = t.replace("×", " times ").replace("÷", " divided by ").replace("−", " minus ")
+            .replace("±", " plus or minus ").replace("≈", " approximately ")
+            .replace("≠", " is not equal to ").replace("≤", " is at most ")
+            .replace("≥", " is at least ").replace("→", " to ")
+        t = t.replace(Regex("(?<=\\d)\\s*=\\s*(?=[\\d-])"), " equals ")
+        t = t.replace(Regex("(?<=\\d)\\s*\\*\\s*(?=\\d)"), " times ")
+        t = t.replace(Regex("(?<=\\d)\\s*/\\s*(?=\\d)"), " divided by ")
+        t = t.replace(Regex("[*_#>|~]+"), " ")
+        return t.replace(Regex("[ \\t]{2,}"), " ").trim()
+    }
+
     /** Blocking: run on a background thread, never the main thread. Returns true if a
      *  reply was produced and spoken. On failure it speaks a short error line and
      *  returns false so the caller can also fall back to another delivery path. */
@@ -330,10 +377,12 @@ object NativeVoiceAnswerer {
 
         private fun enqueue(text: String, flush: Boolean) {
             if (abortRequested) return
+            val spoken = cleanForSpeech(text)
+            if (spoken.isBlank()) return
             val id = "zynk-${System.nanoTime()}"
             pending.add(id)
             val mode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-            val r = engine.speak(text, mode, null, id)
+            val r = engine.speak(spoken, mode, null, id)
             if (r == TextToSpeech.SUCCESS) { utterances++; spokeSomething = true } else pending.remove(id)
         }
 

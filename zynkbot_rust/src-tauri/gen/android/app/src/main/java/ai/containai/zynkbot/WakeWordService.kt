@@ -630,6 +630,15 @@ class WakeWordService : Service() {
             playClosingTone()
             return
         }
+        VoiceCommands.parse(transcript)?.let { cmd ->
+            Thread {
+                val ok = VoiceCommands.execute(this, cmd)
+                Log.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
+                NativeVoiceAnswerer.say(this, if (ok) VoiceCommands.confirmation(cmd) else VoiceCommands.FAILED_LINE)
+                releaseWakeLock()
+            }.start()
+            return
+        }
         Log.i(TAG, "Answering natively: \"$transcript\"")
 
         // The 25s detection wake lock (acquired for chime+dictation) is too short

@@ -55,6 +55,9 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     }
 
     private var screenLock: PowerManager.WakeLock? = null
+    /** Set by a tap on the Z: this trigger was not wanted. Checked wherever a step
+     *  would otherwise carry on (transcript in, answer out). */
+    @Volatile private var cancelled = false
 
     @Volatile private var speechService: org.vosk.android.SpeechService? = null
     private val silenceHandler = Handler(Looper.getMainLooper())
@@ -73,6 +76,9 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         val root = FrameLayout(context).apply { setBackgroundColor(Color.TRANSPARENT) }
         val size = (LOGO_DP * density).toInt()
         val z = ZView(context)
+        // A tap on the Z cancels the session — the way out of an unwanted trigger.
+        z.isClickable = true
+        z.setOnClickListener { cancelByUser() }
         val lp = FrameLayout.LayoutParams(size, size, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
         lp.bottomMargin = (BOTTOM_MARGIN_DP * density).toInt()
         root.addView(z, lp)
@@ -193,6 +199,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         Log.i(TAG, "Session shown — starting dictation")
         ZynkAssistantService.sessionActive = true
         current = this
+        cancelled = false
         // The session window draws over the lock screen but nothing turns the display
         // ON — with the phone asleep the Z was never seen (OnePlus, 2026-09-04: session
         // shown 13:22:03, screen dark until the power button at 13:22:32). Light it,
@@ -220,15 +227,37 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     /**
      * The session window spans the whole screen and, by default, swallows every
      * touch — even over its transparent area. When Matt opened the app mid-reply the
-     * Z sat over the UI and ate the tap on Stop (OnePlus, 2026-09-04). The Z is
-     * display-only, so claim no touchable region at all: everything passes through
-     * to whatever is beneath, and no content inset so apps under it are not resized.
+     * Z sat over the UI and ate the tap on Stop (OnePlus, 2026-09-04). So only the Z's
+     * own square takes touches (a tap cancels the session); everything around it
+     * passes through to whatever is beneath, and no content inset so apps under it
+     * are not resized.
      */
     override fun onComputeInsets(outInsets: Insets) {
         super.onComputeInsets(outInsets)
         outInsets.contentInsets.top = zView?.rootView?.height ?: 0
         outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
-        outInsets.touchableRegion.setEmpty()
+        val z = zView
+        if (z != null && z.width > 0 && z.visibility == View.VISIBLE) {
+            val loc = IntArray(2)
+            z.getLocationInWindow(loc)
+            outInsets.touchableRegion.set(loc[0], loc[1], loc[0] + z.width, loc[1] + z.height)
+        } else {
+            outInsets.touchableRegion.setEmpty()
+        }
+    }
+
+    /** A tap on the Z: stop whatever is in progress, close audibly, back to passive
+     *  listening. Both the listening and the speaking phases are covered. */
+    private fun cancelByUser() {
+        if (cancelled) return
+        cancelled = true
+        Log.i(TAG, "Session cancelled by a tap on the Z")
+        stopListening()
+        NativeVoiceAnswerer.stopSpeaking()
+        Thread {
+            NativeVoiceAnswerer.playCloseTone(context)
+            main.post { hide() }
+        }.start()
     }
 
     /** The app came to the front while this session is still busy: its own Stop
@@ -294,6 +323,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
                 }
                 silenceHandler.removeCallbacksAndMessages(null)
                 speechService = null
+                if (cancelled) return
                 Log.i(TAG, "Transcript: \"$transcript\"")
                 answerAndFinish(transcript)
             }
@@ -351,6 +381,20 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             // audibly so the user knows it fired and shut down, rather than vanishing.
             Thread {
                 NativeVoiceAnswerer.playCloseTone(context)
+                main.post { hide() }
+            }.start()
+            return
+        }
+        // Clock commands are handled here, never by the model (KI-027): it has no
+        // clock, and either invented a confirmation or said it couldn't. The
+        // confirmation is spoken only after the clock app accepted the intent.
+        VoiceCommands.parse(transcript)?.let { cmd ->
+            main.post { zView?.mode = ZView.Mode.THINKING }
+            Thread {
+                NativeVoiceAnswerer.playCloseTone(context)
+                val ok = VoiceCommands.execute(context, cmd)
+                Log.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
+                if (!cancelled) NativeVoiceAnswerer.say(context, if (ok) VoiceCommands.confirmation(cmd) else VoiceCommands.FAILED_LINE)
                 main.post { hide() }
             }.start()
             return
