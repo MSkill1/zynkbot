@@ -709,8 +709,11 @@ class WakeWordService : Service() {
             }
         }
 
-        // Always post the notification: auto-opens for screen-locked (full-screen-intent),
-        // and acts as a tap-to-open fallback for GrapheneOS or when startActivity is blocked.
+        // Always post the notification as a tap-to-open fallback (GrapheneOS, or when
+        // startActivity is blocked). It used to carry a full-screen intent that opened
+        // the app on a locked screen; that permission is restricted by Google Play to
+        // alarm and calling apps, and the native assistant path answers without
+        // opening the app, so the notification is now tap-to-open only.
         // Use FLAG_CANCEL_CURRENT so each delivery gets a fresh PendingIntent with the
         // correct transcript. FLAG_UPDATE_CURRENT + FLAG_IMMUTABLE conflict: IMMUTABLE
         // prevents UPDATE_CURRENT from changing extras, so subsequent deliveries would
@@ -726,7 +729,6 @@ class WakeWordService : Service() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(pendingIntent)          // fires when user taps the notification
-            .setFullScreenIntent(pendingIntent, !screenOn) // fires automatically when screen is off
             .setAutoCancel(true)
             .build()
         getSystemService(NotificationManager::class.java)

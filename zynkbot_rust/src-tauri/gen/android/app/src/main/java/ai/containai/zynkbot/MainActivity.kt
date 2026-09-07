@@ -180,12 +180,12 @@ class MainActivity : TauriActivity() {
         @JavascriptInterface
         fun pick() {
             runOnUiThread {
+                // Photos come through the system photo picker, which needs no
+                // permission, so READ_MEDIA_IMAGES is no longer declared (Google
+                // Play asks for a justification otherwise). Only the pre-13 legacy
+                // storage permission is still requested here.
                 val permsNeeded = mutableListOf<String>()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED) {
-                        permsNeeded.add(Manifest.permission.READ_MEDIA_IMAGES)
-                    }
-                } else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
+                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
                     if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                         permsNeeded.add(Manifest.permission.READ_EXTERNAL_STORAGE)
                     }
@@ -553,10 +553,6 @@ class MainActivity : TauriActivity() {
                 fire("window.__nativeSpeaking&&window.__nativeSpeaking(${if (on) "true" else "false"});")
             }
             NativeVoiceAnswerer.onTurnCompleted = { fire("window.__nativeTurns&&window.__nativeTurns();") }
-            // A locked-screen "Hey Zynk" reply auto-opens the app via a full-screen
-            // intent. Android 14+ denies that permission by default; without it the
-            // second locked query only posts a notification instead of answering.
-            ensureFullScreenIntentPermission()
             val intent = Intent(this@MainActivity, WakeWordService::class.java).apply {
                 putExtra("threshold", threshold)
                 putExtra("modelDir", modelDir.absolutePath)
@@ -1015,29 +1011,6 @@ class MainActivity : TauriActivity() {
             for (child in children) {
                 copyAssetDir("$assetPath/$child", File(destDir, child))
             }
-        }
-    }
-
-    // Prompt once per app launch for USE_FULL_SCREEN_INTENT if it isn't already
-    // allowed. There is no runtime-permission dialog for it on Android 14+; the app
-    // must send the user to a dedicated Settings page. canUseFullScreenIntent()
-    // means we never nag once it's granted. Wrapped in try/catch because some OEM
-    // ROMs (e.g. ColorOS) have thrown on the appops path historically.
-    private var promptedFullScreenIntent = false
-    private fun ensureFullScreenIntentPermission() {
-        if (promptedFullScreenIntent) return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
-        val nm = getSystemService(NotificationManager::class.java)
-        if (nm.canUseFullScreenIntent()) { promptedFullScreenIntent = true; return }
-        promptedFullScreenIntent = true
-        try {
-            startActivity(
-                Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-            )
-        } catch (e: Exception) {
-            Log.w("MainActivity", "Could not open full-screen-intent settings: ${e.message}")
         }
     }
 
