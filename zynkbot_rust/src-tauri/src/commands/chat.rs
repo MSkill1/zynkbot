@@ -2103,28 +2103,55 @@ pub async fn run_ensemble(
     }))
 }
 
-/// The explicit "Remember:" command. Case-insensitive on the keyword
-/// ("Remember:", "remember:", "REMEMBER:") and tolerant of leading and
-/// trailing whitespace. Dictation never produces punctuation, so the spoken
-/// form "remember colon ..." (what Vosk transcribes when the user says the
-/// word "colon") is accepted too, typed or hands-free. Returns the text after
-/// the keyword, trimmed, or `None` when the message is not a Remember command.
+/// The explicit "Remember:" command. Returns the text after the keyword,
+/// trimmed, or `None` when the message is not a Remember command.
+///
+/// Accepted forms, all case-insensitive:
+/// - typed: `Remember: ...`
+/// - spoken: `remember colon ...` — dictation never produces punctuation, so
+///   the user says the word "colon". The offline Vosk model does not know
+///   that word well and has transcribed it as "cohen" and "call and" in real
+///   use (OnePlus, 2026-09-07: "remember cohen the gate code is..." was stored
+///   as a memory about someone named Cohen). The spelling variants below are
+///   the ones seen or phonetically adjacent; each must be followed by a space
+///   or end of text so "remember colonial history" is not a command.
+/// - punctuation right after the keyword is ignored ("Remember colon, the...").
 pub fn explicit_remember(query: &str) -> Option<String> {
-    const KEYWORDS: [&str; 2] = ["remember:", "remember colon"];
+    const SPOKEN_COLON: [&str; 8] = [
+        "colon", "colin", "collin", "cohen", "colan", "call and", "call in", "call on",
+    ];
     let trimmed = query.trim();
-    for kw in KEYWORDS {
-        if trimmed.len() < kw.len() || !trimmed.is_char_boundary(kw.len()) {
-            continue;
+    let lower = trimmed.to_ascii_lowercase();
+
+    // Typed form: "remember:" with anything after.
+    if let Some(rest) = lower.strip_prefix("remember:") {
+        let rest_start = trimmed.len() - rest.len();
+        return Some(trimmed[rest_start..].trim().to_string());
+    }
+
+    // Spoken form: "remember" + one of the colon spellings + separator.
+    let after_remember = match lower.strip_prefix("remember") {
+        Some(r) if r.starts_with(char::is_whitespace) => r.trim_start(),
+        _ => return None,
+    };
+    for variant in SPOKEN_COLON {
+        if let Some(rest) = after_remember.strip_prefix(variant) {
+            // A space or sentence punctuation may follow; an apostrophe may not,
+            // so "remember cohen's birthday" stays an ordinary sentence.
+            const SEPARATORS: [char; 6] = [',', '.', ';', ':', '!', '?'];
+            let separated = rest.is_empty()
+                || rest.starts_with(char::is_whitespace)
+                || rest.starts_with(SEPARATORS);
+            if !separated {
+                continue;
+            }
+            let rest_start = trimmed.len() - rest.len();
+            let content = trimmed[rest_start..]
+                .trim_start_matches(|c: char| SEPARATORS.contains(&c) || c.is_whitespace())
+                .trim_end()
+                .to_string();
+            return Some(content);
         }
-        if !trimmed[..kw.len()].eq_ignore_ascii_case(kw) {
-            continue;
-        }
-        let rest = &trimmed[kw.len()..];
-        // "remember colonial history" must not match the spoken form.
-        if kw.ends_with("colon") && !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
-            continue;
-        }
-        return Some(rest.trim().to_string());
     }
     None
 }
@@ -2149,10 +2176,27 @@ mod tests {
     }
 
     #[test]
+    fn vosk_misspellings_of_colon_are_accepted() {
+        // Both transcripts are verbatim from the OnePlus log, 2026-09-07.
+        assert_eq!(explicit_remember("remember cohen the gate code is for to one").as_deref(), Some("the gate code is for to one"));
+        assert_eq!(explicit_remember("remember call and i park on level three").as_deref(), Some("i park on level three"));
+        assert_eq!(explicit_remember("remember colin my locker is twelve").as_deref(), Some("my locker is twelve"));
+    }
+
+    #[test]
+    fn punctuation_after_the_keyword_is_ignored() {
+        assert_eq!(explicit_remember("Remember colon, the gate code is 9247.").as_deref(), Some("the gate code is 9247."));
+        assert_eq!(explicit_remember("Remember:  the cat is grey").as_deref(), Some("the cat is grey"));
+    }
+
+    #[test]
     fn remember_without_a_colon_is_an_ordinary_message() {
         assert!(explicit_remember("remember my birthday").is_none());
         assert!(explicit_remember("Do you remember: the cat?").is_none());
         assert!(explicit_remember("remember colonial history for me").is_none());
+        assert!(explicit_remember("remember cohen's birthday is in may").is_none());
+        assert!(explicit_remember("remembering colon cancer risks").is_none());
+        assert!(explicit_remember("i remember colon the gate").is_none());
         assert!(explicit_remember("").is_none());
     }
 
