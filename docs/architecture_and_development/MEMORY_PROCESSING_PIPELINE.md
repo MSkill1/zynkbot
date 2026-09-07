@@ -418,7 +418,7 @@ LLM Response: "WEB_SEARCH_NEEDED: current weather in Singapore 2026"
 
 **Note:** `question_extractor.rs` contains more sophisticated clause-level fact extraction (possessive patterns, NER-based entity detection) available as on-demand Tauri commands (`check_question_worthiness`, `extract_facts_from_question`), but is not wired into the automatic pipeline.
 
-**Explicit override:** A message prefixed with `Remember:` always passes the gate regardless of content.
+**Explicit override:** A message prefixed with `Remember:` (any case) or the spoken form `remember colon` — what dictation produces when the user says the word "colon" — always passes the gate regardless of content, and the text after the keyword is stored verbatim (`explicit_remember()` in `commands/chat.rs`).
 
 ### 3.4 LLM Memory Decision (Background Task)
 

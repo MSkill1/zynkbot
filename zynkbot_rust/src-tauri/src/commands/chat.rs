@@ -2105,18 +2105,28 @@ pub async fn run_ensemble(
 
 /// The explicit "Remember:" command. Case-insensitive on the keyword
 /// ("Remember:", "remember:", "REMEMBER:") and tolerant of leading and
-/// trailing whitespace. Returns the text after the colon, trimmed, or `None`
-/// when the message is not a Remember command.
+/// trailing whitespace. Dictation never produces punctuation, so the spoken
+/// form "remember colon ..." (what Vosk transcribes when the user says the
+/// word "colon") is accepted too, typed or hands-free. Returns the text after
+/// the keyword, trimmed, or `None` when the message is not a Remember command.
 pub fn explicit_remember(query: &str) -> Option<String> {
-    const KEYWORD: &str = "remember:";
+    const KEYWORDS: [&str; 2] = ["remember:", "remember colon"];
     let trimmed = query.trim();
-    if trimmed.len() < KEYWORD.len() || !trimmed.is_char_boundary(KEYWORD.len()) {
-        return None;
+    for kw in KEYWORDS {
+        if trimmed.len() < kw.len() || !trimmed.is_char_boundary(kw.len()) {
+            continue;
+        }
+        if !trimmed[..kw.len()].eq_ignore_ascii_case(kw) {
+            continue;
+        }
+        let rest = &trimmed[kw.len()..];
+        // "remember colonial history" must not match the spoken form.
+        if kw.ends_with("colon") && !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+            continue;
+        }
+        return Some(rest.trim().to_string());
     }
-    if !trimmed[..KEYWORD.len()].eq_ignore_ascii_case(KEYWORD) {
-        return None;
-    }
-    Some(trimmed[KEYWORD.len()..].trim().to_string())
+    None
 }
 
 #[cfg(test)]
@@ -2132,9 +2142,17 @@ mod tests {
     }
 
     #[test]
+    fn spoken_remember_colon_from_dictation_works_too() {
+        assert_eq!(explicit_remember("remember colon i park on level three").as_deref(), Some("i park on level three"));
+        assert_eq!(explicit_remember("Remember colon the gate code is four two one").as_deref(), Some("the gate code is four two one"));
+        assert_eq!(explicit_remember("remember colon").as_deref(), Some(""));
+    }
+
+    #[test]
     fn remember_without_a_colon_is_an_ordinary_message() {
         assert!(explicit_remember("remember my birthday").is_none());
         assert!(explicit_remember("Do you remember: the cat?").is_none());
+        assert!(explicit_remember("remember colonial history for me").is_none());
         assert!(explicit_remember("").is_none());
     }
 

@@ -28,6 +28,7 @@ Zynkbot uses a local SQLite database for persistent, semantic memory that learns
 - ✅ Foundational knowledge seeding
 - ✅ No cloud dependency
 - ✅ Verifiable recall (UI shows exactly which memories influenced each response)
+- ✅ **Remember: command** — start a message with `Remember:` and everything after it is saved word for word, bypassing the automatic "is this worth keeping" decision. The keyword is case-insensitive (`remember:` and `REMEMBER:` work). It works by voice too: say "remember colon" followed by the fact, whether dictating into the app or hands-free after "Hey Zynk".
 - ✅ Search by content or namespace
 
 **Memory stays local**

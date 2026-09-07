@@ -142,7 +142,7 @@ export default function App() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const TIPS = [
-    <>Tip: start with "<strong>Remember:</strong>" to force save directly into your memories — use it when you want exact details saved precisely.</>,
+    <>Tip: start with "<strong>Remember:</strong>" to save exactly what follows into your memories, typed or spoken. Any case works, and by voice just say "remember colon" before the fact.</>,
     <>Tap <strong>Memory Manager</strong> to see everything Zynkbot knows about you. You can edit, delete, or add memories at any time.</>,
     <>Open <strong>History</strong> to browse past conversations and copy any response.</>,
     <><strong>ZynkSync</strong> keeps your memories in sync across all your devices automatically — no account required.</>,
@@ -1915,6 +1915,7 @@ export default function App() {
                     }
                   }}
                   placeholder={window.AndroidPaths ? "Type your message..." : "Type your message... (Shift+Enter for new line)"}
+                  title={'Start with "Remember:" to save exactly what follows as a memory. Any case works; by voice, say "remember colon".'}
                   className="query-input"
                   disabled={isLoading}
                   rows={isMobile ? 3 : 4}
