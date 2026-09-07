@@ -201,6 +201,7 @@ pub async fn generate_reply(
                         web_search_needed: None,
                         web_search_query: None,
                         original_query: None,
+                        kb_note: None,
                     });
                 }
                 Ok(None) => {
@@ -223,6 +224,7 @@ pub async fn generate_reply(
                         web_search_needed: None,
                         web_search_query: None,
                         original_query: None,
+                        kb_note: None,
                     });
                 }
             }
@@ -252,6 +254,7 @@ pub async fn generate_reply(
                             web_search_needed: None,
                             web_search_query: None,
                             original_query: None,
+                        kb_note: None,
                         });
                     }
                 }
@@ -436,17 +439,22 @@ pub async fn generate_reply(
     // Only searches when user clicks "Search Knowledge Base" button
     let kb_enabled = kb_enabled.unwrap_or(false);
     let mut kb_context = String::new();
+    // What the search actually found. Drives the prompt wording (kb_prompt.rs),
+    // the note shown in the chat, and whether memory extraction runs: an answer
+    // given when the KB had no real match is not allowed to become a stored fact.
+    let mut kb_grounded = true;
+    let mut kb_note: Option<String> = None;
 
     if kb_enabled {
         let kb_start = std::time::Instant::now();
 
         // EXPLICIT KB SEARCH (user clicked KB button)
-        // Much more aggressive than automatic search since user has explicit intent
         // - 10 chunks (comprehensive coverage)
         // - 15% threshold (cast wide net - user knows what they're looking for)
-        // - Always return top results even if below threshold
+        // - below the threshold, the 5 best chunks are still shown but labelled weak
         let kb_chunk_limit = 10;
         let kb_similarity_threshold = 0.15;
+        let kb_weak_limit = 5;
 
         println!(
             "[KB RAG] 🔍 EXPLICIT KB SEARCH ({} chunks, {:.0}% threshold)",
@@ -454,56 +462,19 @@ pub async fn generate_reply(
             kb_similarity_threshold * 100.0
         );
 
-        // Perform semantic search in KB
         // Explicit KB search: exclude system docs - user wants THEIR documents only
         match crate::kb_rag::search_kb_chunks(&db_pool, &user_id, &query, kb_chunk_limit, false).await {
             Ok(kb_results) => {
-                // For EXPLICIT search: be more permissive
-                // 1. First, get all chunks above threshold
-                let mut relevant_chunks: Vec<_> = kb_results
-                    .iter()
-                    .filter(|r| r.similarity_score > kb_similarity_threshold)
-                    .cloned()
-                    .collect();
-
-                // 2. If none meet threshold, take top 5 best matches anyway (user explicitly requested)
-                if relevant_chunks.is_empty() && !kb_results.is_empty() {
-                    println!("[KB RAG] ⚠️ No chunks above {:.0}% threshold - returning top 5 best matches", kb_similarity_threshold * 100.0);
-                    relevant_chunks = kb_results.into_iter().take(5).collect();
-                }
-
-                if !relevant_chunks.is_empty() {
-                    println!(
-                        "[KB RAG] ✅ Found {} relevant chunks (best: {:.1}%, worst: {:.1}%)",
-                        relevant_chunks.len(),
-                        relevant_chunks.first().map(|r| r.similarity_score * 100.0).unwrap_or(0.0),
-                        relevant_chunks.last().map(|r| r.similarity_score * 100.0).unwrap_or(0.0)
-                    );
-
-                    // Build KB context section with emphatic instructions
-                    kb_context.push_str("\n\n╔═══════════════════════════════════════════════════════════╗\n");
-                    kb_context.push_str("║  🔍 EXPLICIT KNOWLEDGE BASE SEARCH - USER REQUESTED       ║\n");
-                    kb_context.push_str("╚═══════════════════════════════════════════════════════════╝\n\n");
-                    kb_context.push_str("⚠️ CRITICAL INSTRUCTION: The user clicked the KB button to explicitly search their indexed documents.\n");
-                    kb_context.push_str("You MUST use the information below to answer the question.\n");
-                    kb_context.push_str("DO NOT suggest web search - the answer is in the KB context below.\n\n");
-                    kb_context.push_str("=== RETRIEVED DOCUMENTS ===\n\n");
-
-                    for (idx, result) in relevant_chunks.iter().enumerate() {
-                        kb_context.push_str(&format!(
-                            "📄 Document {}: {} (similarity: {:.1}%)\n{}\n\n",
-                            idx + 1,
-                            result.file_name,
-                            result.similarity_score * 100.0,
-                            result.content
-                        ));
-                    }
-
-                    kb_context.push_str("=== END OF KB DOCUMENTS ===\n\n");
-                    kb_context.push_str("✅ Answer the question using ONLY the information above from the user's Knowledge Base.\n");
-                } else {
-                    println!("[KB RAG] ⚠️ No documents found in knowledge base");
-                }
+                let built = crate::kb_prompt::build(&kb_results, kb_similarity_threshold, kb_weak_limit);
+                println!(
+                    "[KB RAG] outcome {:?}: {} chunks returned (best: {:.1}%)",
+                    built.outcome,
+                    kb_results.len(),
+                    kb_results.first().map(|r| r.similarity_score * 100.0).unwrap_or(0.0)
+                );
+                kb_grounded = built.grounded();
+                kb_note = built.note;
+                kb_context = built.context;
             }
             Err(e) => {
                 eprintln!("[KB RAG] ⚠️ Knowledge base search failed: {}", e);
@@ -1115,6 +1086,7 @@ pub async fn generate_reply(
         web_search_needed: web_search_query.as_ref().map(|_| true),
         web_search_query: web_search_query.clone(),
         original_query: Some(query.clone()),
+        kb_note: kb_note.clone(),
     };
 
     // STEP 10: LOG EXCHANGE TO CONVERSATION HISTORY (non-blocking, skipped in HIPAA mode,
@@ -1151,17 +1123,26 @@ pub async fn generate_reply(
 
     // HIPAA Mode: Disable memory extraction and storage entirely for compliance
     let hipaa_ephemeral_enforcement = containment_mode.to_lowercase() == "hipaa";
-    let effective_skip_memory = skip_memory_storage.unwrap_or(false) || hipaa_ephemeral_enforcement;
+    let explicit_remember_content = explicit_remember(&query);
+    let is_explicit_remember = explicit_remember_content.is_some();
+    // A KB-button answer that the search could not ground (nothing found, or
+    // weak matches only) is not trusted enough to learn from: a tester's
+    // invented answer was stored as a memory and then "confirmed" by a later
+    // memory (GitHub #17/#22). An explicit "Remember:" still stores verbatim.
+    let kb_ungrounded_reply = kb_enabled && !kb_grounded && !is_explicit_remember;
+    let effective_skip_memory = skip_memory_storage.unwrap_or(false)
+        || hipaa_ephemeral_enforcement
+        || kb_ungrounded_reply;
 
     if hipaa_ephemeral_enforcement {
         println!("[HIPAA] 🔒 Ephemeral mode enforced - memory extraction and storage disabled");
     }
-
-    let is_explicit_remember = query.trim().to_lowercase().starts_with("remember:");
+    if kb_ungrounded_reply {
+        println!("[KB RAG] memory extraction skipped: the knowledge base had no real match for this question");
+    }
 
     // Explicit "Remember:" commands always store verbatim — override any LLM MEMORY_EXTRACT.
-    if is_explicit_remember {
-        let remember_content = query.trim()["remember:".len()..].trim().to_string();
+    if let Some(remember_content) = explicit_remember_content {
         if !remember_content.is_empty() {
             println!("[RUST] 📌 Explicit Remember: command — storing verbatim content");
             extracted_facts = vec![remember_content];
@@ -1703,36 +1684,13 @@ pub async fn run_ensemble(
         context.push_str("[END BACKGROUND CONTEXT]\n");
     }
 
-    // KB context (if enabled)
+    // KB context (if enabled) — same wording rules as the single-model path
     if kb_enabled.unwrap_or(false) {
         match crate::kb_rag::search_kb_chunks(&db_pool, &user_id, &search_query, 8, false).await {
             Ok(kb_results) => {
-                let relevant_chunks: Vec<_> = kb_results.iter()
-                    .filter(|r| r.similarity_score > 0.15)
-                    .cloned()
-                    .collect();
-                let to_use = if relevant_chunks.is_empty() {
-                    kb_results.into_iter().take(5).collect::<Vec<_>>()
-                } else {
-                    relevant_chunks
-                };
-                if !to_use.is_empty() {
-                    context.push_str("\n\n[KNOWLEDGE BASE DOCUMENTS]\n");
-                    context.push_str("The following documents were retrieved from the user's Knowledge Base. Use this information in your answer.\n\n");
-                    for (idx, chunk) in to_use.iter().enumerate() {
-                        context.push_str(&format!(
-                            "📄 Document {}: {} (relevance: {:.1}%)\n{}\n\n",
-                            idx + 1,
-                            chunk.file_name,
-                            chunk.similarity_score * 100.0,
-                            chunk.content
-                        ));
-                    }
-                    context.push_str("[END KNOWLEDGE BASE DOCUMENTS]\n");
-                    println!("[Ensemble] Added {} KB chunks to context", to_use.len());
-                } else {
-                    println!("[Ensemble] KB search returned no results");
-                }
+                let built = crate::kb_prompt::build(&kb_results, 0.15, 5);
+                println!("[Ensemble] KB outcome {:?} ({} chunks returned)", built.outcome, kb_results.len());
+                context.push_str(&built.context);
             }
             Err(e) => println!("[Ensemble] KB search failed (non-fatal): {}", e),
         }
@@ -2143,4 +2101,45 @@ pub async fn run_ensemble(
         "successful_models": successful_responses.len(),
         "search_results": search_results_json
     }))
+}
+
+/// The explicit "Remember:" command. Case-insensitive on the keyword
+/// ("Remember:", "remember:", "REMEMBER:") and tolerant of leading and
+/// trailing whitespace. Returns the text after the colon, trimmed, or `None`
+/// when the message is not a Remember command.
+pub fn explicit_remember(query: &str) -> Option<String> {
+    const KEYWORD: &str = "remember:";
+    let trimmed = query.trim();
+    if trimmed.len() < KEYWORD.len() || !trimmed.is_char_boundary(KEYWORD.len()) {
+        return None;
+    }
+    if !trimmed[..KEYWORD.len()].eq_ignore_ascii_case(KEYWORD) {
+        return None;
+    }
+    Some(trimmed[KEYWORD.len()..].trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::explicit_remember;
+
+    #[test]
+    fn remember_keyword_is_case_insensitive() {
+        assert_eq!(explicit_remember("Remember: I park on level 3").as_deref(), Some("I park on level 3"));
+        assert_eq!(explicit_remember("remember: I park on level 3").as_deref(), Some("I park on level 3"));
+        assert_eq!(explicit_remember("REMEMBER: I park on level 3").as_deref(), Some("I park on level 3"));
+        assert_eq!(explicit_remember("  ReMeMbEr:   spaced out  ").as_deref(), Some("spaced out"));
+    }
+
+    #[test]
+    fn remember_without_a_colon_is_an_ordinary_message() {
+        assert!(explicit_remember("remember my birthday").is_none());
+        assert!(explicit_remember("Do you remember: the cat?").is_none());
+        assert!(explicit_remember("").is_none());
+    }
+
+    #[test]
+    fn remember_with_nothing_after_it_is_empty_not_none() {
+        assert_eq!(explicit_remember("Remember:").as_deref(), Some(""));
+    }
 }

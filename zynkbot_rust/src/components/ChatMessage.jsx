@@ -19,6 +19,9 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
   const content = message.content;
   const recalled_memories = message.recalled_memories || metadata?.recalled_memories || [];
   const schema = metadata?.schema;
+  // Set by the backend when the KB button was on but the search found no real
+  // match: the answer is not grounded in the user's documents.
+  const kbNote = metadata?.kb_note;
   const webSearchNeeded = message.web_search_needed;
   const webSearchQuery = message.web_search_query;
   const originalQuery = message.original_query;
@@ -105,6 +108,11 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
           {recalled_memories.length > 0 && (
             <span className="memory-indicator">
               📚 {recalled_memories.length} {recalled_memories.length === 1 ? 'memory' : 'memories'}
+            </span>
+          )}
+          {kbNote && (
+            <span className="memory-indicator" title="This reply is not grounded in your Knowledge Base documents">
+              📂 {kbNote}
             </span>
           )}
         </div>

@@ -902,6 +902,7 @@ export default function App() {
           schema: response.schema,
           model_backend: response.model_backend,
           containment_mode: response.containment_mode,
+          kb_note: response.kb_note,
           recalled_memories: response.recalled_memories || []
         }
       };

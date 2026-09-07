@@ -19,6 +19,7 @@ mod zynklink;  // Device-to-device file sharing
 mod web_search;  // DuckDuckGo web search
 mod knowledge_base;  // External reference document system
 mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
+mod kb_prompt;  // Wording of the KB prompt block by search outcome (found / weak / nothing)
 mod conversation_history;  // Persistent conversation log with full-text search
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
@@ -218,6 +219,10 @@ pub struct ReplyResponse {
     web_search_query: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     original_query: Option<String>,
+    /// Set when the KB button was on but the search found no real match, so the
+    /// UI can show that the answer is not grounded in the user's documents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kb_note: Option<String>,
 }
 
 // ============================================================================
