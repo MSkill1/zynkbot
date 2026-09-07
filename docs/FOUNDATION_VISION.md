@@ -92,7 +92,7 @@ Non-profit providing governance and funding stability for Zynkbot and the Contai
 
 ## How This Is Funded
 
-Zynkbot remains free. The project sustains itself through optional services and a developer ecosystem — not through data collection or advertising.
+Zynkbot remains free. The project sustains itself through optional services and a developer ecosystem — not through data collection or advertising. The tiers decided on 2026-09-07: the core app free and complete (Kitchen kit included); additional kits as one-time purchases; professional snap-ins by subscription; modes and enterprise deployments above that. None of this changes the zero-trust design, because a kit never routes data through ContainAI.
 
 **Optional Cloud Memory Backup**
 Zynkbot's memory database lives on your device. An optional encrypted cloud backup service will be available for a small monthly fee — comparable to what you'd pay for cloud storage. Useful when you're away from your local network and need a device to be current, or as protection against device loss. Nothing is required; this is a convenience service for people who want it.

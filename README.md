@@ -18,6 +18,8 @@ Zynkbot wasn't built to be anti-surveillance software by ideology. But when main
 
 The memory system is the core. Every conversation is processed into structured memories — facts, preferences, context, and the relationships between them — stored locally and retrieved semantically. Over time, that accumulated structure *is* your Zynkbot: the understanding you've built together. The underlying AI model is just the face — swap it for a different local model or switch cloud providers without losing anything. In this sense it's less like a chatbot and more like the computer aboard the Starship Enterprise: not because it talks to you, but because it never forgets what you've told it. It will come to know you well, and it's genuinely useful to talk to — but it isn't a replacement for the people in your life, and it isn't trying to be. It's a tool for understanding yourself, not a substitute for your relationships with other people.
 
+The kitchen is the plainest example of what that memory is for. Tell Zynkbot what you cooked and how it went, in whatever words you like. Ask it later what to make, and it remembers what you liked, what you refused, and how you are trying to eat. If you fall off a diet, tell it to forget those weeks and start again, because the memory is yours to edit. This ships as the free Kitchen kit: a packaged, opt-in use of the memory system. Kits run on your device, are off unless you turn them on, and can be deleted as a group.
+
 Zynkbot also runs a networking layer entirely on your local network. ZynkSync keeps your memory database consistent across your own devices. ZynkLink enables direct file transfers between paired users. ZChat provides device-to-device messaging with no cloud relay. Download a colleague's project directly into your knowledge base and Zynkbot is instantly familiar with it — without any of it touching a third-party server.
 
 And because the entire stack is offline-first — no cloud dependency, no subscription, no internet required — the same infrastructure that protects one person's memory also works where connectivity can't be assumed: field work, disaster response, resource-limited regions. A snap-in architecture customizes the platform for specific domains — healthcare, legal, research, enterprise — on the same local-first foundation. **[→ Digital resilience documentation](docs/DIGITAL_RESILIENCE.md)**
@@ -48,6 +50,7 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 ## Key Features
 
 - **Persistent Semantic Memory** - Transparent, editable recall with hybrid entity + semantic search
+- **Kits** - Opt-in packaged uses of the memory system; the Kitchen kit is included free, with others planned as one-time purchases
 - **Privacy-First** - Local-first architecture, no telemetry, optional API use
 - **Safety Modes** - Guardian, Child, HIPAA, Sovereign, Witness containment modes
 - **Pure Rust ML** - Embeddings, NER, and safety classification run on the Candle framework — no Python runtime

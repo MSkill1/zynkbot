@@ -35,6 +35,21 @@ Zynkbot uses a local SQLite database for persistent, semantic memory that learns
 
 ---
 
+### 🍳 Kits (v1.0 — in development)
+
+A kit is a packaged, opt-in use of the memory system built around one everyday job. It is data, not code: a short block of standing instructions added to the system prompt while the kit is on, a memory namespace of its own, a few opening questions, and two or three quick prompts above the message box. A kit has no permissions and no network access; everything it does, you could do by typing.
+
+**How you use one:**
+- **Turn it on** from the card at the end of onboarding, or from the Kits section in System Controls. Skip is the default and nothing is created until you say yes.
+- **Turn it off** and its instructions and quick prompts go away immediately. Its memories stay.
+- **Forget everything from this kit** deletes the kit's namespace in one step, so you can start again clean.
+
+**The first kit is the Kitchen kit.** It remembers what you cook, how it turned out, what you liked and refused, and how you are trying to eat. Ask it what to make tonight or how your week is going.
+
+The core app stays free and complete, Kitchen kit included. Other kits will be one-time purchases; a kit never routes anything through ContainAI.
+
+---
+
 ### 📂 Namespace Categories
 
 Every memory is assigned a **namespace** — a category label auto-detected from the memory's

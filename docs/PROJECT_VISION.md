@@ -78,6 +78,7 @@ Zynkbot is the foundation of a larger ecosystem. The two planned expansions are 
 ### 4. Sustainable Community Source
 - Dual licensing prevents exploitation
 - Commercial use funds development
+- Product tiers (decided 2026-09-07): the core app is free and complete, Kitchen kit included; additional kits are one-time purchases; professional snap-ins are subscriptions; modes and enterprise deployments sit above that. None of this changes the zero-trust design, because a kit never routes data through ContainAI.
 - Foundation ensures long-term maintenance
 - Community-driven roadmap
 

@@ -147,7 +147,8 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ---
 
 ### KI-015 — Android scoped storage blocks scan of files created by other apps
-**Status:** Workaround in place (MANAGE_EXTERNAL_STORAGE permission); proper fix planned  
+**Status:** Resolved on `voice` (build34, 2026-09-07) by design change — `MANAGE_EXTERNAL_STORAGE` is no longer declared or requested (Google Play restricts it to file managers). Files enter ZynkbotShare through the in-app "Add file" picker (`AndroidPaths.pickFile`, copies into the folder) and the Knowledge Base through the new "Add files" button in the KB Manager (`AndroidPaths.copyToKnowledgeBase`, copies into the app-private KB folder). Files dropped into `Downloads/ZynkbotShare` by other apps remain invisible to the scan; that is now expected behaviour rather than a bug.  
+**Original status:** Workaround in place (MANAGE_EXTERNAL_STORAGE permission); proper fix planned  
 **Affected:** Android 11+ devices (API 30+) using ZynkLink file sharing  
 **Description:** Files placed into `Downloads/ZynkbotShare/` by apps other than Zynkbot (Chrome downloads, screenshots, files copied via the system file manager, etc.) are invisible to Zynkbot's directory scan due to Android's scoped storage security model. Zynkbot can enumerate files it created itself, but Android's kernel filters foreign-owned files out of the `readdir` result before Zynkbot's code sees them. This means the phone reports "0 files indexed" to a peer that's browsing its share, even when the user can clearly see the file in the Android Files app.  
 **Workaround:** The `MANAGE_EXTERNAL_STORAGE` permission is now declared in the manifest and requested at first launch on Android 11+. The user must toggle "Allow access to manage all files" in the settings screen that opens automatically. Once granted, Zynkbot has full raw-filesystem access and the scan works normally.  
