@@ -116,6 +116,19 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-028 — Conversation history sync duplicates messages and silently skips some threads
+**Status:** Open — deferred to the ZynkSync refactor; not a beta blocker (testers should treat all sync behaviour as untested until the refactor lands)
+**Affected:** Any two devices syncing conversation history over ZynkSync (observed OnePlus 12R ↔ Pixel 10 Pro XL, 2026-09-07). Covers GitHub #4 (duplicate and stale history entries) and #12 (clearing history or memories does not propagate).
+**Description:** Three separate defects in `zynksync.rs` combine to corrupt synced history:
+1. *Skipped threads.* `get_modified_conversations` sends only sessions whose `last_active` is later than the last sync time, comparing the values as text. Rows written through the voice path used SQLite's `datetime('now')` format (`2026-09-04 17:51:12`) while the cursor is RFC 3339 (`2026-09-04T…`); a space sorts before `T`, so those rows always looked older than the cursor and were never sent. 40 of 156 sessions on the OnePlus never reached the Pixel. Build29 (migration 0010) normalises every stored timestamp, but the cursor has already passed those rows, so they still will not sync on their own.
+2. *Duplicates.* `receive_conversations_from_peer` skips a message only if one with the same `session_id`, `created_at` and `role` already exists. The same format mismatch defeated that check, so every resend inserted a second copy. The Pixel holds 328 rows for a thread whose counter says 162; the OnePlus holds 50 for one that says 30. `message_count` is not repaired, so the History panel under-reports.
+3. *Resend on every restart.* The per-peer last-sync time is held in memory only, so each app restart resends the entire history, which multiplied the copies.
+Deletions are not propagated at all (no tombstones), which is #12.
+**Workaround:** None. Build29 stops new duplicates from forming for messages written after it, but does not clean up existing ones.
+**Fix target:** ZynkSync refactor (outbox model): durable per-peer send cursor, duplicate check keyed on `entry_hash` rather than timestamp text, tombstones for deleted sessions and messages, and a one-time migration that removes exact duplicate rows and recomputes `message_count`.
+
+---
+
 ### KI-016 — Memory extraction produces "kitchen sink" summaries
 **Status:** Open  
 **Affected:** Memory quality overall  
@@ -217,7 +230,7 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 ---
 
 ### KI-023 — Wake-word command is captured but not dispatched until the app is foregrounded
-**Status:** Open — blocks the wake-word feature being usable
+**Status:** Fixed on `voice` (build19–29) — hands-free turns are answered natively by `ZynkAssistantSession` / `NativeVoiceAnswerer` and joined to the current thread; the app no longer needs to be foregrounded
 **Affected:** Android, "Hey Zynk" while the app is backgrounded (observed on Pixel 10 Pro XL, 2026-09-01)
 **Description:** Saying "Hey Zynk" while the app is not in the foreground works up to a point — the wake word triggers, dictation runs, and the spoken text is captured correctly. But the message is never sent and no answer is produced. Opening the app causes the queued message to send immediately and Zynkbot to respond, which shows the transcript survived and only the dispatch was deferred.
 **Why this matters:** Hands-free use is the entire point of the wake word. Having to open the app to complete the request removes the feature's reason to exist.
@@ -227,7 +240,7 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 ---
 
 ### KI-024 — Wake word from the Android home screen only shows a popup of the transcript, nothing is sent
-**Status:** Open — likely the same root cause as KI-023
+**Status:** Fixed on `voice` — same fix as KI-023, verified on the OnePlus 12R home screen
 **Affected:** Android, wake word triggered from the launcher/home screen (observed on OnePlus 12R, 2026-09-01)
 **Description:** Triggering "Hey Zynk" from the home screen produces a popup containing the dictated text and nothing further. No message is sent, and no response is generated or spoken.
 **Relationship to KI-023:** Both are failures of the same step — a captured transcript that never reaches the send path. Filed separately because the observable behaviour differs (silent queue versus a visible popup that leads nowhere), and it is not yet confirmed they share one cause. Fixing KI-023 should be verified against this case explicitly rather than assumed to cover it.
@@ -267,7 +280,7 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 ---
 
 ### KI-026 — No way to stop speech or output once it starts; Clear should become Stop
-**Status:** Open
+**Status:** Fixed on `voice` (build21) — Stop halts native speech, OpenAI TTS and text output; tapping the Z overlay cancels a hands-free turn
 **Affected:** All platforms; most acute on Android with TTS enabled
 **Description:** Once Zynkbot begins speaking a response there is no control to stop it. The existing TTS-stop work is not reachable from the UI in normal use.
 **Fix target:** Replace the Clear button with a Stop button that halts speech and text output together. Clearing is already covered by the new-conversation button next to the history control, so the Clear button is redundant and its position is the natural home for Stop.
@@ -276,7 +289,7 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 ---
 
 ### KI-027 — Hands-free "set a timer" is confirmed aloud but no timer is set
-**Status:** Open — must fix before v1.0
+**Status:** Fixed on `voice` (build26) — `VoiceCommands.kt` parses timer/alarm/stopwatch before the model and fires the `AlarmClock` intent; confirmation is spoken only after the clock app accepted it
 **Affected:** Android, hands-free ("Hey Zynk") path only
 **Description:** Asked hands-free to set a timer, Zynkbot replies with a spoken confirmation including the correct end time, but no timer exists and nothing happens when the time arrives. The in-app dictation path recognises timer, alarm and stopwatch requests (`parseVoiceCommand` in `useVoiceSession.js`) and hands them to the clock app through `VoiceCommandBridge`; the hands-free path (`ZynkAssistantSession` / `WakeWordService` → `NativeVoiceAnswerer`) sends the transcript straight to the language model, which has no clock and invents the confirmation.
 **Fix target:** Port the command parser to Kotlin and run it before the model on the hands-free path; fire the `AlarmClock` intent from the session, and speak a confirmation only after the clock app accepted it, otherwise say it could not be set.
@@ -284,4 +297,4 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-*Last updated: 2026-09-05*
+*Last updated: 2026-09-07*
