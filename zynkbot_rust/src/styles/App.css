@@ -24,9 +24,9 @@ html, body, #root {
     display: none;
   }
 
-  .app.dark-theme {
-    padding-top: env(safe-area-inset-top, 28px);
-  }
+  /* No safe-area padding here: MainActivity reserves the status bar and gesture
+     bar natively (build27). On a phone with a camera cutout this rule reported
+     the cutout height on top of that and pushed the Send row off the bottom. */
 }
 
 .app-columns {
