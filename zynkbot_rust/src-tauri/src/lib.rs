@@ -1,7 +1,20 @@
 // Zynkbot Tauri Backend
 // Uses Candle for ML (pure Rust, no ONNX conflicts)
 
+// Every println!/eprintln! in this crate also lands in an in-memory ring buffer
+// so "Report a problem" can attach the last few hundred lines. Defined before
+// the module declarations so the shadow applies crate-wide. See app_log.rs.
+macro_rules! println {
+    () => { $crate::app_log::line(String::new()) };
+    ($($arg:tt)*) => { $crate::app_log::line(format!($($arg)*)) };
+}
+macro_rules! eprintln {
+    () => { $crate::app_log::err_line(String::new()) };
+    ($($arg:tt)*) => { $crate::app_log::err_line(format!($($arg)*)) };
+}
+
 // Module declarations
+pub mod app_log;            // In-memory log tail for bug reports
 pub mod commands;           // Tauri command handlers (extracted from lib.rs)
 pub mod safety_classifier;  // TinyBERT toxicity classifier (Candle-based)
 mod containment;  // Safety enforcement using toxic-bert + OpenAI API for Child mode
@@ -2320,6 +2333,7 @@ pub fn run() {
             commands::backup::get_backup_key,
             commands::backup::get_backup_key_status,
             commands::backup::acknowledge_backup_key,
+            commands::report::build_problem_report,
             commands::backup::derive_key_from_passphrase,
             commands::backup::get_r2_config_status,
             commands::backup::backup_memories_to_r2,

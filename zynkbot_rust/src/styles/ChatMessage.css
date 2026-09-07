@@ -8,14 +8,15 @@
 }
 
 /* Action buttons row — floats into the gap below the message content */
+/* Sits below the message text in normal flow. It used to be pinned to the
+   bottom-right corner of the message box, which laid the Copy/Regenerate
+   buttons straight over a short one-line reply on phones (2026-09-07). */
 .message-action-row {
-  position: absolute;
-  bottom: 6px;
-  right: 8px;
   display: flex;
+  justify-content: flex-end;
   gap: 6px;
   align-items: center;
-  z-index: 5;
+  margin-top: 6px;
 }
 
 .message-action-btn {

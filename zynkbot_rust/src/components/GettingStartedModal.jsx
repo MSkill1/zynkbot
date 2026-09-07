@@ -50,6 +50,22 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
 
         {/* Step 1: Load Einstein Demo */}
         <div className="guide-step">
+          <div className="step-number">0</div>
+          <div className="step-content">
+            <h3>Try it in the kitchen</h3>
+            <p>
+              The quickest way to see what the memory system is for: tell Zynkbot what you cooked
+              tonight and how it went. Tomorrow ask "what can I make tonight?" It remembers what you
+              liked, what you refused, and how you are trying to eat, and it plans around that.
+            </p>
+            <p className="guide-note">
+              <strong>Fell off the diet?</strong> Tell it to forget those weeks and start again. The
+              memory is yours to edit. The Kitchen kit is free and stays on this device.
+            </p>
+          </div>
+        </div>
+
+        <div className="guide-step">
           <div className="step-header">
             <span className="step-number">1</span>
             <h3>Load the Einstein Demo</h3>

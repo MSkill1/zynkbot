@@ -1,6 +1,19 @@
 fn main() {
     println!("cargo:rerun-if-changed=seeds/einstein_seed.sql");
 
+    // Short git hash, stamped into "Report a problem" output. "unknown" when git
+    // is absent (source tarball, CI without history).
+    let git_hash = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=ZYNKBOT_GIT_HASH={}", git_hash);
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+
     // Desktop-only: point the linker at bundled libvosk.so for offline dictation.
     // libvosk.so from alphacep/vosk-api v0.3.45 (Linux x86_64)
     // sha256: 85c4654de3acdeb99abab86eeb2a6e603927d37089597c0fcc33d8638dc2ccaf

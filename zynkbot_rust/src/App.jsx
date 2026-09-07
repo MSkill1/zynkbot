@@ -9,6 +9,7 @@ import ContainmentModeSelector from "./components/ContainmentModeSelector";
 import ChatMessage from "./components/ChatMessage";
 import MemoryManager from "./components/MemoryManager";
 import AboutModal from "./components/AboutModal";
+import ReportProblemModal from "./components/ReportProblemModal";
 import GettingStartedModal from "./components/GettingStartedModal";
 import WhyZynkbotModal from "./components/WhyZynkbotModal";
 import APIKeyModal from "./components/APIKeyModal";
@@ -161,6 +162,10 @@ export default function App() {
   });
   const [availableModels, setAvailableModels] = useState([]);
   const [containmentMode, setContainmentMode] = useState("guardian");
+  // "Report a problem" — opened from the sidebar or a reply's ⚑ button.
+  const [showReport, setShowReport] = useState(false);
+  const [reportContext, setReportContext] = useState('');
+  const openReport = (context = '') => { setReportContext(context || ''); setShowReport(true); };
   const [showAbout, setShowAbout] = useState(false);
   const [showDemoGuide, setShowDemoGuide] = useState(false);
   const [showWhyZynkbot, setShowWhyZynkbot] = useState(false);
@@ -1203,12 +1208,13 @@ export default function App() {
         title="System Controls"
         onInfoClick={() => setShowUserIdentity(true)}
         onVoiceClick={() => voice.setShowVoiceModal(true)}
+        onReportClick={() => openReport('')}
         // Hide the sidebar's floating ⚙️/✕ whenever ANY overlay is open, so only one
         // close button exists at that corner. Otherwise the two overlap and the first
         // tap toggles the sidebar instead of closing the modal (reported on API Keys,
         // then on the User Identity modal opened from the sidebar's info button).
         hideToggle={showConversationHistory || showAPIKeys || showKBManager || showEnsemble || voice.showVoiceModal
-          || showUserIdentity || showAbout || showDemoGuide || showWhyZynkbot || showConflictResolution || showZynkCluster}
+          || showUserIdentity || showAbout || showDemoGuide || showWhyZynkbot || showConflictResolution || showZynkCluster || showReport}
         onOpen={() => {
           setShowAbout(false);
           setShowDemoGuide(false);
@@ -1798,6 +1804,7 @@ export default function App() {
                         userId={userId}
                         onEdit={!isLoading && idx === lastUserIdx ? handleEditLastUser : undefined}
                         onRegenerate={!isLoading && idx === lastAssistantIdx ? handleRegenerateLast : undefined}
+                        onReport={msg.role === 'assistant' ? openReport : undefined}
                         isEditing={editingMessageId === msg.id}
                         onSaveEdit={(newContent) => handleSaveEdit(msg.id, newContent)}
                         onCancelEdit={handleCancelEdit}
@@ -2309,6 +2316,13 @@ export default function App() {
 
       <WhyZynkbotModal isOpen={showWhyZynkbot} onClose={() => setShowWhyZynkbot(false)} />
       <AboutModal isOpen={showAbout} onClose={() => setShowAbout(false)} />
+      <ReportProblemModal
+        isOpen={showReport}
+        onClose={() => setShowReport(false)}
+        context={reportContext}
+        backend={modelType}
+        threadText={messages.map(m => `${m.role === 'user' ? 'You' : 'Zynkbot'}: ${m.content}`).join('\n\n')}
+      />
       <GettingStartedModal isOpen={showDemoGuide} onClose={() => setShowDemoGuide(false)} onOpenAPIKeys={() => setShowAPIKeys(true)} />
       <APIKeyModal
         isOpen={showAPIKeys}

@@ -57,6 +57,21 @@ pub async fn get_backup_key_status() -> Result<serde_json::Value, String> {
     }))
 }
 
+/// A backup key pushed from a paired device (see propagate_api_keys). Validated as
+/// 32 bytes of hex, written as this device's key, and marked acknowledged.
+pub fn install_pushed_backup_key(key_hex: &str) -> Result<(), String> {
+    let trimmed = key_hex.trim();
+    let bytes = hex::decode(trimmed).map_err(|_| "Backup key is not valid hex".to_string())?;
+    if bytes.len() != 32 {
+        return Err(format!("Backup key must be 32 bytes, got {}", bytes.len()));
+    }
+    std::fs::write(key_path(), trimmed.to_ascii_lowercase())
+        .map_err(|e| format!("Failed to write backup key: {}", e))?;
+    std::fs::write(key_acknowledged_path(), b"1")
+        .map_err(|e| format!("Failed to write acknowledged flag: {}", e))?;
+    Ok(())
+}
+
 /// Records that the user has saved their backup key.
 #[tauri::command]
 pub async fn acknowledge_backup_key() -> Result<(), String> {

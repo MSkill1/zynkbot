@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function CollapsibleSidebar({ children, icon, title, onInfoClick, onVoiceClick, hideToggle, onOpen }) {
+export default function CollapsibleSidebar({ children, icon, title, onInfoClick, onVoiceClick, onReportClick, hideToggle, onOpen }) {
   const [isOpen, setIsOpen] = useState(false);
 
   const handleToggle = () => {
@@ -98,6 +98,29 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                 }}
               >
                 🎙️ Voice
+              </button>
+            )}
+            {onReportClick && (
+              <button
+                onClick={onReportClick}
+                title="Build a bug report to paste into GitHub"
+                style={{
+                  background: '#44475a',
+                  color: '#8be9fd',
+                  border: 'none',
+                  padding: '6px 12px',
+                  borderRadius: '4px',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  height: '32px',
+                  boxSizing: 'border-box',
+                }}
+                onMouseOver={(e) => { e.target.style.background = '#8be9fd'; e.target.style.color = '#22232a'; }}
+                onMouseOut={(e) => { e.target.style.background = '#44475a'; e.target.style.color = '#8be9fd'; }}
+              >
+                ⚑ Report
               </button>
             )}
             {onInfoClick && (

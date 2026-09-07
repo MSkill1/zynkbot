@@ -338,12 +338,26 @@ pub async fn propagate_api_key(key: String, value: String) -> Result<serde_json:
 
 /// Push several keys to every paired peer in one pass.
 ///
+/// Name under which the backup encryption key rides along with an API-key push.
+pub const BACKUP_KEY_PUSH_NAME: &str = "ZYNKBOT_BACKUP_KEY";
+
 /// The UI used to call propagate_api_key once per key, and each call re-ran the
 /// whole peer loop. With the shared client's 30s timeout, a single unreachable
 /// peer cost 30s x number-of-keys — around 8.5 minutes for a full key set, which
 /// read as a frozen button. One pass over the peers with a short timeout instead.
 #[tauri::command]
 pub async fn propagate_api_keys(entries: Vec<(String, String)>) -> Result<serde_json::Value, String> {
+    // The cloud-backup encryption key travels with the API keys. Without it a peer
+    // receives the R2 credentials but keeps its own random backup key, so it can
+    // list the backup and never decrypt it, and its Memory Manager keeps asking
+    // for a passphrase that was set on another phone (OnePlus, 2026-09-07). The
+    // receiver stores this one as backup.key + the acknowledged flag, not in .env.
+    let mut entries = entries;
+    if let Ok(key_hex) = crate::commands::backup::get_backup_key().await {
+        if !key_hex.trim().is_empty() && !entries.iter().any(|(k, _)| k == BACKUP_KEY_PUSH_NAME) {
+            entries.push((BACKUP_KEY_PUSH_NAME.to_string(), key_hex));
+        }
+    }
     // Collect what we need and release the lock before doing any network I/O.
     // Holding ZYNKSYNC_SERVICE across the requests blocked the background sync
     // loop, which wants the same lock.

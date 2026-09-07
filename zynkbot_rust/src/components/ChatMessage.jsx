@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import "../styles/ChatMessage.css";
 
-export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit }) {
+export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit, onReport }) {
   const [editDraft, setEditDraft] = useState(message.content || "");
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (isEditing) setEditDraft(message.content || ""); }, [isEditing, message.content]);
@@ -301,6 +301,16 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
               aria-label="Regenerate last response"
             >
               ↻ Regenerate
+            </button>
+          )}
+          {onReport && (
+            <button
+              className="message-action-btn"
+              onClick={() => onReport(content)}
+              title="Report a problem with this reply"
+              aria-label="Report a problem with this reply"
+            >
+              ⚑ Report
             </button>
           )}
         </div>

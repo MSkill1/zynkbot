@@ -1356,11 +1356,17 @@ pub async fn generate_reply(
                 }
             };
 
-            // Explicit "Remember:" command overrides LLM decision — user is the authority
-            let (should_remember, llm_title) = if bg_is_explicit_remember && !should_remember {
-                println!("[RUST BACKGROUND] ✅ Explicit 'Remember:' command — overriding LLM decision to store");
+            // Explicit "Remember:" command overrides LLM decision — user is the authority.
+            // The title comes from the user's own words too: the classifier sees the raw
+            // query, and on a dictated "remember cohen the gate code..." it titled the
+            // memory "Gate code for Cohen" (2026-09-07). The stored content is already
+            // the text after the keyword, so the title is cut from that.
+            let (should_remember, llm_title) = if bg_is_explicit_remember {
+                if !should_remember {
+                    println!("[RUST BACKGROUND] ✅ Explicit 'Remember:' command — overriding LLM decision to store");
+                }
                 let fallback_title = factual_content.chars().take(60).collect::<String>();
-                let fallback_title = if factual_content.len() > 60 {
+                let fallback_title = if factual_content.chars().count() > 60 {
                     format!("{}…", fallback_title)
                 } else {
                     fallback_title
@@ -1384,7 +1390,16 @@ pub async fn generate_reply(
             let contradiction_detected = llm_relationships.iter()
                 .any(|rel| rel.relationship_type == "contradicts" && rel.confidence.unwrap_or(0.0) >= 0.65);
 
-            if contradiction_detected {
+            // An explicit "Remember:" is stored no matter what. The contradiction modal
+            // needs the page in front to be answered; hands-free there is no page, so
+            // holding the memory for it meant the fact the user just dictated was never
+            // saved while the reply said it was (OnePlus, 2026-09-07). The user has
+            // already stated the new fact; the older memory stays and can be resolved
+            // or deleted in Memory Manager.
+            if contradiction_detected && bg_is_explicit_remember {
+                println!("[RUST BACKGROUND] ⚠️ Contradiction noted, but this is an explicit Remember — storing anyway");
+            }
+            if contradiction_detected && !bg_is_explicit_remember {
                 println!("[RUST BACKGROUND] ⚠️ CONTRADICTION DETECTED - emitting event to frontend (NOT storing yet)");
 
                 // Find the contradicting relationship

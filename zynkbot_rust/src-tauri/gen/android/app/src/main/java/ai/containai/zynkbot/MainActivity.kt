@@ -253,6 +253,46 @@ class MainActivity : TauriActivity() {
             } catch (e: Exception) { uriStr.substringAfterLast('/').substringBefore('?') }
         }
 
+        /**
+         * Knowledge Base import: copy a picked document into the app-private KB folder
+         * that the Rust scanner reads (files/zynkbot/knowledge_base/<userId>/). This is
+         * the Play-compliant replacement for "all files access": the user picks files in
+         * the system picker and Zynkbot keeps its own copy. Returns the new path, or ""
+         * on failure. Called from the page's JS thread, so the copy is done inline.
+         */
+        @JavascriptInterface
+        fun copyToKnowledgeBase(uriStr: String, userId: String): String {
+            return try {
+                val safeUser = userId.replace(Regex("[^A-Za-z0-9._-]"), "")
+                if (safeUser.isEmpty()) return ""
+                val uri = Uri.parse(uriStr)
+                val destDir = File(File(filesDir, "zynkbot/knowledge_base"), safeUser)
+                destDir.mkdirs()
+                val name = getFileName(uriStr).replace('/', '_').ifBlank { "document" }
+                var dest = File(destDir, name)
+                // Never overwrite silently: "notes.txt" becomes "notes (2).txt".
+                var n = 2
+                while (dest.exists()) {
+                    val dot = name.lastIndexOf('.')
+                    val stem = if (dot > 0) name.substring(0, dot) else name
+                    val ext = if (dot > 0) name.substring(dot) else ""
+                    dest = File(destDir, "$stem ($n)$ext"); n++
+                }
+                contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                } ?: return ""
+                dest.absolutePath
+            } catch (e: Exception) {
+                Log.w("MainActivity", "KB import failed: ${e.message}")
+                ""
+            }
+        }
+
+        /** For "Report a problem": make, model and Android version, nothing identifying. */
+        @JavascriptInterface
+        fun getDeviceInfo(): String =
+            "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
+
         @JavascriptInterface
         fun readFileText(uriStr: String): String {
             return try {
@@ -877,7 +917,10 @@ class MainActivity : TauriActivity() {
         permissionQueue.addLast { requestNotificationPermissionIfNeeded() }
         permissionQueue.addLast { requestAssistantRoleIfNeeded() }
         permissionQueue.addLast { requestLocalNetworkPermissionIfNeeded() }
-        permissionQueue.addLast { requestManageStorageIfNeeded() }
+        // "All files access" (MANAGE_EXTERNAL_STORAGE) is no longer requested: Google
+        // Play only grants it to file managers and the like. Files reach ZynkbotShare
+        // and the Knowledge Base through the system picker (pickFile / pickDocuments +
+        // copyToKnowledgeBase), which needs no permission. See KI-015.
         runNextPermissionRequest()
         extractVoskModelIfNeeded()
         startSyncService()
@@ -916,23 +959,6 @@ class MainActivity : TauriActivity() {
 
     private fun runNextPermissionRequest() {
         permissionQueue.removeFirstOrNull()?.invoke()
-    }
-
-    private fun requestManageStorageIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                try {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        data = Uri.parse("package:$packageName")
-                    }
-                    startActivity(intent)
-                } catch (_: Exception) {
-                    try {
-                        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
-                    } catch (_: Exception) {}
-                }
-            }
-        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {

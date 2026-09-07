@@ -3186,11 +3186,30 @@ impl ZynkSyncService {
 
     /// Get list of peer devices
     pub async fn get_peers(&self) -> Vec<PeerDevice> {
+        // A peer's rename arrives through the x-device-name header and is written to
+        // zynk_devices (check_sync_authorized), but the in-memory map still holds the
+        // name captured at pairing time. The UI reads this list, so a renamed peer
+        // showed its old name until the app restarted (Pixel listed the OnePlus as
+        // "Android-1193" while the row already said "12R", 2026-09-07). Prefer the
+        // stored name; fall back to the cached one if the lookup fails.
+        let stored_names: std::collections::HashMap<String, String> =
+            sqlx::query("SELECT device_id, device_name FROM zynk_devices WHERE sync_paired = 1")
+                .fetch_all(&self.db_pool)
+                .await
+                .map(|rows| rows.iter().filter_map(|r| {
+                    let id: String = r.try_get("device_id").ok()?;
+                    let name: String = r.try_get("device_name").ok()?;
+                    if name.trim().is_empty() { None } else { Some((id, name)) }
+                }).collect())
+                .unwrap_or_default();
         let peers_map = self.peers.read().await;
         let online_map = self.peer_last_seen.read().await;
         let threshold = Utc::now() - chrono::Duration::seconds(45);
         peers_map.values().map(|peer| {
             let mut p = peer.clone();
+            if let Some(name) = stored_names.get(&peer.device_id) {
+                p.device_name = name.clone();
+            }
             p.is_online = online_map.get(&peer.device_id)
                 .map_or(false, |&t| t > threshold);
             p
@@ -5095,6 +5114,19 @@ async fn handle_push_api_key(
         "CUSTOM_API_URL",    "CUSTOM_API_KEY", "CUSTOM_MODEL",
         "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
     ];
+    // The backup encryption key is stored as a file, never in .env, and arriving
+    // from a paired device counts as "the user has saved this key" — they set it
+    // and acknowledged it on the sender.
+    if key == crate::commands::models::BACKUP_KEY_PUSH_NAME {
+        crate::commands::backup::install_pushed_backup_key(value)?;
+        println!("[ZynkSync] ✓ Received backup encryption key from {} ({})", verified.device_name, sender_ip);
+        if let Ok(guard) = crate::APP_HANDLE.lock() {
+            if let Some(app) = guard.as_ref() {
+                let _ = app.emit("backup-key-updated", serde_json::json!({}));
+            }
+        }
+        return Ok(axum::Json(serde_json::json!({ "success": true })));
+    }
     if !ALLOWED.contains(&key) {
         return Err(format!("Key '{}' is not propagatable", key));
     }

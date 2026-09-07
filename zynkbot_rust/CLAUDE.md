@@ -8,8 +8,9 @@
   ZynkbotPathsBridge (getShareDir / openShareFolder), FolderPickerBridge
 - `app/src/main/java/ai/containai/zynkbot/SyncForegroundService.kt` — foreground service
   with API-version-conditional startForeground()
-- `app/src/main/AndroidManifest.xml` — permissions including MANAGE_EXTERNAL_STORAGE and
-  WRITE_EXTERNAL_STORAGE (maxSdkVersion=29)
+- `app/src/main/AndroidManifest.xml` — permissions (legacy READ/WRITE_EXTERNAL_STORAGE with
+  maxSdkVersion only; MANAGE_EXTERNAL_STORAGE was removed 2026-09-07 for Google Play — do not
+  re-add it, files come in through the system picker)
 
 Running `tauri android init` again will overwrite these files with Tauri's defaults,
 breaking the foreground service, the ZynkbotShare folder, and the permission setup.
@@ -38,8 +39,9 @@ Files shared via ZynkLink on Android live in `Downloads/ZynkbotShare/`
 `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOWNLOADS)` — no storage
 permissions needed for files the app creates there. Files placed there by other apps
 (e.g. system Files app) may not be readable via raw File API on Android 11+ due to
-scoped storage; if this proves a problem, the fix is a one-time SAF grant on the
-folder at first launch (Phase 2 work).
+scoped storage. Resolved 2026-09-07: files are added through the in-app picker
+(`pickFile` copies into ZynkbotShare, `copyToKnowledgeBase` copies into the KB folder),
+so no storage permission is needed and none is requested.
 
 ## Phase 2 TODO (filed, not built)
 

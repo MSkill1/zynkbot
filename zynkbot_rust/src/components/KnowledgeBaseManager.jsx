@@ -131,6 +131,37 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
     }
   };
 
+  // Android: there is no way for the user to drop files into the app-private KB
+  // folder, and Google Play does not allow the "all files access" permission that
+  // a shared-folder scan would need. So files come in through the system document
+  // picker and are copied into the KB folder by the Kotlin bridge, then rescanned.
+  const [isImporting, setIsImporting] = useState(false);
+  const importOnAndroid = async () => {
+    if (!window.AndroidPaths?.pickDocuments || !window.AndroidPaths?.copyToKnowledgeBase) return;
+    setIsImporting(true);
+    try {
+      const uris = await new Promise((resolve, reject) => {
+        window.__pickFilesResolve = resolve;
+        window.__pickFilesReject = reject;
+        window.AndroidPaths.pickDocuments();
+      });
+      let copied = 0;
+      const failed = [];
+      for (const uri of uris || []) {
+        const dest = window.AndroidPaths.copyToKnowledgeBase(uri, userId);
+        if (dest) copied += 1;
+        else failed.push(window.AndroidPaths.getFileName?.(uri) || uri);
+      }
+      console.log('[KB Manager] Imported', copied, 'file(s) via the document picker');
+      if (failed.length) alert(`Could not import: ${failed.join(', ')}`);
+      if (copied) await loadData();
+    } catch (e) {
+      if (e !== 'cancelled') alert(`Import failed: ${e}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const scanKBFolder = async (folderPath, indexedDocs = null) => {
     setIsScanning(true);
     try {
@@ -424,7 +455,11 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
               {documents.length === 0 ? (
                 <div className="kb-empty-state">
                   <p>No documents indexed yet.</p>
-                  <p className="kb-hint">Add files to your KB folder and index them below.</p>
+                  <p className="kb-hint">
+                    {window.AndroidPaths
+                      ? 'Tap "Add files" to import documents, then index them below.'
+                      : 'Add files to your KB folder and index them below.'}
+                  </p>
                 </div>
               ) : (
                 <div className="kb-document-list">
@@ -440,6 +475,16 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
               <div className="kb-section-header">
                 <h3>Available Files ({availableFiles.length})</h3>
                 <div className="kb-section-actions">
+                  {window.AndroidPaths?.copyToKnowledgeBase && (
+                    <button
+                      onClick={importOnAndroid}
+                      disabled={isScanning || isIndexing || isImporting}
+                      className="kb-scan-button"
+                      title="Pick documents on this phone to add to your knowledge base"
+                    >
+                      {isImporting ? 'Importing…' : '📂 Add files'}
+                    </button>
+                  )}
                   <button
                     onClick={loadData}
                     disabled={isScanning || isIndexing}
