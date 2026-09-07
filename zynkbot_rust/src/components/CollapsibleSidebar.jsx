@@ -54,7 +54,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
           transition: 'transform 0.3s ease',
           zIndex: 1000,
           overflowY: 'auto',
-          padding: 'calc(env(safe-area-inset-top, 28px) + 20px) 15px 100px 15px',
+          padding: '20px 15px 100px 15px', /* status bar reserved natively (build27) */
           borderRight: '1px solid #44475a'
         }}
       >

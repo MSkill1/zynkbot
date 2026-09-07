@@ -18,7 +18,8 @@ function dateLabel(dateStr) {
 function groupSessions(sessions) {
   const groups = {};
   for (const s of sessions) {
-    const label = dateLabel(s.last_active);
+    // Pinned conversations sit in their own group at the top, whatever their date.
+    const label = s.pinned ? "Pinned" : dateLabel(s.last_active);
     if (!groups[label]) groups[label] = [];
     groups[label].push(s);
   }
@@ -46,7 +47,6 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   const searchTimeout = useRef(null);
 
   const isHipaaMode = containmentMode === "hipaa";
-  const isAndroid = !!window.AndroidPaths;
 
   const loadSessions = useCallback(async () => {
     if (!userId || isHipaaMode) return;
@@ -168,7 +168,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   if (isHipaaMode) {
     return (
       <div className="conv-history-panel" style={panelStyle}>
-        <div style={{ padding: "20px", paddingTop: isAndroid ? "calc(env(safe-area-inset-top, 28px) + 12px)" : "20px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ padding: "20px", paddingTop: "20px" /* status bar reserved natively (build27) */, borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h2 style={{ margin: 0, color: "#f8f8f2", fontSize: "1rem" }}>🕐 Conversation History</h2>
         </div>
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px", textAlign: "center", color: "#6272a4" }}>
@@ -195,12 +195,22 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     );
   }
 
+  const togglePin = async (e, session) => {
+    e.stopPropagation();
+    try {
+      await invoke("set_session_pinned", { sessionId: session.session_id, userId, pinned: !session.pinned });
+      await loadSessions();
+    } catch (err) {
+      console.error("[History] pin failed:", err);
+    }
+  };
+
   const groups = groupSessions(sessions);
 
   return (
     <div className="conv-history-panel" style={panelStyle}>
       {/* Header */}
-      <div style={{ padding: "16px 20px", paddingTop: isAndroid ? "calc(env(safe-area-inset-top, 28px) + 12px)" : "16px", borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1e1f2e" }}>
+      <div style={{ padding: "16px 20px", paddingTop: "16px" /* status bar reserved natively (build27) */, borderBottom: "1px solid #44475a", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#1e1f2e" }}>
         <h2 style={{ margin: 0, color: "#f8f8f2", fontSize: "1rem", fontWeight: "bold", flex: 1, minWidth: 0 }}>
           {selectedSession ? (
             <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -345,7 +355,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ color: "#f8f8f2", fontSize: "0.9rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {session.title || "Untitled conversation"}
+                        {session.title || `Voice conversation · ${new Date(session.started_at).toLocaleDateString()}`}
                       </div>
                       <div style={{ color: "#6272a4", fontSize: "0.75rem", marginTop: "3px" }}>
                         {session.message_count} messages
@@ -353,6 +363,13 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                         {" · "}{new Date(session.last_active).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
                     </div>
+                    <button
+                      onClick={(e) => togglePin(e, session)}
+                      title={session.pinned ? "Unpin" : "Pin to top"}
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: "1rem", padding: "0 0 0 8px", flexShrink: 0, opacity: session.pinned ? 1 : 0.35, transform: session.pinned ? "none" : "rotate(45deg)" }}
+                    >
+                      📌
+                    </button>
                     <button
                       onClick={(e) => deleteSession(e, session.session_id)}
                       title="Delete conversation"

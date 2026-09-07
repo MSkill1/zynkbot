@@ -314,9 +314,9 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
         })
     }).collect();
 
-    let session_rows: Vec<(String, String, Option<String>, String, String, i64, Option<String>, Option<String>)> = sqlx::query_as(
+    let session_rows: Vec<(String, String, Option<String>, String, String, i64, Option<String>, Option<String>, i64)> = sqlx::query_as(
         "SELECT session_id, user_id, title, CAST(started_at AS TEXT), CAST(last_active AS TEXT),
-                message_count, model_backend, containment_mode
+                message_count, model_backend, containment_mode, pinned
          FROM conversation_sessions
          WHERE user_id = ?
          ORDER BY started_at"
@@ -336,6 +336,7 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
             "message_count": r.5,
             "model_backend": r.6,
             "containment_mode": r.7,
+            "pinned": r.8,
         })
     }).collect();
 
@@ -527,8 +528,8 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         let result = sqlx::query(
             "INSERT INTO conversation_sessions (
                 session_id, user_id, title, started_at, last_active,
-                message_count, model_backend, containment_mode
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                message_count, model_backend, containment_mode, pinned
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(session_id)
         .bind(sess["user_id"].as_str().unwrap_or(&user_id))
@@ -538,6 +539,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         .bind(sess["message_count"].as_i64().unwrap_or(0))
         .bind(sess["model_backend"].as_str())
         .bind(sess["containment_mode"].as_str())
+        .bind(sess["pinned"].as_i64().unwrap_or(0))   // older backups: not pinned
         .execute(&pool)
         .await;
 

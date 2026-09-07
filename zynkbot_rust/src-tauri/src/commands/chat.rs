@@ -88,6 +88,7 @@ pub async fn send_message_with_memory(
         sink, message, user_id, session_id, backend, containment_mode,
         conversation_history, skip_containment, skip_memory_storage,
         kb_enabled, user_query, image_data,
+        false, // hands_free: this is the in-app path
     )
     .await
 }
@@ -111,6 +112,7 @@ pub async fn generate_reply(
     kb_enabled: Option<bool>,
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
+    hands_free: bool,
 ) -> Result<ReplyResponse, String> {
     use crate::conversation_engine::ConversationEngine;
 
@@ -1126,13 +1128,14 @@ pub async fn generate_reply(
         let ch_reply = final_reply_text.clone();
         let ch_backend = forced_backend.clone();
         let ch_mode = containment_mode.clone();
+        let ch_name_thread = !hands_free;   // a "Hey Zynk" turn never names the thread
         tokio::spawn(async move {
             { let db_url = crate::db::get_db_url();
                 match sqlx::SqlitePool::connect(&db_url).await {
                     Ok(pool) => {
                         if let Err(e) = crate::conversation_history::log_exchange(
                             &pool, &ch_session, &ch_user, &ch_message,
-                            &ch_reply, &ch_backend, &ch_mode,
+                            &ch_reply, &ch_backend, &ch_mode, ch_name_thread,
                         ).await {
                             eprintln!("[ConvHistory] ⚠️ Failed to log exchange: {}", e);
                         }

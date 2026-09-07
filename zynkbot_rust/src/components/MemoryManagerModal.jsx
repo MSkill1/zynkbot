@@ -646,7 +646,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         {KeySaveModal}
 
         {/* Header */}
-        <div style={{ padding: '12px 16px', paddingTop: 'calc(env(safe-area-inset-top, 28px) + 12px)', borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+        <div style={{ padding: '12px 16px', paddingTop: '12px' /* status bar is reserved natively (build27); env() here double-padded on phones with a cutout */, borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           {selectedMemory ? (
             <>
               <button

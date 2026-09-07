@@ -51,6 +51,22 @@ pub async fn search_conversations(
     .map_err(|e: sqlx::Error| e.to_string())
 }
 
+/// Pin a conversation to the top of History (or unpin it).
+#[tauri::command]
+pub async fn set_session_pinned(
+    session_id: String,
+    user_id: String,
+    pinned: bool,
+) -> Result<bool, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url)
+        .await
+        .map_err(|e: sqlx::Error| e.to_string())?;
+    conversation_history::set_session_pinned(&pool, &session_id, &user_id, pinned)
+        .await
+        .map_err(|e: sqlx::Error| e.to_string())
+}
+
 #[tauri::command]
 pub async fn delete_conversation_session(
     session_id: String,

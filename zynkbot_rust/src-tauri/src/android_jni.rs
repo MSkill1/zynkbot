@@ -227,6 +227,7 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
             None, // kb_enabled
             Some(transcript), // user_query: the clean transcript for history/memory/KB/chat
             None, // image_data
+            true, // hands_free
         )
         .await
     });

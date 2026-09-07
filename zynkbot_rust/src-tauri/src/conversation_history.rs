@@ -25,6 +25,8 @@ pub struct ConversationSession {
     pub message_count: i32,
     pub model_backend: Option<String>,
     pub containment_mode: Option<String>,
+    /// Held at the top of the history list regardless of date.
+    pub pinned: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -43,10 +45,41 @@ pub struct ConversationMessage {
 // TABLE SETUP — idempotent, safe to call on every startup
 // ============================================================================
 
-pub async fn ensure_tables(_pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // Schema is created by the SQLite migration in db.rs — nothing to do here
+pub async fn ensure_tables(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // Schema comes from the migrations. Repeat the timestamp normalisation from
+    // migration 0002 on every start as a safety net: any writer that still omits the
+    // timestamp columns gets SQLite's datetime('now') default (space format), which
+    // would misorder the history list again.
+    for sql in [
+        "UPDATE conversation_sessions SET started_at  = replace(started_at,  ' ', 'T') || '+00:00' WHERE started_at  NOT LIKE '%T%'",
+        "UPDATE conversation_sessions SET last_active = replace(last_active, ' ', 'T') || '+00:00' WHERE last_active NOT LIKE '%T%'",
+        "UPDATE conversation_messages SET created_at  = replace(created_at,  ' ', 'T') || '+00:00' WHERE created_at  NOT LIKE '%T%'",
+    ] {
+        let fixed = sqlx::query(sql).execute(pool).await?.rows_affected();
+        if fixed > 0 {
+            println!("[ConvHistory] normalised {} timestamp rows", fixed);
+        }
+    }
     println!("[ConvHistory] ✅ Tables ready");
     Ok(())
+}
+
+/// Pin or unpin a conversation; pinned ones are listed first.
+pub async fn set_session_pinned(
+    pool: &SqlitePool,
+    session_id: &str,
+    user_id: &str,
+    pinned: bool,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE conversation_sessions SET pinned = ? WHERE session_id = ? AND user_id = ?",
+    )
+    .bind(if pinned { 1 } else { 0 })
+    .bind(session_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 // ============================================================================
@@ -61,19 +94,30 @@ pub async fn log_exchange(
     assistant_message: &str,
     model_backend: &str,
     containment_mode: &str,
+    name_thread: bool,
 ) -> Result<(), sqlx::Error> {
-    // Auto-title: first 60 chars of the first user message in this session.
-    // ON CONFLICT leaves title unchanged if the session already exists.
-    let title_snippet: String = user_message.chars().take(60).collect();
+    // Auto-title: first 60 chars of the first message that is allowed to name the
+    // thread. Hands-free turns pass name_thread = false: a "Hey Zynk" test or a stray
+    // TV line joining the current thread must not become its title (a Baldur's Gate
+    // conversation was filed as "claude this is just a test to see if the voice
+    // wake up is wo", 2026-09-07). A thread named by nobody keeps an empty title
+    // until an in-app message arrives; the history panel shows a placeholder.
+    let title_snippet: String = if name_thread {
+        user_message.chars().take(60).collect()
+    } else {
+        String::new()
+    };
 
     sqlx::query(
         "INSERT INTO conversation_sessions
-             (session_id, user_id, title, model_backend, containment_mode)
-         VALUES (?, ?, ?, ?, ?)
+             (session_id, user_id, title, started_at, last_active, model_backend, containment_mode)
+         VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), ?, ?)
          ON CONFLICT (session_id) DO UPDATE SET
-             last_active   = datetime('now'),
+             last_active   = strftime('%Y-%m-%dT%H:%M:%S+00:00','now'),
              message_count = conversation_sessions.message_count + 2,
-             model_backend = EXCLUDED.model_backend",
+             model_backend = EXCLUDED.model_backend,
+             title         = CASE WHEN coalesce(conversation_sessions.title, '') = ''
+                                  THEN EXCLUDED.title ELSE conversation_sessions.title END",
     )
     .bind(session_id)
     .bind(user_id)
@@ -85,8 +129,8 @@ pub async fn log_exchange(
 
     sqlx::query(
         "INSERT INTO conversation_messages
-             (session_id, user_id, role, content, model_backend, containment_mode)
-         VALUES (?, ?, 'user', ?, ?, ?)",
+             (session_id, user_id, role, content, model_backend, containment_mode, created_at)
+         VALUES (?, ?, 'user', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))",
     )
     .bind(session_id)
     .bind(user_id)
@@ -98,8 +142,8 @@ pub async fn log_exchange(
 
     sqlx::query(
         "INSERT INTO conversation_messages
-             (session_id, user_id, role, content, model_backend, containment_mode)
-         VALUES (?, ?, 'assistant', ?, ?, ?)",
+             (session_id, user_id, role, content, model_backend, containment_mode, created_at)
+         VALUES (?, ?, 'assistant', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))",
     )
     .bind(session_id)
     .bind(user_id)
@@ -124,10 +168,10 @@ pub async fn list_sessions(
 ) -> Result<Vec<ConversationSession>, sqlx::Error> {
     sqlx::query_as::<_, ConversationSession>(
         "SELECT id, session_id, user_id, title, started_at, last_active,
-                message_count, model_backend, containment_mode
+                message_count, model_backend, containment_mode, pinned
          FROM conversation_sessions
          WHERE user_id = ?
-         ORDER BY last_active DESC
+         ORDER BY pinned DESC, last_active DESC
          LIMIT ? OFFSET ?",
     )
     .bind(user_id)
@@ -170,12 +214,12 @@ pub async fn search(
         // Date-only filter — no text condition
         return sqlx::query_as::<_, ConversationSession>(
             "SELECT id, session_id, user_id, title, started_at, last_active,
-                    message_count, model_backend, containment_mode
+                    message_count, model_backend, containment_mode, pinned
              FROM conversation_sessions
              WHERE user_id = ?
                AND last_active >= ?
                AND last_active <= ?
-             ORDER BY last_active DESC
+             ORDER BY pinned DESC, last_active DESC
              LIMIT 50",
         )
         .bind(user_id)
@@ -190,14 +234,14 @@ pub async fn search(
     sqlx::query_as::<_, ConversationSession>(
         "SELECT DISTINCT s.id, s.session_id, s.user_id, s.title,
                 s.started_at, s.last_active, s.message_count,
-                s.model_backend, s.containment_mode
+                s.model_backend, s.containment_mode, s.pinned
          FROM conversation_sessions s
          JOIN conversation_messages m ON m.session_id = s.session_id
          WHERE s.user_id = ?
            AND (m.content LIKE ? OR s.title LIKE ?)
            AND s.last_active >= ?
            AND s.last_active <= ?
-         ORDER BY s.last_active DESC
+         ORDER BY s.pinned DESC, s.last_active DESC
          LIMIT 50",
     )
     .bind(user_id)
