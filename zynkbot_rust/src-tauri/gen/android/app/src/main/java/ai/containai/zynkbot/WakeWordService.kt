@@ -60,9 +60,6 @@ class WakeWordService : Service() {
         const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
         const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers
 
-        // Set by WakeWordBridge before starting; called on detection when screen is on.
-        @Volatile var detectionCallback: (() -> Unit)? = null
-
         // Vosk model shared from VoskBridge so screen-off dictation doesn't reload it.
         @Volatile var sharedVoskModel: org.vosk.Model? = null
 
@@ -373,14 +370,14 @@ class WakeWordService : Service() {
                     cooldownRemaining = COOLDOWN_CHUNKS
                     embBuffer.clear()
 
-                    if (MainActivity.isInForeground) {
-                        // App is visible: JS WebView is live, call directly
-                        detectionCallback?.invoke()
-                    } else {
-                        // App is minimized or screen is off: evaluateJavascript() silently
-                        // drops on a paused WebView. Use Kotlin-native path for both cases.
-                        handleScreenOffDetection()
-                    }
+                    // Every trigger takes the native path, whether or not the app is on
+                    // screen. Until 2026-09-07 a lit screen handed the trigger to the
+                    // WebView's own dictation flow instead, which had none of the
+                    // hands-free safeguards (listening cap, fragment gate, voice
+                    // commands, Stop, tap-Z-to-cancel); a TV test showed the screen
+                    // stays lit far more than assumed, so most real triggers landed
+                    // there. The in-app flow is gone; this is the only route now.
+                    handleScreenOffDetection()
                 }
             } else {
                 consecutiveHighScores = 0
@@ -484,8 +481,10 @@ class WakeWordService : Service() {
 
     // ── Screen-off wake word path ────────────────────────────────────────────
 
+    // Named for its origin (screen-off was once the only case); it is now the
+    // single handler for every wake-word trigger.
     private fun handleScreenOffDetection() {
-        Log.i(TAG, "Screen-off wake word — handing off to detection wake lock")
+        Log.i(TAG, "Wake word — handing off to detection wake lock")
         // Release the indefinite audio-loop wake lock; detection lock covers the next 25s.
         releaseAudioWakeLock()
         val pm = getSystemService(PowerManager::class.java)

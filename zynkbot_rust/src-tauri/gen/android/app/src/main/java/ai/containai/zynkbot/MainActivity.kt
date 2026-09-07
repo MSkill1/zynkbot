@@ -46,10 +46,10 @@ class MainActivity : TauriActivity() {
         private const val PERM_ACCESS_LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
 
         // True only while the Activity is in the RESUMED state (app visible to user).
-        // WakeWordService reads this to decide whether to call the JS detection callback
-        // directly or route through the Kotlin-native path (chime + Vosk + notification).
         // evaluateJavascript() silently drops when the WebView is paused (Activity in
         // background), so this flag is the only reliable way to know if JS is reachable.
+        // No longer consulted for wake-word routing (every trigger is native since
+        // 2026-09-07); kept for the lifecycle log and any future JS-reachability check.
         @Volatile var isInForeground = false
 
         // Separate tag so onResume/onPause transitions are easy to grep out of a
@@ -557,9 +557,6 @@ class MainActivity : TauriActivity() {
             // intent. Android 14+ denies that permission by default; without it the
             // second locked query only posts a notification instead of answering.
             ensureFullScreenIntentPermission()
-            WakeWordService.detectionCallback = {
-                fire("window.__wakeWordDetected&&window.__wakeWordDetected();")
-            }
             val intent = Intent(this@MainActivity, WakeWordService::class.java).apply {
                 putExtra("threshold", threshold)
                 putExtra("modelDir", modelDir.absolutePath)
@@ -569,7 +566,6 @@ class MainActivity : TauriActivity() {
 
         @JavascriptInterface
         fun stop() {
-            WakeWordService.detectionCallback = null
             stopService(Intent(this@MainActivity, WakeWordService::class.java))
         }
 

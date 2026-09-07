@@ -2088,7 +2088,7 @@ export default function App() {
                   <VoiceButton
                     ref={voiceButtonRef}
                     onTranscript={(text) => { if (text) insertTranscriptAtCursor(text); }}
-                    disabled={isLoading || voice.isWakeRecording}
+                    disabled={isLoading}
                     style={{
                       position: 'absolute',
                       bottom: '8px',
@@ -2120,7 +2120,7 @@ export default function App() {
                   <VoiceButton
                     ref={voiceButtonRef}
                     onTranscript={(text) => { if (text) insertTranscriptAtCursor(text); }}
-                    disabled={isLoading || voice.isWakeRecording}
+                    disabled={isLoading}
                     style={{
                       width: '85px',
                       height: '42px',
@@ -2477,79 +2477,6 @@ export default function App() {
               ⏳ Creating 59 memories with embeddings and relationships...
             </p>
           </div>
-        </div>
-      )}
-
-      {/* Waveform recording overlay — shown on mobile when mic is active */}
-      {voice.isWakeRecording && isMobile && (
-        <div
-          onClick={async () => {
-            const text = await voice.stopWakeRecordingRef.current?.();
-            const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
-            if (!text || NEVERMIND.test(text)) {
-              voice.endVoiceSessionRef.current?.();
-            } else {
-              voice.wakeTriggeredRef.current = true;
-              voice.handleSendMessageRef.current?.(text);
-            }
-          }}
-          style={{
-            position: 'fixed',
-            bottom: 0, left: 0, right: 0,
-            background: 'rgba(30, 31, 41, 0.97)',
-            borderTop: '1px solid #44475a',
-            padding: '16px 20px 20px',
-            zIndex: 9997,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '12px',
-            cursor: 'pointer',
-            userSelect: 'none',
-          }}
-        >
-          <style>{`
-            @keyframes wv { 0%,100%{height:4px} 50%{height:var(--h)} }
-          `}</style>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '3px', height: '40px', pointerEvents: 'none' }}>
-            {Array.from({ length: 32 }, (_, i) => {
-              const peak = 8 + Math.floor(Math.abs(Math.sin(i * 0.7 + 1.2)) * 32);
-              const delay = (i * 0.06).toFixed(2);
-              const dur = (0.5 + (i % 5) * 0.12).toFixed(2);
-              return (
-                <div key={i} style={{
-                  width: '3px',
-                  borderRadius: '2px',
-                  background: '#8be9fd',
-                  '--h': `${peak}px`,
-                  animation: `wv ${dur}s ${delay}s ease-in-out infinite`,
-                  height: '4px',
-                  alignSelf: 'center',
-                }} />
-              );
-            })}
-          </div>
-          <p style={{ color: '#9aa5c4', fontSize: '0.85rem', margin: 0, pointerEvents: 'none' }}>
-            Listening… tap anywhere to stop and send
-          </p>
-        </div>
-      )}
-
-      {/* Wake word detection flash banner */}
-      {voice.wakeWordFlash && (
-        <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0,
-          padding: '14px',
-          background: 'rgba(139, 233, 253, 0.93)',
-          color: '#282a36',
-          textAlign: 'center',
-          fontWeight: 'bold',
-          fontSize: '1rem',
-          zIndex: 9998,
-          pointerEvents: 'none',
-        }}>
-          🎙️ Hey Zynk — speak now, then tap 🎤 to send
         </div>
       )}
 

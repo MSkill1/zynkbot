@@ -143,13 +143,11 @@ export function useVoiceSession({ setMessages }) {
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [isTtsSpeaking, setIsTtsSpeaking] = useState(false);
   const [isDictating, setIsDictating] = useState(false);
-  const [isWakeRecording, setIsWakeRecording] = useState(false);
   const [wakeWordModelReady, setWakeWordModelReady] = useState(
     () => window.WakeWordBridge ? window.WakeWordBridge.isModelReady() : false
   );
   const [wakeWordDownloadProgress, setWakeWordDownloadProgress] = useState(0);
   const [wakeWordDownloadError, setWakeWordDownloadError] = useState('');
-  const [wakeWordFlash, setWakeWordFlash] = useState(false);
 
   // localStorage-persisting setters
   const setTtsEnabled = (val) => {
@@ -170,17 +168,15 @@ export function useVoiceSession({ setMessages }) {
     localStorage.setItem('zynkbot_keep_screen_awake', val);
   };
 
-  const silenceTimerRef = useRef(null);
   const wakeTriggeredRef = useRef(false);
   const ttsSourceRef = useRef(null);
   const ttsAudioCtxRef = useRef(null);
-  const stopWakeRecordingRef = useRef(null);
   // Updated by App.jsx on every render so wake callbacks never hold a stale closure.
   const handleSendMessageRef = useRef(null);
-  // True only for requests captured while the app was not in front (screen-off
-  // path). App.jsx reads and clears it to decide whether the reply is spoken.
+  // True only for a transcript handed to the app by the native last-resort path
+  // (native answering failed). App.jsx reads and clears it to decide whether the
+  // reply is spoken.
   const handsFreeRef = useRef(false);
-  const endVoiceSessionRef = useRef(null);
 
   // Restarting the wake-word listener is scattered across this hook (TTS
   // finishing, a session ending, silence, an interrupt). Several of those paths
@@ -297,126 +293,11 @@ export function useVoiceSession({ setMessages }) {
     // left nine firings with zero trace of what this in-app path actually did.
     const trace = (m) => { try { window.WakeWordBridge?.log?.(m); } catch (_) {} console.log(m); };
 
-    const SILENCE_MS = 1000;
-    // Hard cap on one dictation. The silence timer restarts on every partial, so
-    // continuous speech (a TV) kept the mic open until the programme paused.
-    const MAX_LISTEN_MS = 12000;
-    let maxListenTimer = null;
-    const CLOSING_PHRASES = /\b(thank(?:\s+you)?\s+zynk|goodbye\s+zynk|zynk\s+stop|stop\s+listening|that'?s?\s+all|close\s+session)\b/i;
-
-    const stopWakeRecording = () => {
-      clearTimeout(silenceTimerRef.current);
-      clearTimeout(maxListenTimer);
-      window.__voskPartial = null;
-      setIsWakeRecording(false);
-      if (!window.VoskBridge) return Promise.resolve('');
-      return new Promise((resolve) => {
-        window.__voskResult = (text) => {
-          window.__voskResult = null;
-          window.__voskError = null;
-          resolve(text || '');
-        };
-        window.__voskError = () => {
-          window.__voskResult = null;
-          window.__voskError = null;
-          resolve('');
-        };
-        window.VoskBridge.stopListening();
-      });
-    };
-    stopWakeRecordingRef.current = stopWakeRecording;
-
-    const endVoiceSession = () => {
-      try {
-        const audio = new Audio('/wake_chime_close.wav');
-        audio.play().catch(() => {});
-      } catch (_) {}
-      armWakeWord(1500);
-    };
-    endVoiceSessionRef.current = endVoiceSession;
-
-    const autoSendWake = async () => {
-      trace('[WakeWord] autoSendWake firing');
-      const text = await stopWakeRecording();
-      trace('[WakeWord] transcript: ' + text);
-
-      if (!text) {
-        armWakeWord(1000);
-        return;
-      }
-
-      const NEVERMIND = /^\s*(never\s*mind|cancel|forget\s*it|discard)\s*$/i;
-      const STOP_ALONE = /^\s*stop\s*$/i;
-      if (CLOSING_PHRASES.test(text) || STOP_ALONE.test(text)) {
-        trace('[WakeWord] stop phrase detected — ending voice session');
-        stopTts();
-        endVoiceSession();
-        return;
-      }
-      if (NEVERMIND.test(text)) {
-        trace('[WakeWord] nevermind — discarding without sending');
-        endVoiceSession();
-        return;
-      }
-
-      const wordCount = text.trim().split(/\s+/).length;
-      if (wordCount < 2 || wordCount > 60) {
-        trace('[WakeWord] transcript rejected as noise (' + wordCount + ' words): ' + text);
-        armWakeWord(1000);
-        return;
-      }
-
-      wakeTriggeredRef.current = true;
-      handleSendMessageRef.current?.(text);
-    };
-
-    const startListening = () => {
-      if (!window.VoskBridge) return;
-      if (window.__dictationActive) return;
-      const startRecording = () => {
-        window.__voskPartial = (partial) => {
-          if (partial.trim()) {
-            clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(autoSendWake, SILENCE_MS);
-          }
-        };
-        window.VoskBridge.startListening();
-        setIsWakeRecording(true);
-        silenceTimerRef.current = setTimeout(autoSendWake, 8000);
-        clearTimeout(maxListenTimer);
-        maxListenTimer = setTimeout(() => {
-          trace('[WakeWord] listening cap reached');
-          autoSendWake();
-        }, MAX_LISTEN_MS);
-      };
-      try {
-        const audio = new Audio('/wake_chime.wav');
-        audio.onended = startRecording;
-        audio.onerror = startRecording;
-        audio.play().catch(startRecording);
-      } catch (_) {
-        startRecording();
-      }
-    };
-
-    window.__wakeWordDetected = () => {
-      if (window.__dictationActive) {
-        trace('[WakeWord] ignored — dictation in progress');
-        return;
-      }
-      if (ttsSourceRef.current) {
-        // Detector is stopped during TTS, so this normally can't fire mid-reply.
-        // If a stray detection slips through, ignore it rather than interrupt —
-        // onended re-arms passive listening when the reply finishes on its own.
-        trace('[WakeWord] detected during TTS — ignoring');
-        return;
-      }
-      trace('[WakeWord] detected — playing chime then recording; foreground=' + !!window.WakeWordBridge?.isNativeSpeaking);
-      window.WakeWordBridge.stop();
-      setWakeWordFlash(true);
-      setTimeout(() => setWakeWordFlash(false), 2500);
-      startListening();
-    };
+    // There is deliberately no in-app "Hey Zynk" handler any more. Every wake-word
+    // trigger, screen on or off, app in front or not, is handled natively by the
+    // assistant session (chime, Vosk dictation, listening cap, fragment gate, voice
+    // commands, spoken reply, Stop, tap-Z-to-cancel). The finished exchange reaches
+    // this thread through window.__nativeTurns. Retired 2026-09-07.
     window.__wakeWordModelReady = () => setWakeWordModelReady(true);
     window.__wakeWordDownloadProgress = (n) => setWakeWordDownloadProgress(n);
     window.__wakeWordDownloadError = (msg) => {
@@ -424,11 +305,12 @@ export function useVoiceSession({ setMessages }) {
       setWakeWordDownloadProgress(0);
     };
     window.__nativeSpeaking = (on) => setIsNativeSpeaking(!!on);
+    // Last-resort hand-off only: the native path could not answer (no speech
+    // engine, model call failed), so it opened the app with the transcript.
     window.__handleScreenOffTranscript = (transcript) => {
       if (!transcript?.trim()) return;
-      trace('[WakeWord] screen-off transcript received: ' + transcript);
-      // Captured while the app was not in front: the user cannot see the
-      // screen, so the reply must be spoken regardless of the in-app setting.
+      trace('[WakeWord] transcript handed to the app by the native fallback: ' + transcript);
+      // Captured hands-free: the reply must be spoken regardless of the in-app setting.
       handsFreeRef.current = true;
       wakeTriggeredRef.current = true;
       setTimeout(() => handleSendMessageRef.current?.(transcript.trim()), 2000);
@@ -442,7 +324,6 @@ export function useVoiceSession({ setMessages }) {
     }
 
     return () => {
-      window.__wakeWordDetected = null;
       window.__wakeWordModelReady = null;
       window.__wakeWordDownloadProgress = null;
       window.__wakeWordDownloadError = null;
@@ -462,18 +343,18 @@ export function useVoiceSession({ setMessages }) {
     return () => window.removeEventListener('zynkbot:dictation', onDictation);
   }, []);
 
-  // Pause wake word detection while recording, dictating, or speaking a reply;
-  // resume after a delay once all three are clear. The detector is kept off
-  // during TTS because the speaker output garbles the mic.
+  // Pause wake word detection while dictating or speaking a reply; resume after
+  // a delay once both are clear. The detector is kept off during TTS because the
+  // speaker output garbles the mic.
   useEffect(() => {
     if (!window.WakeWordBridge || !heyZynkEnabled) return;
-    if (isWakeRecording || isDictating || isTtsSpeaking) {
+    if (isDictating || isTtsSpeaking) {
       window.WakeWordBridge.stop();
     } else {
       armWakeWord(5000);
       return () => clearTimeout(wakeWordRestartTimerRef.current);
     }
-  }, [isWakeRecording, heyZynkEnabled, isDictating, isTtsSpeaking]);
+  }, [heyZynkEnabled, isDictating, isTtsSpeaking]);
 
   // Restart wake word when app returns to foreground (screen unlock, app switch).
   useEffect(() => {
@@ -481,12 +362,12 @@ export function useVoiceSession({ setMessages }) {
     const handleVisible = () => {
       // A push sent while the WebView was paused is lost; re-read on resume.
       try { setIsNativeSpeaking(!!window.WakeWordBridge?.isNativeSpeaking?.()); } catch (_) {}
-      if (!heyZynkEnabled || isWakeRecording || isDictating) return;
+      if (!heyZynkEnabled || isDictating) return;
       armWakeWord();
     };
     document.addEventListener('visibilitychange', handleVisible);
     return () => document.removeEventListener('visibilitychange', handleVisible);
-  }, [heyZynkEnabled, isWakeRecording, isDictating]);
+  }, [heyZynkEnabled, isDictating]);
 
   // Optional: prevent screen sleep while the app is open for hands-free use.
   // This only holds a screen wake lock; it never affects listening.
@@ -516,11 +397,9 @@ export function useVoiceSession({ setMessages }) {
     isTtsSpeaking,
     isNativeSpeaking,
     isDictating,
-    isWakeRecording,
     wakeWordModelReady,
     wakeWordDownloadProgress,
     wakeWordDownloadError,
-    wakeWordFlash,
     // Functions
     stopTts,
     speakResponse,
@@ -529,11 +408,8 @@ export function useVoiceSession({ setMessages }) {
     // - handleSendMessageRef: App.jsx updates this every render so callbacks stay current
     // - wakeTriggeredRef: handleSendMessage reads this for wake-only behaviour (web search auto-run)
     // - handsFreeRef: handleSendMessage reads this to decide whether to speak the reply
-    // - stopWakeRecordingRef / endVoiceSessionRef: waveform overlay calls these
     handleSendMessageRef,
     wakeTriggeredRef,
     handsFreeRef,
-    stopWakeRecordingRef,
-    endVoiceSessionRef,
   };
 }

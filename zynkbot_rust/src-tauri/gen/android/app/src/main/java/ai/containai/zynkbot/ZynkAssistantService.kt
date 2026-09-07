@@ -30,7 +30,7 @@ class ZynkAssistantService : VoiceInteractionService() {
          * The running instance while Zynkbot holds the assistant role, else null.
          * showSession() is an instance method, so WakeWordService needs this to hand
          * a detected wake word to the session. Same companion-static pattern as
-         * WakeWordService.detectionCallback / sharedVoskModel.
+         * WakeWordService.sharedVoskModel.
          */
         @Volatile var instance: ZynkAssistantService? = null
 
