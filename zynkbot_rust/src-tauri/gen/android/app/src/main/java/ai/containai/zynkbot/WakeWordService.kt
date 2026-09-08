@@ -63,8 +63,12 @@ class WakeWordService : Service() {
         // 2026-09-08: a real "Hey Zynk" from ~20 ft measured -31.5 dBFS; ten of the
         // twenty-two false firings that morning sat between -40 and -47. Stricter still
         // while backing off.
-        const val SILENCE_GATE_DB = -42.0
-        const val STRICT_GATE_DB = -38.0
+        // Relaxed again 2026-09-08 pm: from across the room the owner's own "Hey Zynk"
+        // sits at -39 to -44 dBFS, the same band as the TV, and the -42/-38 gates ate
+        // it. Loudness cannot separate the two at room distance; the verifier can.
+        const val SILENCE_GATE_DB = -46.0
+        const val STRICT_GATE_DB = -46.0
+        const val VERIFIER_ENFORCE = false  // log-only until it has seen the owner at every distance
         const val STRICT_HITS = 4           // consecutive high scores needed while backing off
         const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
         const val MISS_WINDOW_MS = 5 * 60_000L
@@ -105,6 +109,7 @@ class WakeWordService : Service() {
     //  2. back-off — after three fruitless sessions in five minutes, demand a much
     //     stronger detection for ten minutes;
     //  3. faster close on no speech (in ZynkAssistantSession).
+    private var verifier: WakeVerifier? = null
     private val recentMisses = ArrayDeque<Long>()      // wall-clock ms of empty / NO_QUERY sessions
     @Volatile private var strictUntil = 0L             // while now < strictUntil: 4 hits, score ≥ 0.9
 
@@ -444,7 +449,17 @@ class WakeWordService : Service() {
                         embBuffer.clear()
                         return
                     }
-                    Log.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS%s".format(level, if (strict) " (strict mode)" else ""))
+                    val v = verifier ?: WakeVerifier.load(this).also { verifier = it }
+                    val vScore = v?.score(flatEmb, EMB_WINDOW, EMB_SIZE) ?: -1f
+                    Log.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS verifier=%.3f%s".format(level, vScore, if (strict) " (strict mode)" else ""))
+                    if (VERIFIER_ENFORCE && v != null && vScore >= 0f && vScore < v.threshold) {
+                        Log.i(TAG, "Detection ignored: verifier says not the owner (%.3f < %.2f)".format(vScore, v.threshold))
+                        saveTriggerClip(score)
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2
+                        embBuffer.clear()
+                        return
+                    }
                     saveTriggerClip(score)
                     consecutiveHighScores = 0
                     cooldownRemaining = COOLDOWN_CHUNKS
