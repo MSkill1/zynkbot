@@ -108,7 +108,22 @@ class WakeWordService : Service() {
     private val recentMisses = ArrayDeque<Long>()      // wall-clock ms of empty / NO_QUERY sessions
     @Volatile private var strictUntil = 0L             // while now < strictUntil: 4 hits, score ≥ 0.9
 
+    /** Stem of the newest trigger clip, so its outcome can be written next to it. */
+    @Volatile private var lastClipStem: String? = null
+
+    /** Records how the newest trigger ended, next to its clip: `.real` or `.false`.
+     *  Labelled clips are the training set for the personal verifier (no upload;
+     *  the files stay under files/zynkbot/wake_triggers). */
+    private fun labelLastClip(real: Boolean) {
+        val stem = lastClipStem ?: return
+        try {
+            val dir = File(filesDir, "zynkbot/wake_triggers")
+            File(dir, "$stem.${if (real) "real" else "false"}").writeText(if (real) "real\n" else "false\n")
+        } catch (e: Exception) { Log.w(TAG, "Could not label clip: ${e.message}") }
+    }
+
     private fun noteOutcome(useful: Boolean) {
+        labelLastClip(useful)
         val now = System.currentTimeMillis()
         synchronized(recentMisses) {
             if (useful) {
@@ -514,6 +529,7 @@ class WakeWordService : Service() {
                 val dir = File(filesDir, "zynkbot/wake_triggers").apply { mkdirs() }
                 val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
                 val file = File(dir, "$stamp-${"%.3f".format(Locale.US, score)}.wav")
+                lastClipStem = file.name.removeSuffix(".wav")
                 val dataBytes = snapshot.sumOf { it.size } * 2
                 FileOutputStream(file).use { out ->
                     out.write(wavHeader(dataBytes, 16000))

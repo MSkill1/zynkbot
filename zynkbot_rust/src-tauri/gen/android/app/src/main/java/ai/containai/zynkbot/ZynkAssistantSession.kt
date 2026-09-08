@@ -261,6 +261,10 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         if (cancelled) return
         cancelled = true
         Log.i(TAG, "Session cancelled by a tap on the Z")
+        // The strongest false-trigger signal there is: the user dismissed it. It used to
+        // count for nothing, so tapping every TV firing away never started the back-off
+        // (2026-09-08). It is a miss, and the clip is labelled false for the verifier.
+        WakeWordService.reportOutcome(false)
         stopListening()
         NativeVoiceAnswerer.stopSpeaking()
         Thread {
