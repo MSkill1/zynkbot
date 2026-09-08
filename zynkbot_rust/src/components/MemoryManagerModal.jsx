@@ -51,6 +51,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [pendingBackup, setPendingBackup] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [cameFromReport, setCameFromReport] = useState(false); // Back from a memory opened via About me returns to About me
+  const [tagFilter, setTagFilter] = useState(''); // set when a tag was tapped in About me; shown as a banner over the list
 
   const loadKeyStatus = async () => {
     try {
@@ -651,7 +652,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
       <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
         onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
-        onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); }} />
+        onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />
         {KeySaveModal}
 
         {/* Header */}
@@ -734,7 +735,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 type="text"
                 placeholder="Search memories..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); setTagFilter(''); }}
                 className="search-input"
                 style={{ width: '100%', boxSizing: 'border-box', marginBottom: '8px' }}
               />
@@ -765,6 +766,12 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
             {/* Count row + Graph + Delete buttons */}
             <div style={{ padding: '8px 16px', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+{tagFilter && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 8px 0', padding: '6px 10px', background: 'rgba(189,147,249,0.15)', border: '1px solid #bd93f9', borderRadius: '6px', fontSize: '0.85rem', color: '#f8f8f2' }}>
+                  <span>Showing memories tagged <strong>{tagFilter}</strong></span>
+                  <button onClick={() => { setTagFilter(''); setSearchQuery(''); }} style={{ marginLeft: 'auto', background: 'none', border: '1px solid #bd93f9', color: '#bd93f9', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.8rem' }}>Show all</button>
+                </div>
+              )}
               <span style={{ color: '#8be9fd', fontWeight: 'bold', fontSize: '0.9rem', flex: 1 }}>
                 Memories ({filteredMemories.length})
               </span>
@@ -998,7 +1005,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     <>
       <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
         onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
-        onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); }} />
+        onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />
     {KeySaveModal}
     <div className="modal-overlay" onClick={onClose}>
       <div className="memory-manager-modal" onClick={(e) => e.stopPropagation()}>
@@ -1048,7 +1055,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             type="text"
             placeholder="Search memories..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => { setSearchQuery(e.target.value); setTagFilter(''); }}
             className="search-input"
           />
           <select
@@ -1117,6 +1124,12 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         <div className="modal-content">
           {/* Left: Memory List */}
           <div className="memory-list-panel">
+{tagFilter && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 8px 0', padding: '6px 10px', background: 'rgba(189,147,249,0.15)', border: '1px solid #bd93f9', borderRadius: '6px', fontSize: '0.85rem', color: '#f8f8f2' }}>
+                  <span>Showing memories tagged <strong>{tagFilter}</strong></span>
+                  <button onClick={() => { setTagFilter(''); setSearchQuery(''); }} style={{ marginLeft: 'auto', background: 'none', border: '1px solid #bd93f9', color: '#bd93f9', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.8rem' }}>Show all</button>
+                </div>
+              )}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <h3>Memories ({filteredMemories.length})</h3>
               {filteredMemories.length > 0 && (

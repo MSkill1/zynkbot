@@ -46,7 +46,13 @@ object OpenAiDictation {
     private const val TRAILING_SILENCE_MS = 1_200L
     private const val MAX_TOTAL_MS = 12_000L
     private const val PRE_ROLL_CHUNKS = 10                 // 500 ms kept from before speech onset
-    private const val MIN_SPEECH_RMS = 400.0               // PCM16 units; below this nothing counts as speech
+    // First real run (2026-09-08): a question asked from ~20 ft after a wake word
+    // that itself measured -31 dBFS never crossed the 400 onset, so Whisper heard
+    // nothing and the session closed. Speech across a room sits around 120–300
+    // PCM16 RMS on a phone mic; 120 with 2.5× the noise floor keeps a quiet room
+    // out and lets distant speech in.
+    private const val MIN_SPEECH_RMS = 120.0               // PCM16 units; below this nothing counts as speech
+    private const val ONSET_FLOOR_MULT = 2.5
     private const val SPEECH_ONSET_CHUNKS = 2              // consecutive loud chunks before "speaking"
     const val HTTP_TIMEOUT_MS = 20_000
 
@@ -130,7 +136,7 @@ object OpenAiDictation {
                     // Track the quiet level, but never learn upwards from a burst that
                     // may itself be the start of speech.
                     noiseFloor = if (noiseFloor == 0.0) rms else if (rms < noiseFloor * 2) noiseFloor * 0.9 + rms * 0.1 else noiseFloor
-                    val onset = max(noiseFloor * 3, MIN_SPEECH_RMS)
+                    val onset = max(noiseFloor * ONSET_FLOOR_MULT, MIN_SPEECH_RMS)
                     loudRun = if (rms > onset) loudRun + 1 else 0
                     preRoll.addLast(bytes)
                     while (preRoll.size > PRE_ROLL_CHUNKS) preRoll.removeFirst()
@@ -145,7 +151,7 @@ object OpenAiDictation {
                     }
                 } else {
                     out.write(bytes)
-                    val quiet = max(noiseFloor * 2, MIN_SPEECH_RMS / 2)
+                    val quiet = max(noiseFloor * 1.5, MIN_SPEECH_RMS / 2)
                     silenceMs = if (rms < quiet) silenceMs + CHUNK_MS else 0L
                     if (silenceMs >= TRAILING_SILENCE_MS) break
                 }

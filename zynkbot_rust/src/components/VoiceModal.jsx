@@ -254,7 +254,7 @@ export default function VoiceModal({
                 Offline — Vosk
                 {!voskAvailable && <span style={{ color: '#6272a4', fontWeight: '400' }}> (not available on macOS)</span>}
               </div>
-              <div style={mutedStyle}>Runs on device. No internet. No punctuation — LLMs handle it fine.</div>
+              <div style={mutedStyle}>Runs on device. No internet needed. Produces no punctuation; large language models do not need punctuation to understand a request.</div>
             </div>
           </label>
         </div>
