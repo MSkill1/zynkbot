@@ -1537,6 +1537,9 @@ pub async fn generate_reply(
                 }
             };
 
+            let _ = sqlx::query("UPDATE memories SET provenance_json = ? WHERE id = ?")
+                .bind(serde_json::json!({ "annotated": "at write", "by": bg_forced_backend.clone() }).to_string())
+                .bind(memory_id).execute(&db_pool).await;
             if let Err(e) = crate::memory::set_memory_extras(&db_pool, memory_id, &tags, sentiment_label, sentiment_score).await {
                 println!("[RUST BACKGROUND] ⚠️ Could not save tags/tone: {}", e);
             }

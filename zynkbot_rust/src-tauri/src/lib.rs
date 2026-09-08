@@ -980,6 +980,69 @@ where
     }
 }
 
+/// Extras-only call for the one-time enrichment of memories stored before the
+/// decision prompt returned them (migration 0011, 2026-09-08). `said_on` is the
+/// day the memory was recorded, so "yesterday" in its text resolves against that
+/// day, not today.
+pub(crate) async fn ask_llm_for_extras(
+    text: &str,
+    said_on: chrono::NaiveDate,
+    backend: &str,
+) -> Result<memory_extras::MemoryExtras, String> {
+    let instructions = memory_extras::prompt_instructions(said_on)
+        .replace("Today's date is", "This memory was recorded on");
+    let prompt = format!(
+        r#"You are annotating an existing personal memory. Do not judge whether to keep it and do not rewrite it.
+
+MEMORY:
+{text}
+
+{instructions}
+
+Respond with ONLY valid JSON, no markdown, starting with {{:
+{{
+  "event_date": "YYYY-MM-DD" or null,
+  "namespace": "personal",
+  "tags": ["tag1"],
+  "tone": "neutral",
+  "entities": [{{"name": "Vermont", "kind": "place"}}]
+}}"#
+    );
+    let response = if backend.contains("anthropic") {
+        call_anthropic_for_memory_decision(&prompt).await?
+    } else if backend.contains("openai") {
+        call_openai_for_memory_decision(&prompt).await?
+    } else if backend.contains("xai") {
+        call_xai_for_memory_decision(&prompt).await?
+    } else if backend.contains("mistral") {
+        call_mistral_for_memory_decision(&prompt).await?
+    } else if backend.ends_with(".gguf") || backend == "local" {
+        call_local_for_memory_decision(&prompt, backend, Some(EXTRAS_SCHEMA)).await?
+    } else if backend == "custom" {
+        call_custom_for_memory_decision(&prompt).await?
+    } else {
+        return Err(format!("Unknown backend '{}'", backend));
+    };
+    let json_str = match (response.find('{'), response.rfind('}')) {
+        (Some(a), Some(b)) if b > a => &response[a..=b],
+        _ => response.as_str(),
+    };
+    serde_json::from_str::<memory_extras::MemoryExtras>(json_str)
+        .map_err(|e| format!("extras parse failed: {}", e))
+}
+
+const EXTRAS_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "event_date": {"type": ["string", "null"]},
+    "namespace": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "tone": {"type": "string"},
+    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}}
+  },
+  "required": ["namespace"]
+}"#;
+
 /// Relationship classification returned by LLM
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct RelationshipClassification {
@@ -2386,6 +2449,7 @@ pub fn run() {
             commands::backup::acknowledge_backup_key,
             commands::report::build_problem_report,
             commands::memory_report::get_memory_report,
+            commands::memory_report::enrich_memory_backlog,
             commands::backup::derive_key_from_passphrase,
             commands::backup::get_r2_config_status,
             commands::backup::backup_memories_to_r2,

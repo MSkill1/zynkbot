@@ -116,7 +116,7 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
             </div>
 
             <p style={p}>{t.memories} memories, {t.links} links between them, {t.entities} named things, across {t.sessions} conversations.</p>
-            <p style={muted}>From {(t.first_at || '').slice(0, 10)} to {(t.last_at || '').slice(0, 10)}. {t.dated} memories carry the date something happened and {t.tagged} have tags; both grow as new memories are stored.</p>
+            <p style={muted}>From {(t.first_at || '').slice(0, 10)} to {(t.last_at || '').slice(0, 10)}. {t.dated} memories carry the date something happened and {t.tagged} have tags.{t.pending_enrichment > 0 ? ` ${t.pending_enrichment} older memories are still being annotated in the background; reopen this later.` : ''}</p>
 
             <Section id="timeline" title="Timeline, by when it happened" count={report.timeline?.length || 0} open>
               {report.timeline?.length ? byMonth(report.timeline).map((g) => (

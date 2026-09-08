@@ -404,6 +404,22 @@ export default function App() {
   // on screen so "Hey Zynk" questions continue it with its history, and pull finished
   // hands-free exchanges into the chat when they complete or when the app comes back
   // to the front (a push to a paused WebView is lost, so resume drains again).
+  // One-time enrichment of memories stored before the extractor returned event
+  // dates, tags, tone and entities (2026-09-08). Runs in the background in Rust,
+  // once per app start, and does nothing once every memory is marked. No button:
+  // there is nothing for a user to decide here.
+  const enrichKickedRef = useRef(false);
+  useEffect(() => {
+    if (!userId || !modelType || enrichKickedRef.current) return;
+    enrichKickedRef.current = true;
+    const t = setTimeout(() => {
+      invoke('enrich_memory_backlog', { userId, backend: modelType })
+        .then((r) => { if (r?.queued) console.log('[Enrich] annotating', r.queued, 'older memories'); })
+        .catch((e) => console.warn('[Enrich] not started:', e));
+    }, 15000); // let startup, sync and the first exchange settle first
+    return () => clearTimeout(t);
+  }, [userId, modelType]);
+
   const sessionIdRef = useRef(sessionId);
   useEffect(() => {
     sessionIdRef.current = sessionId;

@@ -46,6 +46,9 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
     let entities_total: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM memory_entities e JOIN memories m ON m.id = e.memory_id WHERE {MINE}"))
         .bind(user_id).fetch_one(pool).await?;
+    let pending_enrichment: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM memories m WHERE {MINE} AND m.provenance_json IS NULL AND COALESCE(m.source_type,'') IN ('conversation','hands_free')"))
+        .bind(user_id).fetch_one(pool).await?;
     let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_sessions WHERE user_id = ?")
         .bind(user_id).fetch_one(pool).await?;
     let messages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_messages WHERE user_id = ?")
@@ -127,6 +130,7 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
         "generated_at": chrono::Utc::now().to_rfc3339(),
         "totals": {
             "memories": n(&totals, "memories"),
+            "pending_enrichment": pending_enrichment,
             "dated": n(&totals, "dated"),
             "tagged": n(&totals, "tagged"),
             "links": links,
@@ -146,4 +150,98 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
         "extraction": extraction,
         "kitchen": kitchen,
     }))
+}
+
+
+/// One-time enrichment of memories stored before the decision call returned
+/// event date / namespace / tags / tone / entities. Runs in the background,
+/// one memory every ~1.5 s, and marks each in `provenance_json` so it is never
+/// repeated. Started automatically by the app after launch; there is no button,
+/// because once every memory is marked there is nothing left for it to do.
+/// Only the new fields change; content and title are untouched.
+#[tauri::command]
+pub async fn enrich_memory_backlog(user_id: String, backend: String) -> Result<serde_json::Value, String> {
+    static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Ok(serde_json::json!({ "queued": 0, "status": "already running" }));
+    }
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| { RUNNING.store(false, std::sync::atomic::Ordering::SeqCst); format!("DB connect failed: {}", e) })?;
+    let rows = sqlx::query(
+        "SELECT id, content, substr(created_at, 1, 10) AS day, namespace FROM memories
+         WHERE user_id = ? AND provenance_json IS NULL
+           AND COALESCE(source_type, '') IN ('conversation', 'hands_free')
+           AND namespace != '_zynkbot'
+         ORDER BY id ASC LIMIT 2000",
+    )
+    .bind(&user_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| { RUNNING.store(false, std::sync::atomic::Ordering::SeqCst); e.to_string() })?;
+    let total = rows.len();
+    if total == 0 {
+        pool.close().await;
+        RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        return Ok(serde_json::json!({ "queued": 0, "status": "nothing to do" }));
+    }
+    println!("[Enrich] {} older memories to annotate with {}", total, backend);
+
+    tokio::spawn(async move {
+        let mut done = 0usize;
+        let mut failed = 0usize;
+        for row in rows {
+            let id: i64 = row.try_get("id").unwrap_or(0);
+            let content: String = row.try_get("content").unwrap_or_default();
+            let day: String = row.try_get("day").unwrap_or_default();
+            let old_ns: String = row.try_get("namespace").unwrap_or_else(|_| "personal".to_string());
+            let said_on = chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+                .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+            let stamp = serde_json::json!({ "enriched": chrono::Utc::now().to_rfc3339(), "by": backend }).to_string();
+
+            match crate::ask_llm_for_extras(&content, said_on, &backend).await {
+                Ok(extras) => {
+                    let ns = crate::memory_extras::resolve_namespace(extras.namespace.as_deref(), &old_ns);
+                    let event_date = crate::memory_extras::validate_event_date(extras.event_date.as_deref(), &content, said_on + chrono::Duration::days(1))
+                        .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc());
+                    let tags = crate::memory_extras::clean_tags(extras.tags.as_deref());
+                    let (label, score) = crate::memory_extras::tone_to_sentiment(extras.tone.as_deref());
+                    let ents = crate::memory_extras::clean_entities(extras.entities.as_deref());
+                    let r = sqlx::query(
+                        "UPDATE memories SET namespace = ?, event_date = COALESCE(?, event_date), tags = ?,
+                                sentiment_label = ?, sentiment_score = ?, provenance_json = ? WHERE id = ?")
+                        .bind(&ns)
+                        .bind(event_date.map(|d| d.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()))
+                        .bind(serde_json::to_string(&tags).unwrap_or_else(|_| "[]".into()))
+                        .bind(label).bind(score).bind(&stamp).bind(id)
+                        .execute(&pool).await;
+                    if r.is_ok() {
+                        let _ = crate::memory::insert_memory_entities(&pool, id as i32, &ents).await;
+                        done += 1;
+                    } else {
+                        failed += 1;
+                    }
+                }
+                Err(e) => {
+                    failed += 1;
+                    println!("[Enrich] memory {} skipped: {}", id, e);
+                    // A dead backend (no key, model not loaded) fails every row the same
+                    // way; stop after a run of failures rather than hammering it.
+                    if failed >= 5 && done == 0 {
+                        println!("[Enrich] backend not usable — will retry on a later launch");
+                        break;
+                    }
+                }
+            }
+            if (done + failed) % 10 == 0 {
+                println!("[Enrich] {}/{} done ({} failed)", done + failed, total, failed);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        }
+        println!("[Enrich] finished: {} annotated, {} failed, {} total", done, failed, total);
+        pool.close().await;
+        RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    });
+
+    Ok(serde_json::json!({ "queued": total, "status": "started" }))
 }
