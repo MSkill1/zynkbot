@@ -43,6 +43,9 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         private const val TAG = "ZynkAssistantSession"
         private const val SILENCE_MS = 1500L
         private const val SAFETY_TIMEOUT_MS = 12_000L   // hard cap; ongoing speech cannot extend it
+        // OpenAI dictation caps its own recording at SAFETY_TIMEOUT_MS and then uploads;
+        // this backstop only catches a hung upload (2026-09-08).
+        private const val OPENAI_BACKSTOP_MS = SAFETY_TIMEOUT_MS + OpenAiDictation.HTTP_TIMEOUT_MS + 5_000L
         private const val MAX_QUERY_WORDS = 60
         private const val LOGO_DP = 120
         private const val BOTTOM_MARGIN_DP = 140
@@ -65,7 +68,9 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     // removeCallbacksAndMessages(null) used to cancel the safety cap too, so continuous
     // TV speech kept the session listening until the programme paused (2026-09-04).
     private val silenceStop = Runnable { stopVoskAsync() }
-    private val hardStop = Runnable { Log.i(TAG, "Listening cap reached"); stopVoskAsync() }
+    private val hardStop = Runnable { Log.i(TAG, "Listening cap reached"); stopVoskAsync(); openAiRecorder?.cancel() }
+    /** In-flight OpenAI dictation, when the Voice settings selector says "OpenAI". */
+    @Volatile private var openAiRecorder: OpenAiDictation.Recorder? = null
     private val main = Handler(Looper.getMainLooper())
     private var zView: ZView? = null
 
@@ -288,7 +293,61 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
 
     // ── dictation ────────────────────────────────────────────────────────────
 
+    /**
+     * The Voice settings selector (Vosk offline / OpenAI Whisper) used to reach only
+     * the in-app mic button; hands-free always dictated with Vosk. Since 2026-09-08
+     * the session honours it too: OpenAI when selected and a key is on file, else
+     * Vosk. An OpenAI failure (not a cancel) falls back to Vosk once.
+     */
     private fun startListening() {
+        val source = MainActivity.voiceInputSource(context)
+        if (source == "openai" && !OpenAiDictation.hasApiKey(context)) {
+            Log.w(TAG, "[Dictation] OpenAI selected but no OPENAI_API_KEY on file — using Vosk")
+        }
+        if (source == "openai" && OpenAiDictation.hasApiKey(context)) startOpenAiListening() else startVoskListening()
+    }
+
+    private fun startOpenAiListening() {
+        Log.i(TAG, "[Dictation] engine=openai")
+        // Off the main thread: releasing the wake-word mic can wait up to 2s.
+        Thread {
+            val freed = try { WakeWordService.instance?.releaseMicForSession() ?: true } catch (e: Exception) { false }
+            if (!freed) Log.w(TAG, "Wake-word mic not confirmed released; starting OpenAI dictation anyway (its own cap will end it)")
+            if (cancelled) return@Thread
+            lateinit var rec: OpenAiDictation.Recorder
+            rec = OpenAiDictation.record(
+                context,
+                onSpeechStarted = { Log.i(TAG, "[Dictation] speech started") },
+                onDone = { text -> main.post { onOpenAiDone(rec, text) } }
+            )
+            openAiRecorder = rec
+            // stopListening() may have run between thread start and the assignment above.
+            if (cancelled || !ZynkAssistantService.sessionActive) rec.cancel()
+            silenceHandler.postDelayed(hardStop, OPENAI_BACKSTOP_MS)
+        }.start()
+    }
+
+    /** Main looper, like Vosk's onFinalResult. null = failure or cancel; "" = nothing heard. */
+    private fun onOpenAiDone(rec: OpenAiDictation.Recorder, text: String?) {
+        silenceHandler.removeCallbacksAndMessages(null)
+        openAiRecorder = null
+        if (cancelled) return
+        if (rec.isCancelled) {
+            // Ended by the backstop or by onHide — not a failure, so no Vosk fallback.
+            if (ZynkAssistantService.sessionActive) hide()
+            return
+        }
+        if (text == null) {
+            Log.w(TAG, "[Dictation] OpenAI failed — falling back to Vosk")
+            startVoskListening()
+            return
+        }
+        Log.i(TAG, "Transcript: \"$text\"")
+        answerAndFinish(text)
+    }
+
+    private fun startVoskListening() {
+        Log.i(TAG, "[Dictation] engine=vosk")
         val model = WakeWordService.sharedVoskModel
         if (model == null) {
             Log.w(TAG, "No Vosk model loaded yet (wake-word listener hasn't run this session) — nothing to do")
@@ -366,6 +425,8 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         silenceHandler.removeCallbacksAndMessages(null)
         stopVoskAsync()
         speechService = null
+        openAiRecorder?.cancel()
+        openAiRecorder = null
     }
 
     // ── answer ───────────────────────────────────────────────────────────────

@@ -162,6 +162,9 @@ export function useVoiceSession({ setMessages }) {
   const setVoiceInputSource = (val) => {
     setVoiceInputSourceRaw(val);
     localStorage.setItem('zynkbot_voice_input_source', val);
+    // The hands-free assistant session runs natively and cannot read localStorage;
+    // mirror the choice into Kotlin prefs so it dictates with the same engine (2026-09-08).
+    try { window.AndroidPaths?.setVoiceInputSource?.(val); } catch (_) {}
   };
   const setKeepScreenAwake = (val) => {
     setKeepScreenAwakeRaw(val);
@@ -315,6 +318,10 @@ export function useVoiceSession({ setMessages }) {
       wakeTriggeredRef.current = true;
       setTimeout(() => handleSendMessageRef.current?.(transcript.trim()), 2000);
     };
+
+    // Native prefs may lag localStorage (older build, cleared app data): push the
+    // current engine choice before arming so the session matches the selector.
+    try { window.AndroidPaths?.setVoiceInputSource?.(localStorage.getItem('zynkbot_voice_input_source') || 'vosk'); } catch (_) {}
 
     if (heyZynkEnabled) {
       armWakeWord();

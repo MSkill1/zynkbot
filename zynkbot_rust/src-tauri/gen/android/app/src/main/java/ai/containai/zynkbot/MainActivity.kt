@@ -3,6 +3,7 @@ package ai.containai.zynkbot
 import android.Manifest
 import android.app.NotificationManager
 import android.app.role.RoleManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -57,6 +58,18 @@ class MainActivity : TauriActivity() {
         // state unverifiable for 16 minutes of screen-off time, with no way to tell
         // whether it correctly flipped false or got stuck — this closes that gap.
         private const val TAG_LIFECYCLE = "MainActivityLifecycle"
+
+        // The Voice-settings dictation engine, mirrored out of localStorage by
+        // ZynkbotPathsBridge.setVoiceInputSource so the native assistant session —
+        // which never runs the WebView — can honour it too (2026-09-08).
+        private const val VOICE_PREFS = "zynkbot_voice"
+        private const val VOICE_PREFS_INPUT_SOURCE = "input_source"
+        private val VOICE_INPUT_SOURCES = setOf("vosk", "openai")
+
+        /** 'vosk' (default) or 'openai' — whatever the app last pushed. */
+        fun voiceInputSource(context: Context): String =
+            context.getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE)
+                .getString(VOICE_PREFS_INPUT_SOURCE, "vosk") ?: "vosk"
     }
 
     private var webViewRef: WeakReference<WebView>? = null
@@ -200,6 +213,14 @@ class MainActivity : TauriActivity() {
     }
 
     inner class ZynkbotPathsBridge {
+        /** Voice settings selector ('vosk' | 'openai'); anything else is ignored. */
+        @JavascriptInterface
+        fun setVoiceInputSource(src: String) {
+            if (src !in VOICE_INPUT_SOURCES) return
+            getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE).edit()
+                .putString(VOICE_PREFS_INPUT_SOURCE, src).apply()
+        }
+
         @JavascriptInterface
         fun getShareDir(): String {
             return try {
