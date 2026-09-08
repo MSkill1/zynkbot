@@ -46,6 +46,9 @@ pub struct Memory {
     pub expires_at: Option<DateTime<Utc>>,
     pub entities_detected: Option<serde_json::Value>,
     pub original_text: Option<String>,
+    /// JSON array of lowercase topic words from the decision call (migration 0011).
+    #[sqlx(default)]
+    pub tags: Option<String>,
     #[sqlx(default)]
     pub similarity: Option<f64>,
 }
@@ -193,7 +196,7 @@ async fn fetch_memories_by_ids(
     }
     let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
-        "SELECT id, title, content, source_type, session_id, created_at, updated_at,
+        "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
                 is_syncable, is_shareable, event_type, event_date,
                 link_count, is_ephemeral, expires_at, entities_detected, original_text
@@ -425,7 +428,7 @@ pub async fn list_memories(
     namespace: Option<&str>,
 ) -> Result<Vec<Memory>, sqlx::Error> {
     let mut sql = String::from(
-        "SELECT id, title, content, source_type, session_id, created_at, updated_at,
+        "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
                 is_syncable, is_shareable, event_type, event_date,
                 link_count, is_ephemeral, expires_at, entities_detected, original_text
@@ -463,7 +466,7 @@ pub async fn get_memory(
     memory_id: i32,
 ) -> Result<Option<Memory>, sqlx::Error> {
     sqlx::query_as::<_, Memory>(
-        "SELECT id, title, content, source_type, session_id, created_at, updated_at,
+        "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
                 is_syncable, is_shareable, event_type, event_date,
                 link_count, is_ephemeral, expires_at, entities_detected, original_text

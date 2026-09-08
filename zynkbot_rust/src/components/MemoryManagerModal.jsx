@@ -520,9 +520,12 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   };
 
   // Filter memories by search query
+  // Tags count as searchable text: "#keto" or "keto" both find a memory tagged keto,
+  // which is what tapping a tag in the About-me report does.
   const filteredMemories = memories.filter(mem =>
     mem.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (mem.title && mem.title.toLowerCase().includes(searchQuery.toLowerCase()))
+    (mem.title && mem.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
+    (mem.tags && searchQuery && mem.tags.toLowerCase().includes(searchQuery.toLowerCase().replace(/^#/, '')))
   );
 
   if (!isOpen) return null;
@@ -646,7 +649,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
-        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setSelectedMemory(m); } }} />
+        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setSelectedMemory(m); } }}
+        onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); }} />
         {KeySaveModal}
 
         {/* Header */}
@@ -992,7 +996,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   return (
     <>
       <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
-        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setSelectedMemory(m); } }} />
+        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setSelectedMemory(m); } }}
+        onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); }} />
     {KeySaveModal}
     <div className="modal-overlay" onClick={onClose}>
       <div className="memory-manager-modal" onClick={(e) => e.stopPropagation()}>
