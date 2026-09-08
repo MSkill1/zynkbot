@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from '@tauri-apps/api/core';
+import MemoryReportModal from './MemoryReportModal';
 import MemoryGraphModal from "./MemoryGraphModal";
 import "../styles/MemoryManagerModal.css";
 
@@ -48,6 +49,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [passphraseConfirm, setPassphraseConfirm] = useState('');
   const [passphraseStatus, setPassphraseStatus] = useState('');
   const [pendingBackup, setPendingBackup] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   const loadKeyStatus = async () => {
     try {
@@ -643,6 +645,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   if (isMobile) {
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId} />
         {KeySaveModal}
 
         {/* Header */}
@@ -661,6 +664,10 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             <>
               <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: 1 }}>Memory Manager</h2>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
+                  style={{ background: '#bd93f9', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  🧠 About me
+                </button>
                 <button onClick={handleBackup} disabled={backupStatus === 'busy'}
                   style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
                   {backupStatus === 'busy' ? '…' : '☁ Backup'}
@@ -981,6 +988,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   return (
     <>
+      <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId} />
     {KeySaveModal}
     <div className="modal-overlay" onClick={onClose}>
       <div className="memory-manager-modal" onClick={(e) => e.stopPropagation()}>
@@ -988,6 +996,10 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         <div className="modal-header">
           <h2>Memory Manager</h2>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
+              style={{ background: '#bd93f9', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              🧠 About me
+            </button>
             <button onClick={handleBackup} disabled={backupStatus === 'busy'}
               title="Encrypt and back up all memories to Cloudflare R2"
               style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', padding: '8px 14px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}>

@@ -437,7 +437,8 @@ pub(crate) async fn ask_llm_for_relationships(
     extracted_fact: &str,
     similar_memories: &[(i32, String, Option<String>, f32)],
     backend: &str,
-) -> Result<(Option<String>, Vec<RelationshipClassification>), String> {
+) -> Result<(Option<String>, Vec<RelationshipClassification>, memory_extras::MemoryExtras), String> {
+    let extras_instructions = memory_extras::prompt_instructions(chrono::Utc::now().date_naive());
     let similar_memories_text = if similar_memories.is_empty() {
         "(none)".to_string()
     } else {
@@ -469,6 +470,8 @@ RELATIONSHIP TYPES:
 
 ⚠️ High semantic similarity does NOT mean agreement — opposite claims = contradiction.
 
+{extras_instructions}
+
 Return ONLY valid JSON starting with {{:
 {{
   "title": "Concise descriptive title for the new fact (max 50 chars)",
@@ -479,9 +482,14 @@ Return ONLY valid JSON starting with {{:
       "reason": "Brief explanation",
       "confidence": 0.95
     }}
-  ]
+  ],
+  "event_date": "YYYY-MM-DD" or null,
+  "namespace": "personal",
+  "tags": ["tag1"],
+  "tone": "neutral",
+  "entities": [{{"name": "Vermont", "kind": "place"}}]
 }}"#,
-        extracted_fact, similar_memories_text
+        extracted_fact, similar_memories_text, extras_instructions = extras_instructions
     );
 
     let response = if backend.contains("anthropic") {
@@ -529,6 +537,8 @@ Return ONLY valid JSON starting with {{:
     struct RelationshipResult {
         title: Option<String>,
         relationships: Option<Vec<RelationshipClassification>>,
+        #[serde(flatten)]
+        extras: memory_extras::MemoryExtras,
     }
 
     match serde_json::from_str::<RelationshipResult>(json_str) {
@@ -537,7 +547,7 @@ Return ONLY valid JSON starting with {{:
                 .into_iter()
                 .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
                 .collect();
-            Ok((result.title, rels))
+            Ok((result.title, rels, result.extras))
         }
         Err(e) => {
             println!("[Memory Relations] Failed to parse JSON: {} — raw: {}", e, &json_str[..json_str.len().min(120)]);
@@ -553,7 +563,8 @@ async fn ask_llm_about_memory(
     message: &str,
     conversation_history: &str,
     backend: &str,
-) -> Result<(bool, Option<String>), String> {
+) -> Result<(bool, Option<String>, memory_extras::MemoryExtras), String> {
+    let extras_instructions = memory_extras::prompt_instructions(chrono::Utc::now().date_naive());
     // Build prompt
     let prompt = format!(
         r#"You are a memory decision system. Analyze the user's message and decide if it should be stored as a long-term memory.
@@ -591,6 +602,8 @@ Do NOT remember:
   • "I work at Google"
   • "I graduated in 2015"
 
+{extras_instructions}
+
 ⚠️ CRITICAL OUTPUT REQUIREMENTS:
 - Respond with ONLY valid JSON
 - Do NOT include any explanatory text before or after the JSON
@@ -600,11 +613,16 @@ Do NOT remember:
 OUTPUT FORMAT:
 {{
   "should_remember": true/false,
-  "title": "Title here (only if should_remember is true)"
+  "title": "Title here (only if should_remember is true)",
+  "event_date": "YYYY-MM-DD" or null,
+  "namespace": "personal",
+  "tags": ["tag1"],
+  "tone": "neutral",
+  "entities": [{{"name": "Vermont", "kind": "place"}}]
 }}
 
 Return the JSON now:"#,
-        conversation_history, message
+        conversation_history, message, extras_instructions = extras_instructions
     );
 
     // Call LLM based on backend (same backend as main conversation!)
@@ -622,7 +640,7 @@ Return the JSON now:"#,
         call_custom_for_memory_decision(&prompt).await?
     } else {
         println!("[Memory Decision] Unknown backend '{}' - skipping memory decision", backend);
-        return Ok((false, None));
+        return Ok((false, None, memory_extras::MemoryExtras::default()));
     };
 
     // Parse JSON response
@@ -630,6 +648,8 @@ Return the JSON now:"#,
     struct MemoryDecision {
         should_remember: bool,
         title: Option<String>,
+        #[serde(flatten)]
+        extras: memory_extras::MemoryExtras,
     }
 
     // Try to extract JSON from response (handles cases where LLM adds extra text)
@@ -647,14 +667,14 @@ Return the JSON now:"#,
         Ok(decision) => {
             println!("[Memory Decision] LLM decision: should_remember={}, title={:?}",
                      decision.should_remember, decision.title);
-            Ok((decision.should_remember, decision.title))
+            Ok((decision.should_remember, decision.title, decision.extras))
         }
         Err(e) => {
             println!("[Memory Decision] Failed to parse LLM response: {}", e);
             #[cfg(debug_assertions)]
             println!("[Memory Decision] Response was: {}", response);
             // Fallback to no memory on parse error
-            Ok((false, None))
+            Ok((false, None, memory_extras::MemoryExtras::default()))
         }
     }
 }
@@ -876,6 +896,11 @@ async fn call_local_for_memory_decision(prompt: &str, backend: &str, json_schema
 const RELATIONSHIP_SCHEMA: &str = r#"{
   "type": "object",
   "properties": {
+    "event_date": {"type": ["string", "null"]},
+    "namespace": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "tone": {"type": "string"},
+    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}},
     "title": {"type": "string"},
     "relationships": {
       "type": "array",
@@ -897,6 +922,11 @@ const RELATIONSHIP_SCHEMA: &str = r#"{
 const MEMORY_DECISION_SCHEMA: &str = r#"{
   "type": "object",
   "properties": {
+    "event_date": {"type": ["string", "null"]},
+    "namespace": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "tone": {"type": "string"},
+    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}},
     "should_remember": {"type": "boolean"},
     "title": {"type": "string"}
   },
@@ -970,8 +1000,8 @@ pub(crate) async fn ask_llm_about_memory_with_relationships(
 ) -> Result<(bool, Option<String>, Vec<RelationshipClassification>, memory_extras::MemoryExtras), String> {
     // If no similar memories, fall back to simple decision
     if similar_memories.is_empty() {
-        let (should_remember, title) = ask_llm_about_memory(message, conversation_history, backend).await?;
-        return Ok((should_remember, title, Vec::new(), memory_extras::MemoryExtras::default()));
+        let (should_remember, title, extras) = ask_llm_about_memory(message, conversation_history, backend).await?;
+        return Ok((should_remember, title, Vec::new(), extras));
     }
     let extras_instructions = memory_extras::prompt_instructions(chrono::Utc::now().date_naive());
 
@@ -1220,10 +1250,10 @@ Return the JSON now:"#,
             // Fallback: try simple decision without relationships
             println!("[Memory Decision] Falling back to simple memory decision (no relationship detection)");
             match ask_llm_about_memory(message, conversation_history, backend).await {
-                Ok((should_remember, title)) => {
+                Ok((should_remember, title, extras)) => {
                     println!("[Memory Decision] ⚠️ Using fallback decision: should_remember={}, title={:?}",
                              should_remember, title);
-                    Ok((should_remember, title, Vec::new(), memory_extras::MemoryExtras::default()))
+                    Ok((should_remember, title, Vec::new(), extras))
                 },
                 Err(fallback_err) => {
                     println!("[Memory Decision] ❌ Fallback also failed: {}", fallback_err);
@@ -2355,6 +2385,7 @@ pub fn run() {
             commands::backup::get_backup_key_status,
             commands::backup::acknowledge_backup_key,
             commands::report::build_problem_report,
+            commands::memory_report::get_memory_report,
             commands::backup::derive_key_from_passphrase,
             commands::backup::get_r2_config_status,
             commands::backup::backup_memories_to_r2,

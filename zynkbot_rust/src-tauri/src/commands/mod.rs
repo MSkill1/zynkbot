@@ -4,6 +4,7 @@ pub mod setup_wizard;
 pub mod conversation;
 pub mod knowledge_base;
 pub mod memory;
+pub mod memory_report;
 pub mod models;
 pub mod nlp;
 pub mod onboarding;

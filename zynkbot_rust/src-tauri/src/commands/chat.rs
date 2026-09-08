@@ -1319,9 +1319,9 @@ pub async fn generate_reply(
             // API: full should_remember + relationship classification.
             let (should_remember, llm_title, llm_relationships, llm_extras) = if !bg_is_api {
                 match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
-                    Ok((title, rels)) => {
+                    Ok((title, rels, extras)) => {
                         println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
-                        (true, title, rels, crate::memory_extras::MemoryExtras::default())
+                        (true, title, rels, extras)
                     }
                     Err(e) => {
                         println!("[RUST BACKGROUND] ⚠️ Relationship classifier failed: {} — storing without links", e);
