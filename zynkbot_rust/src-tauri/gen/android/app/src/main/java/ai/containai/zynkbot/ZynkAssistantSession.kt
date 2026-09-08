@@ -42,7 +42,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     companion object {
         private const val TAG = "ZynkAssistantSession"
         private const val SILENCE_MS = 1500L
-        private const val NO_SPEECH_MS = 4000L          // nothing heard after the chime → close (2026-09-08)
+        private const val NO_SPEECH_MS = 6000L          // nothing heard after the chime → close (4 s cut a real "set a timer" off on 2026-09-08 pm; 6 s)
         private const val SAFETY_TIMEOUT_MS = 12_000L   // hard cap; ongoing speech cannot extend it
         // OpenAI dictation caps its own recording at SAFETY_TIMEOUT_MS and then uploads;
         // this backstop only catches a hung upload (2026-09-08).
@@ -73,6 +73,8 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     // A false trigger in a quiet room used to hold the mic for the full 12 s cap;
     // with no partial result in the first 4 s there is nobody talking to us (2026-09-08).
     private val noSpeechStop = Runnable { Log.i(TAG, "No speech after the chime — closing"); stopVoskAsync() }
+    @Volatile private var listenStartedAt = 0L
+    @Volatile private var firstPartialLogged = false
     /** In-flight OpenAI dictation, when the Voice settings selector says "OpenAI". */
     @Volatile private var openAiRecorder: OpenAiDictation.Recorder? = null
     private val main = Handler(Looper.getMainLooper())
@@ -368,6 +370,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             override fun onPartialResult(h: String?) {
                 val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
                 if (partial.isNotBlank()) {
+                    if (!firstPartialLogged) { firstPartialLogged = true; Log.i(TAG, "[Dictation] first words after ${System.currentTimeMillis() - listenStartedAt} ms") }
                     silenceHandler.removeCallbacks(noSpeechStop)
                     silenceHandler.removeCallbacks(silenceStop)
                     silenceHandler.postDelayed(silenceStop, SILENCE_MS)
@@ -415,6 +418,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
                 val rec = org.vosk.Recognizer(model, 16000.0f)
                 val service = org.vosk.android.SpeechService(rec, 16000.0f)
                 speechService = service
+                listenStartedAt = System.currentTimeMillis(); firstPartialLogged = false
                 service.startListening(listener)
                 silenceHandler.postDelayed(hardStop, SAFETY_TIMEOUT_MS)
                 silenceHandler.postDelayed(noSpeechStop, NO_SPEECH_MS)
