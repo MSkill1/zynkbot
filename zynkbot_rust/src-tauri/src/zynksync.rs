@@ -3500,6 +3500,29 @@ async fn inject_verified_device(
             let device_id: String = row.try_get("device_id").unwrap_or_default();
             let device_name: String = row.try_get("device_name").unwrap_or_default();
             if !device_id.is_empty() {
+                // A peer whose DHCP address changed overnight kept its old address in
+                // zynk_devices and in the peers map, so ZChat delivery and outbound sync
+                // went to a dead IP even while that peer was talking to us (Pixel
+                // .158 → .185, 2026-09-08). Every certificate-verified request carries
+                // the true address; record it when it differs.
+                if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>().cloned() {
+                    let ip = addr.ip().to_string();
+                    if !ip.is_empty() && !ip.starts_with("127.") {
+                        let changed = sqlx::query(
+                            "UPDATE zynk_devices SET device_ip = ? WHERE device_id = ? AND COALESCE(device_ip, '') != ?")
+                            .bind(&ip).bind(&device_id).bind(&ip)
+                            .execute(&service.db_pool).await
+                            .map(|r| r.rows_affected() > 0).unwrap_or(false);
+                        if changed {
+                            println!("[ZynkSync] {} is now at {} — address updated", device_name, ip);
+                            let mut peers = service.peers.write().await;
+                            if let Some(p) = peers.get_mut(&device_id) {
+                                p.host = ip.clone();
+                                p.url = format!("https://{}:{}", ip, p.port);
+                            }
+                        }
+                    }
+                }
                 req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
             }
         }
