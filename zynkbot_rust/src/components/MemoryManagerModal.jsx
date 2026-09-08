@@ -50,6 +50,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [passphraseStatus, setPassphraseStatus] = useState('');
   const [pendingBackup, setPendingBackup] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [cameFromReport, setCameFromReport] = useState(false); // Back from a memory opened via About me returns to About me
 
   const loadKeyStatus = async () => {
     try {
@@ -649,7 +650,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
-        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setSelectedMemory(m); } }}
+        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
         onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); }} />
         {KeySaveModal}
 
@@ -658,7 +659,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
           {selectedMemory ? (
             <>
               <button
-                onClick={() => { setSelectedMemory(null); setIsEditing(false); }}
+                onClick={() => { setSelectedMemory(null); setIsEditing(false); if (cameFromReport) { setCameFromReport(false); setShowReport(true); } }}
                 style={{ background: 'none', border: 'none', color: '#8be9fd', fontSize: '0.9rem', cursor: 'pointer', padding: '8px 4px', fontWeight: 'bold', flexShrink: 0 }}
               >← Back</button>
               <span style={{ color: '#f8f8f2', fontWeight: 'bold', fontSize: '0.9rem', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -996,7 +997,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   return (
     <>
       <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
-        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setSelectedMemory(m); } }}
+        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
         onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); }} />
     {KeySaveModal}
     <div className="modal-overlay" onClick={onClose}>

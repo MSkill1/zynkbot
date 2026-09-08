@@ -7,6 +7,7 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [openSections, setOpenSections] = useState({});
 
   useEffect(() => {
     if (!isOpen) return;
@@ -41,7 +42,6 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
     (report.belief_changes || []).forEach((x) => lines.push(`  ${x.day}  ${x.kind}: "${x.new_title}" vs "${x.old_title}"${x.notes ? ' — ' + x.notes : ''}`));
     lines.push('');
     lines.push('Tone: ' + list(report.tone, (x) => `${x.label} ${x.count}`));
-    lines.push('Extraction outcomes by conversation: ' + list(report.extraction, (x) => `${x.outcome} ${x.count}`));
     if (report.kitchen?.length) {
       lines.push('');
       lines.push('Kitchen:');
@@ -53,10 +53,13 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
     try { await navigator.clipboard.writeText(asText()); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch (_) {}
   };
 
-  const h = { color: '#8be9fd', fontSize: '0.95rem', margin: '14px 0 6px 0' };
   const p = { margin: '0 0 4px 0', fontSize: '0.88rem', lineHeight: 1.5, color: '#ececec' };
   const muted = { ...p, color: '#9aa5c4' };
   const btn = { padding: '7px 12px', borderRadius: '6px', border: '1px solid #6272a4', background: 'rgba(98,114,164,0.25)', color: '#8be9fd', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' };
+  const chip = (text, key, onClick) => (
+    <span key={key} onClick={onClick} title={onClick ? 'Show these memories in the list' : undefined}
+      style={{ display: 'inline-block', margin: '2px 4px 2px 0', padding: '2px 8px', borderRadius: '10px', background: '#2b2d3a', border: '1px solid #44475a', fontSize: '0.8rem', color: onClick ? '#8be9fd' : '#f8f8f2', cursor: onClick ? 'pointer' : 'default' }}>{text}</span>
+  );
   // Every line that names a memory opens it in the Memory Manager for editing or
   // deleting: the report is a view of the graph, and the graph is the user's to change.
   const link = (id, text) => (
@@ -65,10 +68,36 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
       {text}
     </button>
   );
-  const chip = (text, key, onClick) => (
-    <span key={key} onClick={onClick} title={onClick ? 'Show these memories in the list' : undefined}
-      style={{ display: 'inline-block', margin: '2px 4px 2px 0', padding: '2px 8px', borderRadius: '10px', background: '#2b2d3a', border: '1px solid #44475a', fontSize: '0.8rem', color: onClick ? '#8be9fd' : '#f8f8f2', cursor: onClick ? 'pointer' : 'default' }}>{text}</span>
-  );
+  // Sections fold: a few weeks of data already made one long scroll a wall of text
+  // (2026-09-08). Each header shows its count so a closed section still says something.
+  const Section = ({ id, title, count, children, open }) => {
+    const isOpen = openSections[id] ?? !!open;
+    return (
+      <div style={{ borderTop: '1px solid #33354a', paddingTop: '6px', marginTop: '6px' }}>
+        <button onClick={() => setOpenSections((o) => ({ ...o, [id]: !isOpen }))}
+          style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', color: '#8be9fd', fontSize: '0.95rem', fontWeight: 600, padding: '6px 0', cursor: 'pointer', textAlign: 'left' }}>
+          <span>{title}{count != null ? <span style={{ color: '#6272a4', fontWeight: 400 }}> · {count}</span> : null}</span>
+          <span style={{ fontSize: '0.8rem' }}>{isOpen ? '▼' : '▶'}</span>
+        </button>
+        {isOpen && <div style={{ paddingBottom: '6px' }}>{children}</div>}
+      </div>
+    );
+  };
+  // Timeline grouped by month, newest first, so a year of entries reads as headings.
+  const byMonth = (rows) => {
+    const groups = [];
+    for (const r of rows || []) {
+      const m = (r.day || '').slice(0, 7);
+      const g = groups.find((x) => x.month === m);
+      if (g) g.rows.push(r); else groups.push({ month: m, rows: [r] });
+    }
+    return groups;
+  };
+  const monthName = (ym) => {
+    const [y, m] = ym.split('-').map(Number);
+    return isNaN(m) ? ym : new Date(y, m - 1, 1).toLocaleString(undefined, { month: 'long', year: 'numeric' });
+  };
+  const kindLabel = { person: 'People', place: 'Places', org: 'Organisations', thing: 'Things' };
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px' }}>
@@ -86,47 +115,53 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
               <button style={btn} onClick={copy}>{copied ? '✓ Copied' : '📋 Copy as text'}</button>
             </div>
 
-            <h3 style={h}>In numbers</h3>
-            <p style={p}>{t.memories} memories, {t.links} links between them, {t.entities} named things, across {t.sessions} conversations and {t.messages} messages.</p>
-            <p style={muted}>From {(t.first_at || '').slice(0, 10)} to {(t.last_at || '').slice(0, 10)}. {t.dated} memories carry the date something happened; {t.tagged} have tags. Both grow as new memories are stored.</p>
+            <p style={p}>{t.memories} memories, {t.links} links between them, {t.entities} named things, across {t.sessions} conversations.</p>
+            <p style={muted}>From {(t.first_at || '').slice(0, 10)} to {(t.last_at || '').slice(0, 10)}. {t.dated} memories carry the date something happened and {t.tagged} have tags; both grow as new memories are stored.</p>
 
-            <h3 style={h}>Categories</h3>
-            <div>{(report.namespaces || []).map((x, i) => chip(`${x.name} · ${x.count}`, i))}</div>
+            <Section id="timeline" title="Timeline, by when it happened" count={report.timeline?.length || 0} open>
+              {report.timeline?.length ? byMonth(report.timeline).map((g) => (
+                <div key={g.month}>
+                  <p style={{ ...muted, margin: '8px 0 2px 0', fontWeight: 600 }}>{monthName(g.month)}</p>
+                  {g.rows.map((x) => <p key={x.id} style={p}><span style={{ color: '#9aa5c4', fontVariantNumeric: 'tabular-nums' }}>{x.day.slice(8)}</span>{'  '}{link(x.id, x.title)}</p>)}
+                </div>
+              )) : <p style={muted}>No memory has an event date yet. Say when something happened ("yesterday", "last March") and it will appear here.</p>}
+            </Section>
 
-            <h3 style={h}>Tags</h3>
-            <div>{report.tags?.length ? report.tags.map((x, i) => chip(`${x.tag} · ${x.count}`, i, onFilterTag ? () => onFilterTag(x.tag) : undefined)) : <span style={muted}>none yet, tags start with memories stored from now on</span>}</div>
+            <Section id="categories" title="Categories" count={report.namespaces?.length || 0}>
+              <div>{(report.namespaces || []).map((x, i) => chip(`${x.name} · ${x.count}`, i))}</div>
+            </Section>
 
-            <h3 style={h}>People, places and things</h3>
-            {['person', 'place', 'org', 'thing'].map((k) => (
-              <p key={k} style={p}><strong style={{ color: '#9aa5c4' }}>{{ person: 'People', place: 'Places', org: 'Organisations', thing: 'Things' }[k]}:</strong>{' '}
-                {report.entities?.[k]?.length ? report.entities[k].map((x) => `${x.name} (${x.count})`).join(', ') : 'none yet'}</p>
-            ))}
+            <Section id="tags" title="Tags" count={report.tags?.length || 0}>
+              <div>{report.tags?.length ? report.tags.map((x, i) => chip(`${x.tag} · ${x.count}`, i, onFilterTag ? () => onFilterTag(x.tag) : undefined)) : <span style={muted}>none yet, tags start with memories stored from now on</span>}</div>
+              {report.tags?.length ? <p style={{ ...muted, marginTop: '6px' }}>Tap a tag to see those memories in the list.</p> : null}
+            </Section>
 
-            <h3 style={h}>Timeline, by when it happened</h3>
-            {report.timeline?.length ? report.timeline.map((x) => (
-              <p key={x.id} style={p}><span style={{ color: '#9aa5c4', fontVariantNumeric: 'tabular-nums' }}>{x.day}</span>{'  '}{link(x.id, x.title)}</p>
-            )) : <p style={muted}>No memory has an event date yet. Say when something happened ("yesterday", "last March") and it will appear here.</p>}
+            <Section id="entities" title="People, places and things" count={t.entities}>
+              {['person', 'place', 'org', 'thing'].map((k) => (
+                <p key={k} style={p}><strong style={{ color: '#9aa5c4' }}>{kindLabel[k]}:</strong>{' '}
+                  {report.entities?.[k]?.length ? report.entities[k].map((x) => `${x.name} (${x.count})`).join(', ') : 'none yet'}</p>
+              ))}
+            </Section>
 
-            <h3 style={h}>Belief changes</h3>
-            {report.belief_changes?.length ? report.belief_changes.map((x, i) => (
-              <p key={i} style={p}><span style={{ color: '#9aa5c4' }}>{x.day}</span>{'  '}<em>{x.kind}</em>: {link(x.new_id, `"${x.new_title}"`)} vs {link(x.old_id, `"${x.old_title}"`)}{x.notes ? <span style={{ color: '#9aa5c4' }}> — {x.notes}</span> : null}</p>
-            )) : <p style={muted}>No contradictions recorded yet.</p>}
-
-            <h3 style={h}>Tone</h3>
-            <div>{(report.tone || []).map((x, i) => chip(`${x.label} · ${x.count}`, i))}</div>
+            <Section id="beliefs" title="Belief changes" count={report.belief_changes?.length || 0}>
+              {report.belief_changes?.length ? report.belief_changes.map((x, i) => (
+                <p key={i} style={p}><span style={{ color: '#9aa5c4' }}>{x.day}</span>{'  '}<em>{x.kind}</em>: {link(x.new_id, `"${x.new_title}"`)} vs {link(x.old_id, `"${x.old_title}"`)}{x.notes ? <span style={{ color: '#9aa5c4' }}> — {x.notes}</span> : null}</p>
+              )) : <p style={muted}>No contradictions recorded yet.</p>}
+            </Section>
 
             {report.kitchen?.length > 0 && (
-              <>
-                <h3 style={h}>Kitchen</h3>
+              <Section id="kitchen" title="Kitchen" count={report.kitchen.length}>
                 {report.kitchen.map((x) => <p key={x.id} style={p}><span style={{ color: '#9aa5c4' }}>{x.day}</span>{'  '}{link(x.id, x.title)}</p>)}
-              </>
+              </Section>
             )}
 
-            <h3 style={h}>Where extraction stopped</h3>
-            <p style={muted}>Per conversation, what happened to the last exchange: {(report.extraction || []).map((x) => `${x.outcome} ${x.count}`).join(', ')}.</p>
+            <Section id="tone" title="Tone" count={(report.tone || []).length}>
+              <div>{(report.tone || []).map((x, i) => chip(`${x.label} · ${x.count}`, i))}</div>
+            </Section>
 
-            <h3 style={h}>Most recent memories</h3>
-            {(report.recent || []).map((x) => <p key={x.id} style={p}><span style={{ color: '#9aa5c4' }}>{x.day}</span>{'  '}{link(x.id, x.title)} <span style={{ color: '#6272a4' }}>· {x.namespace}</span></p>)}
+            <Section id="recent" title="Most recent memories" count={(report.recent || []).length}>
+              {(report.recent || []).map((x) => <p key={x.id} style={p}><span style={{ color: '#9aa5c4' }}>{x.day}</span>{'  '}{link(x.id, x.title)} <span style={{ color: '#6272a4' }}>· {x.namespace}</span></p>)}
+            </Section>
           </>
         )}
       </div>
