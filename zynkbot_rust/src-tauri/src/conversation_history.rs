@@ -95,6 +95,7 @@ pub async fn log_exchange(
     model_backend: &str,
     containment_mode: &str,
     name_thread: bool,
+    input_mode: &str,
 ) -> Result<(), sqlx::Error> {
     // Auto-title: first 60 chars of the first message that is allowed to name the
     // thread. Hands-free turns pass name_thread = false: a "Hey Zynk" test or a stray
@@ -127,23 +128,26 @@ pub async fn log_exchange(
     .execute(pool)
     .await?;
 
+    // INSERT OR IGNORE: the unique index from migration 0011 makes an exact repeat
+    // of (session, role, second, content) a no-op instead of a second row.
     sqlx::query(
-        "INSERT INTO conversation_messages
-             (session_id, user_id, role, content, model_backend, containment_mode, created_at)
-         VALUES (?, ?, 'user', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))",
+        "INSERT OR IGNORE INTO conversation_messages
+             (session_id, user_id, role, content, model_backend, containment_mode, created_at, input_mode)
+         VALUES (?, ?, 'user', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), ?)",
     )
     .bind(session_id)
     .bind(user_id)
     .bind(user_message)
     .bind(model_backend)
     .bind(containment_mode)
+    .bind(input_mode)
     .execute(pool)
     .await?;
 
     sqlx::query(
-        "INSERT INTO conversation_messages
-             (session_id, user_id, role, content, model_backend, containment_mode, created_at)
-         VALUES (?, ?, 'assistant', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))",
+        "INSERT OR IGNORE INTO conversation_messages
+             (session_id, user_id, role, content, model_backend, containment_mode, created_at, input_mode)
+         VALUES (?, ?, 'assistant', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), 'system')",
     )
     .bind(session_id)
     .bind(user_id)
@@ -154,6 +158,19 @@ pub async fn log_exchange(
     .await?;
 
     Ok(())
+}
+
+/// What happened to memory extraction for the latest exchange in a thread.
+/// One of: gate_skipped, model_declined, duplicate, contradiction, stored, error.
+/// Answers "did nothing memorable happen, or did extraction never run?" per session.
+pub async fn set_extraction_outcome(pool: &SqlitePool, session_id: &str, outcome: &str) {
+    let _ = sqlx::query(
+        "UPDATE conversation_sessions SET last_extraction = ?, last_extraction_at = strftime('%Y-%m-%dT%H:%M:%S+00:00','now') WHERE session_id = ?",
+    )
+    .bind(outcome)
+    .bind(session_id)
+    .execute(pool)
+    .await;
 }
 
 // ============================================================================

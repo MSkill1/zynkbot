@@ -15,6 +15,7 @@ macro_rules! eprintln {
 
 // Module declarations
 pub mod app_log;            // In-memory log tail for bug reports
+pub mod memory_extras;      // event date / namespace / tags / tone / entities from the decision call
 pub mod commands;           // Tauri command handlers (extracted from lib.rs)
 pub mod safety_classifier;  // TinyBERT toxicity classifier (Candle-based)
 mod containment;  // Safety enforcement using toxic-bert + OpenAI API for Child mode
@@ -907,6 +908,11 @@ const MEMORY_DECISION_WITH_RELATIONSHIPS_SCHEMA: &str = r#"{
   "properties": {
     "should_remember": {"type": "boolean"},
     "title": {"type": "string"},
+    "event_date": {"type": ["string", "null"]},
+    "namespace": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "tone": {"type": "string"},
+    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}},
     "relationships": {
       "type": "array",
       "items": {
@@ -955,18 +961,19 @@ pub struct RelationshipClassification {
 }
 
 /// Enhanced memory decision that also classifies relationships with similar memories
-/// Returns (should_remember, optional_title, relationship_classifications)
+/// Returns (should_remember, optional_title, relationship_classifications, extras)
 pub(crate) async fn ask_llm_about_memory_with_relationships(
     message: &str,
     conversation_history: &str,
     similar_memories: &[(i32, String, Option<String>, f32)],  // (id, content, title, similarity)
     backend: &str,
-) -> Result<(bool, Option<String>, Vec<RelationshipClassification>), String> {
+) -> Result<(bool, Option<String>, Vec<RelationshipClassification>, memory_extras::MemoryExtras), String> {
     // If no similar memories, fall back to simple decision
     if similar_memories.is_empty() {
         let (should_remember, title) = ask_llm_about_memory(message, conversation_history, backend).await?;
-        return Ok((should_remember, title, Vec::new()));
+        return Ok((should_remember, title, Vec::new(), memory_extras::MemoryExtras::default()));
     }
+    let extras_instructions = memory_extras::prompt_instructions(chrono::Utc::now().date_naive());
 
     // Build similar memories section
     let similar_memories_text = similar_memories.iter()
@@ -1073,6 +1080,8 @@ Examples of factual statements that should ALWAYS be remembered:
 
 The contradiction detection is SEPARATE from the should_remember decision!
 
+{extras_instructions}
+
 ⚠️ CRITICAL OUTPUT REQUIREMENTS:
 - Respond with ONLY valid JSON
 - Do NOT include any explanatory text before or after the JSON
@@ -1091,11 +1100,16 @@ OUTPUT FORMAT:
       "reason": "Brief explanation of the relationship",
       "confidence": 0.95
     }}
-  ]
+  ],
+  "event_date": "YYYY-MM-DD" or null,
+  "namespace": "personal",
+  "tags": ["tag1", "tag2"],
+  "tone": "neutral",
+  "entities": [{{"name": "Vermont", "kind": "place"}}]
 }}
 
 Return the JSON now:"#,
-        conversation_history, message, similar_memories_text
+        conversation_history, message, similar_memories_text, extras_instructions = extras_instructions
     );
 
     // Call LLM based on backend
@@ -1113,7 +1127,7 @@ Return the JSON now:"#,
         call_custom_for_memory_decision(&prompt).await?
     } else {
         println!("[Memory Decision] Unknown backend '{}' - skipping", backend);
-        return Ok((false, None, Vec::new()));
+        return Ok((false, None, Vec::new(), memory_extras::MemoryExtras::default()));
     };
 
     // Parse JSON response
@@ -1122,6 +1136,8 @@ Return the JSON now:"#,
         should_remember: bool,
         title: Option<String>,
         relationships: Option<Vec<RelationshipClassification>>,
+        #[serde(flatten)]
+        extras: memory_extras::MemoryExtras,
     }
 
     // Extract JSON from response (handle markdown code blocks and raw JSON)
@@ -1187,7 +1203,12 @@ Return the JSON now:"#,
                 }
             }
 
-            Ok((decision.should_remember, decision.title, relationships))
+            if decision.extras.event_date.is_some() || decision.extras.namespace.is_some() {
+                println!("[Memory Decision] extras: event_date={:?} namespace={:?} tags={:?} tone={:?} entities={}",
+                         decision.extras.event_date, decision.extras.namespace, decision.extras.tags,
+                         decision.extras.tone, decision.extras.entities.as_ref().map_or(0, |e| e.len()));
+            }
+            Ok((decision.should_remember, decision.title, relationships, decision.extras))
         }
         Err(e) => {
             println!("[Memory Decision] ❌ Failed to parse JSON response: {}", e);
@@ -1202,11 +1223,11 @@ Return the JSON now:"#,
                 Ok((should_remember, title)) => {
                     println!("[Memory Decision] ⚠️ Using fallback decision: should_remember={}, title={:?}",
                              should_remember, title);
-                    Ok((should_remember, title, Vec::new()))
+                    Ok((should_remember, title, Vec::new(), memory_extras::MemoryExtras::default()))
                 },
                 Err(fallback_err) => {
                     println!("[Memory Decision] ❌ Fallback also failed: {}", fallback_err);
-                    Ok((false, None, Vec::new()))
+                    Ok((false, None, Vec::new(), memory_extras::MemoryExtras::default()))
                 }
             }
         }

@@ -597,7 +597,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         if exists { messages_skipped += 1; continue; }
 
         let result = sqlx::query(
-            "INSERT INTO conversation_messages (
+            "INSERT OR IGNORE INTO conversation_messages (
                 session_id, user_id, role, content, created_at,
                 model_backend, containment_mode, entry_hash, prev_hash
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"

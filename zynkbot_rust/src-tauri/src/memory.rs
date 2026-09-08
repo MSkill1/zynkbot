@@ -690,3 +690,47 @@ pub async fn get_memory_graph(
     }
     Ok(graph_data)
 }
+
+
+/// Fields the decision call now supplies (2026-09-07): tags, tone, and a
+/// possibly better event date / namespace than the NLP guess. Applied after
+/// insert so the many `insert_memory` callers keep their signature.
+pub async fn set_memory_extras(
+    pool: &SqlitePool,
+    memory_id: i32,
+    tags: &[String],
+    sentiment_label: &str,
+    sentiment_score: f64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE memories SET tags = ?, sentiment_label = ?, sentiment_score = ? WHERE id = ?")
+        .bind(serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string()))
+        .bind(sentiment_label)
+        .bind(sentiment_score)
+        .bind(memory_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// One row per named thing in a memory (memory_entities, migration 0011).
+pub async fn insert_memory_entities(
+    pool: &SqlitePool,
+    memory_id: i32,
+    entities: &[crate::memory_extras::EntityOut],
+) -> Result<usize, sqlx::Error> {
+    let mut n = 0;
+    for e in entities {
+        let canonical = e.name.trim().to_lowercase();
+        let r = sqlx::query(
+            "INSERT OR IGNORE INTO memory_entities (memory_id, name, canonical, kind) VALUES (?, ?, ?, ?)",
+        )
+        .bind(memory_id)
+        .bind(e.name.trim())
+        .bind(&canonical)
+        .bind(&e.kind)
+        .execute(pool)
+        .await?;
+        n += r.rows_affected() as usize;
+    }
+    Ok(n)
+}

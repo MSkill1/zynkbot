@@ -124,7 +124,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 2. *Duplicates.* `receive_conversations_from_peer` skips a message only if one with the same `session_id`, `created_at` and `role` already exists. The same format mismatch defeated that check, so every resend inserted a second copy. The Pixel holds 328 rows for a thread whose counter says 162; the OnePlus holds 50 for one that says 30. `message_count` is not repaired, so the History panel under-reports.
 3. *Resend on every restart.* The per-peer last-sync time is held in memory only, so each app restart resends the entire history, which multiplied the copies.
 Deletions are not propagated at all (no tombstones), which is #12.
-**Workaround:** None. Build29 stops new duplicates from forming for messages written after it, but does not clean up existing ones.
+**Workaround:** None. Build29 stops new duplicates from forming for messages written after it. Migration 0011 (memory branch, 2026-09-07) removes the existing exact duplicates, repairs `message_count`, and adds a unique index so a resend cannot create a second row; skipped threads and non-propagating deletions remain until the outbox refactor.
 **Fix target:** ZynkSync refactor (outbox model): durable per-peer send cursor, duplicate check keyed on `entry_hash` rather than timestamp text, tombstones for deleted sessions and messages, and a one-time migration that removes exact duplicate rows and recomputes `message_count`.
 
 ---

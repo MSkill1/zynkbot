@@ -1101,6 +1101,7 @@ pub async fn generate_reply(
         let ch_backend = forced_backend.clone();
         let ch_mode = containment_mode.clone();
         let ch_name_thread = !hands_free;   // a "Hey Zynk" turn never names the thread
+        let ch_hands_free = hands_free;
         tokio::spawn(async move {
             { let db_url = crate::db::get_db_url();
                 match sqlx::SqlitePool::connect(&db_url).await {
@@ -1108,6 +1109,7 @@ pub async fn generate_reply(
                         if let Err(e) = crate::conversation_history::log_exchange(
                             &pool, &ch_session, &ch_user, &ch_message,
                             &ch_reply, &ch_backend, &ch_mode, ch_name_thread,
+                            if ch_hands_free { "hands_free" } else { "typed" },
                         ).await {
                             eprintln!("[ConvHistory] ⚠️ Failed to log exchange: {}", e);
                         }
@@ -1294,6 +1296,7 @@ pub async fn generate_reply(
                 if has_memory_candidate {
                     bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
                 }
+                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "duplicate").await;
                 db_pool.close().await;
                 return;
             }
@@ -1305,6 +1308,7 @@ pub async fn generate_reply(
                 if has_memory_candidate {
                     bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
                 }
+                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
                 db_pool.close().await;
                 return;
             }
@@ -1313,16 +1317,16 @@ pub async fn generate_reply(
 
             // Local: MEMORY_EXTRACT fired → relationships + title only (should_remember=true).
             // API: full should_remember + relationship classification.
-            let (should_remember, llm_title, llm_relationships) = if !bg_is_api {
+            let (should_remember, llm_title, llm_relationships, llm_extras) = if !bg_is_api {
                 match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
                     Ok((title, rels)) => {
                         println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
-                        (true, title, rels)
+                        (true, title, rels, crate::memory_extras::MemoryExtras::default())
                     }
                     Err(e) => {
                         println!("[RUST BACKGROUND] ⚠️ Relationship classifier failed: {} — storing without links", e);
                         let fallback = crate::generate_title_from_content(&factual_content);
-                        (true, Some(fallback), Vec::new())
+                        (true, Some(fallback), Vec::new(), crate::memory_extras::MemoryExtras::default())
                     }
                 }
             } else {
@@ -1346,11 +1350,11 @@ pub async fn generate_reply(
                                 Ok(result) => result,
                                 Err(e2) => {
                                     println!("[RUST BACKGROUND] ⚠️ Fallback also failed: {}", e2);
-                                    (false, None, Vec::new())
+                                    (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
                                 }
                             }
                         } else {
-                            (false, None, Vec::new())
+                            (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
                         }
                     }
                 }
@@ -1378,6 +1382,7 @@ pub async fn generate_reply(
 
             if !should_remember {
                 bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
                 db_pool.close().await;
                 return;
             }
@@ -1440,6 +1445,7 @@ pub async fn generate_reply(
 
                         // Don't store memory yet - wait for user decision via resolve_memory_conflict_v2
                         bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
+                        crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "contradiction").await;
                         db_pool.close().await;
                         return;
                     }
@@ -1481,6 +1487,18 @@ pub async fn generate_reply(
                 }
             };
 
+            // The decision call's own fields win over the NLP guesses when present and
+            // valid (2026-09-07): a real event date, a namespace from the known list,
+            // tags, tone, and named entities. NLP stays as the fallback.
+            let today = chrono::Utc::now().date_naive();
+            let namespace = crate::memory_extras::resolve_namespace(llm_extras.namespace.as_deref(), &namespace);
+            let event_date = crate::memory_extras::validate_event_date(llm_extras.event_date.as_deref(), &bg_message, today)
+                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                .or(event_date);
+            let tags = crate::memory_extras::clean_tags(llm_extras.tags.as_deref());
+            let (sentiment_label, sentiment_score) = crate::memory_extras::tone_to_sentiment(llm_extras.tone.as_deref());
+            let llm_entities = crate::memory_extras::clean_entities(llm_extras.entities.as_deref());
+
             // Store memory in database (with LLM-generated title, NLP entities, and events!)
             let memory_id = match crate::memory::insert_memory(
                 &db_pool,
@@ -1495,7 +1513,7 @@ pub async fn generate_reply(
                 &namespace,                        // namespace (NLP-detected)
                 true,                              // is_syncable
                 false,                             // is_shareable
-                Some(entities),                    // entities_detected (includes proper + common nouns!)
+                Some(entities.clone()),            // entities_detected (includes proper + common nouns!)
                 event_type.as_deref(),             // event_type (auto-detected!)
                 event_date,                        // event_date (auto-extracted!)
                 Some(&bg_message),                 // original_text (FULL original user message for context!)
@@ -1503,15 +1521,39 @@ pub async fn generate_reply(
                 Ok(id) => {
                     println!("[RUST BACKGROUND] ✅ Memory stored with ID: {}", id);
                     bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
+                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "stored").await;
                     id
                 }
                 Err(e) => {
                     println!("[RUST BACKGROUND] ⚠️ Failed to store memory: {}", e);
                     bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
+                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "error").await;
                     db_pool.close().await;
                     return;
                 }
             };
+
+            if let Err(e) = crate::memory::set_memory_extras(&db_pool, memory_id, &tags, sentiment_label, sentiment_score).await {
+                println!("[RUST BACKGROUND] ⚠️ Could not save tags/tone: {}", e);
+            }
+            // Entities: the model's list when it gave one, else the name-finder's proper nouns.
+            let entity_rows: Vec<crate::memory_extras::EntityOut> = if !llm_entities.is_empty() {
+                llm_entities
+            } else {
+                entities.as_array().map(|arr| arr.iter().filter_map(|e| {
+                    let word = e.get("word")?.as_str()?.trim().to_string();
+                    let label = e.get("label")?.as_str().unwrap_or("").to_string();
+                    let score = e.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                    if word.chars().count() < 3 || word.starts_with("##") || score < 0.6 { return None; }
+                    let kind = if label.contains("PER") { "person" } else if label.contains("LOC") { "place" } else if label.contains("ORG") { "org" } else if word.chars().next().map_or(false, |c| c.is_uppercase()) { "thing" } else { return None; };
+                    Some(crate::memory_extras::EntityOut { name: word, kind: kind.to_string() })
+                }).collect()).unwrap_or_default()
+            };
+            match crate::memory::insert_memory_entities(&db_pool, memory_id, &entity_rows).await {
+                Ok(n) if n > 0 => println!("[RUST BACKGROUND] {} entit{} recorded", n, if n == 1 { "y" } else { "ies" }),
+                Ok(_) => {}
+                Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not save entities: {}", e),
+            }
 
             // Store LLM-classified relationships (if any)
             if !llm_relationships.is_empty() {
@@ -1572,6 +1614,18 @@ pub async fn generate_reply(
 
             db_pool.close().await;
             println!("[RUST BACKGROUND] 🏁 Memory processing complete");
+        });
+    }
+ else {
+        // Nothing was extracted for this exchange. Record why, so "103 sessions with no
+        // memories" can be told apart into gate-refused vs. deliberately skipped.
+        let reason = if effective_skip_memory { "skipped" } else { "gate_skipped" };
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                crate::conversation_history::set_extraction_outcome(&pool, &sid, reason).await;
+                pool.close().await;
+            }
         });
     }
 
