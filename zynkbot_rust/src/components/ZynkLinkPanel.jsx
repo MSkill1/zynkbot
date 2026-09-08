@@ -344,13 +344,9 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
 
 
   return (
-    <div style={{
-      background: '#282a36',
-      border: '1px solid #44475a',
-      borderRadius: '8px',
-      padding: '15px',
-      marginBottom: '20px'
-    }}>
+    <div style={{ padding: '0 2px', marginBottom: '12px' }}>
+      {/* No box of its own: the System Controls section already draws the card, and
+          a second border inside it read as clutter and cost width on phones (2026-09-07). */}
       {/* What is ZynkLink — only shown before any devices are linked */}
       {linkedUsers.length === 0 && <div style={{
         background: '#1e1f29',

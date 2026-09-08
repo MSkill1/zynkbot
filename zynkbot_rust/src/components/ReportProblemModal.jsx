@@ -60,8 +60,9 @@ export default function ReportProblemModal({ isOpen, onClose, context, threadTex
   };
 
   const openIssues = async () => {
-    try { await invoke('open_external_url', { url: ISSUES_URL }); }
-    catch (_) { window.open(ISSUES_URL, '_blank'); }
+    try { if (window.AndroidPaths?.openUrl && window.AndroidPaths.openUrl(ISSUES_URL)) return; } catch (_) {}
+    try { await invoke('open_external_url', { url: ISSUES_URL }); return; } catch (_) {}
+    window.open(ISSUES_URL, '_blank');
   };
 
   const btn = {
@@ -106,7 +107,7 @@ export default function ReportProblemModal({ isOpen, onClose, context, threadTex
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
           <button style={btn} onClick={build} disabled={busy}>{busy ? 'Building…' : '🧾 Build report'}</button>
           {report && <button style={btn} onClick={copy}>{copied ? '✓ Copied' : '📋 Copy report'}</button>}
-          {report && <button style={btn} onClick={openIssues}>Open GitHub issues</button>}
+          <button style={btn} onClick={openIssues} title={ISSUES_URL}>Open GitHub issues</button>
         </div>
         {error && <p style={{ color: '#ff5555', fontSize: '0.85rem' }}>{error}</p>}
 

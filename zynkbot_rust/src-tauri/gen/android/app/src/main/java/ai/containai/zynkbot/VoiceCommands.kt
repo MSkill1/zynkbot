@@ -107,6 +107,27 @@ object VoiceCommands {
             true
         } catch (e: Exception) {
             Log.w(TAG, "${cmd::class.simpleName} failed: ${e.message}")
+            // There is no public Android intent for a stopwatch (timers and alarms have
+            // one; the stopwatch action above is honoured only by some clock apps — the
+            // OnePlus clock ignored it, 2026-09-07). Open the clock app itself instead,
+            // found through the alarm intent it must handle, so the user lands one tap away.
+            if (cmd == Cmd.Stopwatch) openClockApp(context) else false
+        }
+    }
+
+    /** True if the device's clock app could be brought to the front. */
+    private var openedClockInstead = false
+    private fun openClockApp(context: Context): Boolean {
+        val probe = Intent(AlarmClock.ACTION_SET_ALARM)
+        val pkg = probe.resolveActivity(context.packageManager)?.packageName ?: return false
+        val launch = context.packageManager.getLaunchIntentForPackage(pkg) ?: return false
+        launch.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        return try {
+            context.startActivity(launch)
+            openedClockInstead = true
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Opening the clock app failed: ${e.message}")
             false
         }
     }
@@ -129,6 +150,9 @@ object VoiceCommands {
             val minutes = if (cmd.minute > 0) " " + cmd.minute.toString().padStart(2, '0') else ""
             "Alarm set for $h12$minutes $ampm."
         }
-        Cmd.Stopwatch -> "Stopwatch started."
+        Cmd.Stopwatch -> if (openedClockInstead) {
+            openedClockInstead = false
+            "This phone's clock app has no stopwatch shortcut, so I opened it for you. The stopwatch is one tap away."
+        } else "Stopwatch started."
     }
 }

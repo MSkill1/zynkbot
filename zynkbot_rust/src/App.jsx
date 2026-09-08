@@ -1347,8 +1347,13 @@ export default function App() {
           </div>
           {showGettingStarted && (
           <div>
+          <p style={{fontSize: '0.9rem', color: '#8be9fd', lineHeight: '1.6', marginBottom: '10px'}}>
+            <strong>Try it in the kitchen.</strong> Tell Zynkbot what you cooked tonight and how it went.
+            Tomorrow ask "what can I make tonight?" It remembers what you liked, what you refused, and how
+            you are trying to eat. Fell off the diet? Tell it to forget those weeks and start again. The memory is yours to edit.
+          </p>
           <p style={{fontSize: '0.9rem', color: '#8be9fd', lineHeight: '1.6', marginBottom: '15px'}}>
-            New to Zynkbot? Load the Einstein demo below to see how memory and relationships work.
+            Or load the Einstein demo below to see how memory and relationships work.
             After loading, open the <strong>Memory Manager</strong> to explore the memories and their connections.
           </p>
 

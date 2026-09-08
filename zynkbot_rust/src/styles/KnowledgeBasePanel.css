@@ -1,9 +1,7 @@
 .knowledge-base-panel {
-  background: #282a36;
-  border-radius: 8px;
-  padding: 20px;
-  margin: 20px 0;
-  border: 1px solid #44475a;
+  /* No box of its own: the System Controls section already draws the card. */
+  padding: 0 2px;
+  margin-bottom: 12px;
 }
 
 .panel-header {

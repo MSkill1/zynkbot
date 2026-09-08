@@ -367,13 +367,9 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   const isAndroid = !!window.AndroidPaths;
 
   return (
-    <div style={{
-      background: '#282a36',
-      border: '1px solid #44475a',
-      borderRadius: '8px',
-      padding: '15px',
-      marginBottom: '20px'
-    }}>
+    <div style={{ padding: '0 2px', marginBottom: '12px' }}>
+      {/* No box of its own: the System Controls section already draws the card, and
+          a second border inside it read as clutter and cost width on phones (2026-09-07). */}
 
       {/* This device's name, as shown to other devices on the network */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', fontSize: '0.85rem', color: '#9aa5c4' }}>
@@ -557,6 +553,24 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                 }}
               >
                 📋 Copy IP Address + Code
+              </button>
+              <button
+                onClick={handleGetPairingCode}
+                title="Replace this code with a fresh one"
+                style={{
+                  width: '100%',
+                  marginTop: '8px',
+                  padding: '9px',
+                  background: 'rgba(80,250,123,0.15)',
+                  color: '#50fa7b',
+                  border: '1px solid #50fa7b',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '0.88rem'
+                }}
+              >
+                🔑 Generate New Code
               </button>
             </div>
           ) : (

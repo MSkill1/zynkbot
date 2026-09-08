@@ -288,6 +288,16 @@ class MainActivity : TauriActivity() {
             }
         }
 
+        /** Open a web address in the phone's browser (Report a problem → GitHub issues). */
+        @JavascriptInterface
+        fun openUrl(url: String): Boolean {
+            if (!(url.startsWith("https://") || url.startsWith("http://"))) return false
+            return try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
+                true
+            } catch (e: Exception) { false }
+        }
+
         /** For "Report a problem": make, model and Android version, nothing identifying. */
         @JavascriptInterface
         fun getDeviceInfo(): String =
