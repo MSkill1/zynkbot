@@ -1100,7 +1100,11 @@ pub async fn generate_reply(
         let ch_reply = final_reply_text.clone();
         let ch_backend = forced_backend.clone();
         let ch_mode = containment_mode.clone();
-        let ch_name_thread = !hands_free;   // a "Hey Zynk" turn never names the thread
+        // Any real exchange may name the thread, hands-free included. The old rule
+        // (hands-free never names) left a thread whose first three questions were
+        // spoken titled by a later typed message, and the user could not find it
+        // (2026-09-08). Fragments and NO_QUERY turns never reach this point anyway.
+        let ch_name_thread = true;
         let ch_hands_free = hands_free;
         tokio::spawn(async move {
             { let db_url = crate::db::get_db_url();

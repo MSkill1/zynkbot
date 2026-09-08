@@ -128,6 +128,31 @@ export default function App() {
       return uuidv4();
     }
   });
+  // A restart (update, crash, swipe-away) forgets the page's session, but Rust still
+  // knows the thread hands-free turns were joining. Put it back on screen instead of
+  // opening an empty one; a thread "disappeared" that way on 2026-09-08.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+    let fresh = false;
+    try { fresh = !sessionStorage.getItem('zynkbot_restored'); sessionStorage.setItem('zynkbot_restored', '1'); } catch (_) { fresh = true; }
+    if (!fresh) return;
+    (async () => {
+      try {
+        const current = await invoke('get_current_session');
+        if (!current || current === sessionId) return;
+        const rows = await invoke('get_conversation_messages', { sessionId: current });
+        if (!rows || rows.length === 0) return;
+        setSessionId(current);
+        try { sessionStorage.setItem('zynkbot_session_id', current); } catch (_) {}
+        setMessages(rows.map((m) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [] })));
+        console.log('[Session] restored thread', current.slice(0, 8), 'with', rows.length, 'messages');
+      } catch (e) {
+        console.warn('[Session] could not restore the current thread:', e);
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Messages persist in session
   const [messages, setMessages] = useState(() => {
