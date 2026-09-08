@@ -59,7 +59,12 @@ class WakeWordService : Service() {
         const val MAX_LISTEN_MS = 12_000L   // hard cap on one dictation, ongoing speech cannot extend it
         const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
         const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers
-        const val SILENCE_GATE_DB = -47.0   // detections on audio quieter than this are ignored
+        // Detections on audio quieter than this are ignored. Set from the Pixel's log of
+        // 2026-09-08: a real "Hey Zynk" from ~20 ft measured -31.5 dBFS; ten of the
+        // twenty-two false firings that morning sat between -40 and -47. Stricter still
+        // while backing off.
+        const val SILENCE_GATE_DB = -42.0
+        const val STRICT_GATE_DB = -38.0
         const val STRICT_HITS = 4           // consecutive high scores needed while backing off
         const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
         const val MISS_WINDOW_MS = 5 * 60_000L
@@ -415,7 +420,7 @@ class WakeWordService : Service() {
                 Log.d(TAG, "High score: $score (consecutive=$consecutiveHighScores, need=$needHits${if (strict) ", strict" else ""})")
                 if (consecutiveHighScores >= needHits) {
                     val level = recentLevelDb()
-                    if (level < SILENCE_GATE_DB) {
+                    if (level < (if (strict) STRICT_GATE_DB else SILENCE_GATE_DB)) {
                         Log.i(TAG, "Detection ignored: audio too quiet (%.1f dBFS, score=%.3f)".format(level, score))
                         consecutiveHighScores = 0
                         cooldownRemaining = COOLDOWN_CHUNKS / 2
