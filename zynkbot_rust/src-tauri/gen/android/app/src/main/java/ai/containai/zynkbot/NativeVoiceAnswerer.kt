@@ -191,7 +191,9 @@ object NativeVoiceAnswerer {
                             pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis()))
                             try { onTurnCompleted?.invoke() } catch (_: Exception) {}
                         }
-                        WakeWordService.reportOutcome(true)
+                        // Not reported as a real interaction: a fluent TV line the model
+                        // chose to answer ("Lindsey Clancy", 2026-09-08) would otherwise
+                        // reset the back-off. Only clock commands and explicit Remember do.
                         speaker.finish(replyText)
                     }
                     override fun onError(message: String) { failure = message }

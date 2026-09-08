@@ -437,6 +437,22 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
 
     // ── answer ───────────────────────────────────────────────────────────────
 
+    /** Cheap shape test used only in strict mode: a question mark, an interrogative
+     *  or imperative opening, or a Remember command. Whisper transcripts carry
+     *  punctuation; Vosk ones do not, so the word list matters more there. */
+    private fun looksAddressedToAssistant(t: String): Boolean {
+        val s = t.trim().lowercase()
+        if (s.isEmpty()) return false
+        if (s.contains('?')) return true
+        val openers = listOf(
+            "what", "what's", "whats", "how", "when", "where", "who", "why", "which", "is ", "are ", "do ", "does ", "did ",
+            "can you", "could you", "would you", "will you", "please", "tell me", "remind", "remember", "set ", "start ",
+            "open ", "play ", "search", "look up", "find", "define", "explain", "give me", "show me", "read", "translate",
+            "hey zynk", "zynk",
+        )
+        return openers.any { s.startsWith(it) }
+    }
+
     private fun answerAndFinish(transcript: String) {
         // Local sanity gate, free: one word is noise, sixty is a TV programme.
         val words = transcript.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
@@ -447,6 +463,18 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             WakeWordService.reportOutcome(false)
             // Nothing heard (a false trigger on the air conditioner, say): close
             // audibly so the user knows it fired and shut down, rather than vanishing.
+            Thread {
+                NativeVoiceAnswerer.playCloseTone(context)
+                main.post { hide() }
+            }.start()
+            return
+        }
+        // While backing off, only something shaped like a question or a request goes
+        // to the model at all; a TV line ("This is the best time of your life.") is
+        // closed here as a miss without an API call (2026-09-08).
+        if (WakeWordService.isStrict() && VoiceCommands.parse(transcript) == null && !looksAddressedToAssistant(transcript)) {
+            Log.i(TAG, "Strict mode: transcript is not a question or request — not sent")
+            WakeWordService.reportOutcome(false)
             Thread {
                 NativeVoiceAnswerer.playCloseTone(context)
                 main.post { hide() }

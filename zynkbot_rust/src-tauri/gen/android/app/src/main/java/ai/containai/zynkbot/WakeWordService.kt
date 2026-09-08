@@ -74,6 +74,8 @@ class WakeWordService : Service() {
         /** Called by the session / answerer when a trigger ends: `useful` = a real
          *  question was answered or a command ran; false = nothing heard or NO_QUERY. */
         @JvmStatic fun reportOutcome(useful: Boolean) { instance?.noteOutcome(useful) }
+        /** True while backing off after repeated fruitless triggers. */
+        @JvmStatic fun isStrict(): Boolean = (instance?.strictUntil ?: 0L) > System.currentTimeMillis()
 
         // Vosk model shared from VoskBridge so screen-off dictation doesn't reload it.
         @Volatile var sharedVoskModel: org.vosk.Model? = null
