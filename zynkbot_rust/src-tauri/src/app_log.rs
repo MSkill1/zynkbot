@@ -67,6 +67,7 @@ pub fn redact(text: &str) -> String {
             r"(?i)bearer\s+[A-Za-z0-9._\-]{8,}",
             r"\b[0-9a-fA-F]{32,}\b",
             r"\b[A-Za-z0-9+/]{40,}={0,2}\b",
+            r"(?i)pairing code:?\s*\d{6}",
         ]
         .iter()
         .map(|p| Regex::new(p).expect("redaction regex"))
@@ -103,6 +104,8 @@ mod tests {
         assert!(!r.contains("eyJ"), "{r}");
         let r = redact("backup key f576711a1556f576711a1556f576711a1556f576711a1556");
         assert!(r.contains("[redacted]"), "{r}");
+        let r = redact("[ZynkSync] Generated pairing code: 423522 (expires in 10 minutes)");
+        assert!(!r.contains("423522"), "{r}");
     }
 
     #[test]

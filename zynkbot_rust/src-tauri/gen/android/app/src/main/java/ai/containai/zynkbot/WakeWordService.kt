@@ -59,6 +59,16 @@ class WakeWordService : Service() {
         const val MAX_LISTEN_MS = 12_000L   // hard cap on one dictation, ongoing speech cannot extend it
         const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
         const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers
+        const val SILENCE_GATE_DB = -47.0   // detections on audio quieter than this are ignored
+        const val STRICT_HITS = 4           // consecutive high scores needed while backing off
+        const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
+        const val MISS_WINDOW_MS = 5 * 60_000L
+        const val MISSES_TO_BACK_OFF = 3
+        const val BACK_OFF_MS = 10 * 60_000L
+
+        /** Called by the session / answerer when a trigger ends: `useful` = a real
+         *  question was answered or a command ran; false = nothing heard or NO_QUERY. */
+        @JvmStatic fun reportOutcome(useful: Boolean) { instance?.noteOutcome(useful) }
 
         // Vosk model shared from VoskBridge so screen-off dictation doesn't reload it.
         @Volatile var sharedVoskModel: org.vosk.Model? = null
@@ -79,6 +89,43 @@ class WakeWordService : Service() {
     private val embBuffer = ArrayDeque<FloatArray>()
     private var cooldownRemaining = 0
     private var consecutiveHighScores = 0
+
+    // ── false-trigger mitigations (2026-09-08) ─────────────────────────────
+    // 21 firings in 32 minutes with the TV on, scores 0.87–1.0, verified identical on
+    // desktop replay: the model itself is the problem and only a retrained verifier
+    // fixes detection. Until then, three cheap defences against the annoyance:
+    //  1. silence gate — six of those firings were on near-silent audio;
+    //  2. back-off — after three fruitless sessions in five minutes, demand a much
+    //     stronger detection for ten minutes;
+    //  3. faster close on no speech (in ZynkAssistantSession).
+    private val recentMisses = ArrayDeque<Long>()      // wall-clock ms of empty / NO_QUERY sessions
+    @Volatile private var strictUntil = 0L             // while now < strictUntil: 4 hits, score ≥ 0.9
+
+    private fun noteOutcome(useful: Boolean) {
+        val now = System.currentTimeMillis()
+        synchronized(recentMisses) {
+            if (useful) {
+                recentMisses.clear()
+                if (strictUntil > now) { strictUntil = 0L; Log.i(TAG, "Real question answered — leaving strict mode") }
+                return
+            }
+            recentMisses.addLast(now)
+            while (recentMisses.isNotEmpty() && now - recentMisses.first() > MISS_WINDOW_MS) recentMisses.removeFirst()
+            if (recentMisses.size >= MISSES_TO_BACK_OFF && strictUntil < now) {
+                strictUntil = now + BACK_OFF_MS
+                Log.i(TAG, "${recentMisses.size} fruitless triggers in 5 min — strict mode for 10 min (need $STRICT_HITS hits ≥ $STRICT_SCORE)")
+            }
+        }
+    }
+
+    /** RMS of the last ~3 s in dBFS; -47 dB is far below speech at any distance. */
+    private fun recentLevelDb(): Double {
+        var sum = 0.0; var n = 0L
+        for (chunk in recentChunks) { for (v in chunk) { val f = v / 32768.0; sum += f * f; n++ } }
+        if (n == 0L) return -100.0
+        val rms = Math.sqrt(sum / n)
+        return 20.0 * Math.log10(Math.max(rms, 1e-9))
+    }
 
     @Volatile private var running = false
     @Volatile private var audioReleased = false
@@ -360,11 +407,22 @@ class WakeWordService : Service() {
             val score = prob.firstOrNull() ?: return
             recentScores.addLast(score)
             while (recentScores.size > TRIGGER_CLIP_CHUNKS) recentScores.removeFirst()
-            if (score > threshold) {
+            val strict = System.currentTimeMillis() < strictUntil
+            val needHits = if (strict) STRICT_HITS else 2
+            val needScore = if (strict) STRICT_SCORE else threshold
+            if (score > needScore) {
                 consecutiveHighScores++
-                Log.d(TAG, "High score: $score (consecutive=$consecutiveHighScores, need=2)")
-                if (consecutiveHighScores >= 2) {
-                    Log.i(TAG, "Wake word detected! score=$score threshold=$threshold")
+                Log.d(TAG, "High score: $score (consecutive=$consecutiveHighScores, need=$needHits${if (strict) ", strict" else ""})")
+                if (consecutiveHighScores >= needHits) {
+                    val level = recentLevelDb()
+                    if (level < SILENCE_GATE_DB) {
+                        Log.i(TAG, "Detection ignored: audio too quiet (%.1f dBFS, score=%.3f)".format(level, score))
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2
+                        embBuffer.clear()
+                        return
+                    }
+                    Log.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS%s".format(level, if (strict) " (strict mode)" else ""))
                     saveTriggerClip(score)
                     consecutiveHighScores = 0
                     cooldownRemaining = COOLDOWN_CHUNKS

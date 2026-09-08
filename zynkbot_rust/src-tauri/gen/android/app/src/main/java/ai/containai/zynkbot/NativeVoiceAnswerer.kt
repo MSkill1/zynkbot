@@ -183,6 +183,7 @@ object NativeVoiceAnswerer {
                         if (replyText.trim().startsWith(NO_QUERY)) {
                             Log.i(TAG, "Model judged the transcript not a request — staying silent")
                             noQuery = true
+                            WakeWordService.reportOutcome(false)
                             speaker.discard()
                         } else if (replyText.isNotBlank()) {
                             // Queue the exchange for the app's chat now, not after speech:
@@ -190,6 +191,7 @@ object NativeVoiceAnswerer {
                             pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis()))
                             try { onTurnCompleted?.invoke() } catch (_: Exception) {}
                         }
+                        WakeWordService.reportOutcome(true)
                         speaker.finish(replyText)
                     }
                     override fun onError(message: String) { failure = message }

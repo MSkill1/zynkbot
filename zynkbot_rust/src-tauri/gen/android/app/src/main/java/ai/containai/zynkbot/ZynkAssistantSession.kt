@@ -42,6 +42,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     companion object {
         private const val TAG = "ZynkAssistantSession"
         private const val SILENCE_MS = 1500L
+        private const val NO_SPEECH_MS = 4000L          // nothing heard after the chime → close (2026-09-08)
         private const val SAFETY_TIMEOUT_MS = 12_000L   // hard cap; ongoing speech cannot extend it
         // OpenAI dictation caps its own recording at SAFETY_TIMEOUT_MS and then uploads;
         // this backstop only catches a hung upload (2026-09-08).
@@ -69,6 +70,9 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     // TV speech kept the session listening until the programme paused (2026-09-04).
     private val silenceStop = Runnable { stopVoskAsync() }
     private val hardStop = Runnable { Log.i(TAG, "Listening cap reached"); stopVoskAsync(); openAiRecorder?.cancel() }
+    // A false trigger in a quiet room used to hold the mic for the full 12 s cap;
+    // with no partial result in the first 4 s there is nobody talking to us (2026-09-08).
+    private val noSpeechStop = Runnable { Log.i(TAG, "No speech after the chime — closing"); stopVoskAsync() }
     /** In-flight OpenAI dictation, when the Voice settings selector says "OpenAI". */
     @Volatile private var openAiRecorder: OpenAiDictation.Recorder? = null
     private val main = Handler(Looper.getMainLooper())
@@ -360,6 +364,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             override fun onPartialResult(h: String?) {
                 val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
                 if (partial.isNotBlank()) {
+                    silenceHandler.removeCallbacks(noSpeechStop)
                     silenceHandler.removeCallbacks(silenceStop)
                     silenceHandler.postDelayed(silenceStop, SILENCE_MS)
                 }
@@ -408,6 +413,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
                 speechService = service
                 service.startListening(listener)
                 silenceHandler.postDelayed(hardStop, SAFETY_TIMEOUT_MS)
+                silenceHandler.postDelayed(noSpeechStop, NO_SPEECH_MS)
             } catch (e: Exception) {
                 Log.e(TAG, "Vosk start failed: ${e.message}")
                 main.post { hide() }
@@ -438,6 +444,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             Log.i(TAG, "Transcript rejected (${words.size} words) — not a question")
         }
         if (transcript.isBlank() || words.size < 2 || words.size > MAX_QUERY_WORDS) {
+            WakeWordService.reportOutcome(false)
             // Nothing heard (a false trigger on the air conditioner, say): close
             // audibly so the user knows it fired and shut down, rather than vanishing.
             Thread {
@@ -454,6 +461,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             Thread {
                 NativeVoiceAnswerer.playCloseTone(context)
                 val ok = VoiceCommands.execute(context, cmd)
+                WakeWordService.reportOutcome(true)
                 Log.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
                 if (!cancelled) NativeVoiceAnswerer.say(context, if (ok) VoiceCommands.confirmation(cmd) else VoiceCommands.FAILED_LINE)
                 main.post { hide() }
