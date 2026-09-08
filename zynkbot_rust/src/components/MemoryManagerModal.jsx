@@ -645,11 +645,12 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   if (isMobile) {
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId} />
+      <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
+        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setSelectedMemory(m); } }} />
         {KeySaveModal}
 
         {/* Header */}
-        <div style={{ padding: '12px 16px', paddingTop: '12px' /* status bar is reserved natively (build27); env() here double-padded on phones with a cutout */, borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+        <div style={{ padding: '12px 16px', paddingTop: '12px' /* status bar is reserved natively (build27); env() here double-padded on phones with a cutout */, borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
           {selectedMemory ? (
             <>
               <button
@@ -662,8 +663,10 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             </>
           ) : (
             <>
-              <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: 1 }}>Memory Manager</h2>
-              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: '1 1 100%' }}>Memory Manager</h2>
+              {/* One tidy grid of equal buttons under the title; the old right-aligned
+                  wrap left a ragged two-row cluster beside the heading (2026-09-08). */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', width: '100%' }}>
                 <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
                   style={{ background: '#bd93f9', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>
                   🧠 About me
@@ -988,7 +991,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   return (
     <>
-      <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId} />
+      <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
+        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setSelectedMemory(m); } }} />
     {KeySaveModal}
     <div className="modal-overlay" onClick={onClose}>
       <div className="memory-manager-modal" onClick={(e) => e.stopPropagation()}>

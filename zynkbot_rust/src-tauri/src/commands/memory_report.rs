@@ -14,6 +14,7 @@ fn n(row: &sqlx::sqlite::SqliteRow, col: &str) -> i64 {
     row.try_get::<i64, _>(col).unwrap_or(0)
 }
 
+#[allow(non_snake_case)]
 #[tauri::command]
 pub async fn get_memory_report(user_id: String) -> Result<serde_json::Value, String> {
     let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
@@ -24,15 +25,20 @@ pub async fn get_memory_report(user_id: String) -> Result<serde_json::Value, Str
     r
 }
 
+#[allow(non_snake_case)]
 async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Value, sqlx::Error> {
-    // "Mine" = not the app's own self-description and not demo data.
-    const MINE: &str = "user_id = ? AND namespace != '_zynkbot' AND COALESCE(source_type,'') != 'demo_data'";
+    // "Mine" = not the app's own self-description and not demo data. Always
+    // qualified with the memories alias: two of the queries join memories twice
+    // and an unqualified `namespace` was ambiguous (first run, 2026-09-08).
+    let mine = |alias: &str| format!(
+        "{a}.user_id = ? AND {a}.namespace != '_zynkbot' AND COALESCE({a}.source_type,'') != 'demo_data'", a = alias);
+    let MINE = mine("m");
 
     let totals = sqlx::query(&format!(
         "SELECT COUNT(*) AS memories, MIN(created_at) AS first_at, MAX(created_at) AS last_at,
                 SUM(CASE WHEN event_date IS NOT NULL THEN 1 ELSE 0 END) AS dated,
                 SUM(CASE WHEN tags != '[]' THEN 1 ELSE 0 END) AS tagged
-         FROM memories WHERE {MINE}"))
+         FROM memories m WHERE {MINE}"))
         .bind(user_id).fetch_one(pool).await?;
     let links: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM memory_links l JOIN memories m ON m.id = l.source_memory_id WHERE {MINE}"))
@@ -46,7 +52,7 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
         .bind(user_id).fetch_one(pool).await?;
 
     let namespaces: Vec<serde_json::Value> = sqlx::query(&format!(
-        "SELECT namespace, COUNT(*) AS c FROM memories WHERE {MINE} GROUP BY namespace ORDER BY c DESC"))
+        "SELECT m.namespace AS namespace, COUNT(*) AS c FROM memories m WHERE {MINE} GROUP BY m.namespace ORDER BY c DESC"))
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({"name": s(r, "namespace"), "count": n(r, "c")})).collect();
 
@@ -67,18 +73,19 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
     }
 
     let timeline: Vec<serde_json::Value> = sqlx::query(&format!(
-        "SELECT id, title, substr(event_date, 1, 10) AS day, namespace FROM memories
-         WHERE {MINE} AND event_date IS NOT NULL ORDER BY event_date DESC LIMIT 30"))
+        "SELECT m.id AS id, m.title AS title, substr(m.event_date, 1, 10) AS day, m.namespace AS namespace FROM memories m
+         WHERE {MINE} AND m.event_date IS NOT NULL ORDER BY m.event_date DESC LIMIT 30"))
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({"id": n(r, "id"), "title": s(r, "title"), "day": s(r, "day"), "namespace": s(r, "namespace")})).collect();
 
+    let MINE_A = mine("a");
     let belief_changes: Vec<serde_json::Value> = sqlx::query(&format!(
         "SELECT l.relation_type AS kind, substr(l.created_at, 1, 10) AS day, l.notes AS notes,
                 a.title AS new_title, b.title AS old_title, a.id AS new_id, b.id AS old_id
          FROM memory_links l
          JOIN memories a ON a.id = l.source_memory_id
          JOIN memories b ON b.id = l.target_memory_id
-         WHERE l.relation_type IN ('contradicts', 'resolves') AND a.{MINE}
+         WHERE l.relation_type IN ('contradicts', 'resolves') AND {MINE_A}
          ORDER BY l.created_at DESC LIMIT 15"))
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({
@@ -87,13 +94,13 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
             "new_id": n(r, "new_id"), "old_id": n(r, "old_id")})).collect();
 
     let tone: Vec<serde_json::Value> = sqlx::query(&format!(
-        "SELECT sentiment_label AS label, COUNT(*) AS c FROM memories WHERE {MINE} GROUP BY sentiment_label ORDER BY c DESC"))
+        "SELECT m.sentiment_label AS label, COUNT(*) AS c FROM memories m WHERE {MINE} GROUP BY m.sentiment_label ORDER BY c DESC"))
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({"label": s(r, "label"), "count": n(r, "c")})).collect();
 
     let recent: Vec<serde_json::Value> = sqlx::query(&format!(
-        "SELECT id, title, substr(created_at, 1, 10) AS day, namespace, tags FROM memories
-         WHERE {MINE} ORDER BY created_at DESC LIMIT 10"))
+        "SELECT m.id AS id, m.title AS title, substr(m.created_at, 1, 10) AS day, m.namespace AS namespace, m.tags AS tags FROM memories m
+         WHERE {MINE} ORDER BY m.created_at DESC LIMIT 10"))
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({"id": n(r, "id"), "title": s(r, "title"), "day": s(r, "day"), "namespace": s(r, "namespace"), "tags": s(r, "tags")})).collect();
 
@@ -104,8 +111,8 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
         .iter().map(|r| serde_json::json!({"outcome": s(r, "outcome"), "count": n(r, "c")})).collect();
 
     let kitchen: Vec<serde_json::Value> = sqlx::query(&format!(
-        "SELECT id, title, substr(COALESCE(event_date, created_at), 1, 10) AS day FROM memories
-         WHERE {MINE} AND namespace = 'kitchen' ORDER BY COALESCE(event_date, created_at) DESC LIMIT 10"))
+        "SELECT m.id AS id, m.title AS title, substr(COALESCE(m.event_date, m.created_at), 1, 10) AS day FROM memories m
+         WHERE {MINE} AND m.namespace = 'kitchen' ORDER BY COALESCE(m.event_date, m.created_at) DESC LIMIT 10"))
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({"id": n(r, "id"), "title": s(r, "title"), "day": s(r, "day")})).collect();
 
