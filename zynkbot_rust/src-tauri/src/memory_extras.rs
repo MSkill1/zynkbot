@@ -119,14 +119,23 @@ pub fn tone_to_sentiment(tone: Option<&str>) -> (&'static str, f64) {
     }
 }
 
-/// Entities worth a row: 2+ characters, not a pronoun/contraction, known kind.
+/// Entities worth a row: 2+ characters, not a pronoun, contraction, calendar word
+/// or bare number, known kind. ("August" and "September" came back as things on
+/// the first real run, 2026-09-08.)
 pub fn clean_entities(entities: Option<&[EntityOut]>) -> Vec<EntityOut> {
-    const SKIP: [&str; 12] = ["i", "me", "you", "we", "they", "it", "user", "the user", "i'm", "i've", "he", "she"];
+    const SKIP: [&str; 40] = [
+        "i", "me", "you", "we", "they", "it", "user", "the user", "i'm", "i've", "he", "she",
+        "january", "february", "march", "april", "may", "june", "july", "august", "september",
+        "october", "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday",
+        "saturday", "sunday", "today", "yesterday", "tomorrow", "tonight", "last night", "week",
+        "weekend", "morning", "evening",
+    ];
     let mut out: Vec<EntityOut> = Vec::new();
     for e in entities.unwrap_or(&[]) {
         let name = e.name.trim();
         let canon = name.to_ascii_lowercase();
-        if name.chars().count() < 2 || SKIP.contains(&canon.as_str()) || name.contains('\'') {
+        let is_number = !canon.is_empty() && canon.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '/' || c == '.');
+        if name.chars().count() < 2 || SKIP.contains(&canon.as_str()) || name.contains('\'') || is_number {
             continue;
         }
         if out.iter().any(|o| o.name.eq_ignore_ascii_case(name)) {
@@ -192,6 +201,8 @@ mod tests {
         let raw = vec![
             EntityOut { name: "Vermont".into(), kind: "location".into() },
             EntityOut { name: "I".into(), kind: "person".into() },
+            EntityOut { name: "August".into(), kind: "thing".into() },
+            EntityOut { name: "2026".into(), kind: "thing".into() },
             EntityOut { name: "Laurimar".into(), kind: "Person".into() },
             EntityOut { name: "vermont".into(), kind: "place".into() },
             EntityOut { name: "Elden Ring".into(), kind: "game".into() },

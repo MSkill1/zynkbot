@@ -116,7 +116,14 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({"id": n(r, "id"), "title": s(r, "title"), "day": s(r, "day")})).collect();
 
+    let hands_free: Vec<serde_json::Value> = sqlx::query(&format!(
+        "SELECT m.id AS id, m.title AS title, substr(m.created_at, 1, 10) AS day FROM memories m
+         WHERE {MINE} AND m.source_type = 'hands_free' ORDER BY m.created_at DESC LIMIT 30"))
+        .bind(user_id).fetch_all(pool).await?
+        .iter().map(|r| serde_json::json!({"id": n(r, "id"), "title": s(r, "title"), "day": s(r, "day")})).collect();
+
     Ok(serde_json::json!({
+        "hands_free": hands_free,
         "generated_at": chrono::Utc::now().to_rfc3339(),
         "totals": {
             "memories": n(&totals, "memories"),

@@ -1166,6 +1166,10 @@ pub async fn generate_reply(
         let bg_user_id = user_id.clone();
         let bg_session_id = session_id.clone();
         let bg_forced_backend = forced_backend.clone();
+        // A memory extracted from a "Hey Zynk" turn is marked so it can be reviewed or
+        // removed as a group: a fluent TV line slipped past the fragment gate and was
+        // stored as the user's own biography (2026-09-08).
+        let bg_source_type: &'static str = if hands_free { "hands_free" } else { "conversation" };
         let bg_containment_mode = containment_mode.clone();
         let bg_sink = sink.clone();
         let bg_is_api = is_api;
@@ -1504,7 +1508,7 @@ pub async fn generate_reply(
                 &db_pool,
                 llm_title.as_deref(),              // title (LLM-generated!)
                 &factual_content,                  // content (factual statements only!)
-                Some("conversation"),              // source_type
+                Some(bg_source_type),              // source_type ("hands_free" for wake-word turns)
                 Some(&bg_session_id),              // session_id
                 Some(message_embedding),           // embedding
                 None,                              // parent_scroll_id

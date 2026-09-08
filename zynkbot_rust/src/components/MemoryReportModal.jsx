@@ -155,6 +155,13 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
               </Section>
             )}
 
+            {report.hands_free?.length > 0 && (
+              <Section id="handsfree" title="Heard hands-free" count={report.hands_free.length}>
+                <p style={muted}>Stored from "Hey Zynk" turns. If one is not you (a TV line, someone else in the room), open it and delete it.</p>
+                {report.hands_free.map((x) => <p key={x.id} style={p}><span style={{ color: '#9aa5c4' }}>{x.day}</span>{'  '}{link(x.id, x.title)}</p>)}
+              </Section>
+            )}
+
             <Section id="tone" title="Tone" count={(report.tone || []).length}>
               <div>{(report.tone || []).map((x, i) => chip(`${x.label} · ${x.count}`, i))}</div>
             </Section>
