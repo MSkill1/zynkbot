@@ -601,7 +601,7 @@ class WakeWordService : Service() {
                 val mp = MediaPlayer()
                 mp.setAudioAttributes(
                     android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA) // media volume: the assistant stream has no user-facing slider and sat at 5/15 on the Pixel (2026-09-08)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
@@ -757,7 +757,7 @@ class WakeWordService : Service() {
                 val mp = MediaPlayer()
                 mp.setAudioAttributes(
                     android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA) // media volume: the assistant stream has no user-facing slider and sat at 5/15 on the Pixel (2026-09-08)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )
@@ -842,7 +842,7 @@ class WakeWordService : Service() {
                 val mp = MediaPlayer()
                 mp.setAudioAttributes(
                     android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA) // media volume: the assistant stream has no user-facing slider and sat at 5/15 on the Pixel (2026-09-08)
                         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
                         .build()
                 )

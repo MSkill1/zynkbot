@@ -449,16 +449,19 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
      *  or imperative opening, or a Remember command. Whisper transcripts carry
      *  punctuation; Vosk ones do not, so the word list matters more there. */
     private fun looksAddressedToAssistant(t: String): Boolean {
-        val s = t.trim().lowercase()
-        if (s.isEmpty()) return false
-        if (s.contains('?')) return true
-        val openers = listOf(
-            "what", "what's", "whats", "how", "when", "where", "who", "why", "which", "is ", "are ", "do ", "does ", "did ",
-            "can you", "could you", "would you", "will you", "please", "tell me", "remind", "remember", "set ", "start ",
-            "open ", "play ", "search", "look up", "find", "define", "explain", "give me", "show me", "read", "translate",
-            "hey zynk", "zynk",
+        val s = " " + t.trim().lowercase().replace(Regex("[^a-z0-9' ]"), " ").replace(Regex("\\s+"), " ") + " "
+        if (t.contains('?')) return true
+        // Anywhere in the sentence, not only at the start: "in baldur's gate three, at the
+        // very beginning, is there somewhere you can find a shovel" was dropped on
+        // 2026-09-08 because it did not *begin* with a question word.
+        val markers = listOf(
+            " what ", " what's ", " whats ", " how ", " when ", " where ", " where's ", " who ", " who's ", " why ", " which ",
+            " is there ", " are there ", " is it ", " does ", " do i ", " do you ", " did ", " can you ", " can i ", " could you ",
+            " would you ", " will you ", " should i ", " please ", " tell me ", " remind ", " remember ", " set a ", " set an ",
+            " start a ", " start the ", " open ", " play ", " search ", " look up ", " find ", " define ", " explain ",
+            " give me ", " show me ", " read ", " translate ", " zynk ",
         )
-        return openers.any { s.startsWith(it) }
+        return markers.any { s.contains(it) }
     }
 
     private fun answerAndFinish(transcript: String) {
