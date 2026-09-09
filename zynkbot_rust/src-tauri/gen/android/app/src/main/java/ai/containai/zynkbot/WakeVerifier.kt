@@ -19,11 +19,14 @@ class WakeVerifier private constructor(
     private val coef: FloatArray, private val intercept: Float, val threshold: Float, val trained: String,
     private val owners: Set<String>,
 ) {
-    /** A verifier is personal: it enforces only on the devices it was trained for
-     *  (listed in the asset's "owners"). On any other phone it scores and logs so
-     *  labelled clips accumulate for that user's own model, but blocks nothing. */
+    /** A verifier is personal: it enforces only for the user it was trained on
+     *  (the asset's "owners" lists Zynkbot user ids, .zynk_user_id). The user id is
+     *  the same on every device that user pairs and survives a reinstall once the
+     *  phone is re-paired; a device id does not (a fresh install on 2026-09-09 got a
+     *  new device id and the verifier silently stopped enforcing). For anyone else
+     *  it scores and logs so labelled clips accumulate, but blocks nothing. */
     fun enforcesOn(context: Context): Boolean {
-        val id = try { java.io.File(context.filesDir, "zynkbot/.zynk_device_id").readText().trim() } catch (_: Exception) { "" }
+        val id = try { java.io.File(context.filesDir, "zynkbot/.zynk_user_id").readText().trim() } catch (_: Exception) { "" }
         return id.isNotEmpty() && owners.contains(id)
     }
     companion object {

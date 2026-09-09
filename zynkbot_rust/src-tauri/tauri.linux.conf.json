@@ -1,0 +1,25 @@
+{
+  "bundle": {
+    "resources": {
+      "gen/android/app/src/main/assets/vosk-model/": "vosk-model/"
+    },
+    "linux": {
+      "deb": {
+        "depends": [],
+        "files": {
+          "/usr/lib/vosk/libvosk.so": "lib/vosk/libvosk.so"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/lib/vosk/libvosk.so": "lib/vosk/libvosk.so"
+        }
+      },
+      "appimage": {
+        "files": {
+          "/usr/lib/vosk/libvosk.so": "lib/vosk/libvosk.so"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "gen/android/app/src/main/assets/vosk-model/": "vosk-model/"
+    }
+  }
+}

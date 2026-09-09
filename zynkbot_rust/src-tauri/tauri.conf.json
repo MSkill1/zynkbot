@@ -25,12 +25,16 @@
       "capabilities": [
         {
           "identifier": "main-capability",
-          "windows": ["main"],
+          "windows": [
+            "main"
+          ],
           "permissions": [
             {
               "identifier": "shell:allow-open",
               "allow": [
-                { "path": "**" }
+                {
+                  "path": "**"
+                }
               ]
             },
             "shell:default",
@@ -58,11 +62,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "linux": {
-      "deb": {
-        "depends": []
-      }
-    }
+    ]
   }
 }

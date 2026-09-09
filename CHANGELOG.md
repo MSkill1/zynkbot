@@ -12,6 +12,8 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - Every "Hey Zynk" now runs natively through the Android assistant role: chime, Z overlay, tap-Z-to-cancel, Stop, replies spoken with the built-in voice and joined to the current thread. The old in-app wake path is gone.
 - Timer, alarm and stopwatch by voice, handled by the clock app without a model call; stopwatch falls back to opening the clock app.
 - Fewer false triggers: silence gate, back-off after repeated fruitless firings, faster close when nobody speaks, a default-deny instruction for TV and fragments, and a personal verifier trained from the owner's own clips (enforcing on the developer's phones; off with clip collection on for testers).
+- The personal wake-word verifier enforces for the user it was trained on (by user id, which survives reinstalls) and only logs for anyone else.
+- When Android refuses the in-app assistant-role prompt (seen on a GrapheneOS Pixel, Android 17), Zynkbot opens the system's assistant picker instead.
 - The Vosk/Whisper selector applies to hands-free too; Whisper falls back to Vosk.
 - "Remember colon …" saves a fact word for word by voice; Vosk's misspellings of "colon" are accepted.
 - Chime and spoken replies use the media volume.

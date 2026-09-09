@@ -964,7 +964,24 @@ class MainActivity : TauriActivity() {
     // decline, or dismiss alike). Skipped if the role is already held or unavailable.
     private val requestAssistantRole = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { runNextPermissionRequest() }
+    ) {
+        // Some Android builds refuse the role dialog outright (GrapheneOS Pixel on Android 17,
+        // 2026-09-09: "Role is not requestable: android.app.role.ASSISTANT") and the
+        // request returns at once with nothing shown. Then the only way to get the
+        // role is the system's own picker, so open it and say why.
+        val rm = getSystemService(RoleManager::class.java)
+        if (rm != null && !rm.isRoleHeld(RoleManager.ROLE_ASSISTANT)) {
+            try {
+                android.widget.Toast.makeText(this,
+                    "Choose Zynkbot as your digital assistant to answer \"Hey Zynk\" on screen",
+                    android.widget.Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+            } catch (e: Exception) {
+                Log.w("MainActivity", "Could not open the assistant picker: ${e.message}")
+            }
+        }
+        runNextPermissionRequest()
+    }
 
     private fun requestAssistantRoleIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

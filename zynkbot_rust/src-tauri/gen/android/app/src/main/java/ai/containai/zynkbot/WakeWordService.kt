@@ -68,9 +68,9 @@ class WakeWordService : Service() {
         // it. Loudness cannot separate the two at room distance; the verifier can.
         const val SILENCE_GATE_DB = -46.0
         const val STRICT_GATE_DB = -46.0
-        // Enforcement is decided per device by WakeVerifier.enforcesOn(): the shipped
-        // verifier is trained on one owner's voice and lists that owner's device ids;
-        // on any other phone it only logs and collects clips (2026-09-09).
+        // Enforcement is decided per user by WakeVerifier.enforcesOn(): the shipped
+        // verifier is trained on one owner's voice and lists that owner's user id;
+        // for anyone else it only logs and collects clips (2026-09-09).
         const val STRICT_HITS = 4           // consecutive high scores needed while backing off
         const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
         const val MISS_WINDOW_MS = 5 * 60_000L

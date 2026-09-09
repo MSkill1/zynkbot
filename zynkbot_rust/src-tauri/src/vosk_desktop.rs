@@ -35,7 +35,18 @@ struct SessionHandle {
 
 fn find_model_dir() -> Result<PathBuf, String> {
     let manifest = env!("CARGO_MANIFEST_DIR");
+    // Packaged builds (2026-09-09): the model ships as a Tauri resource
+    // (tauri.conf.json bundle.resources). Tauri puts resources at
+    // <prefix>/lib/<ProductName>/ next to <prefix>/bin/<exe> on Linux (.deb, .rpm,
+    // AppImage) and next to the .exe on Windows, so both are derived from the
+    // executable's own location, the same way the rpath finds libvosk.so.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
     let candidates = [
+        exe_dir.join("../lib/Zynkbot/vosk-model"),
+        exe_dir.join("vosk-model"),
         PathBuf::from("./models/system/vosk"),
         PathBuf::from("./models/vosk"),
         PathBuf::from(manifest).join("models/system/vosk"),

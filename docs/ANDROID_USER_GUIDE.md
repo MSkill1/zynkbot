@@ -23,7 +23,7 @@ Zynkbot asks for permissions one at a time, in this order. Each prompt waits for
 
 1. Microphone. Needed for the mic button in the chat and for hands-free "Hey Zynk". Without it the app still works as a text chat.
 2. Notifications (Android 13 and newer only). Zynkbot shows two quiet, permanent notifications while it works in the background: "Listening for Hey Zynk" and "Memory sync active". Android requires a notification for any app that keeps a microphone or network task alive in the background. If you decline, those background tasks may be stopped by the system.
-3. Digital assistant role (Android 10 and newer). Android asks whether Zynkbot should be your phone's assistant app, the role Google Assistant normally holds. Saying yes lets Zynkbot listen and answer on top of any app and on the lock screen, and lets the wake-word listener come back after a reboot without you opening the app. This prompt appears once per install. If you decline, hands-free still works but in a reduced form (see section 3).
+3. Digital assistant role (Android 10 and newer). Android asks whether Zynkbot should be your phone's assistant app, the role Google Assistant normally holds. Some phones refuse to show that question (the Pixel test phone, running GrapheneOS on Android 17, does); then Zynkbot opens the phone's "Default digital assistant app" screen for you and you pick Zynkbot there. Saying yes lets Zynkbot listen and answer on top of any app and on the lock screen, and lets the wake-word listener come back after a reboot without you opening the app. This prompt appears once per install. If you decline, hands-free still works but in a reduced form (see section 3).
 4. Local network (Android 16 and newer only). Lets Zynkbot talk to your other Zynkbot devices on the same Wi-Fi for syncing, file sharing and ZChat (section 8). If Zynkbot is only on this one phone, declining is fine.
 
 To grant the assistant role later: open the phone's Settings, then Apps, then Default apps, then Digital assistant app, and choose Zynkbot. On a Pixel the screen is titled "Default digital assistant app" and lists every installed assistant, including one installed from a file. Menu names vary by phone maker.
@@ -103,7 +103,7 @@ The clips exist only to build that training set. The phone saves a short audio c
 
 Hands-free works without the verifier. The verifier only reduces misfires: it cannot make Zynkbot wake when the wake-word model itself did not fire.
 
-In this beta the verifier is switched on only for the phones it was trained on. On every other phone it runs silently, logs its opinion and collects clips, and never blocks a wake.
+In this beta the verifier is switched on only for the person it was trained on, recognised by the Zynkbot user id that all of that person's paired devices share. For everyone else it runs silently, logs its opinion and collects clips, and never blocks a wake.
 
 ## 6. Choosing the dictation engine
 
