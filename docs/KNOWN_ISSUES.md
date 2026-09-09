@@ -202,7 +202,7 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 **Two supporting defects found while investigating:**
 
-- **`install.bat` extracts only 2 of the 5 required files.** The Windows Vosk build is MinGW-based and the zip also ships `libstdc++-6.dll`, `libwinpthread-1.dll` and `libgcc_s_seh-1.dll`. The extract step at `install.bat:701` copies only `libvosk.lib` and `libvosk.dll`, so even a fully successful download leaves `libvosk.dll` unable to load for want of its runtime dependencies.
+- ~~**`install.bat` extracts only 2 of the 5 required files.**~~ Fixed: the extract step now copies `libvosk.lib`, `libvosk.dll`, `libstdc++-6.dll`, `libwinpthread-1.dll` and `libgcc_s_seh-1.dll` (checked 2026-09-09). Still open for the *installer*: the NSIS/MSI package must carry the four DLLs next to `app.exe`; `tauri.windows.conf.json` now lists them as resources (2026-09-09, unverified until a Windows build runs).
 - **The Vosk download has no retry and fails quietly.** A failure prints a single `[WARNING]` line in the middle of a long install log and installation continues, so a Windows user ends up with no offline dictation and no clear indication why.
 
 **Workaround:** None on Windows. Dictation falls back to OpenAI Whisper (cloud), which requires an API key and network access.  
