@@ -195,6 +195,8 @@ Every completed exchange is automatically saved to a local database. Conversatio
 
 Upload documents and search them semantically during conversations.
 
+Adding a document only puts the file in Zynkbot's folder. Before Zynkbot can talk about what is in it, it must **index** it: read the file and build a searchable index of its contents in Zynkbot's own local database. Until a file is indexed, Zynkbot cannot see what it says. Indexing runs on your device and sends nothing anywhere.
+
 **Supported formats:**
 - Text files (.txt, .md)
 - JSON files (.json)

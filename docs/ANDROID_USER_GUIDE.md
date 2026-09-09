@@ -6,11 +6,13 @@ This guide is for anyone installing Zynkbot on an Android phone, including beta 
 
 ## 1. Installing
 
-Zynkbot is not on the Play Store yet. You install it from a file.
+Beta testers are invited through Google Play. If you received an invitation link, open it on the phone, tap "Join", then install Zynkbot from the Play Store like any other app. Updates arrive through Play.
+
+Without an invitation, you install it from a file:
 
 1. On the phone, open the GitHub Releases page: https://github.com/MSkill1/zynkbot/releases/latest
 2. Download the `.apk` file. An APK is an Android install package. The build is for arm64 phones, which is every mainstream Android phone from the last several years.
-3. Tap the downloaded file. Android will ask you to allow installs from this source (your browser or file manager). Allow it. This is asked once per app that installs things, not every time.
+3. Tap the downloaded file. Android asks you to allow installs from this source (your browser or file manager); the exact wording depends on the Android version. Allow it. This is asked once per app that installs things, not every time.
 4. Tap Install, then Open.
 
 Minimum Android version: 8.0. Newer is better; some features below only exist on newer versions and say so.
@@ -22,16 +24,22 @@ Zynkbot asks for permissions one at a time, in this order. Each prompt waits for
 1. Microphone. Needed for the mic button in the chat and for hands-free "Hey Zynk". Without it the app still works as a text chat.
 2. Notifications (Android 13 and newer only). Zynkbot shows two quiet, permanent notifications while it works in the background: "Listening for Hey Zynk" and "Memory sync active". Android requires a notification for any app that keeps a microphone or network task alive in the background. If you decline, those background tasks may be stopped by the system.
 3. Digital assistant role (Android 10 and newer). Android asks whether Zynkbot should be your phone's assistant app, the role Google Assistant normally holds. Saying yes lets Zynkbot listen and answer on top of any app and on the lock screen, and lets the wake-word listener come back after a reboot without you opening the app. This prompt appears once per install. If you decline, hands-free still works but in a reduced form (see section 3).
-4. Local network (Android 16 and newer only). Lets Zynkbot talk to your other Zynkbot devices on the same Wi-Fi for syncing. Not used in this beta (see section 10), so declining is fine.
+4. Local network (Android 16 and newer only). Lets Zynkbot talk to your other Zynkbot devices on the same Wi-Fi for syncing, file sharing and ZChat (section 8). If Zynkbot is only on this one phone, declining is fine.
 
-To grant the assistant role later: open the phone's Settings, then Apps, then Default apps, then Digital assistant app, and choose Zynkbot. The exact menu names vary by phone maker.
+To grant the assistant role later: open the phone's Settings, then Apps, then Default apps, then Digital assistant app, and choose Zynkbot. On a Pixel the screen is titled "Default digital assistant app" and lists every installed assistant, including one installed from a file. Menu names vary by phone maker.
 
 Zynkbot does not ask for "all files access" or for access to your photos. Files reach the app through the system file picker, which needs no permission.
 
 
 ## 3. Talking to it hands-free
 
-Hands-free is off until you turn it on. In the app, open Voice Settings and switch on "Enable wake word" under "Hey Zynk — Always Listening". The wake-word models ship inside the app; nothing is downloaded.
+Two things happen when you talk to Zynkbot: the phone listens for the words "Hey Zynk", and then turns what you say next into text. Both can run entirely on the phone.
+
+- The wake-word listener always runs on the phone. Its models ship inside the app; nothing is downloaded and no audio leaves the device.
+- Turning your speech into text (dictation) uses an offline engine called Vosk by default. It runs on the phone with no internet connection, and the audio never leaves the device.
+- If you prefer, you can switch dictation to OpenAI Whisper, an online service that returns better punctuation. Then, and only then, each recording is sent to OpenAI. OpenAI's published API data policy (read 2026-09-09) says API data is not used to train its models and lists the transcription service as keeping no audio for abuse monitoring; its general rule for other services is up to 30 days. Section 6 explains how to choose.
+
+Hands-free is off until you turn it on. In the app, open Voice Settings and switch on "Enable wake word" under "Hey Zynk — Always Listening".
 
 What happens, step by step:
 
@@ -44,7 +52,7 @@ What happens, step by step:
 Limits on one listen:
 
 - If nothing is heard for 6 seconds after the chime, Zynkbot closes with the short tone and does nothing else.
-- Listening never runs longer than 12 seconds, even if someone is still talking.
+- One listen is capped at 12 seconds. This is a fixed limit set in the app, not a limit of either dictation engine; anything said after 12 seconds is cut off.
 - A tap on the Z cancels, whether it is listening or speaking. You hear the short tone, and the phone goes back to waiting for "Hey Zynk".
 - The Stop button in the app also cuts off a spoken reply.
 - Zynkbot answers one question per wake. It does not keep listening after a reply. Say "Hey Zynk" again for the next one.
@@ -53,7 +61,6 @@ Without the assistant role, "Hey Zynk" still works, but there is no Z on screen,
 
 Other apps' recordings: if another app is using the microphone (a call, a voice memo, another assistant), Zynkbot pauses its listening and resumes when that app is done.
 
-<!-- CHECK: The in-app "Voice Commands" list (VoiceModal.jsx) mentions spoken "Stop", "Never mind", "Cancel", "Thank you Zynk" and "Goodbye Zynk". I found no code in the native hands-free path (WakeWordService, ZynkAssistantSession, VoiceCommands) that acts on those phrases, so this guide does not list them. The same in-app text says "after ~2 seconds" of silence; the code uses 1.5 s. -->
 
 ## 4. What it does without asking a model
 
@@ -67,7 +74,7 @@ Stopwatch. Say "start the stopwatch". Android has no standard stopwatch command,
 
 If the clock app cannot be reached at all, Zynkbot says "I couldn't reach the clock app to do that."
 
-Remember, word for word. Start a message with "remember colon" followed by the fact, and Zynkbot saves exactly those words as a memory, with no rewording. This works spoken (hands-free or the mic button) and typed in the chat as "Remember: ...". Because the offline dictation engine often mishears the word "colon", these spellings are all accepted at the start of a message:
+Using the Remember function ("Remember:"). Start a message with the word remember and a colon, then the fact, and Zynkbot saves exactly those words as a memory, with no rewording. This works spoken (hands-free or the mic button) and typed in the chat as "Remember: ...". Because the offline dictation engine often mishears the word "colon", these spellings are all accepted at the start of a message:
 
 - remember colon
 - remember colin
@@ -90,13 +97,13 @@ Hands-free listening hears everything in the room, so Zynkbot has several checks
 
 Backing off after repeated false triggers. If three wakes in five minutes end with nothing useful (nothing heard, a fragment, the model deciding it was not a request, or you tapping the Z to cancel), Zynkbot becomes strict for ten minutes. While strict, it needs a much stronger and longer "Hey Zynk" to wake, and it only sends transcripts to the model that look like a question or a request (a question mark, or words such as "what", "how", "can you", "set a", "remember"). A real answered question, a timer, an alarm or a Remember command ends strict mode early.
 
-The personal verifier. This is a small second check that runs after the wake word fires and asks: does this sound like the owner saying "Hey Zynk"? It is trained on a computer, not on the phone, from the owner's own recordings of the wake word against the false triggers the phone collected. The trained weights ship inside the app.
+The personal verifier. This is a small second check that runs after the wake word fires and asks: does this sound like the owner saying "Hey Zynk"? It is trained once, on a computer, from the owner's own recordings of the wake word against the false triggers the phone collected, and the result ships inside the app as a fixed set of numbers. The phone does not learn or retrain on its own, and recent clips play no part in the decision.
 
-To build that training set, the phone saves a short audio clip (about 3 seconds) every time the wake word fires, under the app's private storage in a folder called `wake_triggers`. Each clip is labelled `.real` if the wake led to a real answer or command and `.false` if it did not. Only the newest 20 clips are kept. Nothing is uploaded; the clips leave the phone only if the owner copies them off by hand.
+The clips exist only to build that training set. The phone saves a short audio clip (about 3 seconds) every time the wake word fires, under the app's private storage in a folder called `wake_triggers`. Each clip is labelled `.real` if the wake led to a real answer or command and `.false` if it did not. Only the newest 20 clips are kept, so the folder stays small. Nothing is uploaded; the clips leave the phone only if the owner copies them off by hand.
 
 Hands-free works without the verifier. The verifier only reduces misfires: it cannot make Zynkbot wake when the wake-word model itself did not fire.
 
-<!-- resolved 2026-09-09: enforcement is per device (the verifier file lists the devices it was trained for); on any other phone it is log-only and collects clips -->
+In this beta the verifier is switched on only for the phones it was trained on. On every other phone it runs silently, logs its opinion and collects clips, and never blocks a wake.
 
 ## 6. Choosing the dictation engine
 
@@ -104,21 +111,33 @@ Dictation means turning your speech into text. Open Voice Settings and look unde
 
 Offline, Vosk (the default). Runs on the phone. No internet needed and no audio leaves the device. It produces lowercase text with no punctuation, and numbers come out as words ("ten minutes"). Models understand requests fine without punctuation.
 
-OpenAI Whisper. Sends the recording to OpenAI and gets text back with punctuation and capitals. It needs an OpenAI key entered under API keys in the app (the entry is named OPENAI_API_KEY). If the key is missing, hands-free quietly uses Vosk instead. Hands-free waits up to 8 seconds for you to start speaking, records until you pause for just over a second, and never records more than 12 seconds. If the upload fails, that one listen falls back to Vosk. The app's settings note states that OpenAI keeps audio for 30 days for abuse review.
-
-<!-- CHECK: The brief says Whisper "may invent a word or two in silence". I found no code or comment in this repository that states this. It is a commonly reported behaviour of the Whisper model, not something verified here, so it is left out of the guide text. -->
+OpenAI Whisper. Sends the recording to OpenAI and gets text back with punctuation and capitals. It needs an OpenAI key entered under API keys in the app (the entry is named OPENAI_API_KEY). If the key is missing, hands-free quietly uses Vosk instead. Hands-free waits up to 8 seconds for you to start speaking, records until you pause for just over a second, and never records more than 12 seconds. If the upload fails, that one listen falls back to Vosk. What OpenAI does with the audio is described in section 3.
 
 ## 7. Files and folders
 
 Where Zynkbot keeps its data. Memories, conversations, settings and the knowledge base live in the app's private storage. Other apps cannot see it, and uninstalling Zynkbot deletes it.
 
-Knowledge Base. A knowledge base is a set of your own documents that Zynkbot can search when answering. In the Knowledge Base manager, tap "Add files". The system file picker opens; you can select several files at once. Zynkbot copies each one into its private knowledge base folder and never changes the original. A file with the same name as an existing one is saved as "name (2)". Index the files after adding them.
+Knowledge Base. A knowledge base is a set of your own documents that Zynkbot can search when answering. In the Knowledge Base manager, tap "Add files". The system file picker opens; you can select several files at once. Zynkbot copies each one into its private knowledge base folder and never changes the original. A file with the same name as an existing one is saved as "name (2)".
+
+Indexing, and why it is needed. Adding a file only puts it in the folder. Before Zynkbot can talk about what is in it, it has to read the file and build its own searchable index of the contents, in its private database on the phone. That step is called indexing, and it is a button in the Knowledge Base manager. Until a file is indexed, Zynkbot cannot see what it says. Indexing runs on the phone and sends nothing anywhere; it can take a while for a long PDF. Then, when you ask a question with the KB button on, Zynkbot looks up the most relevant passages from the index and reads them before answering.
 
 ZynkbotShare. For sharing files between your own Zynkbot devices, the app uses a folder called ZynkbotShare inside the phone's Downloads folder. Add files to it from inside the app with the "+ Add Files" button in the file browser, which copies the chosen file in. There is also a button that opens the folder in the phone's file manager.
 
 Why files added by other apps are not seen. Android only lets an app see files it created itself in shared folders like Downloads. A file saved into ZynkbotShare by Chrome, a screenshot tool or a file manager is invisible to Zynkbot. This is how Android works, not a bug. Always add files through the app's own buttons.
 
-## 8. Memory
+## 8. Your other Zynkbot devices: sync, file sharing and ZChat
+
+If you run Zynkbot on more than one device (another phone, a laptop), the devices can find each other on the same Wi-Fi and work together. This is included in the beta. Nothing in it uses the internet or any server; the devices talk to each other directly, over an encrypted connection that only the two paired devices can open.
+
+Pairing. On one device, open the sidebar (the ⚙️ System Controls button) and find ZynkSync; it shows that device's pairing code in the form address:code, for example 192.168.0.100:123456. On the other device, in the same panel, enter the address and the six-digit code and confirm. Pairing is done once per pair of devices.
+
+ZynkSync. Once paired, memories and conversations are copied between the devices in the background, so a fact you told the laptop is known to the phone. This is the part that is known to be imperfect in this beta: some threads never arrive and some messages arrive twice (section 11). It is being rebuilt after the beta.
+
+ZynkLink. Files can be sent from one device to the other. On the phone, files you receive land in the ZynkbotShare folder (section 7). To let Zynkbot read a received file, add it to the knowledge base with "Add files" and index it.
+
+ZChat. A private text chat between two of your paired devices, or between two people who have paired their devices. Open the ZynkLink panel, find the device, and tap "💬 Chat". Messages are stored on the two devices and nowhere else. A message is sent the moment you tap send; if the other device is off or away, it is kept and delivered the next time the two devices sync. The chat window checks for new messages every few seconds while it is open, and unread counts show in the device list.
+
+## 9. Memory
 
 Memory Manager. Zynkbot saves facts about you from conversations. The Memory Manager (a button in the app; on a phone it sits in the bottom row of buttons) lists every memory. You can edit, delete or add memories there.
 
@@ -138,9 +157,9 @@ Each memory title in the report is a link. Tap it to open that memory to edit or
 
 Heard hands-free. Memories that came from a "Hey Zynk" exchange are marked separately and listed in this section, so you can check what the phone picked up when you were not looking at it. Only the last 30 are shown.
 
-## 9. Reporting a problem
+## 10. Reporting a problem
 
-Where. Two places: the "⚑ Report" button in the sidebar, and a small "⚑ Report" link under any reply from Zynkbot. The second one starts the report with the first 300 characters of that reply.
+Two places: the "⚑ Report" button in the sidebar, and a small "⚑ Report" link under any reply from Zynkbot. The second one starts the report with the first 300 characters of that reply.
 
 What a report contains. Everything is built on the phone from the app's own state:
 
@@ -148,38 +167,24 @@ What a report contains. Everything is built on the phone from the app's own stat
 - Platform and, on Android, the phone maker, model and Android version (nothing that identifies you)
 - The model backend in use (for example which provider)
 - Your description of what happened
-- The current conversation, only if you tick the box
+- **The current conversation, only if you tick the box.** Untick it and the report contains no conversation and no memories; you can still report the problem.
 - The last 300 lines of Zynkbot's own log
 
-What is masked. Before anything is shown, the log and the conversation text are scanned and the following are replaced with "[redacted]": provider API keys (such as keys beginning with sk-), any KEY=value, SECRET, TOKEN, PASSWORD or PASSPHRASE pairs, bearer tokens, long hexadecimal strings (including the backup key), long base64 strings, and ZynkSync pairing codes.
+What is masked. Even when you include the conversation, it is masked before it is shown to you. Before anything is shown, the log and the conversation text are scanned and the following are replaced with "[redacted]": provider API keys (such as keys beginning with sk-), any KEY=value, SECRET, TOKEN, PASSWORD or PASSPHRASE pairs, bearer tokens, long hexadecimal strings (including the backup key), long base64 strings, and ZynkSync pairing codes.
 
 Nothing is sent automatically. The report is a block of text on your screen. Read it, tap "Copy report", then paste it into a new GitHub issue. The "Open GitHub issues" button opens https://github.com/MSkill1/zynkbot/issues/new in your browser.
 
-## 10. Known limits in this beta
+## 11. Known limits in this beta
 
-- Sync between devices (ZynkSync) is known to be unreliable: some threads never sync and some messages arrive twice. It is being rebuilt. Please do not test it or report sync bugs; they are already known.
+- Sync between devices (ZynkSync) works but is known to be unreliable: some threads never sync and some messages arrive twice. It is being rebuilt after the beta. You are welcome to pair your devices; please do not report sync bugs, they are already known.
 - The wake word can fire on a loud TV or radio nearby. Loudness cannot tell your voice from the TV at room distance; that is what the verifier and the back-off in section 5 are for. Expect some misfires with a TV on.
 - The chime, the close tone and spoken replies all use the phone's media volume, the same slider as music and videos. If replies are too quiet, turn up media volume.
 - Hands-free replies in the app are always spoken. The "Speak replies in the app" switch only affects replies to typed or mic-button messages, and that uses OpenAI's voice, so it needs the OpenAI key.
 
-## 11. Privacy notes
+## 12. Privacy notes
 
 - Stays on the phone: memories, conversation history, the knowledge base, settings, API keys, wake-word audio clips, and all speech recognition when the offline engine is selected.
 - Leaves the phone: your messages and relevant memories go to whichever model provider you configured under API keys, and only when you ask a question. Hands-free questions are sent the same way.
 - Leaves the phone if you choose Whisper: the audio of each dictation goes to OpenAI.
 - Leaves the phone if you use "Push keys": your API keys and the memory backup key are sent to your own paired Zynkbot devices on the local network, and nowhere else.
 - Never sent by the app on its own: problem reports, logs, or the wake-word clips.
-
----
-
-## Facts to verify
-
-These could not be confirmed from the code and should be checked by hand before this guide is published:
-
-1. The exact path to the assistant setting on a stock Pixel and on a OnePlus (this guide uses the generic "Settings > Apps > Default apps > Digital assistant app" from the source comment).
-2. Whether a sideloaded app is offered in the assistant picker on every tested phone (the ZynkAssistantService header still calls this an open question).
-3. The wording of the Android "install unknown apps" prompt on current versions.
-4. Whether the tester APK will be built with the verifier on or off (see the CHECK note in section 5).
-5. The OpenAI 30-day audio retention statement, which is quoted from the app's own settings text and not verified against OpenAI's current policy.
-6. Whether the Whisper-invents-words caveat should be included; it is not supported by anything in this repository.
-7. The label of the Memory Manager button in the phone layout (the code shows a button titled "Open Memory Manager" in the bottom row; the visible text was not checked).

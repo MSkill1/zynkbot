@@ -279,7 +279,7 @@ export default function VoiceModal({
             />
             <div>
               <div style={{ ...labelStyle, fontWeight: '500' }}>OpenAI Whisper</div>
-              <div style={mutedStyle}>Cloud transcription with punctuation. Requires OPENAI_API_KEY. OpenAI retains audio 30 days for abuse review only.</div>
+              <div style={mutedStyle}>Cloud transcription with punctuation. Requires OPENAI_API_KEY. Audio is sent to OpenAI; its API policy says it is not used for training and the transcription service keeps no audio for abuse monitoring (policy read 2026-09-09).</div>
             </div>
           </label>
         </div>
