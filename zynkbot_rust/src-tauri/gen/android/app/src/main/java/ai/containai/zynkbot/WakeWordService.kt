@@ -68,7 +68,7 @@ class WakeWordService : Service() {
         // it. Loudness cannot separate the two at room distance; the verifier can.
         const val SILENCE_GATE_DB = -46.0
         const val STRICT_GATE_DB = -46.0
-        const val VERIFIER_ENFORCE = false  // log-only until it has seen the owner at every distance
+        const val VERIFIER_ENFORCE = true   // on since 2026-09-09: v2 verifier keeps 31/33 of the owner's clips at both distances, stops 56/60 false
         const val STRICT_HITS = 4           // consecutive high scores needed while backing off
         const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
         const val MISS_WINDOW_MS = 5 * 60_000L
