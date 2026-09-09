@@ -60,7 +60,7 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
             </p>
             <p className="guide-note">
               <strong>Fell off the diet?</strong> Tell it to forget those weeks and start again. The
-              memory is yours to edit. The Kitchen kit is free and stays on this device.
+              memory is yours to edit. Everything stays on this device.
             </p>
           </div>
         </div>

@@ -104,9 +104,9 @@ jobs:
 
       - name: Install Android NDK and build tools
         run: |
-          sdkmanager "ndk;27.0.12077973" "build-tools;36.0.0"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
-          echo "$ANDROID_SDK_ROOT/ndk/27.0.12077973/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+          sdkmanager "ndk;30.0.15729638" "build-tools;36.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.15729638" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Setup Node
         uses: actions/setup-node@v4

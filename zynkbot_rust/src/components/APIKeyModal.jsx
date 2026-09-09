@@ -942,7 +942,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
           </div>
           <div style={{ marginTop: '6px' }}>
             <span className="api-section-desc">
-              Zero-knowledge encrypted backup — your key never leaves this device.{' '}
+              Zero-knowledge encrypted backup. The key stays on your own devices: it is shared only with phones and computers you have paired, over their direct encrypted connection, and never with any server.{' '}
               <span style={{ color: '#bd93f9' }}>Free during beta. Early users get founder pricing when paid tiers launch.</span>
             </span>
             <div style={{ marginTop: '10px' }}>

@@ -23,7 +23,7 @@ pub async fn list_memories(
             is_syncable, is_shareable,
             event_type, event_date,
             link_count, is_ephemeral, expires_at,
-            entities_detected, original_text,
+            entities_detected, original_text, tags,
             NULL as similarity
         FROM memories
         WHERE TRUE

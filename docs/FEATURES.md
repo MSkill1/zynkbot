@@ -37,7 +37,7 @@ Zynkbot uses a local SQLite database for persistent, semantic memory that learns
 
 ### 🍳 Kits (v1.0 — in development)
 
-A kit is a packaged, opt-in use of the memory system built around one everyday job. It is data, not code: a short block of standing instructions added to the system prompt while the kit is on, a memory namespace of its own, a few opening questions, and two or three quick prompts above the message box. A kit has no permissions and no network access; everything it does, you could do by typing.
+A kit will be a packaged, opt-in use of the memory system built around one everyday job. It is data, not code: a short block of standing instructions added to the system prompt while the kit is on, a memory namespace of its own, a few opening questions, and two or three quick prompts above the message box. A kit has no permissions and no network access; everything it does, you could do by typing.
 
 **How you use one:**
 - **Turn it on** from the card at the end of onboarding, or from the Kits section in System Controls. Skip is the default and nothing is created until you say yes.
