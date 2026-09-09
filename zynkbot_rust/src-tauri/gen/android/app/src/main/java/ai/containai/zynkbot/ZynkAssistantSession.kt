@@ -43,7 +43,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         private const val TAG = "ZynkAssistantSession"
         private const val SILENCE_MS = 1500L
         private const val NO_SPEECH_MS = 6000L          // nothing heard after the chime → close (4 s cut a real "set a timer" off on 2026-09-08 pm; 6 s)
-        private const val SAFETY_TIMEOUT_MS = 12_000L   // hard cap; ongoing speech cannot extend it
+        private const val SAFETY_TIMEOUT_MS = 30_000L   // hard cap; ongoing speech cannot extend it (12 s cut off dictated paragraphs; 30 s from 2026-09-09)
         // OpenAI dictation caps its own recording at SAFETY_TIMEOUT_MS and then uploads;
         // this backstop only catches a hung upload (2026-09-08).
         private const val OPENAI_BACKSTOP_MS = SAFETY_TIMEOUT_MS + OpenAiDictation.HTTP_TIMEOUT_MS + 5_000L

@@ -52,7 +52,7 @@ What happens, step by step:
 Limits on one listen:
 
 - If nothing is heard for 6 seconds after the chime, Zynkbot closes with the short tone and does nothing else.
-- One listen is capped at 12 seconds. This is a fixed limit set in the app, not a limit of either dictation engine; anything said after 12 seconds is cut off.
+- One listen is capped at 30 seconds. This is a fixed limit set in the app, not a limit of either dictation engine; anything said after 30 seconds is cut off.
 - A tap on the Z cancels, whether it is listening or speaking. You hear the short tone, and the phone goes back to waiting for "Hey Zynk".
 - The Stop button in the app also cuts off a spoken reply.
 - Zynkbot answers one question per wake. It does not keep listening after a reply. Say "Hey Zynk" again for the next one.
@@ -111,7 +111,7 @@ Dictation means turning your speech into text. Open Voice Settings and look unde
 
 Offline, Vosk (the default). Runs on the phone. No internet needed and no audio leaves the device. It produces lowercase text with no punctuation, and numbers come out as words ("ten minutes"). Models understand requests fine without punctuation.
 
-OpenAI Whisper. Sends the recording to OpenAI and gets text back with punctuation and capitals. It needs an OpenAI key entered under API keys in the app (the entry is named OPENAI_API_KEY). If the key is missing, hands-free quietly uses Vosk instead. Hands-free waits up to 8 seconds for you to start speaking, records until you pause for just over a second, and never records more than 12 seconds. If the upload fails, that one listen falls back to Vosk. What OpenAI does with the audio is described in section 3.
+OpenAI Whisper. Sends the recording to OpenAI and gets text back with punctuation and capitals. It needs an OpenAI key entered under API keys in the app (the entry is named OPENAI_API_KEY). If the key is missing, hands-free quietly uses Vosk instead. Hands-free waits up to 8 seconds for you to start speaking, records until you pause for just over a second, and never records more than 30 seconds. If the upload fails, that one listen falls back to Vosk. What OpenAI does with the audio is described in section 3.
 
 ## 7. Files and folders
 

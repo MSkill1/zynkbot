@@ -15,6 +15,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - The Vosk/Whisper selector applies to hands-free too; Whisper falls back to Vosk.
 - "Remember colon …" saves a fact word for word by voice; Vosk's misspellings of "colon" are accepted.
 - Chime and spoken replies use the media volume.
+- A hands-free listen may run up to 30 seconds (was 12), long enough to dictate a paragraph.
 
 ### Memory
 - Memories carry an event date, a category from a fixed list, tags, tone and named entities from the same call that decides whether to remember; older memories are annotated in the background once.

@@ -44,7 +44,7 @@ object OpenAiDictation {
     private const val CHUNK_SAMPLES = (SAMPLE_RATE * CHUNK_MS / 1000).toInt()
     private const val SPEECH_WAIT_MS = 8_000L
     private const val TRAILING_SILENCE_MS = 1_200L
-    private const val MAX_TOTAL_MS = 12_000L
+    private const val MAX_TOTAL_MS = 30_000L
     private const val PRE_ROLL_CHUNKS = 10                 // 500 ms kept from before speech onset
     // First real run (2026-09-08): a question asked from ~20 ft after a wake word
     // that itself measured -31 dBFS never crossed the 400 onset, so Whisper heard
