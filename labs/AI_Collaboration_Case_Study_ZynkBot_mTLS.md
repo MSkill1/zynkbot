@@ -108,3 +108,15 @@ This experiment suggests a practical workflow for security-sensitive features:
 4. Use the divergence between the two proposals as a map of the design space
 
 The overhead is low. The catch rate on non-obvious flaws appears high.
+
+---
+
+## Working notes (Matt, 2026-09-09; transcribed by Claude from a voice note)
+
+Three observations from the beta build-up, kept here because they extend the takeaway above.
+
+**1. The skill is reading, not writing.** The job that is forming around this work has no title yet, but its shape is clear: instead of learning to read and write one programming language, learn to *read* three or four well enough to check an AI's work in each. Writing is delegated; reading, and knowing what to ask, is not. The mTLS experiment above is an example: the flaw was caught by reading two designs side by side, not by writing either.
+
+**2. Ensemble review of the code itself.** After the beta build is frozen, hand the repository to several independent models (Claude in the desktop app, and possibly Grok, Mistral and Codex) and ask each for a plain audit pass. This is the programming equivalent of Zynkbot's Ensemble mode: no model is expected to be right, but the disagreements are a cheap map of where to look. The findings come back to the coding agent as questions, not as patches. Rule of thumb from the mTLS case: ask for a competing design or an audit, never "fix it" in a second tool, so that there is only ever one hand on the code.
+
+**3. Networking is where agents lose track of *where*.** While designing ZynkSync, the recurring failure was not logic but location: an agent writing "to the database" was sometimes writing to the peer's database, or to the copy it was syncing from, and reported success either way. When debugging anything that crosses a machine boundary, the first question to ask an agent is literal: *which machine, which file path, which process is doing this write?* Requiring that answer before accepting "done" caught more sync bugs than any test did.

@@ -193,7 +193,7 @@ object NativeVoiceAnswerer {
                         }
                         // Not reported as a real interaction: a fluent TV line the model
                         // chose to answer ("Lindsey Clancy", 2026-09-08) would otherwise
-                        // reset the back-off. Only clock commands and explicit Remember do.
+                        // reset the back-off. Only clock commands do (ZynkAssistantSession.answerAndFinish).
                         speaker.finish(replyText)
                     }
                     override fun onError(message: String) { failure = message }

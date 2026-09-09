@@ -560,7 +560,7 @@ class WakeWordService : Service() {
                 dir.listFiles { f -> f.name.endsWith(".wav") }
                     ?.sortedByDescending { it.name }
                     ?.drop(TRIGGER_CLIPS_KEPT)
-                    ?.forEach { it.delete(); File(dir, it.name.removeSuffix(".wav") + ".scores.txt").delete() }
+                    ?.forEach { val stem = it.name.removeSuffix(".wav"); it.delete(); for (ext in listOf(".scores.txt", ".real", ".false")) File(dir, stem + ext).delete() }
                 Log.i(TAG, "Trigger clip saved: ${file.name}")
             } catch (e: Exception) {
                 Log.w(TAG, "Trigger clip not saved: ${e.message}")
