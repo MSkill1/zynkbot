@@ -1,9 +1,15 @@
 name: Release
 
+# Runs on a version tag (creates a draft GitHub release and attaches the installers)
+# and by hand from the Actions tab (builds everything and keeps the installers as
+# workflow artifacts, no release touched) so the pipeline can be tested without
+# tagging. Rewritten 2026-09-09: the Android job never worked (KI-034) and both
+# desktop jobs failed at v0.9.5-beta1.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   release:
@@ -64,6 +70,23 @@ jobs:
             file \
             libasound2-dev
 
+      # Windows links against libvosk.lib and the installer carries libvosk.dll plus
+      # its three MinGW runtime DLLs (tauri.windows.conf.json). Same SDK and file
+      # list as install.bat.
+      - name: Download Vosk Windows SDK
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ver = '0.3.45'
+          $dir = 'zynkbot_rust/src-tauri/lib/vosk'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/alphacep/vosk-api/releases/download/v$ver/vosk-win64-$ver.zip" -OutFile vosk.zip
+          Expand-Archive -Path vosk.zip -DestinationPath vosk_extract -Force
+          foreach ($f in 'libvosk.lib','libvosk.dll','libstdc++-6.dll','libwinpthread-1.dll','libgcc_s_seh-1.dll') {
+            Copy-Item "vosk_extract/vosk-win64-$ver/$f" -Destination "$dir/$f" -Force
+          }
+          Get-ChildItem $dir
+
       - name: Install frontend dependencies
         working-directory: zynkbot_rust
         run: npm ci
@@ -72,9 +95,13 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # linuxdeploy must find libvosk.so while assembling the AppImage.
+          LD_LIBRARY_PATH: ${{ github.workspace }}/zynkbot_rust/src-tauri/lib/vosk
         with:
           projectPath: zynkbot_rust
-          tagName: ${{ github.ref_name }}
+          # On a tag: create the draft release and attach the installers. On a manual
+          # run tagName is empty, so tauri-action only builds.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: Zynkbot ${{ github.ref_name }}
           releaseBody: |
             See the [CHANGELOG](https://github.com/MSkill1/zynkbot/blob/main/CHANGELOG.md) for details.
@@ -82,10 +109,21 @@ jobs:
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
           args: ${{ matrix.args }}
 
+      - name: Keep installers as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zynkbot-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            zynkbot_rust/src-tauri/target/release/bundle/deb/*.deb
+            zynkbot_rust/src-tauri/target/release/bundle/rpm/*.rpm
+            zynkbot_rust/src-tauri/target/release/bundle/appimage/*.AppImage
+            zynkbot_rust/src-tauri/target/release/bundle/msi/*.msi
+            zynkbot_rust/src-tauri/target/release/bundle/nsis/*.exe
+
   release-android:
     permissions:
       contents: write
-    needs: release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -100,13 +138,14 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools platforms;android-34'
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
 
-      - name: Install Android NDK and build tools
+      # NDK 30 links 16 KB-aligned libraries, which Google Play requires (ROADMAP).
+      - name: Install Android NDK
         run: |
-          sdkmanager "ndk;30.0.15729638" "build-tools;36.0.0"
+          sdkmanager "ndk;30.0.15729638"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.15729638" >> $GITHUB_ENV
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.15729638" >> $GITHUB_ENV
-          echo "$ANDROID_SDK_ROOT/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -115,7 +154,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: zynkbot_rust/package-lock.json
 
-      - name: Setup Rust with Android targets
+      - name: Setup Rust with Android target
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
@@ -124,10 +163,13 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: zynkbot_rust/src-tauri -> target
+          key: android-release
 
       - name: Install system dependencies
         run: sudo apt-get install -y libssl-dev perl
 
+      # app/build.gradle.kts refuses to configure without keystore.properties, so the
+      # release key must be present as repository secrets.
       - name: Write signing keystore
         run: |
           mkdir -p $HOME/keystores
@@ -135,21 +177,44 @@ jobs:
             > $HOME/keystores/zynkbot-release.jks
           printf "storeFile=$HOME/keystores/zynkbot-release.jks\nstorePassword=${{ secrets.ANDROID_STORE_PASSWORD }}\nkeyAlias=${{ secrets.ANDROID_KEY_ALIAS }}\nkeyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}\n" \
             > zynkbot_rust/src-tauri/gen/android/keystore.properties
+          test -s $HOME/keystores/zynkbot-release.jks || { echo "ANDROID_KEYSTORE_BASE64 secret is empty"; exit 1; }
 
       - name: Install frontend dependencies
         working-directory: zynkbot_rust
         run: npm ci
 
-      - name: Build Android APK (arm64 only)
-        working-directory: zynkbot_rust/src-tauri/gen/android
-        run: ./gradlew assembleArm64Release
+      # The Tauri CLI generates the gitignored Gradle files (tauri.settings.gradle,
+      # tauri.build.gradle.kts, tauri.properties) before it runs Gradle; calling
+      # gradlew directly, as this job did until 2026-09-09, cannot work on a fresh
+      # checkout (KI-034). arm64 only: the APK goes on the GitHub release, the AAB
+      # is what Google Play takes.
+      - name: Build release APK and AAB (arm64)
+        working-directory: zynkbot_rust
+        run: |
+          npm run tauri android build -- --apk --aab --target aarch64
+          ls -la src-tauri/gen/android/app/build/outputs/apk/universal/release/ \
+                 src-tauri/gen/android/app/build/outputs/bundle/universalRelease/
 
-      - name: Upload APK to release
+      - name: Keep APK and AAB as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zynkbot-android
+          if-no-files-found: error
+          path: |
+            zynkbot_rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+            zynkbot_rust/src-tauri/gen/android/app/build/outputs/bundle/universalRelease/app-universal-release.aab
+
+      - name: Upload APK to the GitHub release
+        if: github.ref_type == 'tag'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./zynkbot_rust/src-tauri/tauri.conf.json').version")
-          cp zynkbot_rust/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk \
+          cp zynkbot_rust/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
             Zynkbot_${VERSION}.apk
+          # The desktop job creates the draft release; create it here if that job has not yet.
+          gh release view ${{ github.ref_name }} --repo MSkill1/zynkbot >/dev/null 2>&1 || \
+            gh release create ${{ github.ref_name }} --repo MSkill1/zynkbot --draft --prerelease \
+              --title "Zynkbot ${{ github.ref_name }}" --notes "See the CHANGELOG for details."
           gh release upload ${{ github.ref_name }} Zynkbot_${VERSION}.apk \
             --repo MSkill1/zynkbot --clobber

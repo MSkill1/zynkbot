@@ -50,6 +50,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [passphraseStatus, setPassphraseStatus] = useState('');
   const [pendingBackup, setPendingBackup] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [reportSection, setReportSection] = useState(''); // section to open when About me is reopened from the tag banner (2026-09-09: no way back after tapping a tag)
   const [cameFromReport, setCameFromReport] = useState(false); // Back from a memory opened via About me returns to About me
   const [tagFilter, setTagFilter] = useState(''); // set when a tag was tapped in About me; shown as a banner over the list
   const [onlyRequested, setOnlyRequested] = useState(false); // "Remembered on request": only memories stored with "Remember: ..."
@@ -658,7 +659,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   if (isMobile) {
     return (
       <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
+      <MemoryReportModal isOpen={showReport} openSection={reportSection} onClose={() => { setShowReport(false); setReportSection(''); }} userId={userId}
         onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
         onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />
         {KeySaveModal}
@@ -778,7 +779,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 {tagFilter && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 8px 0', padding: '6px 10px', background: 'rgba(189,147,249,0.15)', border: '1px solid #bd93f9', borderRadius: '6px', fontSize: '0.85rem', color: '#f8f8f2' }}>
                   <span>Showing memories tagged <strong>{tagFilter}</strong></span>
-                  <button onClick={() => { setTagFilter(''); setSearchQuery(''); }} style={{ marginLeft: 'auto', background: 'none', border: '1px solid #bd93f9', color: '#bd93f9', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.8rem' }}>Show all</button>
+                  <button onClick={() => { setReportSection('tags'); setShowReport(true); }} title="Return to the About me report to pick another tag" style={{ marginLeft: 'auto', background: 'none', border: '1px solid #8be9fd', color: '#8be9fd', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.8rem' }}>← About me</button>
+                  <button onClick={() => { setTagFilter(''); setSearchQuery(''); }} style={{ background: 'none', border: '1px solid #bd93f9', color: '#bd93f9', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.8rem' }}>Show all</button>
                 </div>
               )}
               <span style={{ color: '#8be9fd', fontWeight: 'bold', fontSize: '0.9rem', flex: 1 }}>
@@ -1012,7 +1014,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   return (
     <>
-      <MemoryReportModal isOpen={showReport} onClose={() => setShowReport(false)} userId={userId}
+      <MemoryReportModal isOpen={showReport} openSection={reportSection} onClose={() => { setShowReport(false); setReportSection(''); }} userId={userId}
         onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
         onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />
     {KeySaveModal}
@@ -1137,7 +1139,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 {tagFilter && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 8px 0', padding: '6px 10px', background: 'rgba(189,147,249,0.15)', border: '1px solid #bd93f9', borderRadius: '6px', fontSize: '0.85rem', color: '#f8f8f2' }}>
                   <span>Showing memories tagged <strong>{tagFilter}</strong></span>
-                  <button onClick={() => { setTagFilter(''); setSearchQuery(''); }} style={{ marginLeft: 'auto', background: 'none', border: '1px solid #bd93f9', color: '#bd93f9', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.8rem' }}>Show all</button>
+                  <button onClick={() => { setReportSection('tags'); setShowReport(true); }} title="Return to the About me report to pick another tag" style={{ marginLeft: 'auto', background: 'none', border: '1px solid #8be9fd', color: '#8be9fd', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.8rem' }}>← About me</button>
+                  <button onClick={() => { setTagFilter(''); setSearchQuery(''); }} style={{ background: 'none', border: '1px solid #bd93f9', color: '#bd93f9', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', fontSize: '0.8rem' }}>Show all</button>
                 </div>
               )}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>

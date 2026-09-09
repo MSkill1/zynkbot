@@ -75,7 +75,18 @@ pub fn redact(text: &str) -> String {
     });
     let mut out = text.to_string();
     for re in PATTERNS.iter() {
-        out = re.replace_all(&out, "[redacted]").to_string();
+        out = re
+            .replace_all(&out, |caps: &regex::Captures| {
+                let m = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+                // A file path also matches the base64 pattern (its alphabet includes
+                // '/'): "zynkbot/files/zynkbot/models/system/bert" was masked in a
+                // report on 2026-09-09. Two or more slashes with only short segments
+                // between them is a path, not a key; leave it readable.
+                let looks_like_path = m.matches('/').count() >= 2
+                    && m.split('/').all(|seg| seg.len() <= 16);
+                if looks_like_path { m.to_string() } else { "[redacted]".to_string() }
+            })
+            .to_string();
     }
     out
 }
@@ -114,5 +125,18 @@ mod tests {
         assert_eq!(redact(line), line);
         let line = "[KB RAG] outcome Found: 3 chunks returned (best: 42.1%)";
         assert_eq!(redact(line), line);
+    }
+}
+
+#[cfg(test)]
+mod redact_path_tests {
+    use super::redact;
+    #[test]
+    fn file_paths_stay_readable_but_keys_do_not() {
+        let p = "/data/data/ai.containai.zynkbot/files/zynkbot/models/system/bert-base-NER/model.safetensors";
+        assert_eq!(redact(p), p);
+        let key = "token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV0123456789+/=";
+        assert!(redact(key).contains("[redacted]"));
+        assert!(redact("sk-ant-api03-abcdefghijklmnop").contains("[redacted]"));
     }
 }
