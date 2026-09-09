@@ -118,9 +118,8 @@ function Toggle({ checked, onChange, id }) {
 
 const FLAT_COMMANDS = [
   { cmd: '"Hey Zynk"', desc: 'One question per wake. Wait for the tone, then speak. Zynkbot answers, then waits for the next "Hey Zynk" — it never listens on its own.' },
-  { cmd: '"Thank you Zynk" / "Goodbye Zynk"', desc: 'Ends the session and returns to standby.' },
-  { cmd: '"Never mind" / "Cancel"', desc: 'If you accidentally woke it — discards your recording without sending.' },
-  { cmd: '"Stop"', desc: 'Stops the spoken response.' },
+  { cmd: 'Tap the Z', desc: 'If you woke it by accident: tapping the green Z cancels listening or stops the reply without sending anything.' },
+  { cmd: '"Stop"', desc: 'Typed or dictated in the app, stops a spoken reply. Hands-free, the microphone is off while Zynkbot speaks, so use the Stop button or tap the Z instead.' },
   { cmd: '"Set a timer for 10 minutes"', desc: 'Works with any duration — seconds, minutes, or hours.' },
   { cmd: '"Set an alarm for 7:30 AM"', desc: 'Sets a system alarm.' },
   { cmd: '"Start stopwatch"', desc: 'Starts the device stopwatch.' },
@@ -218,7 +217,7 @@ export default function VoiceModal({
             <ol style={{ margin: 0, paddingLeft: '18px', color: '#9aa5c4', fontSize: '0.84rem', lineHeight: '1.6' }}>
               <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> and wait for the tone before speaking.</li>
               <li>Speak your question or command.</li>
-              <li>Stop talking. After ~2 seconds you'll hear a second tone confirming your message was sent.</li>
+              <li>Stop talking. After 1.5 seconds of silence you'll hear a second tone confirming your message was sent.</li>
               <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> again after each response to continue the conversation.</li>
             </ol>
           </div>
@@ -364,8 +363,9 @@ export default function VoiceModal({
           <div>
             <div style={labelStyle}>Speak replies in the app</div>
             <div style={mutedStyle}>
-              Hands-free "Hey Zynk" replies (screen off, app in the background) are
-              always spoken. Turn this on to also hear replies while the app is open.
+              Hands-free "Hey Zynk" replies are always spoken, whether the screen is on
+              or off and whether the app is open or not. Turn this on to also hear replies
+              to messages you type or dictate in the app.
               {ttsEnabled && ' Uses OpenAI TTS (alloy) — requires OPENAI_API_KEY. Say "stop" or use the Stop button to interrupt.'}
             </div>
           </div>

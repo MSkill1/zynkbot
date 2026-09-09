@@ -81,6 +81,14 @@ When AI detects contradicting information during conversation:
 - **Security**: 6-digit pairing codes, 10-minute timeout
 - **Database**: All memories with `is_syncable = true` are synced (enforced in every sync query); `namespace` is preserved per memory but not yet used to filter what syncs — per-namespace sync control is planned
 
+### Peer address changes
+
+A paired peer whose IP address changes (a new DHCP lease overnight, a different hotspot) is re-found from its own traffic: every request it makes that passes certificate verification carries its current address, and when that differs from the stored one the device record and the in-memory peer entry are updated on the spot. The asymmetry is that this only works while the peer is talking to you. A peer that has gone quiet at a new address is not re-found until it makes a request; until then outbound sync and ZChat delivery to it go to the old address. <!-- added by Claude 2026-09-09, review -->
+
+### What sync does not yet carry
+
+A synced memory carries its content, title, namespace, embedding, event date, tone, the raw entity blob from the name finder, and its relationship links. It does not carry the memory's **tags** or the rows in the named-entity table (the people, places, organisations and things that About me lists), so those appear on the receiving device only for memories it stored itself. Cloud backup (below) carries less again: no tags, no event date, no tone and no named-entity rows. <!-- added by Claude 2026-09-09, review -->
+
 ---
 
 ## 📁 ZynkLink: Device-to-Device File Sharing
@@ -249,6 +257,18 @@ CREATE TABLE zchat_messages (
 
 ---
 
+## ☁️ Cloud Backup
+
+**Encrypted backup and restore to a storage bucket you control**
+
+Cloud backup is opened from Memory Manager and writes to an S3-compatible bucket (Cloudflare R2 is the tested target) configured in Settings → API Keys with `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and optionally `R2_BUCKET` (default `zynkbot-backups`). Each backup replaces a single object, `backup.enc`. <!-- added by Claude 2026-09-09, review -->
+
+**What is backed up:** your memories (everything except Zynkbot's own `_zynkbot` self-knowledge) with title, content, source type, session, namespace, sync and share flags, the raw entity blob, event type, original message text, creation time and embedding; and your conversation history, both the session list (including pinned state) and every message. Restore inserts what is not already present (memories matched by content, sessions by id, messages by session, time and role), regenerates an embedding for any memory that lacks one, clears any local deletion tombstones for restored memories so sync does not remove them again, and then pushes the restored memories to paired devices. <!-- added by Claude 2026-09-09, review -->
+
+**The encryption key.** The bundle is encrypted with AES-256-GCM under a 32-byte key kept as `backup.key` in the app's data directory. The key is generated at random the first time it is needed, and the UI asks you to confirm you have saved a copy; without the key a backup cannot be decrypted. Instead of a random key you can enter a **passphrase**: it is run through Argon2id with a fixed salt, so the same passphrase produces the same key on any device, which is how a backup is recovered on a fresh install. The key also travels with **Push to all devices** (below), so a paired device that receives your API keys receives the backup key too. <!-- added by Claude 2026-09-09, review -->
+
+---
+
 ## Network Architecture
 
 All networking features share common infrastructure:
@@ -289,6 +309,7 @@ All networking features share common infrastructure:
 - ✅ **Pairing required** for all network features
 - ✅ **Independent trust relationships** — ZynkLink and ZynkSync are separate pairings. Unsyncing a device does not remove its ZynkLink pairing, and unlinking does not remove its ZynkSync pairing. Each can be revoked independently.
 - ✅ **Ollama admin operations blocked** — paired devices may use inference and model discovery via the remote proxy; pull, push, create, copy, and delete are rejected.
+- ✅ **Backup key rides with "Push to all devices"**: the API-key push in Settings → API Keys appends the cloud-backup encryption key to the set it sends. On the receiving device the key is written as `backup.key` (never into `.env`) and marked as acknowledged, so that device can decrypt the shared backup instead of holding a random key of its own. The push route requires the sender's pinned certificate like every other protected route. <!-- added by Claude 2026-09-09, review -->
 
 **Safe for:**
 - Home networks

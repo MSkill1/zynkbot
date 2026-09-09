@@ -108,24 +108,13 @@ Memories are passed in the order returned by hybrid search (entity + semantic we
 
 ## KB Context (Optional)
 
-If the user clicked "Search Knowledge Base," the KB retrieval results are prepended *before* the rest of the prompt as a clearly delimited block:
+If the user clicked the KB button, the search runs over their indexed documents (10 chunks, system docs excluded) and `kb_prompt.rs` builds a block that is prepended *before* the rest of the prompt. The wording depends on what the search found, one of three outcomes:
 
-```
-╔═══════════════════════════════════════════════════════════╗
-║  🔍 EXPLICIT KNOWLEDGE BASE SEARCH - USER REQUESTED       ║
-╚═══════════════════════════════════════════════════════════╝
+1. **Found** (at least one chunk above the 15% similarity threshold): the matching chunks are listed as `Document N: filename (similarity: xx%)`. The model is told to answer from these passages, to quote the exact row or line it relied on, and, if the passages do not actually contain the answer, to say plainly that the knowledge base has no record of it rather than filling the gap from general knowledge. It is also told not to suggest a web search.
+2. **Weak only** (chunks returned, none above the threshold): the five best are listed as `Weak match N`. The model is told that nothing clearly matched, that the weak matches are shown only in case one contains the answer, to answer from one only if it does, and otherwise to say the knowledge base has no record of this. It must not answer from general knowledge as if it came from the documents.
+3. **Nothing** (the search returned no chunks): no documents are listed. The model is told to say plainly that the knowledge base has no record of this, not to invent an answer, and to keep any general-knowledge addition short and clearly labelled as not from the documents.
 
-⚠️ CRITICAL INSTRUCTION: The user clicked the KB button to explicitly
-search their indexed documents. You MUST use the information below...
-
-=== RETRIEVED DOCUMENTS ===
-📄 Document 1: filename.txt (similarity: 82.3%)
-[chunk content]
-...
-=== END OF KB DOCUMENTS ===
-```
-
-Parameters: up to 10 chunks, 15% similarity threshold. If no chunks exceed 15%, the top 5 are returned regardless (user explicitly requested KB search).
+Every block opens with `=== KNOWLEDGE BASE SEARCH (user pressed the KB button) ===` and closes with `=== END OF KNOWLEDGE BASE SEARCH ===`. Only the first outcome counts as grounded: for the other two the chat command returns a `kb_note` that the UI shows in the reply header, and memory extraction is skipped for that reply so an ungrounded answer cannot be stored as a fact (an explicit "Remember:" still stores). <!-- added by Claude 2026-09-09, review -->
 
 ---
 

@@ -28,7 +28,7 @@ Zynkbot uses a local SQLite database for persistent, semantic memory that learns
 - ✅ Foundational knowledge seeding
 - ✅ No cloud dependency
 - ✅ Verifiable recall (UI shows exactly which memories influenced each response)
-- ✅ **Remember: command** — start a message with `Remember:` and everything after it is saved word for word, bypassing the automatic "is this worth keeping" decision. The keyword is case-insensitive (`remember:` and `REMEMBER:` work). It works by voice too: say "remember colon" followed by the fact, whether dictating into the app or hands-free after "Hey Zynk".
+- ✅ **Remember: command** — start a message with `Remember:` and everything after it is saved word for word. The automatic "is this worth keeping" decision still runs, but its answer is overridden, and the memory is stored even when it contradicts an existing memory (the older memory stays and can be resolved or deleted in Memory Manager). The keyword is case-insensitive (`remember:` and `REMEMBER:` work). It works by voice too: say "remember colon" followed by the fact, whether dictating into the app or hands-free after "Hey Zynk". Offline dictation often mishears "colon", so "remember colin", "collin", "cohen", "colan", "call and", "call in" and "call on" are accepted in the same position, provided a space or punctuation follows ("remember colonial history" and "remember cohen's birthday" are ordinary messages).
 - ✅ Search by content or namespace
 
 **Memory stays local**
@@ -57,7 +57,7 @@ content, used to organize and filter memories in the Memory Manager.
 
 **Canonical namespaces:**
 `personal`, `work`, `career`, `health`, `family`, `education`, `technology`, `science`,
-`philosophy`, `politics`, `travel`, `achievements`, `biography`
+`philosophy`, `politics`, `travel`, `achievements`, `biography`, `kitchen`, `hobbies`
 
 **UI features:**
 - Namespace filter dropdown in Memory Manager
@@ -178,6 +178,8 @@ Every completed exchange is automatically saved to a local database. Conversatio
 - View complete message history for any session
 - **Resume** — reload a past session into the active chat, restoring full conversation context
 - Delete individual sessions
+- **Pin** a conversation (pin icon on its row) and it sits in a "Pinned" group at the top of the list whatever its date; pinned state is included in cloud backups <!-- added by Claude 2026-09-09, review -->
+- **Thread restore after a restart**: when the app is opened fresh (after an update, a crash or being swiped away), it asks the backend which conversation was current; if that thread has messages and is not the one the page already has, it is put back on screen instead of an empty chat. This is what keeps hands-free "Hey Zynk" turns, which join the current thread from outside the page, from disappearing. <!-- added by Claude 2026-09-09, review -->
 
 **HIPAA mode:** Conversation history is completely disabled. No records are written — raw conversation text is more sensitive than extracted facts, and disabling both is the correct default.
 
@@ -210,6 +212,9 @@ Upload documents and search them semantically during conversations.
 - ✅ Context-aware retrieval
 - ✅ Upload multiple documents
 - ✅ Manage documents via UI
+- ✅ On Android, tap **Add files** in the Knowledge Base panel to import documents from the phone's file picker, then index them
+
+**Fabrication guard (KB button on).** The search results decide what the model is told, in one of three ways. (1) At least one chunk scores above the 15% similarity threshold: the model is told to answer from those passages, to quote the row or line it relied on, and to say plainly that your knowledge base has no record of it if the passages do not contain the answer. (2) Chunks came back but none above the threshold: the five best are shown, labelled as weak matches, and the model is told not to answer from general knowledge as if it came from your documents. (3) The search returned nothing: the model is told to say so and to label anything it adds from general knowledge. In cases 2 and 3 a note appears in the reply header ("Knowledge base searched — no strong match; answer may not come from your documents", or "Knowledge base searched — no matching documents") and no memory is extracted from that reply, so an invented answer cannot become a stored fact. A "Remember:" command still stores. <!-- added by Claude 2026-09-09, review -->
 
 **Use cases:**
 - Personal documentation (recipes, notes, procedures)
@@ -226,7 +231,7 @@ Upload documents and search them semantically during conversations.
 Professional database-style interface for managing your memories.
 
 **Features:**
-- **Search/Filter**: Find memories by content, tags, or namespace
+- **Search/Filter**: Find memories by content or namespace; the search box also matches tag text (with or without a leading `#`). There is no separate tag filter control, but tapping a tag in About me fills the search for you
 - **Inline Editing**: Edit memories directly in the UI
 - **Bulk Operations**: Delete multiple memories at once
 - **Database-style UI**: No SQL knowledge required
@@ -241,6 +246,22 @@ Professional database-style interface for managing your memories.
 - Edit memory content and metadata
 - Delete unwanted memories
 - See memory relationships (contradicts, supports, etc.) — see [Memory Relationship Graph](architecture_and_development/MEMORY_RELATIONSHIP_GRAPH.md) for a full explanation of the graph, its practical uses, and its research potential
+
+---
+
+### 🪞 About me (memory report)
+
+Tap **About me** in Memory Manager for a report of what Zynkbot knows about you. It is read straight from the local database with no model call, and nothing leaves the device. <!-- added by Claude 2026-09-09, review -->
+
+**Sections:** the numbers (memories, links between them, named things, conversations, messages, date range, how many memories carry an event date and how many have tags); a **timeline** ordered by when things happened, grouped by month; **categories**; **tags** (tap one to see those memories in the list); **people, places, organisations and things**; **belief changes** (contradiction and resolution links); **kitchen** (when the Kitchen kit has stored anything); **heard hands-free** (memories stored from "Hey Zynk" turns, so a line the TV said can be found and deleted); **tone**; and the **most recent** memories. Every line that names a memory opens it in Memory Manager for editing or deleting. **Copy as text** puts the whole report on the clipboard. <!-- added by Claude 2026-09-09, review -->
+
+---
+
+### 🗓️ What the decision call records about each memory
+
+The same model call that decides whether a message is worth remembering also returns, with no extra request: the **event date** (when the thing happened, only if the message states or implies it; the value is kept only if it parses, is not before 1900 or more than about two years ahead, and is not a January 1 placeholder), a **category** from the fixed namespace list above, up to five lowercase **tags**, the user's **tone** (positive, neutral, negative, frustrated, anxious or excited, stored as a sentiment label and score) and the **named entities** mentioned, each as a person, place, organisation or thing. Values the model omits or gets wrong fall back to the local NLP guess. Memories from hands-free turns are marked with source type `hands_free`. <!-- added by Claude 2026-09-09, review -->
+
+**Older memories** stored before these fields existed are filled in by a background pass that starts automatically after launch: one memory every 1.5 seconds, up to 2000 per run, content and title untouched, each stamped so it is never revisited. If the model backend is unusable it stops after a run of failures and tries again on a later launch. About me shows how many are still pending. <!-- added by Claude 2026-09-09, review -->
 
 ---
 
@@ -327,6 +348,7 @@ See [NETWORKING_FEATURES.md](NETWORKING_FEATURES.md) for detailed documentation:
 - **ZynkSync** - Memory synchronization across your devices
 - **ZynkLink** - File sharing between paired devices
 - **ZChat** - Device-to-device messaging
+- **Cloud backup** - Encrypted backup and restore of memories and conversation history to your own storage bucket (see the Cloud Backup section there)
 
 ---
 

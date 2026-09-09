@@ -93,7 +93,7 @@ These aren't hypothetical scenarios — they happen regularly:
 - Only if you choose to use API models instead of local models
 - Degrades gracefully: falls back to local model if API unavailable
 
-⚠️ **Voice input** (Google Web Speech API)
+⚠️ **Voice input** (only if you pick the OpenAI Whisper engine; the default Vosk engine runs offline on the device)
 - Optional feature, can be disabled
 - Keyboard/text input always works offline
 

@@ -397,9 +397,9 @@ LLM Response: "WEB_SEARCH_NEEDED: current weather in Singapore 2026"
 2. Extract fact text, collect into `extracted_facts: Vec<String>`
 3. Strip all `MEMORY_EXTRACT:` lines from the response shown to the user
 4. If any facts were extracted, **skip the regular memory pipeline** — the extracted statements are a better representation than the raw question
-5. For each fact: spawn background task → generate embedding → NLP enhance (entities, namespace) → store directly
+5. The first extracted fact becomes the factual content for the background task described below (embedding, duplicate check, relationship classification, storage); any further facts on the same reply are dropped
 
-**Note:** Relationship detection (contradicts/elaborates) is not yet applied to extracted facts. See Roadmap.
+**Note:** Extracted facts go through the same background pipeline as ordinary messages, so relationship detection (contradicts/elaborates) is applied to them: `ask_llm_for_relationships` for local models, `ask_llm_about_memory_with_relationships` for API models (`commands/chat.rs`).
 
 ### 3.4 Memory Worthiness Gate
 
@@ -451,13 +451,15 @@ LLM Response: "WEB_SEARCH_NEEDED: current weather in Singapore 2026"
 2. Generate 384-dim embedding using all-MiniLM-L6-v2
 3. Blocking task (ML-bound)
 
-### 3.6 NLP Enhancement (Title, Tags, Entities, Events)
+### 3.6 NLP Enhancement (Fallback for Namespace, Entities, Events)
 
 **File:** `src-tauri/src/nlp_enhancer.rs`
 
 **Location:** `lib.rs`
 
 **Function:** `enhancer.enhance(message: &str)`
+
+**Precedence:** the memory decision call also returns `event_date`, `namespace`, `tags`, `tone` and `entities` (`memory_extras.rs`, `MemoryExtras`). Those win when present and valid: `validate_event_date` rejects unparseable, pre-1900, far-future and January 1 placeholder dates; `resolve_namespace` keeps only a namespace from the canonical list; `clean_tags` lower-cases, de-duplicates and caps tags at five; `clean_entities` drops pronouns, calendar words and bare numbers. The NLP enhancer's namespace, event type and event date are the fallback when the model omits a field or it fails validation; NLP does not produce tags at all, so a memory has tags only if the decision call supplied them. <!-- added by Claude 2026-09-09, review -->
 
 **Output:**
 ```rust
