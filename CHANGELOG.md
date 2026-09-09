@@ -21,6 +21,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ### Reporting
 - Problem reports no longer mask ordinary file paths (the base64 pattern matched path segments); keys, tokens and pairing codes are still masked.
+- With the conversation box unticked, the report's log tail no longer quotes your message, memory titles or the reply (a report on 2026-09-09 still carried them).
 
 ### Memory
 - Memories carry an event date, a category from a fixed list, tags, tone and named entities from the same call that decides whether to remember; older memories are annotated in the background once.

@@ -20,9 +20,13 @@ pub async fn build_problem_report(
     let git = option_env!("ZYNKBOT_GIT_HASH").unwrap_or("unknown");
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
     let n = log_lines.unwrap_or(300).min(800);
+    let include_conversation = thread.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false);
     let logs: Vec<String> = crate::app_log::recent(n)
         .into_iter()
         .map(|l| crate::app_log::redact(&l))
+        // Without the conversation box ticked, the log tail must not carry the
+        // user's words or memory titles either.
+        .map(|l| if include_conversation { l } else { crate::app_log::scrub_user_text(&l) })
         .collect();
 
     let mut out = String::new();
@@ -44,7 +48,7 @@ pub async fn build_problem_report(
         out.push_str(&crate::app_log::redact(t.trim()));
         out.push_str("\n```\n\n");
     }
-    out.push_str(&format!("### Last {} log lines (credentials masked)\n\n```\n", logs.len()));
+    out.push_str(&format!("### Last {} log lines ({})\n\n```\n", logs.len(), if include_conversation { "credentials masked" } else { "credentials masked; message text and memory titles omitted" }));
     out.push_str(&logs.join("\n"));
     out.push_str("\n```\n");
     Ok(out)

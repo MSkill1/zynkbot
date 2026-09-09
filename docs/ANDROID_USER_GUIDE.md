@@ -168,7 +168,7 @@ What a report contains. Everything is built on the phone from the app's own stat
 - Platform and, on Android, the phone maker, model and Android version (nothing that identifies you)
 - The model backend in use (for example which provider)
 - Your description of what happened
-- **The current conversation, only if you tick the box.** Untick it and the report contains no conversation and no memories; you can still report the problem.
+- **The current conversation, only if you tick the box.** Untick it and the report contains no conversation and no memories: the log lines that would quote your message, a memory title or the model's reply are blanked out too. You can still report the problem.
 - The last 300 lines of Zynkbot's own log
 
 What is masked. Even when you include the conversation, it is masked before it is shown to you. Before anything is shown, the log and the conversation text are scanned and the following are replaced with "[redacted]": provider API keys (such as keys beginning with sk-), any KEY=value, SECRET, TOKEN, PASSWORD or PASSPHRASE pairs, bearer tokens, long hexadecimal strings (including the backup key), long base64 strings, and ZynkSync pairing codes.

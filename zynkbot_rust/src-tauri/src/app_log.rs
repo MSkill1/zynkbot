@@ -128,6 +128,36 @@ mod tests {
     }
 }
 
+/// Remove the user's own words from a log line: the message text the chat
+/// request prints, memory titles and snippets from retrieval and the decision
+/// call, and anything else that quotes what was said. Applied to the log tail of
+/// a problem report when the user did NOT tick "include the conversation", so
+/// that choice means what the guide says it means (2026-09-09: a report with the
+/// box unticked still carried the question and twenty memory snippets).
+pub fn scrub_user_text(line: &str) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+    static RULES: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
+        [
+            (r#"▶ .*$"#, "▶ [message text omitted]"),
+            (r#"(Including: ).*$"#, "${1}[memory omitted]"),
+            (r#"(Memory \d+ - Score: [\d.]+ \(\d+%\)) - .*$"#, "${1} - [title omitted]"),
+            (r#"(linked #\d+) \(Some\("[^"]*"\)\)"#, "${1} ([title omitted])"),
+            (r#"(Memory #\d+: \w+(?: \(confidence: [\d.]+\))?) - .*$"#, "${1} - [reason omitted]"),
+            (r#"(should_remember=\w+, title=).*$"#, "${1}[omitted]"),
+            (r#"(?i)((?:transcript|reply|query|remember|saved|title)\w*[:=] ?)"[^"]*""#, "${1}\"[omitted]\""),
+        ]
+        .iter()
+        .map(|(p, r)| (Regex::new(p).expect("scrub regex"), *r))
+        .collect()
+    });
+    let mut out = line.to_string();
+    for (re, rep) in RULES.iter() {
+        out = re.replace_all(&out, *rep).to_string();
+    }
+    out
+}
+
 #[cfg(test)]
 mod redact_path_tests {
     use super::redact;
@@ -138,5 +168,27 @@ mod redact_path_tests {
         let key = "token abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUV0123456789+/=";
         assert!(redact(key).contains("[redacted]"));
         assert!(redact("sk-ant-api03-abcdefghijklmnop").contains("[redacted]"));
+    }
+}
+
+#[cfg(test)]
+mod scrub_tests {
+    use super::scrub_user_text;
+    #[test]
+    fn user_words_leave_the_log_tail() {
+        let cases = [
+            ("18:39:23.051 ▶ This was just a test to see if I get a response.", "▶ [message text omitted]"),
+            ("[Engine]   Including: we're really actively dislike having...", "Including: [memory omitted]"),
+            ("[1] Memory 1518 - Score: 0.686 (68%) - Testing code fix response time", "Memory 1518 - Score: 0.686 (68%) - [title omitted]"),
+            ("memory #1518 → linked #1585 (Some(\"User confirms test success\")) via 'supports'", "linked #1585 ([title omitted]) via"),
+            ("[Memory Decision]   Memory #1517: supports (confidence: 0.85) - Both describe the user", "Memory #1517: supports (confidence: 0.85) - [reason omitted]"),
+            ("LLM decision: should_remember=false, title=None, 10 relationships", "should_remember=false, title=[omitted]"),
+            ("Native reply: \"Yes, I received it.\"", "reply: \"[omitted]\""),
+        ];
+        for (line, expect) in cases {
+            let got = scrub_user_text(line);
+            assert!(got.contains(expect), "{line} -> {got}");
+        }
+        assert_eq!(scrub_user_text("[ZynkSync] ✓ Peer stored 170 sessions"), "[ZynkSync] ✓ Peer stored 170 sessions");
     }
 }
