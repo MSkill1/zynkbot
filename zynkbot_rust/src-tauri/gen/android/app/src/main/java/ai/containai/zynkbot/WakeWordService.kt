@@ -68,7 +68,9 @@ class WakeWordService : Service() {
         // it. Loudness cannot separate the two at room distance; the verifier can.
         const val SILENCE_GATE_DB = -46.0
         const val STRICT_GATE_DB = -46.0
-        const val VERIFIER_ENFORCE = true   // on since 2026-09-09: v2 verifier keeps 31/33 of the owner's clips at both distances, stops 56/60 false
+        // Enforcement is decided per device by WakeVerifier.enforcesOn(): the shipped
+        // verifier is trained on one owner's voice and lists that owner's device ids;
+        // on any other phone it only logs and collects clips (2026-09-09).
         const val STRICT_HITS = 4           // consecutive high scores needed while backing off
         const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
         const val MISS_WINDOW_MS = 5 * 60_000L
@@ -452,7 +454,7 @@ class WakeWordService : Service() {
                     val v = verifier ?: WakeVerifier.load(this).also { verifier = it }
                     val vScore = v?.score(flatEmb, EMB_WINDOW, EMB_SIZE) ?: -1f
                     Log.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS verifier=%.3f%s".format(level, vScore, if (strict) " (strict mode)" else ""))
-                    if (VERIFIER_ENFORCE && v != null && vScore >= 0f && vScore < v.threshold) {
+                    if (v != null && vScore >= 0f && vScore < v.threshold && v.enforcesOn(this)) {
                         Log.i(TAG, "Detection ignored: verifier says not the owner (%.3f < %.2f)".format(vScore, v.threshold))
                         saveTriggerClip(score)
                         consecutiveHighScores = 0

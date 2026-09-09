@@ -147,13 +147,11 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ---
 
 ### KI-015 — Android scoped storage blocks scan of files created by other apps
-**Status:** Resolved on `voice` (build34, 2026-09-07) by design change — `MANAGE_EXTERNAL_STORAGE` is no longer declared or requested (Google Play restricts it to file managers). Files enter ZynkbotShare through the in-app "Add file" picker (`AndroidPaths.pickFile`, copies into the folder) and the Knowledge Base through the new "Add files" button in the KB Manager (`AndroidPaths.copyToKnowledgeBase`, copies into the app-private KB folder). Files dropped into `Downloads/ZynkbotShare` by other apps remain invisible to the scan; that is now expected behaviour rather than a bug.  
-**Original status:** Workaround in place (MANAGE_EXTERNAL_STORAGE permission); proper fix planned  
-**Affected:** Android 11+ devices (API 30+) using ZynkLink file sharing  
-**Description:** Files placed into `Downloads/ZynkbotShare/` by apps other than Zynkbot (Chrome downloads, screenshots, files copied via the system file manager, etc.) are invisible to Zynkbot's directory scan due to Android's scoped storage security model. Zynkbot can enumerate files it created itself, but Android's kernel filters foreign-owned files out of the `readdir` result before Zynkbot's code sees them. This means the phone reports "0 files indexed" to a peer that's browsing its share, even when the user can clearly see the file in the Android Files app.  
-**Workaround:** The `MANAGE_EXTERNAL_STORAGE` permission is now declared in the manifest and requested at first launch on Android 11+. The user must toggle "Allow access to manage all files" in the settings screen that opens automatically. Once granted, Zynkbot has full raw-filesystem access and the scan works normally.  
-**Fix target:** Migrate to a proper Storage Access Framework (SAF) integration for Play Store distribution. `MANAGE_EXTERNAL_STORAGE` is restricted by Google Play to specific allowed use cases (file managers, backup/sync apps) and requires explicit approval during Play Store review. See ROADMAP.md for the SAF migration plan.  
-**Impact:** Any Android 11+ user who declines the "All files access" prompt will still be able to send files that Zynkbot itself downloaded, but files they add to ZynkbotShare via other apps will not be visible to peers until they grant the permission.
+**Status:** Resolved on `voice` (build34, 2026-09-07) by design change  
+**Affected:** Android 11+ devices using ZynkLink file sharing or the Knowledge Base  
+**Description:** Files placed into `Downloads/ZynkbotShare/` by apps other than Zynkbot are invisible to Zynkbot's directory scan under scoped storage. Until 2026-09-07 the app declared and requested `MANAGE_EXTERNAL_STORAGE` ("All files access") to see them; Google Play only grants that permission to file managers and similar, so it was removed.  
+**Resolution:** files enter ZynkbotShare through the in-app **Add file** picker (`AndroidPaths.pickFile`, which copies the file into the folder) and the Knowledge Base through **Add files** in the KB Manager (`AndroidPaths.copyToKnowledgeBase`, which copies into the app-private KB folder). Files dropped into the folder by other apps remain invisible; that is now expected behaviour and is documented in INSTALLATION_TROUBLESHOOTING.md.  
+**Impact:** none for users who add files from inside the app.
 
 ---
 
@@ -298,4 +296,42 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-*Last updated: 2026-09-07*
+### KI-029 — Whisper invents words in silence
+**Status:** Open — known behaviour of the Whisper model; mitigated downstream  
+**Affected:** Hands-free turns with the OpenAI Whisper dictation engine selected  
+**Description:** When the wake word fires and nobody speaks, Whisper sometimes returns a short phrase from nowhere ("Thanks for watching!", "Bye.", "Wow.", observed 2026-09-09). The word gate, the strict-mode shape test and the model's NO_QUERY instruction catch these, so nothing is answered, but a phantom transcript can appear in the log.  
+**Fix target:** discard a Whisper transcript when the recorder measured no speech above the noise floor, or when the result matches Whisper's known filler phrases.
+
+---
+
+### KI-030 — Sync and cloud backup do not carry the new memory fields
+**Status:** Open — after the beta, with the sync refactor  
+**Affected:** Multi-device users; anyone restoring a backup  
+**Description:** Migration 0011 added `tags`, `sentiment`, `event_date` use, and the `memory_entities` table. ZynkSync's memory payload and the R2 backup export were written before them and do not include tags or entities, so a memory arriving on a second device or restored from backup loses them.  
+**Fix target:** extend `SyncMemory` and the backup export/import to carry the new columns and the entities rows; part of the outbox refactor.
+
+---
+
+### KI-031 — Ensemble replies never carry the knowledge-base note
+**Status:** Open  
+**Affected:** Ensemble mode with the KB button on  
+**Description:** The single-model path shows a header note when the KB search found no real match (see kb_prompt.rs). The ensemble path uses the same prompt wording but never sets `kb_note` on its reply, so an ungrounded ensemble answer shows no note.  
+**Fix target:** thread the KB outcome through `run_ensemble` into the synthesised reply's metadata.
+
+---
+
+### KI-032 — Mic-button dictation is recorded as typed
+**Status:** Open — cosmetic  
+**Affected:** The `input_mode` column added in migration 0011  
+**Description:** Messages are recorded as `hands_free` or `typed`; text dictated with the in-app mic button is indistinguishable from typed text because the page does not tell the backend which it was.  
+**Fix target:** pass an `input_mode` from the page when the message came from VoiceButton.
+
+---
+
+### KI-033 — Tapping a tag in About me filtered nothing (fixed)
+**Status:** Fixed on `memory` (2026-09-09)  
+**Description:** The Memory Manager's list query did not include the new `tags` column, so the tag filter fell back to a text search and matched nothing. The query now returns tags.
+
+---
+
+*Last updated: 2026-09-09*

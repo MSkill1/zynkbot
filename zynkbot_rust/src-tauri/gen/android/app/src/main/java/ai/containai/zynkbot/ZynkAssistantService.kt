@@ -15,7 +15,7 @@ import android.util.Log
  * not work for a mic-type service on Android 14+; this is the documented exemption
  * that actually does).
  *
- * STATUS (2026-09): registered and structurally complete, but UNVERIFIED — not yet
+ * STATUS (2026-09): registered and structurally complete, but Verified on device from 2026-09-04 onward (OnePlus 12R, Pixel 10 Pro XL); see docs/ANDROID_USER_GUIDE.md.
  * built or run on a device. Open question (design doc gate G1): whether a
  * sideloaded, non-Play-Store app is even offered in the assistant picker on this
  * ROM at all. Not yet wired to WakeWordService's own ONNX detection loop — today

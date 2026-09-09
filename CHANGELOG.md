@@ -6,7 +6,31 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## [Unreleased]
+## [Unreleased] — 0.9.6-beta1 (in progress) <!-- draft by Claude 2026-09-09, review wording -->
+
+### Android voice
+- Every "Hey Zynk" now runs natively through the Android assistant role: chime, Z overlay, tap-Z-to-cancel, Stop, replies spoken with the built-in voice and joined to the current thread. The old in-app wake path is gone.
+- Timer, alarm and stopwatch by voice, handled by the clock app without a model call; stopwatch falls back to opening the clock app.
+- Fewer false triggers: silence gate, back-off after repeated fruitless firings, faster close when nobody speaks, a default-deny instruction for TV and fragments, and a personal verifier trained from the owner's own clips (enforcing on the developer's phones; off with clip collection on for testers).
+- The Vosk/Whisper selector applies to hands-free too; Whisper falls back to Vosk.
+- "Remember colon …" saves a fact word for word by voice; Vosk's misspellings of "colon" are accepted.
+- Chime and spoken replies use the media volume.
+
+### Memory
+- Memories carry an event date, a category from a fixed list, tags, tone and named entities from the same call that decides whether to remember; older memories are annotated in the background once.
+- "About me" report in the Memory Manager, read from the local database; every line opens its memory; tap a tag to filter.
+- Memories from hands-free turns are marked and listed separately.
+- Explicit Remember is stored even when it contradicts an older memory; a contradiction no longer blocks it.
+- One timestamp format everywhere; duplicate conversation rows removed and prevented.
+
+### Knowledge base
+- Fabrication guard: the model is told what the search found (real matches, weak matches, nothing) and the reply header says when an answer is not grounded; no memory is extracted from an ungrounded reply.
+- Android: Add files through the system picker; "All files access" no longer requested.
+
+### App
+- Report a problem: a local text report (version, build, device, masked log tail, optional conversation) from System Controls or under any reply.
+- Pinned threads; the current thread is restored after a restart; renamed peers show their new name; a peer's changed address is learned from its own requests; the backup key travels with "Push to all devices".
+- 16 KB page-size alignment (Vosk 0.3.75, ONNX Runtime 1.29); full-screen-intent and photo permissions removed; Google Play readiness plan in the roadmap.
 
 ---
 

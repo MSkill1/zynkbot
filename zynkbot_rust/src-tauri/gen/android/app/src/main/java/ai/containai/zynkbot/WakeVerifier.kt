@@ -17,16 +17,26 @@ import kotlin.math.max
 class WakeVerifier private constructor(
     private val mean: FloatArray, private val scale: FloatArray,
     private val coef: FloatArray, private val intercept: Float, val threshold: Float, val trained: String,
+    private val owners: Set<String>,
 ) {
+    /** A verifier is personal: it enforces only on the devices it was trained for
+     *  (listed in the asset's "owners"). On any other phone it scores and logs so
+     *  labelled clips accumulate for that user's own model, but blocks nothing. */
+    fun enforcesOn(context: Context): Boolean {
+        val id = try { java.io.File(context.filesDir, "zynkbot/.zynk_device_id").readText().trim() } catch (_: Exception) { "" }
+        return id.isNotEmpty() && owners.contains(id)
+    }
     companion object {
         private const val TAG = "WakeVerifier"
         fun load(context: Context): WakeVerifier? = try {
             val text = context.assets.open("wake-word-models/hey_zynk_verifier.json").bufferedReader().readText()
             val j = JSONObject(text)
             fun arr(k: String): FloatArray { val a = j.getJSONArray(k); return FloatArray(a.length()) { a.getDouble(it).toFloat() } }
+            val owners = mutableSetOf<String>()
+            j.optJSONArray("owners")?.let { a -> for (i in 0 until a.length()) owners.add(a.getString(i)) }
             WakeVerifier(arr("mean"), arr("scale"), arr("coef"), j.getDouble("intercept").toFloat(),
-                j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"))
-                .also { Log.i(TAG, "Loaded verifier (${it.coef.size} dims, threshold ${it.threshold}, ${it.trained})") }
+                j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"), owners)
+                .also { Log.i(TAG, "Loaded verifier (${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
         } catch (e: Exception) { Log.w(TAG, "No verifier: ${e.message}"); null }
     }
 

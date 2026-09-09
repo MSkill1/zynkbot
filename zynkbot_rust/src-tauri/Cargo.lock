@@ -162,7 +162,7 @@ checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "app"
-version = "0.9.5-beta1"
+version = "0.9.6-beta1"
 dependencies = [
  "aes-gcm",
  "anyhow",
