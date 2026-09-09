@@ -127,7 +127,7 @@ Why files added by other apps are not seen. Android only lets an app see files i
 
 ## 8. Your other Zynkbot devices: sync, file sharing and ZChat
 
-If you run Zynkbot on more than one device (another phone, a laptop), the devices can find each other on the same Wi-Fi and work together. This is included in the beta. Nothing in it uses the internet or any server; the devices talk to each other directly, over an encrypted connection that only the two paired devices can open.
+If you run Zynkbot on more than one device (another phone, a laptop), the devices can find each other on the same Wi-Fi and work together. This is included in the beta. Nothing in it uses the internet or any server; the devices talk to each other directly over an encrypted connection, and only devices you have paired are accepted.
 
 Pairing. On one device, open the sidebar (the ⚙️ System Controls button) and find ZynkSync; it shows that device's pairing code in the form address:code, for example 192.168.0.100:123456. On the other device, in the same panel, enter the address and the six-digit code and confirm. Pairing is done once per pair of devices.
 
