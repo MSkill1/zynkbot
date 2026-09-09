@@ -14,6 +14,19 @@ fn n(row: &sqlx::sqlite::SqliteRow, col: &str) -> i64 {
     row.try_get::<i64, _>(col).unwrap_or(0)
 }
 
+/// Ids of memories the user stored with "Remember: ..." (marked in provenance_json at
+/// write time). The Memory Manager uses it for its "Remembered on request" filter.
+#[tauri::command]
+pub async fn list_requested_memory_ids(user_id: String) -> Result<Vec<i64>, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("DB connect failed: {}", e))?;
+    let rows = sqlx::query("SELECT id FROM memories WHERE user_id = ? AND provenance_json LIKE '%\"requested\":true%'")
+        .bind(&user_id).fetch_all(&pool).await.map_err(|e| format!("Query failed: {}", e));
+    pool.close().await;
+    Ok(rows?.iter().map(|r| n(r, "id")).collect())
+}
+
 #[allow(non_snake_case)]
 #[tauri::command]
 pub async fn get_memory_report(user_id: String) -> Result<serde_json::Value, String> {
@@ -125,7 +138,16 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({"id": n(r, "id"), "title": s(r, "title"), "day": s(r, "day")})).collect();
 
+    // "Remember: ..." memories, newest first. Marked at write time in provenance_json
+    // (2026-09-09); anything stored before that date has no mark and is not listed.
+    let requested: Vec<serde_json::Value> = sqlx::query(&format!(
+        "SELECT m.id AS id, m.title AS title, substr(m.created_at, 1, 10) AS day FROM memories m
+         WHERE {MINE} AND m.provenance_json LIKE '%\"requested\":true%' ORDER BY m.created_at DESC LIMIT 100"))
+        .bind(user_id).fetch_all(pool).await?
+        .iter().map(|r| serde_json::json!({"id": n(r, "id"), "title": s(r, "title"), "day": s(r, "day")})).collect();
+
     Ok(serde_json::json!({
+        "requested": requested,
         "hands_free": hands_free,
         "generated_at": chrono::Utc::now().to_rfc3339(),
         "totals": {

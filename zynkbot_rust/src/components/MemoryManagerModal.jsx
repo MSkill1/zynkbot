@@ -52,6 +52,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [showReport, setShowReport] = useState(false);
   const [cameFromReport, setCameFromReport] = useState(false); // Back from a memory opened via About me returns to About me
   const [tagFilter, setTagFilter] = useState(''); // set when a tag was tapped in About me; shown as a banner over the list
+  const [onlyRequested, setOnlyRequested] = useState(false); // "Remembered on request": only memories stored with "Remember: ..."
 
   const loadKeyStatus = async () => {
     try {
@@ -524,10 +525,17 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   // Filter memories by search query
   // Tags count as searchable text: "#keto" or "keto" both find a memory tagged keto,
   // which is what tapping a tag in the About-me report does.
-  const filteredMemories = memories.filter(mem =>
+  const filteredMemories = memories.filter(mem => (!onlyRequested || mem.requested) && (
     mem.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
     (mem.title && mem.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
     (mem.tags && searchQuery && mem.tags.toLowerCase().includes(searchQuery.toLowerCase().replace(/^#/, '')))
+  ));
+  const requestedToggle = (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#bd93f9', cursor: 'pointer', margin: '0 0 8px 0' }}
+      title='Only memories you stored with "Remember: ..." (typed or spoken)'>
+      <input type="checkbox" checked={onlyRequested} onChange={(e) => setOnlyRequested(e.target.checked)} />
+      Remembered on request
+    </label>
   );
 
   if (!isOpen) return null;
@@ -739,6 +747,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 className="search-input"
                 style={{ width: '100%', boxSizing: 'border-box', marginBottom: '8px' }}
               />
+              {requestedToggle}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <select value={filterNamespace} onChange={(e) => setFilterNamespace(e.target.value)} className="filter-select" style={{ flex: 1 }}>
                   <option value="all">All Namespaces</option>
@@ -1058,6 +1067,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             onChange={(e) => { setSearchQuery(e.target.value); setTagFilter(''); }}
             className="search-input"
           />
+          {requestedToggle}
           <select
             value={filterNamespace}
             onChange={(e) => setFilterNamespace(e.target.value)}

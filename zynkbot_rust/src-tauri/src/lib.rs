@@ -2450,6 +2450,7 @@ pub fn run() {
             commands::report::build_problem_report,
             commands::memory_report::get_memory_report,
             commands::memory_report::enrich_memory_backlog,
+            commands::memory_report::list_requested_memory_ids,
             commands::backup::derive_key_from_passphrase,
             commands::backup::get_r2_config_status,
             commands::backup::backup_memories_to_r2,

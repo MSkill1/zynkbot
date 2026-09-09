@@ -139,10 +139,11 @@ ZChat. A private text chat between two of your paired devices, or between two pe
 
 ## 9. Memory
 
-Memory Manager. Zynkbot saves facts about you from conversations. The Memory Manager (a button in the app; on a phone it sits in the bottom row of buttons) lists every memory. You can edit, delete or add memories there.
+Memory Manager. Zynkbot saves facts about you from conversations. A "Remembered on request" checkbox above the list shows only the memories you stored with "Remember:". The Memory Manager (a button in the app; on a phone it sits in the bottom row of buttons) lists every memory. You can edit, delete or add memories there.
 
 About me. In the Memory Manager, tap "About me". It builds a report from the memories on this phone, in these sections:
 
+- You asked me to remember: everything stored with "Remember:", newest first, 20 at a time with a Show more button (only memories stored from this version on; older ones carry no mark)
 - Timeline, by when it happened
 - Categories
 - Tags

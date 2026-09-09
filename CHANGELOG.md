@@ -20,6 +20,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - Memories carry an event date, a category from a fixed list, tags, tone and named entities from the same call that decides whether to remember; older memories are annotated in the background once.
 - "About me" report in the Memory Manager, read from the local database; every line opens its memory; tap a tag to filter.
 - Memories from hands-free turns are marked and listed separately.
+- Memories stored with "Remember:" are marked when written; a "Remembered on request" checkbox in the Memory Manager shows only them, and About me opens with a "You asked me to remember" section (20 at a time). Memories stored before this build carry no mark.
 - Explicit Remember is stored even when it contradicts an older memory; a contradiction no longer blocks it.
 - One timestamp format everywhere; duplicate conversation rows removed and prevented.
 

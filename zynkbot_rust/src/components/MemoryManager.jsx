@@ -27,8 +27,15 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
       console.log('[MemoryManager] Raw result from Tauri:', result);
       console.log('[MemoryManager] Result length:', result?.length);
 
+      // Which of these were stored with "Remember: ..." (marked at write time since 2026-09-09)
+      let requestedIds = new Set();
+      try {
+        requestedIds = new Set(await invoke('list_requested_memory_ids', { userId: user_id }));
+      } catch (e) { console.warn('[MemoryManager] requested-ids lookup failed:', e); }
+
       const userMemories = (result || [])
         .filter(mem => (mem.user_id || '').toLowerCase() !== 'system')
+        .map(mem => ({ ...mem, requested: requestedIds.has(mem.id) }))
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
       console.log('[MemoryManager] Filtered user memories:', userMemories.length);

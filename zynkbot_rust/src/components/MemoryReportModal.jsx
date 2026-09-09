@@ -8,6 +8,7 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [openSections, setOpenSections] = useState({});
+  const [requestedShown, setRequestedShown] = useState(20); // "You asked me to remember": 20 at a time so the top of the report stays short
 
   useEffect(() => {
     if (!isOpen) return;
@@ -42,6 +43,11 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
     (report.belief_changes || []).forEach((x) => lines.push(`  ${x.day}  ${x.kind}: "${x.new_title}" vs "${x.old_title}"${x.notes ? ' — ' + x.notes : ''}`));
     lines.push('');
     lines.push('Tone: ' + list(report.tone, (x) => `${x.label} ${x.count}`));
+    if (report.requested?.length) {
+      lines.push('');
+      lines.push('You asked me to remember:');
+      report.requested.forEach((x) => lines.push(`  ${x.day}  ${x.title}`));
+    }
     if (report.kitchen?.length) {
       lines.push('');
       lines.push('Kitchen:');
@@ -117,6 +123,16 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
 
             <p style={p}>{t.memories} memories, {t.links} links between them, {t.entities} named things, across {t.sessions} conversations.</p>
             <p style={muted}>From {(t.first_at || '').slice(0, 10)} to {(t.last_at || '').slice(0, 10)}. {t.dated} memories carry the date something happened and {t.tagged} have tags.{t.pending_enrichment > 0 ? ` ${t.pending_enrichment} older memories are still being annotated in the background; reopen this later.` : ''}</p>
+
+            {report.requested?.length > 0 && (
+              <Section id="requested" title="You asked me to remember" count={report.requested.length} open>
+                <p style={muted}>Stored word for word from "Remember: ..." (typed or spoken), newest first.</p>
+                {report.requested.slice(0, requestedShown).map((x) => <p key={x.id} style={p}><span style={{ color: '#9aa5c4' }}>{x.day}</span>{'  '}{link(x.id, x.title)}</p>)}
+                {report.requested.length > requestedShown && (
+                  <button style={btn} onClick={() => setRequestedShown((k) => k + 20)}>Show more ({report.requested.length - requestedShown} more)</button>
+                )}
+              </Section>
+            )}
 
             <Section id="timeline" title="Timeline, by when it happened" count={report.timeline?.length || 0} open>
               {report.timeline?.length ? byMonth(report.timeline).map((g) => (
