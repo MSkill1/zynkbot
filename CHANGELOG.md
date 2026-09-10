@@ -19,6 +19,9 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - Chime and spoken replies use the media volume.
 - A hands-free listen may run up to 30 seconds (was 12), long enough to dictate a paragraph.
 
+### Build and release
+- The release workflow builds and signs the Linux (.deb, .rpm, AppImage), Windows (NSIS) and Android (APK and AAB) packages on a tag, and can be run by hand without one; Linux and Windows packages carry the Vosk library and model.
+
 ### Reporting
 - Problem reports no longer mask ordinary file paths (the base64 pattern matched path segments); keys, tokens and pairing codes are still masked.
 - With the conversation box unticked, the report's log tail no longer quotes your message, memory titles or the reply (a report on 2026-09-09 still carried them).
