@@ -68,6 +68,15 @@ class WakeWordService : Service() {
         // it. Loudness cannot separate the two at room distance; the verifier can.
         const val SILENCE_GATE_DB = -46.0
         const val STRICT_GATE_DB = -46.0
+        // Battery (2026-09-10): the three models ran on every 80 ms chunk all night while
+        // the screen-off wake lock kept the CPU up, and a Pixel went from 50% to dead.
+        // Below COMPUTE_GATE_DB (well under the detection gate) for QUIET_SKIP_AFTER
+        // chunks in a row, nothing is computed until a chunk is loud again. The first
+        // loud chunk runs immediately, so speech onset is never skipped; the stale
+        // embeddings it joins are embeddings of the same silence.
+        const val COMPUTE_GATE_DB = -52.0
+        const val QUIET_SKIP_AFTER = 25          // 2 s of quiet before skipping starts
+        const val QUIET_STATS_EVERY_CHUNKS = 3750 // ~5 min: one log line of skipped/total
         // Enforcement is decided per user by WakeVerifier.enforcesOn(): the shipped
         // verifier is trained on one owner's voice and lists that owner's user id;
         // for anyone else it only logs and collects clips (2026-09-09).
@@ -145,6 +154,18 @@ class WakeWordService : Service() {
                 Log.i(TAG, "${recentMisses.size} fruitless triggers in 5 min — strict mode for 10 min (need $STRICT_HITS hits ≥ $STRICT_SCORE)")
             }
         }
+    }
+
+    private var quietRun = 0
+    private var quietSkipped = 0L
+    private var quietTotal = 0L
+
+    /** RMS of one chunk in dBFS (cheap: 1280 multiplies). */
+    private fun chunkLevelDb(pcm16: ShortArray): Double {
+        var sum = 0.0
+        for (v in pcm16) { val f = v / 32768.0; sum += f * f }
+        val rms = Math.sqrt(sum / pcm16.size.coerceAtLeast(1))
+        return 20.0 * Math.log10(Math.max(rms, 1e-9))
     }
 
     /** RMS of the last ~3 s in dBFS; -47 dB is far below speech at any distance. */
@@ -402,6 +423,16 @@ class WakeWordService : Service() {
         while (recentChunks.size > TRIGGER_CLIP_CHUNKS) recentChunks.removeFirst()
 
         if (cooldownRemaining > 0) { cooldownRemaining--; return }
+
+        // Quiet room: count, and skip the models once the quiet has lasted 2 s.
+        quietTotal++
+        if (chunkLevelDb(pcm16) < COMPUTE_GATE_DB) quietRun++ else quietRun = 0
+        if (quietTotal % QUIET_STATS_EVERY_CHUNKS == 0L) {
+            Log.i(TAG, "Quiet-skip: %d of %d chunks skipped in the last ~5 min (%.0f%%)".format(
+                quietSkipped, QUIET_STATS_EVERY_CHUNKS, 100.0 * quietSkipped / QUIET_STATS_EVERY_CHUNKS))
+            quietSkipped = 0
+        }
+        if (quietRun > QUIET_SKIP_AFTER) { quietSkipped++; return }
 
         try {
             val audioFloat = FloatArray(CHUNK_SAMPLES) { pcm16[it].toFloat() / 32768f }
