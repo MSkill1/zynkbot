@@ -146,6 +146,9 @@ jobs:
           sdkmanager "ndk;30.0.15729638"
           echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.15729638" >> $GITHUB_ENV
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.15729638" >> $GITHUB_ENV
+          # openssl-src builds OpenSSL from source and calls aarch64-linux-android-ranlib
+          # by name; it lives in the NDK's llvm bin directory (first CI run, 2026-09-09).
+          echo "$ANDROID_SDK_ROOT/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
       - name: Setup Node
         uses: actions/setup-node@v4
