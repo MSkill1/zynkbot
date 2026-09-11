@@ -11,7 +11,7 @@ echo.
 echo This script will:
 echo   - Stop any running Zynkbot processes
 echo   - Remove the Start Menu shortcut
-echo   - Optionally remove your memory database
+echo   - Optionally remove your memory database, API keys and device identity
 echo   - Optionally remove the Rust toolchain
 echo   - Optionally remove the Zynkbot project folder
 echo.
@@ -30,8 +30,11 @@ REM ============================================
 REM Stop running processes
 REM ============================================
 echo Stopping any running Zynkbot processes...
-taskkill /f /im "zynkbot.exe" >nul 2>&1 || true
-taskkill /f /im "app.exe" >nul 2>&1 || true
+REM No '|| true' here: that is a shell idiom, not a cmd command, and taskkill
+REM returns non-zero whenever the process is simply not running -- so every run
+REM printed "'true' is not recognized as an internal or external command" twice.
+taskkill /f /im "zynkbot.exe" >nul 2>&1
+taskkill /f /im "app.exe" >nul 2>&1
 timeout /t 1 /nobreak >nul
 echo Done.
 echo.
@@ -49,23 +52,42 @@ if exist %SHORTCUT% (
 echo.
 
 REM ============================================
-REM Memory database
+REM Memory database and device identity
 REM ============================================
+REM Zynkbot stores state in TWO places, not one. Removing only the first leaves
+REM .zynk_user_id and .zynk_device_id behind, so a later install is recognised as
+REM the same user and a "fresh install" is not fresh -- which silently invalidates
+REM any first-run or onboarding test.
 set DB_DIR=%LOCALAPPDATA%\zynkbot
-if exist "%DB_DIR%" (
-    echo Your memory database is stored at: %DB_DIR%
-    echo This contains all memories Zynkbot has learned about you.
+set ID_DIR=%APPDATA%\zynkbot
+set FOUND_DATA=0
+if exist "%DB_DIR%" set FOUND_DATA=1
+if exist "%ID_DIR%" set FOUND_DATA=1
+if "%FOUND_DATA%"=="1" (
+    echo Zynkbot keeps your data in two locations:
     echo.
-    set /p DEL_DB="Delete your memory database? This cannot be undone. [y/N]: "
+    echo   %DB_DIR%
+    echo     memory database, API keys, ZynkSync TLS identity
+    echo   %ID_DIR%
+    echo     user id and device id
+    echo.
+    echo Keeping these means a future install is recognised as the SAME user.
+    echo Delete both if you are testing a first-run or new-user install.
+    echo.
+    set /p DEL_DB="Delete ALL Zynkbot data? This cannot be undone. [y/N]: "
     if /i "!DEL_DB!"=="y" (
-        rmdir /s /q "%DB_DIR%"
-        echo Memory database deleted.
+        if exist "%DB_DIR%" rmdir /s /q "%DB_DIR%"
+        if exist "%ID_DIR%" rmdir /s /q "%ID_DIR%"
+        echo All Zynkbot data deleted - the next install will behave as a new user.
     ) else (
-        echo Memory database kept at: %DB_DIR%
-        echo You can delete it manually at any time.
+        echo Data kept in both locations.
+        echo NOTE: the next install will NOT behave as a new user.
+        echo To clear it later, run these two commands:
+        echo   rmdir /s /q "%DB_DIR%"
+        echo   rmdir /s /q "%ID_DIR%"
     )
 ) else (
-    echo No memory database found.
+    echo No Zynkbot data found.
 )
 echo.
 

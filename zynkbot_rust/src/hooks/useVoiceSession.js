@@ -126,7 +126,12 @@ export function useVoiceSession({ setMessages }) {
     () => localStorage.getItem('zynkbot_tts_enabled') === 'true'
   );
   const [heyZynkEnabled, setHeyZynkEnabledRaw] = useState(
-    () => localStorage.getItem('zynkbot_hey_zynk_enabled') !== 'false'
+    // Opt-in, not opt-out (beta): without a personal verifier enforcing, the wake
+    // classifier alone false-triggers on television and other speech, and the
+    // audio loop is a real battery cost. A new user should choose to turn this on
+    // rather than meet it firing at the TV. Anyone who already enabled it has
+    // 'true' stored and keeps it on.
+    () => localStorage.getItem('zynkbot_hey_zynk_enabled') === 'true'
   );
   const [voiceInputSource, setVoiceInputSourceRaw] = useState(
     () => localStorage.getItem('zynkbot_voice_input_source') || 'vosk'

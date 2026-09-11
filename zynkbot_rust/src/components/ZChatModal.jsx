@@ -319,7 +319,12 @@ export default function ZChatModal({
             padding: '10px',
             marginBottom: '10px',
             display: 'grid',
-            gridTemplateColumns: 'repeat(7, 1fr)',
+            // KI-018: a fixed 7 columns overflowed on ~360dp phones. At that width the
+            // grid gets ~260px of inner space, giving each of 7 columns ~30px against a
+            // ~35px min-content button, and `1fr` (= minmax(auto, 1fr)) will not shrink
+            // below min-content — so the row ran past the modal. auto-fit reflows to
+            // however many columns actually fit (6 at 360dp, 7 above ~390dp).
+            gridTemplateColumns: 'repeat(auto-fit, minmax(36px, 1fr))',
             gap: '8px'
           }}>
             {emoticons.map((emo, idx) => (

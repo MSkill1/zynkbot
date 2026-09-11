@@ -297,6 +297,22 @@ export default function VoiceModal({
               />
             </div>
 
+            {/* Two facts a user should have before switching this on, both measured:
+                the audio loop runs continuously and costs battery, and without a
+                trained personal verifier the classifier alone answers to television
+                and other speech. Off by default for the same reason. */}
+            <p style={{
+              color: '#9aa5c4',
+              fontSize: '0.8rem',
+              lineHeight: 1.45,
+              margin: '4px 0 0 0',
+            }}>
+              Listens continuously for "Hey Zynk". The microphone stays active, which
+              shortens battery life noticeably — best while charging. During beta it
+              can also answer to a television or other voices; turn it off if that
+              happens.
+            </p>
+
             {heyZynkEnabled && !wakeWordModelReady && (
               <div style={{
                 padding: '12px',

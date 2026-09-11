@@ -71,7 +71,11 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
           }}>
             {title}
           </h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {/* flexWrap: at ~360dp (the most common Android width) the 100vw drawer
+              leaves ~330px of content, too little for the title and all three
+              buttons on one line. Wrapping drops the button group to its own row
+              instead of compressing the buttons until their labels break. */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', flexWrap: 'wrap' }}>
             {onVoiceClick && (
               <button
                 onClick={onVoiceClick}
@@ -85,8 +89,13 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                   fontWeight: '600',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
-                  height: '32px',
+                  minHeight: '32px',
                   boxSizing: 'border-box',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap',
                 }}
                 onMouseOver={(e) => {
                   e.target.style.background = '#8be9fd';
@@ -114,8 +123,13 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                   fontWeight: '600',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
-                  height: '32px',
+                  minHeight: '32px',
                   boxSizing: 'border-box',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap',
                 }}
                 onMouseOver={(e) => { e.target.style.background = '#8be9fd'; e.target.style.color = '#22232a'; }}
                 onMouseOut={(e) => { e.target.style.background = '#44475a'; e.target.style.color = '#8be9fd'; }}
@@ -135,7 +149,14 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
                   fontSize: '0.8rem',
                   fontWeight: '600',
                   cursor: 'pointer',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.2s ease',
+                  minHeight: '32px',
+                  boxSizing: 'border-box',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                  whiteSpace: 'nowrap',
                 }}
                 onMouseOver={(e) => {
                   e.target.style.background = '#8be9fd';

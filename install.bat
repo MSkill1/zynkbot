@@ -749,12 +749,14 @@ if exist "%VOSK_LIB_DIR%\libvosk.lib" (
         if exist "!VOSK_LIB_DIR!\libvosk.lib" (
             echo [OK] Vosk library installed - offline dictation enabled
         ) else (
-            echo [WARNING] Vosk extraction failed - offline dictation unavailable
-            echo           You can still use OpenAI Whisper for cloud dictation
+            echo [ERROR] Vosk extraction failed - cannot continue
+            call :vosk_required
+            exit /b 1
         )
     ) else (
-        echo [WARNING] Vosk download failed - offline dictation unavailable
-        echo           You can still use OpenAI Whisper for cloud dictation
+        echo [ERROR] Vosk download failed - cannot continue
+        call :vosk_required
+        exit /b 1
     )
 )
 echo.
@@ -821,3 +823,30 @@ echo  Ready to use Zynkbot!
 echo =========================================
 echo.
 pause
+exit /b 0
+
+REM ============================================
+REM KI-020: since KI-019 un-gated Vosk for Windows, lib\vosk\libvosk.lib is a
+REM LINK-TIME requirement, not an optional extra. If the SDK is missing the Rust
+REM build fails with a linker error naming libvosk.lib and nothing points at the
+REM real cause, so stop here with an explanation instead of continuing.
+REM ============================================
+:vosk_required
+echo.
+echo   Offline dictation is not optional on Windows: libvosk.lib is required to
+echo   LINK the application. Continuing would fail the build below with a linker
+echo   error naming libvosk.lib and no indication that a download is the cause.
+echo.
+echo   To fix this by hand, download:
+echo     https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-win64-0.3.45.zip
+echo.
+echo   and copy these 5 files into:
+echo     !VOSK_LIB_DIR!
+echo.
+echo     libvosk.lib, libvosk.dll, libstdc++-6.dll,
+echo     libwinpthread-1.dll, libgcc_s_seh-1.dll
+echo.
+echo   Then re-run install.bat.
+echo.
+pause
+goto :eof
