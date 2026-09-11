@@ -54,7 +54,12 @@ const S = {
   },
 };
 
-const isMobile = window.innerWidth <= 768;
+// Fresh-install bug (OnePlus, 2026-09-11): width alone misdetected Android. At module
+// load the WebView has not applied width=device-width yet, so innerWidth reads the raw
+// physical width (1264px OnePlus, 1080px Pixel) — both > 768 — and the phone was shown
+// the desktop GGUF "optional local model" flow. The Android bridge global is the reliable
+// platform signal; the width test stays only as the narrow-desktop-window fallback.
+const isMobile = !!window.AndroidPaths || window.innerWidth <= 768;
 
 export default function SetupWizard({ onComplete }) {
   const [screen, setScreen]           = useState('welcome');

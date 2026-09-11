@@ -868,6 +868,16 @@ class MainActivity : TauriActivity() {
         super.onResume()
         isInForeground = true
         Log.i(TAG_LIFECYCLE, "onResume — isInForeground=true")
+        // Back from the system assistant-settings screen: resume the permission
+        // queue exactly where it paused, so onboarding continues in order instead
+        // of having raced ahead while the settings screen was up.
+        if (awaitingAssistantPick) {
+            awaitingAssistantPick = false
+            val held = getSystemService(RoleManager::class.java)
+                ?.isRoleHeld(RoleManager.ROLE_ASSISTANT) == true
+            Log.i("MainActivity", "Back from assistant settings — role held: $held")
+            runNextPermissionRequest()
+        }
         // Mid-reply and the user opened the app: the in-app Stop button takes over,
         // so drop the assistant session's Z overlay (it would sit over the UI).
         ZynkAssistantSession.current?.hideOverlay()
@@ -962,22 +972,51 @@ class MainActivity : TauriActivity() {
     // without the app being reopened. Uses the launcher API like the other pickers in
     // this file so the sequenced queue advances on the dialog's result (accept,
     // decline, or dismiss alike). Skipped if the role is already held or unavailable.
+    //
+    // Set when the user is sent to the system assistant-settings screen: the
+    // permission queue PAUSES until onResume() sees them back. Fresh-install report
+    // (OnePlus, 2026-09-11): the queue used to advance the moment settings opened,
+    // so pressing Back landed in the installer mid-download with the role unset —
+    // and the only guidance had been a Toast that vanished under the settings screen.
+    private var awaitingAssistantPick = false
+
     private val requestAssistantRole = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         // Some Android builds refuse the role dialog outright (GrapheneOS Pixel on Android 17,
         // 2026-09-09: "Role is not requestable: android.app.role.ASSISTANT") and the
         // request returns at once with nothing shown. Then the only way to get the
-        // role is the system's own picker, so open it and say why.
+        // role is the system's own picker — explain with a persistent dialog (a Toast
+        // is gone in seconds and leaves no instructions), and only open settings on
+        // an explicit tap so the user knows where they are going and why.
         val rm = getSystemService(RoleManager::class.java)
         if (rm != null && !rm.isRoleHeld(RoleManager.ROLE_ASSISTANT)) {
             try {
-                android.widget.Toast.makeText(this,
-                    "Choose Zynkbot as your digital assistant to answer \"Hey Zynk\" on screen",
-                    android.widget.Toast.LENGTH_LONG).show()
-                startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Make Zynkbot your assistant")
+                    .setMessage(
+                        "To answer \"Hey Zynk\" from the lock screen, Zynkbot must be " +
+                        "the phone's digital assistant.\n\n" +
+                        "On the next screen choose Digital assistant app, then Zynkbot.\n\n" +
+                        "You can also do this later: Settings → Apps → " +
+                        "Default apps → Digital assistant app.")
+                    .setPositiveButton("Open settings") { _, _ ->
+                        try {
+                            awaitingAssistantPick = true
+                            startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+                            // Queue resumes in onResume() when the user returns.
+                        } catch (e: Exception) {
+                            Log.w("MainActivity", "Could not open the assistant picker: ${e.message}")
+                            awaitingAssistantPick = false
+                            runNextPermissionRequest()
+                        }
+                    }
+                    .setNegativeButton("Not now") { _, _ -> runNextPermissionRequest() }
+                    .setOnCancelListener { runNextPermissionRequest() }
+                    .show()
+                return@registerForActivityResult
             } catch (e: Exception) {
-                Log.w("MainActivity", "Could not open the assistant picker: ${e.message}")
+                Log.w("MainActivity", "Assistant fallback dialog failed: ${e.message}")
             }
         }
         runNextPermissionRequest()
