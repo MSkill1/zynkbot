@@ -395,6 +395,24 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Re-fetch when API keys arrive from a paired device (the backend applies them
+  // and emits this per key). The model list is derived from which providers have
+  // keys, so without this the dropdown stayed empty until an app restart even
+  // though the push had succeeded (OnePlus fresh install, 2026-09-11).
+  useEffect(() => {
+    let unlisten = null;
+    let timer = null;
+    (async () => {
+      unlisten = await listen('api-keys-updated', () => {
+        // A push sends one event per key; coalesce the burst into one refetch.
+        clearTimeout(timer);
+        timer = setTimeout(() => { fetchModels(); }, 300);
+      });
+    })();
+    return () => { clearTimeout(timer); if (unlisten) unlisten(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Save messages to sessionStorage whenever they change
   useEffect(() => {
     try {

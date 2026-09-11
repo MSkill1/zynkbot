@@ -55,8 +55,13 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       const purpose = namePromptPurpose;
       setNamePromptPurpose(null);
       // Resume whichever pairing action asked for a name in the first place.
-      if (purpose === 'generate') handleGetPairingCode();
-      else if (purpose === 'add') handleAddDevice();
+      // nameConfirmed bypasses the hasCustomName check: the handler invoked here is
+      // the closure from the render BEFORE the save, where hasCustomName was still
+      // false, so it re-opened the prompt and the user had to name the device twice
+      // (OnePlus fresh install, 2026-09-11). The flag is an object property so a
+      // click event passed by an onClick binding can never satisfy it by accident.
+      if (purpose === 'generate') handleGetPairingCode({ nameConfirmed: true });
+      else if (purpose === 'add') handleAddDevice({ nameConfirmed: true });
     } catch (error) {
       setMessage(`✗ Failed to save device name: ${error}`);
     }
@@ -171,8 +176,8 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   }, []);
 
   // Get pairing code and IP
-  const handleGetPairingCode = async () => {
-    if (!hasCustomName) { openNamePrompt('generate'); return; }
+  const handleGetPairingCode = async (opts) => {
+    if (!hasCustomName && opts?.nameConfirmed !== true) { openNamePrompt('generate'); return; }
     try {
       const [code, ip] = await Promise.all([
         invoke('get_zynksync_pairing_code'),
@@ -194,8 +199,8 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   };
 
   // Add a device by entering a pairing code
-  const handleAddDevice = async () => {
-    if (!hasCustomName) { openNamePrompt('add'); return; }
+  const handleAddDevice = async (opts) => {
+    if (!hasCustomName && opts?.nameConfirmed !== true) { openNamePrompt('add'); return; }
     const input = pairingInput.trim();
     if (!input) {
       setMessage('✗ Please enter the pairing code in IP:code format');

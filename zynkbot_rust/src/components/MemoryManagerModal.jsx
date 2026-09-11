@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import MemoryReportModal from './MemoryReportModal';
 import MemoryGraphModal from "./MemoryGraphModal";
 import "../styles/MemoryManagerModal.css";
@@ -249,6 +250,20 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
       loadKeyStatus();
     }
   }, [isOpen, fetchMemories, fetchNamespaces]);
+
+  // Keys pushed from a paired device land while the app is running: the backend
+  // installs them and emits these events. Without listening, this modal kept the
+  // key status it loaded on mount and showed the "set up your backup key" prompt
+  // until an app restart, even though backup.key and the R2 credentials were
+  // already on disk (OnePlus, 2026-09-11).
+  useEffect(() => {
+    const unsubs = [];
+    (async () => {
+      unsubs.push(await listen('backup-key-updated', () => loadKeyStatus()));
+      unsubs.push(await listen('api-keys-updated', () => loadKeyStatus()));
+    })();
+    return () => { unsubs.forEach((u) => u()); };
+  }, []);
 
   // Load relationships when memory is selected
   useEffect(() => {

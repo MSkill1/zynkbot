@@ -2300,7 +2300,30 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     std::env::set_var("GTK_OVERLAY_SCROLLING", "0");
 
-    tauri::Builder::default()
+    // Plugins are registered on the Builder, BEFORE setup, so Tauri initialises them
+    // before any webview exists. They used to be registered inside setup() through
+    // app.handle().plugin(), which initialises each plugin while holding the
+    // PluginStore mutex. On Android the Rust event loop is its own thread, and the
+    // UI thread takes that same mutex from the WebView's shouldOverrideUrlLoading
+    // (on_navigation) while the first page loads; a mobile plugin's initialize()
+    // meanwhile dispatches to the UI thread over JNI. Two fresh installs on the
+    // OnePlus (2026-09-11, ANR traces 14:58 and 15:32) showed exactly that: the UI
+    // thread parked on the PluginStore lock / a full event channel until the 5 s
+    // ANR — a black screen the user had to kill. Timing-dependent, so it looked
+    // intermittent.
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())   // directory selection (Knowledge Base)
+        .plugin(tauri_plugin_shell::init())    // opening folders/URLs
+        .plugin(tauri_plugin_opener::init());  // Android Intent system / xdg-open
+    if cfg!(debug_assertions) {
+        builder = builder.plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build(),
+        );
+    }
+
+    builder
         .setup(|app| {
             // Ensure model directories exist in user data dir (for installed binary)
             let models_dir = crate::db::get_app_data_dir();
@@ -2340,22 +2363,8 @@ pub fn run() {
                 }
             }
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
-            // Initialize dialog plugin for directory selection (Knowledge Base)
-            app.handle().plugin(tauri_plugin_dialog::init())?;
-
-            // Initialize shell plugin for opening folders/URLs
-            app.handle().plugin(tauri_plugin_shell::init())?;
-
-            // Initialize opener plugin (uses Android Intent system on mobile, xdg-open on Linux)
-            app.handle().plugin(tauri_plugin_opener::init())?;
+            // (dialog / shell / opener / log plugins are registered on the Builder
+            // above — see the comment there for why not here.)
 
             // Store app handle globally for HTTP server event emission
             {

@@ -997,19 +997,16 @@ class MainActivity : TauriActivity() {
                     .setMessage(
                         "To answer \"Hey Zynk\" from the lock screen, Zynkbot must be " +
                         "the phone's digital assistant.\n\n" +
-                        "On the next screen choose Digital assistant app, then Zynkbot.\n\n" +
+                        "On the next screen, tap Digital assistant app, then choose Zynkbot.\n\n" +
                         "You can also do this later: Settings → Apps → " +
                         "Default apps → Digital assistant app.")
                     .setPositiveButton("Open settings") { _, _ ->
-                        try {
-                            awaitingAssistantPick = true
-                            startActivity(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
-                            // Queue resumes in onResume() when the user returns.
-                        } catch (e: Exception) {
-                            Log.w("MainActivity", "Could not open the assistant picker: ${e.message}")
+                        awaitingAssistantPick = true
+                        if (!openAssistantPicker()) {
                             awaitingAssistantPick = false
                             runNextPermissionRequest()
                         }
+                        // Otherwise the queue resumes in onResume() when the user returns.
                     }
                     .setNegativeButton("Not now") { _, _ -> runNextPermissionRequest() }
                     .setOnCancelListener { runNextPermissionRequest() }
@@ -1040,6 +1037,37 @@ class MainActivity : TauriActivity() {
             }
         }
         runNextPermissionRequest()
+    }
+
+    // The screen that actually lets the user CHOOSE an assistant. Verified on the
+    // OnePlus (OxygenOS, Android 16, 2026-09-11): the native role request is refused
+    // ("Role is not requestable: android.app.role.ASSISTANT" — same as GrapheneOS),
+    // and Settings.ACTION_VOICE_INPUT_SETTINGS opens Settings$ManageAssistActivity,
+    // an overview that only SHOWS the current assistant with no way to pick another —
+    // two fresh installs dead-ended there. MANAGE_DEFAULT_APPS_SETTINGS opens
+    // PermissionController's default-app category list; "Digital assistant app" on
+    // it is the per-role radio list with Zynkbot in it (the dialog text says so).
+    // This is the screen a third-party app can reach: the direct per-role intent
+    // (MANAGE_DEFAULT_APP + role name) opens the list itself but is privileged —
+    // "requires android.permission.MANAGE_ROLE_HOLDERS" from an app; it only worked
+    // from `adb shell am start` because the shell has that permission — so it is not
+    // attempted. The old overview stays as a last resort for devices without the
+    // category list.
+    private fun openAssistantPicker(): Boolean {
+        val attempts = listOf(
+            Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
+            Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),
+        )
+        for (intent in attempts) {
+            try {
+                startActivity(intent)
+                Log.i("MainActivity", "Opened assistant picker via ${intent.action}")
+                return true
+            } catch (e: Exception) {
+                Log.w("MainActivity", "Assistant picker ${intent.action} failed: ${e.message}")
+            }
+        }
+        return false
     }
 
     private val permissionQueue = ArrayDeque<() -> Unit>()
