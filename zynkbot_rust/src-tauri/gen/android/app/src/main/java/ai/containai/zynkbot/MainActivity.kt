@@ -868,6 +868,22 @@ class MainActivity : TauriActivity() {
         super.onResume()
         isInForeground = true
         Log.i(TAG_LIFECYCLE, "onResume — isInForeground=true")
+        // Android may have destroyed and recreated this window's surface while we
+        // were in another activity (16 s in Settings during onboarding did it — the
+        // window came back NO_SURFACE -> DRAW_PENDING). Tauri's base activity only
+        // resumes plugins; nothing asked the WebView to draw into the new surface,
+        // so it stayed black until the next touch generated input (OnePlus fresh
+        // install, 2026-09-11, twice). Make sure it is running and force a frame.
+        // Resume-side only: pausing the WebView in onPause would stop the JS the
+        // hands-free path relies on while the app is in the background.
+        webViewRef?.get()?.let { wv ->
+            wv.onResume()
+            wv.resumeTimers()
+            wv.post {
+                wv.requestLayout()
+                wv.invalidate()
+            }
+        }
         // Back from the system assistant-settings screen: resume the permission
         // queue exactly where it paused, so onboarding continues in order instead
         // of having raced ahead while the settings screen was up.
@@ -997,7 +1013,9 @@ class MainActivity : TauriActivity() {
                     .setMessage(
                         "To answer \"Hey Zynk\" from the lock screen, Zynkbot must be " +
                         "the phone's digital assistant.\n\n" +
-                        "On the next screen, tap Digital assistant app, then choose Zynkbot.\n\n" +
+                        "On the next screen: tap Digital assistant app, then tap the " +
+                        "current assistant (usually Google) to see the list, and choose " +
+                        "Zynkbot. Press Back until you are back in Zynkbot.\n\n" +
                         "You can also do this later: Settings → Apps → " +
                         "Default apps → Digital assistant app.")
                     .setPositiveButton("Open settings") { _, _ ->

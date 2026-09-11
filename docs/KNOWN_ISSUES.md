@@ -43,6 +43,28 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ## Onboarding
 
+### KI-035 — Android first launch hung on a black screen (fixed)
+**Status:** Fixed on `voice` (2026-09-11)
+**Affected:** Every fresh Android install; it hit both fresh installs on the OnePlus 12R that day (ANR traces 14:58 and 15:32). Looked intermittent because it is timing-dependent.
+**Description:** On Android the Rust event loop is its own thread. Plugins were registered inside `setup()` via `app.handle().plugin()`, which initialises each plugin while holding Tauri's `PluginStore` mutex, and a mobile plugin's `initialize()` dispatches to the UI thread over JNI. The UI thread, loading the first page, takes that same mutex from `shouldOverrideUrlLoading`. Each waited on the other until the 5 s ANR: the user saw a black screen right after the first permission prompt and had to kill the app.
+**Fix:** plugins are registered on the `Builder` before `setup`, so they are initialised before any webview exists.
+
+---
+
+### KI-036 — Assistant-role step dead-ended during onboarding (fixed)
+**Status:** Fixed on `voice` (2026-09-11)
+**Description:** The native role request is refused on OxygenOS just as on GrapheneOS ("Role is not requestable: android.app.role.ASSISTANT"). The fallback opened `VOICE_INPUT_SETTINGS` — an overview that only shows the current assistant — with a Toast for guidance that vanished under it, and advanced the permission queue immediately, so pressing Back landed in the installer mid-download with the role unset. Without the role, "Hey Zynk" cannot answer from the lock screen. The direct per-role intent (`MANAGE_DEFAULT_APP`) opens the list but needs `android.permission.MANAGE_ROLE_HOLDERS`; an app cannot use it (it works from `adb shell` only because the shell holds that permission).
+**Fix:** a persistent dialog explains the taps (Digital assistant app → tap the current assistant → choose Zynkbot → Back until you are back in Zynkbot), opens the default-apps list (`MANAGE_DEFAULT_APPS_SETTINGS`), and the queue pauses until `onResume`, which logs whether the role is held. Verified: Zynkbot holds the role after a fresh install.
+
+---
+
+### KI-037 — Android first run offered the desktop's GGUF model download (fixed)
+**Status:** Fixed on `voice` (2026-09-11)
+**Description:** `SetupWizard` decided "mobile" with `window.innerWidth <= 768`, evaluated at module load — before the WebView applied `width=device-width` — so `innerWidth` read the raw physical width (1264 px OnePlus, 1080 px Pixel) and Android took the desktop path, offering ~5 GB local models it cannot run. Latent since the wizard was written; it only shows on a first run, which is why it went unseen.
+**Fix:** keyed on the Android bridge global (`window.AndroidPaths`); width stays only as the narrow-desktop-window fallback.
+
+---
+
 ### KI-004 — Onboarding relationship detection skipped on fresh install (fixed)
 **Status:** Fixed in this release  
 **Description:** `complete_onboarding` reported "no embedding" for all onboarding memories because the `Memory` struct uses `#[sqlx(skip)]` on the embedding field. Embeddings were present in the database but not read by the struct. Fixed by fetching embeddings separately via a raw query.
@@ -92,6 +114,20 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ## Networking
+
+### KI-038 — Device name asked twice when pairing (fixed)
+**Status:** Fixed on `voice` (2026-09-11)
+**Description:** After the name was saved, the pairing action was resumed through the closure from the previous render, where `hasCustomName` was still false, so the prompt reopened and the user had to name the device again.
+**Fix:** the resumed call carries `nameConfirmed` and skips that check.
+
+---
+
+### KI-039 — Keys pushed from another device did not show until the app was restarted (fixed)
+**Status:** Fixed on `voice` (2026-09-11)
+**Description:** The receiving backend applied pushed keys live and emitted `api-keys-updated` / `backup-key-updated`, but the Memory Manager and the model dropdown loaded their state once on mount and did not listen, so the "set up your backup key" prompt stayed and the dropdown stayed empty until a restart — with all keys, `backup.key` and the R2 credentials already on disk.
+**Fix:** both listen and refetch (the dropdown coalesces the per-key burst into one request). Verified: 14 keys received in 0.4 s, one refetch, no restart.
+
+---
 
 ### KI-009 — Unsyncing a device also removes the ZynkLink pairing
 **Status:** Fixed in this release  
@@ -165,11 +201,27 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Mobile UI
 
-### KI-018 — ZChat emoji picker overflows the screen on narrow Android phones
-**Status:** Open  
+### KI-040 — Black screen when returning to the app after a while away (fixed; verification pending)
+**Status:** Fixed on `voice` (2026-09-11); still to be confirmed by leaving the app ~30 s and returning
+**Description:** Android drops the window surface while another activity is up for long (16 s in Settings during onboarding did it). On return the WebView did not draw into the new surface until a touch generated input, so the app sat black. Tauri's base activity only resumes plugins.
+**Fix:** `onResume` calls the WebView's `onResume`/`resumeTimers` and posts `requestLayout`/`invalidate`. Resume-side only: pausing the WebView in `onPause` would stop the JS the hands-free path relies on while the app is in the background.
+
+---
+
+### KI-018 — ZChat emoji picker overflows the screen on narrow Android phones (fixed)
+**Status:** Fixed on `voice` (2026-09-11) — the grid was `repeat(7, 1fr)`, and `1fr` cannot shrink below min-content, so at ~360 dp (the most common Android width; the OnePlus 12R under its display-size override) it ran past the modal; now `repeat(auto-fit, minmax(36px, 1fr))`, six columns at 360 dp. The System Controls header had the same squeeze (Voice/Report labels spilling below their buttons); fixed the same day.  
 **Affected:** Android users tapping the 😊 button in ZChat on phones with narrow screens (~360–411px CSS width)  
 **Description:** The emoji picker in `ZChatModal.jsx` renders an inline grid of emoji buttons above the input row. It has no width cap or horizontal scroll container, so on a narrow phone the grid runs off the right edge of the screen — the leftmost emojis are visible but the rest can't be reached because the panel isn't scrollable. The Tab S3 (wider screen) shows the full row and works normally.  
 **Fix target:** Two reasonable directions. (a) Constrain the picker to the modal width with `max-width: 100%; overflow-x: auto; flex-wrap: wrap;` and enlarge the touch target — keeps a consistent Zynkbot picker on desktop and mobile. (b) Hide the picker button entirely on Android (`{!isAndroid && ...}` around the 😊 button, same pattern as the VoiceButton fix in v0.9.4 hotfix). Android keyboards already expose a full emoji set via the keyboard's emoji key — duplicating it in-app is redundant and the phone's picker is better. Preferred: (b) on mobile, keep the small in-app picker on desktop where OS emoji entry is clumsier.
+
+---
+
+## Desktop UI
+
+### KI-041 — Two close buttons on desktop modals, one of them closing the sidebar underneath (fixed)
+**Status:** Fixed on `voice` (2026-09-11)
+**Description:** The sidebar's floating toggle was hidden with the HTML `hidden` attribute, which is only UA-stylesheet `display:none`; the button's inline `display:flex` (added when centring the icon for phones) overrode it, so the toggle stayed live under every open modal — a second ✕ that closed the sidebar. The API Keys modal's own ✕ was `position:fixed` to the viewport, which hugs the panel on a phone but floated far to the right of the centred 700 px panel on desktop.
+**Fix:** the toggle is conditionally rendered, not `hidden`; the modal's ✕ is sticky inside the panel.
 
 ---
 
@@ -188,8 +240,8 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Voice & Dictation
 
-### KI-019 — No offline dictation on Windows; Vosk is compiled out rather than unavailable
-**Status:** Open — must fix before v1.0  
+### KI-019 — No offline dictation on Windows; Vosk is compiled out rather than unavailable (fixed)
+**Status:** Fixed on `voice`; verified on Windows 2026-09-11 — the four gates below are widened, `build.rs` emits the Windows link-search, MSVC accepted the MinGW import library (the predicted CRT mismatch surfaces only as `LNK4098`, a warning), the NSIS bundle carries the four DLLs and the Vosk model next to `app.exe`, and Vosk and Whisper dictation were both confirmed at runtime. The offline-first guarantee now holds on Windows. KI-020 remains.  
 **Affected:** All Windows users. Dictation on Windows requires an OpenAI API key and a network round-trip, so the offline-first guarantee does not hold on Windows.  
 **Description:** Vosk works on Windows — alphacep ships a prebuilt `vosk-win64-0.3.45` SDK containing `libvosk.lib` and `libvosk.dll`. Windows support is partly wired already: `install.bat` downloads that SDK into `zynkbot_rust/src-tauri/lib/vosk/`, and `START_ZYNKBOT.bat` adds that directory to `PATH` when `libvosk.dll` is present. The feature is nevertheless unreachable on Windows because four separate gates compile it out:
 
@@ -249,8 +301,16 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 ## Build
 
-### KI-021 — `import_persona_collection` references a module that does not exist, so `cargo build` always fails
-**Status:** Open  
+### KI-043 — Windows: the app cannot be rebuilt while it is running
+**Status:** Open — developer-facing only
+**Affected:** Anyone developing on Windows
+**Description:** `build.rs` copies `lib/vosk/libvosk.dll` on every build, and Windows locks a DLL that a running process has loaded, so `cargo build` / `cargo check` fails with `The process cannot access the file because it is being used by another process (os error 32)` while Zynkbot is open — with nothing pointing at the running app as the cause. Linux does not lock loaded libraries, so the same build succeeds there. Hit twice on 2026-09-11.
+**Fix target:** skip the copy when the destination is up to date, or write the resources into the bundle directory rather than beside the running executable; at minimum, name the cause in the error.
+
+---
+
+### KI-021 — `import_persona_collection` references a module that does not exist, so `cargo build` always fails (fixed)
+**Status:** Fixed — `cargo check --all-targets` is clean on `voice` as of 2026-09-11 (Windows); this entry had gone stale.  
 **Affected:** Everyone who runs `install.bat`, on every platform  
 **Description:** `src/bin/import_persona_collection.rs:19` calls `app_lib::commands::persona_memory::import_persona_memory_collection(...)`, but there is no `persona_memory` module — `commands/mod.rs` declares 17 modules and that is not among them, and nothing else in the tree defines it. The build fails with:
 
@@ -268,6 +328,13 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 ---
 
 ## Chat & Responses
+
+### KI-042 — Safety classifier failed on long input and fell back to keyword matching (fixed)
+**Status:** Fixed on `voice` (2026-09-11)
+**Description:** toxic-bert has 512 position embeddings. Input that tokenised past 512 failed the forward pass ("index-select invalid index 512 with dim size 512"), and the containment layer fell back to keyword-only matching — a degraded check that passed a long message in Guardian mode with `✅ Content allowed`.
+**Fix:** token ids and attention mask are truncated to 512 (CLS kept at index 0), so long inputs are classified on their first 512 tokens instead of dropping to keywords.
+
+---
 
 ### KI-025 — LLM responses are not streamed; nothing appears until the full response arrives
 **Status:** Open — Tier 1 v1.0 item
