@@ -198,14 +198,26 @@ impl SafetyClassifier {
             .encode(text, true)
             .map_err(|e| format!("Tokenization failed: {}", e))?;
 
-        let tokens = encoding.get_ids();
+        // toxic-bert (BERT-base) has 512 learned position embeddings. An input that
+        // tokenizes past 512 indexes past that table and `forward` fails with
+        // "index-select invalid index 512 with dim size 512" — which the caller was
+        // treating as "allowed" (a fail-OPEN in the containment layer). Truncate to
+        // the model's limit so long inputs are still classified on their first 512
+        // tokens rather than skipped. The BertProcessing post-processor already put
+        // [CLS] at index 0, so a head-truncation keeps it.
+        const MAX_TOKENS: usize = 512;
+        let tokens_full = encoding.get_ids();
+        let mask_full = encoding.get_attention_mask();
+        let n = tokens_full.len().min(MAX_TOKENS);
+        let tokens = &tokens_full[..n];
+        let attention_mask = &mask_full[..n];
+
         let token_ids = Tensor::new(tokens, &self.device)
             .map_err(|e| format!("Failed to create token tensor: {}", e))?
             .unsqueeze(0)
             .map_err(|e| format!("Failed to unsqueeze: {}", e))?;
 
         // Create attention mask
-        let attention_mask = encoding.get_attention_mask();
         let attention_mask_tensor = Tensor::new(attention_mask, &self.device)
             .map_err(|e| format!("Failed to create attention mask: {}", e))?
             .unsqueeze(0)

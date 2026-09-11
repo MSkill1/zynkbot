@@ -287,7 +287,7 @@ export default function VoiceModal({
         {/* Hey Zynk — only shown on Android (window.WakeWordBridge present) */}
         {!!window.WakeWordBridge && (
           <>
-            <p style={sectionHeadingStyle}>Hey Zynk — Always Listening</p>
+            <p style={sectionHeadingStyle}>Hey Zynk — Wake Word Detection</p>
             <div style={rowStyle}>
               <span style={labelStyle}>Enable wake word</span>
               <Toggle
@@ -297,20 +297,25 @@ export default function VoiceModal({
               />
             </div>
 
-            {/* Two facts a user should have before switching this on, both measured:
-                the audio loop runs continuously and costs battery, and without a
-                trained personal verifier the classifier alone answers to television
-                and other speech. Off by default for the same reason. */}
+            {/* Detection framing, not "listening": the loop checks audio on-device
+                for one phrase and discards it — nothing is transcribed, stored, or
+                transmitted (a short clip is kept locally only when the word fires,
+                as verifier training data). Two facts a user should have before
+                switching this on: the detector loop costs battery, and without a
+                trained personal verifier the classifier alone fires on television
+                and other speech. Off by default for the same reasons. */}
             <p style={{
               color: '#9aa5c4',
               fontSize: '0.8rem',
               lineHeight: 1.45,
               margin: '4px 0 0 0',
             }}>
-              Listens continuously for "Hey Zynk". The microphone stays active, which
-              shortens battery life noticeably — best while charging. During beta it
-              can also answer to a television or other voices; turn it off if that
-              happens.
+              Detects the phrase "Hey Zynk" on this device. Audio is checked and
+              discarded on the phone — never recorded or sent anywhere. (When the
+              word fires, a short clip stays on your phone to improve accuracy.)
+              Running the detector shortens battery life — best while charging.
+              During beta it can also fire on a television or other voices; turn it
+              off if that happens.
             </p>
 
             {heyZynkEnabled && !wakeWordModelReady && (

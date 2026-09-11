@@ -10,10 +10,15 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
 
   return (
     <>
-      {/* Icon button (always visible) - BOTTOM LEFT */}
+      {/* Icon button - BOTTOM LEFT. Conditionally RENDERED, not `hidden`:
+          the HTML hidden attribute is just UA-stylesheet `display: none`, and the
+          inline `display: 'flex'` below (added when the icon was centered during
+          the mobile pass) silently overrides it — which resurrected the toggle
+          under open modals and produced a second ✕ that closes the sidebar
+          underneath (re-reported on API Keys, desktop, 2026-09-11). */}
+      {!hideToggle && (
       <button
         onClick={handleToggle}
-        hidden={hideToggle}
         className={`sidebar-toggle-btn${isOpen ? ' sidebar-open' : ''}`}
         style={{
           position: 'fixed',
@@ -38,6 +43,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
       >
         {isOpen ? '✕' : icon}
       </button>
+      )}
 
       {/* Sidebar panel - WIDER (460px) */}
       <div
