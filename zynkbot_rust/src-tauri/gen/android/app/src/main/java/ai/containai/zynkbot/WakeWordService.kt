@@ -56,7 +56,7 @@ class WakeWordService : Service() {
         const val EMB_WINDOW = 16           // embeddings the classifier expects
         const val COOLDOWN_CHUNKS = 50      // ~4 seconds before re-triggering
         const val TRIGGER_CLIP_CHUNKS = 40  // ~3.2 s: covers the models' full context (~2.5 s)
-        const val MAX_LISTEN_MS = 12_000L   // hard cap on one dictation, ongoing speech cannot extend it
+        const val MAX_LISTEN_MS = 30_000L   // hard cap on one dictation, ongoing speech cannot extend it (12 s cut off dictated paragraphs; matches ZynkAssistantSession since 2026-09-12)
         const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
         const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers
         // Detections on audio quieter than this are ignored. Set from the Pixel's log of
@@ -195,6 +195,12 @@ class WakeWordService : Service() {
     // paused and every re-arm is refused, and it resumes when that recording ends.
     private var recordingCallback: AudioManager.AudioRecordingCallback? = null
     @Volatile private var pausedForOtherRecording = false
+    // A screen-off turn is in progress: from the start of its dictation until the reply
+    // has been spoken or the turn abandoned. NativeVoiceAnswerer.speaking only goes true
+    // once answer() starts, ~100 ms after Vosk's recording ends; the recording watch
+    // re-armed the detector in that gap, so it was live while the phone spoke the
+    // reply and fired on it (Pixel, 2026-09-12 16:41).
+    @Volatile private var answering = false
     @Volatile private var loopSessionId = -1
 
     // The last ~3 s of microphone audio and the model's score per chunk, so each firing
@@ -284,9 +290,10 @@ class WakeWordService : Service() {
         // as a new question. The web side's timers can't see native speech, so this is
         // enforced here, at the one entry point every start goes through. The re-arm
         // happens from NativeVoiceAnswerer when the speech ends.
-        if (NativeVoiceAnswerer.speaking || ZynkAssistantService.sessionActive || pausedForOtherRecording) {
+        if (NativeVoiceAnswerer.speaking || answering || ZynkAssistantService.sessionActive || pausedForOtherRecording) {
             val why = when {
                 NativeVoiceAnswerer.speaking -> "native speech"
+                answering -> "a screen-off turn"
                 ZynkAssistantService.sessionActive -> "an assistant session"
                 else -> "another app's recording"
             }
@@ -485,8 +492,8 @@ class WakeWordService : Service() {
                     val v = verifier ?: WakeVerifier.load(this).also { verifier = it }
                     val vScore = v?.score(flatEmb, EMB_WINDOW, EMB_SIZE) ?: -1f
                     Log.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS verifier=%.3f%s".format(level, vScore, if (strict) " (strict mode)" else ""))
-                    if (v != null && vScore >= 0f && vScore < v.threshold && v.enforcesOn(this)) {
-                        Log.i(TAG, "Detection ignored: verifier says not the owner (%.3f < %.2f)".format(vScore, v.threshold))
+                    if (v != null && vScore >= 0f && vScore <= v.threshold && v.enforcesOn(this)) {
+                        Log.i(TAG, "Detection ignored: verifier says not the owner (%.3f <= %.2f)".format(vScore, v.threshold))
                         saveTriggerClip(score)
                         consecutiveHighScores = 0
                         cooldownRemaining = COOLDOWN_CHUNKS / 2
@@ -664,6 +671,10 @@ class WakeWordService : Service() {
                 try { wakeLock?.acquire(90_000L) } catch (_: Exception) {}
                 return@Thread
             }
+            // Seen on the GrapheneOS Pixel (2026-09-12): the assistant role is held but
+            // Settings.Secure.voice_interaction_service was never set, so the system never
+            // bound ZynkAssistantService and every trigger landed here without a trace.
+            if (assistant == null) Log.w(TAG, "Assistant service not bound (voice_interaction_service unset?) — using in-service dictation")
             startKotlinVoskDictation()
         }.start()
     }
@@ -675,6 +686,7 @@ class WakeWordService : Service() {
             return
         }
 
+        answering = true
         val accumulated = StringBuilder()
         val silenceHandler = Handler(Looper.getMainLooper())
         var speechService: org.vosk.android.SpeechService? = null
@@ -718,10 +730,12 @@ class WakeWordService : Service() {
                 Log.e(TAG, "Screen-off Vosk error: ${e?.message}")
                 silenceHandler.removeCallbacksAndMessages(null)
                 releaseWakeLock()
+                endTurn(resume = true)
             }
             override fun onTimeout() {
                 Log.w(TAG, "Screen-off Vosk timeout — no speech detected")
                 releaseWakeLock()
+                endTurn(resume = true)
             }
         }
 
@@ -735,8 +749,16 @@ class WakeWordService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "Screen-off Vosk start failed: ${e.message}")
                 releaseWakeLock()
+                endTurn(resume = true)
             }
         }
+    }
+
+    /** The screen-off turn is over. Resume passive listening unless the transcript was
+     *  handed to the app, whose JS re-arms the detector itself once the reply is done. */
+    private fun endTurn(resume: Boolean) {
+        answering = false
+        if (resume) resumeMicAfterSession()
     }
 
     // Answer a screen-off transcript entirely natively: no Activity, no WebView,
@@ -748,6 +770,7 @@ class WakeWordService : Service() {
         if (transcript.isBlank()) {
             Log.i(TAG, "Empty transcript — not waking screen")
             releaseWakeLock()
+            endTurn(resume = true)
             return
         }
         // Local sanity gate, free: one word is noise, sixty is a TV programme.
@@ -756,14 +779,20 @@ class WakeWordService : Service() {
             Log.i(TAG, "Transcript rejected (${words.size} words) — not a question")
             releaseWakeLock()
             playClosingTone()
+            endTurn(resume = true)
             return
         }
+        // "Sent" tone before anything slow, as ZynkAssistantSession does: until
+        // 2026-09-12 this path played it after the spoken reply, so the user waited
+        // through the whole round trip in silence and then heard "sent" at the end.
         VoiceCommands.parse(transcript)?.let { cmd ->
             Thread {
+                playClosingTone()
                 val ok = VoiceCommands.execute(this, cmd)
                 Log.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
                 NativeVoiceAnswerer.say(this, if (ok) VoiceCommands.confirmation(cmd) else VoiceCommands.FAILED_LINE)
                 releaseWakeLock()
+                endTurn(resume = true)
             }.start()
             return
         }
@@ -774,12 +803,17 @@ class WakeWordService : Service() {
         try { wakeLock?.acquire(90_000L) } catch (_: Exception) {}
 
         Thread {
+            playClosingTone()
             val spoke = NativeVoiceAnswerer.answer(this, transcript)
             if (spoke) {
                 releaseWakeLock()
-                playClosingTone()
+                endTurn(resume = true)
             } else {
                 deliverTranscriptToApp(transcript)
+                // Same as before this flag existed: the recording watch used to re-arm
+                // here, and on GrapheneOS the app only opens when the notification is
+                // tapped, so waiting for its JS would leave the wake word off.
+                endTurn(resume = true)
             }
         }.start()
     }
@@ -921,6 +955,7 @@ class WakeWordService : Service() {
         if (running || audioThread?.isAlive == true) return
         if (kwsSession == null || melSession == null || embSession == null) return
         if (NativeVoiceAnswerer.speaking) return   // NativeVoiceAnswerer re-arms when speech ends
+        if (answering) return                       // endTurn() re-arms when the screen-off turn is over
         if (pausedForOtherRecording) return         // the recording watch re-arms when it ends
         if (ZynkAssistantService.sessionActive) return  // the session re-arms on hide
         Log.i(TAG, "Re-arming wake word after the assistant session")
