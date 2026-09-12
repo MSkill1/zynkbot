@@ -138,6 +138,22 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-051 — Assistant role held but the voice-interaction service never bound, so every "Hey Zynk" ran on the old in-service fallback (seen once; fresh install verified clean)
+**Status:** Observed on the GrapheneOS Pixel 2026-09-12 on an install that predated the 2026-09-11 onboarding changes; a wipe and fresh onboarding on the same phone set all three settings correctly and the session path ran. Cause of the stale state not established. Detection added: `WakeWordService` now logs "Assistant service not bound (voice_interaction_service unset?)" when it falls back.
+**Affected:** Any phone where `Settings.Secure.assistant` names Zynkbot but `voice_interaction_service` is empty. Read-only for an app, so it cannot be repaired from inside Zynkbot; re-picking the assistant in Settings → Default apps sets it.
+**Description:** `WakeWordService` hands each trigger to `ZynkAssistantService.instance`; when the system has not bound that service the instance is null and the trigger silently takes the retained in-service dictation path. That path had drifted from the session (sent tone after the reply, 12 s cap, detector re-armed during the spoken reply), which is how the 2026-09-12 wake-word bugs were found.
+**Post-beta decision (2026-09-12):** remove the fallback dictation path; when the assistant service is not bound, say so on screen with the settings shortcut. See ROADMAP.
+
+---
+
+### KI-052 — First spoken line after the TTS engine connects is inaudible (fixed)
+**Status:** Fixed on `voice` (2026-09-12, `45424bc`); verified on the Pixel: the spoken error line was heard on the first try after the fix.
+**Affected:** GrapheneOS Pixel with its bundled TTS engine (`app.grapheneos.speechservices`); not reproduced on the OnePlus.
+**Description:** On a fresh process the first `speak()` after the engine connected was reported played (engine logged time-to-first-audio; `speakNow` returned after 4.4 s) yet nothing came out of the speaker; the same line 30 s later was heard word for word. Seen as "no AI backend is configured" being silent on a fresh install.
+**Fix:** `NativeVoiceAnswerer.engine()` plays a 150 ms silent utterance and waits for it before the engine is handed out.
+
+---
+
 ### KI-009 — Unsyncing a device also removes the ZynkLink pairing
 **Status:** Fixed in this release  
 **Affected:** Users who have both ZynkSync and ZynkLink active between the same two devices  
