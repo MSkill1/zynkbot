@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { invoke } from '@tauri-apps/api/core';
 import "../styles/ContainmentModeSelector.css";
+import { confirmDialog } from '../utils/confirmDialog';
 
 const MODES = [
   { value: "witness", label: "Witness", description: "No filtering" },
@@ -16,7 +17,7 @@ export default function ContainmentModeSelector({ currentMode, onModeChange }) {
   const handleModeChange = async (newMode) => {
     // Show warning when switching to Child mode
     if (newMode === 'child') {
-      const confirmed = window.confirm(
+      const confirmed = await confirmDialog(
         `Child Safety Mode\n\n` +
         `This mode turns on the strongest content filtering available — designed for households where children will be using Zynkbot.\n\n` +
         `What it does:\n` +

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import '../styles/KnowledgeBaseManager.css';
+import { confirmDialog } from '../utils/confirmDialog';
 
 export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
   const [documents, setDocuments] = useState([]);
@@ -215,7 +216,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
       return;
     }
 
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       `Index all ${availableFiles.length} files?\n\n` +
       `⏱️ Embedding runs on CPU without GPU acceleration.\n` +
       `Large files (100KB+) can take 5–15 minutes each to embed.\n` +
@@ -263,7 +264,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
   };
 
   const handleRemoveDocument = async (doc) => {
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       `Remove "${doc.file_name}" from index?\n\n` +
       `This will delete all ${doc.chunk_count} chunks.\n` +
       `The file itself will not be deleted.`
@@ -289,7 +290,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
   };
 
   const handleReindexDocument = async (doc) => {
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       `Re-index "${doc.file_name}"?\n\n` +
       `This will regenerate all embeddings for this document.`
     );

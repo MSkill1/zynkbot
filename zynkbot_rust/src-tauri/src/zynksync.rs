@@ -2273,6 +2273,14 @@ impl ZynkSyncService {
             if !to_tombstone_locally.is_empty() {
                 println!("[ZynkSync] Applying {} remote tombstones locally", to_tombstone_locally.len());
                 self.delete_and_tombstone(&to_tombstone_locally).await?;
+                // If that emptied the device, drop the Einstein demo persona too. Clear All
+                // already does; this path did not, and the model kept addressing the user as
+                // "Albert" with no demo memories left (2026-09-12, KI-048 follow-up).
+                let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
+                    .fetch_one(&self.db_pool).await.unwrap_or(1);
+                if remaining == 0 {
+                    crate::db::remove_demo_persona_profile();
+                }
             }
 
             // 2. Absorb remote tombstones we don't have yet (protection for future syncs)

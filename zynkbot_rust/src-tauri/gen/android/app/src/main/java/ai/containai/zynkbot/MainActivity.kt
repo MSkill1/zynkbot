@@ -18,6 +18,7 @@ import android.provider.Settings
 import android.util.Log
 import android.view.WindowManager
 import android.webkit.JavascriptInterface
+import android.view.View
 import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -884,6 +885,9 @@ class MainActivity : TauriActivity() {
                 wv.invalidate()
             }
         }
+        // The surface may not exist yet at this point; onWindowFocusChanged finishes
+        // the job once it does (see there).
+        surfaceMayBeStale = true
         // Back from the system assistant-settings screen: resume the permission
         // queue exactly where it paused, so onboarding continues in order instead
         // of having raced ahead while the settings screen was up.
@@ -907,6 +911,33 @@ class MainActivity : TauriActivity() {
             }, 800)
         } else {
             handleScreenOffTranscript(intent)
+        }
+    }
+
+    // Set by onResume, consumed by the first onWindowFocusChanged(true) after it.
+    @Volatile private var surfaceMayBeStale = false
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || !surfaceMayBeStale) return
+        surfaceMayBeStale = false
+        // KI-040, second attempt. The invalidate posted from onResume was not enough:
+        // Android recreates the window surface AFTER onResume, on the next traversal,
+        // so that invalidate can land before there is a surface to draw into, and the
+        // WebView's renderer never produces a frame until the first touch (OnePlus
+        // fresh install, 2026-09-11 and again 2026-09-12 coming back from the
+        // assistant-settings screen: black until tapped). Focus arrives only once the
+        // window is attached with its surface. A one-frame visibility toggle makes the
+        // compositor render the WebView now, without waiting for input. It runs once
+        // per return (the flag), so it does not blink on ordinary focus changes.
+        webViewRef?.get()?.let { wv ->
+            wv.post {
+                wv.visibility = View.INVISIBLE
+                wv.post {
+                    wv.visibility = View.VISIBLE
+                    wv.invalidate()
+                }
+            }
         }
     }
 

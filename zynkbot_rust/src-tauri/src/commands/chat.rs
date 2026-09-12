@@ -817,14 +817,42 @@ pub async fn generate_reply(
 
     let mut extracted_facts: Vec<String> = Vec::new();
 
-    for line in reply_text.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("MEMORY_EXTRACT:") {
-            let fact = trimmed["MEMORY_EXTRACT:".len()..].trim().to_string();
+    // Tolerant parse (KI-049): small local models wrap the marker in markdown, echo the
+    // prompt's own heading as the label, or put the label on one line and the fact on
+    // the next. Lines consumed here are also hidden from the displayed reply below, so
+    // parser and display stay in step.
+    let reply_lines: Vec<&str> = reply_text.lines().collect();
+    let mut consumed_extract_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut heading_without_fact = false;
+    let mut li = 0;
+    while li < reply_lines.len() {
+        if let Some(rem) = extract_marker_remainder(reply_lines[li]) {
+            consumed_extract_lines.insert(li);
+            let mut fact = rem;
+            if fact.is_empty() {
+                // Label alone on its line: the fact is the next non-empty line, unless that
+                // line is another label or the PART 2 heading.
+                let mut lj = li + 1;
+                while lj < reply_lines.len() && reply_lines[lj].trim().is_empty() { lj += 1; }
+                if lj < reply_lines.len()
+                    && extract_marker_remainder(reply_lines[lj]).is_none()
+                    && !reply_lines[lj].trim_start().to_uppercase().starts_with("PART ")
+                {
+                    fact = reply_lines[lj].trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_')).trim().to_string();
+                    consumed_extract_lines.insert(lj);
+                    li = lj;
+                } else {
+                    heading_without_fact = true;
+                }
+            }
             if !fact.is_empty() {
                 extracted_facts.push(fact);
             }
         }
+        li += 1;
+    }
+    if extracted_facts.is_empty() && heading_without_fact {
+        println!("[RUST] ⚠️ Reply had a fact-extraction heading but no fact after it — nothing stored (model formatting, KI-049)");
     }
 
     // Stopwords excluded from both safety filters — too common to serve as grounding evidence.
@@ -1010,7 +1038,11 @@ pub async fn generate_reply(
 
         let filtered: Vec<String> = truncated
             .lines()
-            .filter_map(|line| {
+            .enumerate()
+            .filter_map(|(idx, line)| {
+                // Lines the tolerant parser consumed (marker, echoed heading, or the fact
+                // line under a bare label) never reach the display (KI-049).
+                if consumed_extract_lines.contains(&idx) { return None; }
                 let t = line.trim_start();
                 if t.contains("MEMORY_EXTRACT:") { return None; }
                 // Handle "PART N — ..." lines from local models following the two-part format.
@@ -2284,4 +2316,36 @@ mod tests {
     fn remember_with_nothing_after_it_is_empty_not_none() {
         assert_eq!(explicit_remember("Remember:").as_deref(), Some(""));
     }
+}
+
+/// Recognise a fact-extraction marker line tolerantly (KI-049). Returns the text after the
+/// marker; empty when the label stands alone and the fact follows on the next line.
+/// Accepts the canonical `MEMORY_EXTRACT:` and what small local models actually write:
+/// markdown wrappers (`**MEMORY_EXTRACT:**`, `- MEMORY_EXTRACT:`), a space for the
+/// underscore, the prompt's own headings echoed as labels ("FACT EXTRACTION:",
+/// "PERSONAL FACT EXTRACTION:", "PART 1 — FACT EXTRACTION:"), and a bare heading with no
+/// colon. 2026-09-12, llama3.2:3b wrote "FACT EXTRACTION:" on one line and
+/// "Albert has a dog named Mike." on the next, and the strict parser stored nothing, silently.
+fn extract_marker_remainder(line: &str) -> Option<String> {
+    // Drop markdown emphasis/code wrappers anywhere, then leading list/heading decoration.
+    let cleaned: String = line.chars().filter(|c| !matches!(c, '*' | '`')).collect();
+    let mut t: &str = cleaned.trim().trim_start_matches(|c: char| matches!(c, '-' | '•' | '#' | '>' | '_' | ' ' | '\t'));
+    // The local prompt's "PART 1 — " prefix.
+    if t.get(..6).map_or(false, |h| h.eq_ignore_ascii_case("part 1")) {
+        t = t[6..].trim_start_matches(|c: char| matches!(c, ' ' | '\u{2014}' | '\u{2013}' | '-' | ':'));
+    }
+    let upper = t.to_uppercase();
+    for marker in ["MEMORY_EXTRACT", "MEMORY EXTRACT", "PERSONAL FACT EXTRACTION", "FACT EXTRACTION"] {
+        if !upper.starts_with(marker) { continue; }
+        let rest = match t.get(marker.len()..) { Some(r) => r, None => return None };
+        let rest_t = rest.trim_start();
+        if let Some(after) = rest_t.strip_prefix(':') {
+            return Some(after.trim().trim_matches(|c: char| matches!(c, '_' | ':')).trim().to_string());
+        }
+        // No colon: only a bare heading counts (a sentence that merely mentions the
+        // marker must not be mistaken for one).
+        if rest_t.is_empty() { return Some(String::new()); }
+        return None;
+    }
+    None
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirmDialog } from '../utils/confirmDialog';
 
 // Groups sessions by relative date for display
 function dateLabel(dateStr) {
@@ -130,7 +131,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
 
   const deleteSession = async (e, sessionId) => {
     e.stopPropagation();
-    if (!window.confirm("Delete this conversation? This cannot be undone.")) return;
+    if (!await confirmDialog("Delete this conversation? This cannot be undone.")) return;
     try {
       await invoke("delete_conversation_session", { sessionId, userId });
       setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
@@ -144,7 +145,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   };
 
   const clearAllHistory = async () => {
-    if (!window.confirm("Delete ALL conversation history? This cannot be undone.")) return;
+    if (!await confirmDialog("Delete ALL conversation history? This cannot be undone.")) return;
     try {
       await invoke("clear_conversation_history", { userId });
       setSessions([]);

@@ -64,17 +64,25 @@ echo ""
 # Memory database (ask — this is personal data)
 # ============================================
 DB_DIR="$HOME/.local/share/zynkbot"
-if [ -d "$DB_DIR" ]; then
+# WebKitGTK profile: localStorage (dictation source, preferred model, wake word, TTS,
+# onboarding flags), cookies and cache. Tauri keys it by the app identifier, not the
+# app name, so it survived an uninstall and a "fresh" install came back with the old
+# preferences (KI-048, found on Windows 2026-09-12; same layout here).
+WV_DIR="$HOME/.local/share/ai.containai.zynkbot"
+WV_CACHE="$HOME/.cache/ai.containai.zynkbot"
+if [ -d "$DB_DIR" ] || [ -d "$WV_DIR" ]; then
     echo "Your memory database is stored at: $DB_DIR"
     echo "This contains all memories Zynkbot has learned about you."
+    echo "Saved preferences (dictation source, preferred model, wake word) are at: $WV_DIR"
     echo ""
-    read -rp "Delete your memory database? This cannot be undone. [y/N] " del_db
+    read -rp "Delete your memory database and saved preferences? This cannot be undone. [y/N] " del_db
     if [[ "$del_db" =~ ^[Yy]$ ]]; then
-        rm -rf "$DB_DIR"
-        echo "Memory database deleted."
+        rm -rf "$DB_DIR" "$WV_DIR" "$WV_CACHE"
+        echo "Memory database and saved preferences deleted - the next install will behave as a new user."
     else
         echo "Memory database kept at: $DB_DIR"
-        echo "You can delete it manually at any time."
+        echo "Saved preferences kept at: $WV_DIR"
+        echo "You can delete them manually at any time: rm -rf \"$DB_DIR\" \"$WV_DIR\" \"$WV_CACHE\""
     fi
 else
     echo "No memory database found."

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import VoiceButton from './VoiceButton';
+import { confirmDialog } from '../utils/confirmDialog';
 
 export default function ZChatModal({
   isOpen,
@@ -141,7 +142,7 @@ export default function ZChatModal({
   };
 
   const handleClearHistory = async () => {
-    if (!window.confirm('Clear all chat history with this user?')) return;
+    if (!await confirmDialog('Clear all chat history with this user?')) return;
     try {
       await invoke('zchat_clear_history', { withDeviceId: device.device_id });
       setMessages([]);

@@ -201,8 +201,10 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Mobile UI
 
-### KI-040 — Black screen when returning to the app after a while away (fixed; verification pending)
-**Status:** Fixed on `voice` (2026-09-11); still to be confirmed by leaving the app ~30 s and returning
+### KI-040 — Black screen when returning to the app after a while away (reopened 2026-09-12; second fix pending verification)
+**Status:** First fix (2026-09-11) was not enough: on a fresh OnePlus install on 2026-09-12, coming back from the assistant-settings screen still showed black until the first tap. Second fix on `voice` (2026-09-12), to be verified on the next APK by repeating that exact flow.
+**Why the first fix missed:** it invalidated the WebView from `onResume`, but Android recreates the window surface after `onResume`, so the invalidate could land before there was a surface to draw into; nothing scheduled a frame once the surface appeared, and the first touch was what finally forced one.
+**Second fix:** `onResume` sets a flag; the first `onWindowFocusChanged(true)` after it, which fires only once the window is attached with its surface, consumes the flag and does a one-frame visibility toggle on the WebView, forcing the compositor to render without input. Once per return, so no blink on ordinary focus changes.
 **Description:** Android drops the window surface while another activity is up for long (16 s in Settings during onboarding did it). On return the WebView did not draw into the new surface until a touch generated input, so the app sat black. Tauri's base activity only resumes plugins.
 **Fix:** `onResume` calls the WebView's `onResume`/`resumeTimers` and posts `requestLayout`/`invalidate`. Resume-side only: pausing the WebView in `onPause` would stop the JS the hands-free path relies on while the app is in the background.
 
@@ -358,6 +360,31 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 **Affected:** Desktop (Windows seen; Linux and Mac exposed the same way)
 **Description:** Pull Model and Stop Model shell out to the `ollama` CLI by bare name. An app instance launched before Ollama was installed, or from a launcher with a minimal environment, does not have the PATH entry the installer added, so the spawn failed with "program not found" while Ollama itself was serving fine on 11434.
 **Fix:** the CLI is looked up on PATH first and then in the stock install locations (`%LOCALAPPDATA%\Programs\Ollama`, `C:\Program Files\Ollama`, `/usr/local/bin`, `/usr/bin`, Homebrew, the Mac app bundle). The error now names the path it tried and suggests a restart.
+
+---
+
+### KI-047 — Confirmation dialogs skipped on Windows: Einstein demo loaded and "Clear All" deleted memories without asking (fixed)
+**Status:** Fixed on `voice` (2026-09-12); verified on the Windows desktop dev build, Linux and Android to be re-checked on the next builds
+**Affected:** Windows desktop. Linux and Android were unaffected.
+**Description:** Every confirmation in the app used the browser's synchronous `window.confirm()`. On Windows the WebView2 engine hands JavaScript dialogs to the host through an event it does not await, so a `confirm()` raised from a click handler returned `true` before any dialog appeared. Only a confirm reached after an `await` (a later tick) displayed. Seen 2026-09-12 on a fresh install: loading the Einstein demo skipped its "load this demo?" prompt, and Clear All skipped both of its warnings and deleted 59 memories immediately, stopping only at the conversation-history prompt that comes after the delete call. Linux (WebKitGTK) and Android render the dialog natively, which is why it never showed there. (A dev-build detail seen at the same time, the success notification appearing twice, is React StrictMode double-running effects and is not this bug.)
+**Fix:** a shared `confirmDialog()` in `src/utils/confirmDialog.js` wraps the Tauri dialog plugin's native `confirm()`, which shows a real OS dialog from Rust and resolves with the user's actual answer on Windows, Linux, macOS and Android. All 25 `window.confirm` call sites across 10 files now `await confirmDialog(...)`; two handlers (clear conversation, exit onboarding) became async to do so. `dialog:default` in `tauri.conf.json` already grants the permission, so no Rust change was needed. Outside the Tauri shell (plain browser) it falls back to `window.confirm`, which works there.
+**Follow-up:** `alert()` uses the same WebView2 path. It carries no return value, so nothing is bypassed, but a sync `alert()` in a click handler may go unshown on Windows. Migrating those to the plugin's `message()` is a separate, lower-priority change.
+
+---
+
+### KI-048 — "Fresh" install inherited old preferences: the uninstaller never removed the WebView profile (fixed)
+**Status:** Fixed on `voice` (2026-09-12) for Windows; Linux uninstaller updated on the same reasoning, to be verified on the next Linux boot
+**Affected:** Windows and Linux desktop. Android is unaffected (uninstalling the app removes its WebView data).
+**Description:** The app's remembered preferences (`zynkbot_voice_input_source`, `zynkbot_preferred_model`, `zynkbot_hey_zynk_enabled`, `zynkbot_tts_enabled`, `zynkbot_keep_screen_awake`, `zynkbot_web_search_auto`, onboarding flags) live in the WebView's localStorage. Tauri keeps that profile in a folder named after the app identifier, `%LOCALAPPDATA%i.containai.zynkbot` on Windows (`~/.local/share/ai.containai.zynkbot` on Linux), not in the `zynkbot` data folder the uninstaller wiped. On the 2026-09-12 fresh-install test the profile from 2026-08-30 survived, so the new install started with dictation set to OpenAI (chosen before Windows had Vosk) and the preferred backend already "custom", silently invalidating the new-user test.
+**Fix:** `uninstall.bat` "Delete ALL data" now removes the WebView profile as a third location and names it in the prompt; `uninstall.sh` does the same. Until an install is redone, the folder can be removed by hand with the app closed.
+
+---
+
+### KI-049 — A stated fact was "extracted" but no memory was created: strict marker parsing + prompt heading echoed by small models (fixed)
+**Status:** Fixed on `voice` (2026-09-12); verify on desktop with a small local model and on the next APK
+**Affected:** All platforms; most likely with small local models (3B class), which the phone relies on
+**Description:** "I have a dog named Mike" with llama3.2:3b produced `FACT EXTRACTION:` on one line and `Albert has a dog named Mike.` on the next. The prompt's own section heading was "PART 1 — FACT EXTRACTION:", so the model echoed the heading as its label instead of the required `MEMORY_EXTRACT:` marker. The parser accepted only a line beginning with the exact marker, found nothing, and no log recorded the miss; the display stripper hides only the exact marker, so the model's heading leaked into the visible reply and looked like a successful extraction.
+**Fix:** (1) prompt headings no longer resemble output labels ("HOW TO SAVE PERSONAL FACTS", "PART 1 — MEMORY_EXTRACT") and both prompt variants state that no other label or heading may be written; (2) the parser tolerates markdown wrappers, a space for the underscore, the echoed headings, a bare heading with the fact on the next line, and hides every consumed line from the display; (3) a warning is logged when a heading appears with no fact after it. Also: the sync-tombstone path now removes the Einstein demo persona when it empties the device, matching Clear All.
 
 ---
 

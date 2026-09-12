@@ -54,6 +54,24 @@ pub fn get_user_profile_path() -> PathBuf {
     get_app_data_dir().join("user_profile.json")
 }
 
+/// Remove user_profile.json only if it is the Einstein demo persona (`demo_persona: true`).
+/// A real user's profile is never touched. Clear All deletes the file unconditionally; the
+/// sync-tombstone path that can empty a device did not, so after the 2026-09-12 test the
+/// model kept addressing the user as "Albert" with no demo memories left (KI-048 follow-up).
+pub fn remove_demo_persona_profile() -> bool {
+    let path = get_user_profile_path();
+    let Ok(text) = std::fs::read_to_string(&path) else { return false };
+    let is_demo = serde_json::from_str::<serde_json::Value>(&text).ok()
+        .and_then(|v| v.get("demo_persona").cloned())
+        .map(|d| d.as_bool().unwrap_or(false) || d.as_str().map_or(false, |s| s.eq_ignore_ascii_case("true")))
+        .unwrap_or(false);
+    if is_demo && std::fs::remove_file(&path).is_ok() {
+        println!("[Memory] Removed the demo persona (user_profile.json) — no memories left on this device");
+        return true;
+    }
+    false
+}
+
 pub fn get_db_url() -> String {
     format!("sqlite://{}?mode=rwc", get_db_path().display())
 }

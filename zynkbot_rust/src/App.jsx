@@ -30,6 +30,7 @@ import SnapInModal from "./components/SnapInModal";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
 import VoiceModal from "./components/VoiceModal";
 import { useVoiceSession, parseVoiceCommand, shouldSpeakReply, nativeTurnsToMessages } from './hooks/useVoiceSession';
+import { confirmDialog, messageDialog } from './utils/confirmDialog';
 
 // API Base URL - DEPRECATED: All API calls now use Tauri commands
 // Keeping this for legacy components that haven't been migrated yet (ZynkSync, ZynkLink, etc.)
@@ -625,8 +626,8 @@ export default function App() {
 
   // Voice input now handled by VoiceButton component (using whisper.cpp)
 
-  const handleClearConversation = () => {
-    if (window.confirm('Clear conversation history? This will remove all messages from the current chat.')) {
+  const handleClearConversation = async () => {
+    if (await confirmDialog('Clear conversation history? This will remove all messages from the current chat.')) {
       setMessages([]);
     }
   };
@@ -1447,7 +1448,7 @@ export default function App() {
               }
 
               try {
-                const confirmed = window.confirm(
+                const confirmed = await confirmDialog(
                   'Load Einstein Demo\n\n' +
                   'This will load Einstein\'s 59 pre-built memories and relationships into your memory database.\n\n' +
                   'Make sure you have already cleared your memories in Memory Manager before continuing.\n\n' +
@@ -1471,13 +1472,14 @@ export default function App() {
                 console.log('Einstein seed applied:', result);
 
                 button.textContent = '✅ Success! Reloading...';
-                alert(
+                // Awaited native dialog: a plain alert() does not block on Windows, so the
+                // reload below fired with the dialog still up and it appeared twice (KI-047).
+                await messageDialog(
                   `✅ Einstein Demo Loaded!\n\n` +
                   `📚 Memories: ${result.loaded_count}\n` +
                   `🔗 Relationships: ${result.relationships_created || 0}\n\n` +
                   `Check Memory Manager to explore the memory graph!`
                 );
-                // Reload immediately after function completes (not after 1 second)
                 window.location.reload();
               } catch (error) {
                 console.error('Failed to load Einstein demo:', error);

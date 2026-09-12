@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import CostGuideModal from "./CostGuideModal";
 import "../styles/APIKeyModal.css";
+import { confirmDialog } from '../utils/confirmDialog';
 
 const POPULAR_MODELS = [
   "llama3.2:3b",
@@ -306,7 +307,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
         const peers = await invoke('get_zynksync_peers');
         const onlinePeers = (peers || []).filter(p => p.is_online);
         if (onlinePeers.length > 0) {
-          const confirmed = window.confirm(
+          const confirmed = await confirmDialog(
             `Send this key to your ${onlinePeers.length} other device${onlinePeers.length > 1 ? 's' : ''}?\n\n` +
             `Your API key travels encrypted, peer-to-peer, directly between your devices. ` +
             `It does not touch the internet.`
@@ -329,7 +330,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   };
 
   const handleDelete = async (providerKey) => {
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       `Remove ${providerKey}?\n\n` +
       `You can add it back later if needed.`
     );
@@ -421,7 +422,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   };
 
   const handleRemoveCustom = async () => {
-    if (!window.confirm("Remove custom endpoint configuration?")) return;
+    if (!await confirmDialog("Remove custom endpoint configuration?")) return;
     try {
       await invoke('remove_api_key', { key: 'CUSTOM_API_URL' });
       await invoke('remove_api_key', { key: 'CUSTOM_API_KEY' });
@@ -1042,7 +1043,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                       const peers = await invoke('get_zynksync_peers');
                       const onlinePeers = (peers || []).filter(p => p.is_online);
                       if (onlinePeers.length > 0) {
-                        const confirmed = window.confirm(
+                        const confirmed = await confirmDialog(
                           `Send R2 backup credentials to your ${onlinePeers.length} other device${onlinePeers.length > 1 ? 's' : ''}?\n\n` +
                           `Credentials travel encrypted, peer-to-peer — they don't touch the internet.`
                         );

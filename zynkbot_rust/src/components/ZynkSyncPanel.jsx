@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { confirmDialog } from '../utils/confirmDialog';
 
 export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, onIdentityAdopted, onMemoriesSynced }) {
   const [peers, setPeers] = useState([]);
@@ -133,7 +134,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
 
   // Leave the entire sync network
   const handleUnsync = useCallback(async () => {
-    if (!window.confirm(
+    if (!await confirmDialog(
       'Leave the sync network?\n\n' +
       'This device will disconnect from all other devices. ' +
       'Your memories stay on this device — nothing is deleted. ' +
@@ -159,7 +160,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   }, [onIdentityAdopted]);
 
   const handleExpelDevice = useCallback(async (deviceId, deviceName) => {
-    if (!window.confirm(
+    if (!await confirmDialog(
       `Remove "${deviceName}" from the network?\n\n` +
       'This device will be removed from all other devices in the network. ' +
       'If the device is online it will also be notified.\n\n' +
@@ -230,7 +231,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       });
 
       if (peer.user_id && peer.user_id !== userId) {
-        const confirmed = window.confirm(
+        const confirmed = await confirmDialog(
           `⚠️ IDENTITY SYNC\n\n` +
           `Joining this network will:\n` +
           `• Migrate your memories to match the host's identity\n` +

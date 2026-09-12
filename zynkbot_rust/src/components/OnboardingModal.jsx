@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import '../styles/OnboardingModal.css';
+import { confirmDialog } from '../utils/confirmDialog';
 
 export default function OnboardingModal({ isOpen, onClose, userId }) {
   const [currentStep, setCurrentStep] = useState(0);
@@ -109,8 +110,8 @@ export default function OnboardingModal({ isOpen, onClose, userId }) {
     }
   };
 
-  const handleExit = () => {
-    if (window.confirm('Exit onboarding? You can always run it later from the sidebar. Anything you\'ve answered so far has already been saved.')) {
+  const handleExit = async () => {
+    if (await confirmDialog('Exit onboarding? You can always run it later from the sidebar. Anything you\'ve answered so far has already been saved.')) {
       onClose();
     }
   };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import '../styles/UserIdentityModal.css';
+import { confirmDialog } from '../utils/confirmDialog';
 
 export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl, sessionId }) {
   const [identity, setIdentity] = useState(null);
@@ -70,7 +71,7 @@ export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl, session
   };
 
   const handleResetIdentity = async () => {
-    const confirmed = window.confirm(
+    const confirmed = await confirmDialog(
       '⚠️ DANGER: This will create a NEW User ID for this device!\n\n' +
       'Current memories will remain in the database but will be associated with your OLD User ID.\n' +
       'You will start fresh with a new identity.\n\n' +

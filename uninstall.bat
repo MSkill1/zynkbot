@@ -60,31 +60,41 @@ REM the same user and a "fresh install" is not fresh -- which silently invalidat
 REM any first-run or onboarding test.
 set DB_DIR=%LOCALAPPDATA%\zynkbot
 set ID_DIR=%APPDATA%\zynkbot
+REM WebView2 profile: localStorage (dictation source, preferred model, wake word,
+REM TTS, onboarding flags), cookies and cache. Keyed by the Tauri identifier, not
+REM the app name, so it was missed until 2026-09-12 (KI-048): a "fresh" install
+REM came back with the old preferences, e.g. dictation defaulting to OpenAI.
+set WV_DIR=%LOCALAPPDATA%\ai.containai.zynkbot
 set FOUND_DATA=0
 if exist "%DB_DIR%" set FOUND_DATA=1
 if exist "%ID_DIR%" set FOUND_DATA=1
+if exist "%WV_DIR%" set FOUND_DATA=1
 if "%FOUND_DATA%"=="1" (
-    echo Zynkbot keeps your data in two locations:
+    echo Zynkbot keeps your data in three locations:
     echo.
     echo   %DB_DIR%
     echo     memory database, API keys, ZynkSync TLS identity
     echo   %ID_DIR%
     echo     user id and device id
+    echo   %WV_DIR%
+    echo     saved preferences (dictation source, preferred model, wake word, onboarding)
     echo.
     echo Keeping these means a future install is recognised as the SAME user.
-    echo Delete both if you are testing a first-run or new-user install.
+    echo Delete all three if you are testing a first-run or new-user install.
     echo.
     set /p DEL_DB="Delete ALL Zynkbot data? This cannot be undone. [y/N]: "
     if /i "!DEL_DB!"=="y" (
         if exist "%DB_DIR%" rmdir /s /q "%DB_DIR%"
         if exist "%ID_DIR%" rmdir /s /q "%ID_DIR%"
+        if exist "%WV_DIR%" rmdir /s /q "%WV_DIR%"
         echo All Zynkbot data deleted - the next install will behave as a new user.
     ) else (
-        echo Data kept in both locations.
+        echo Data kept in all three locations.
         echo NOTE: the next install will NOT behave as a new user.
-        echo To clear it later, run these two commands:
+        echo To clear it later, run these three commands:
         echo   rmdir /s /q "%DB_DIR%"
         echo   rmdir /s /q "%ID_DIR%"
+        echo   rmdir /s /q "%WV_DIR%"
     )
 ) else (
     echo No Zynkbot data found.

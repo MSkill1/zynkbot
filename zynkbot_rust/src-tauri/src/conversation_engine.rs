@@ -265,7 +265,7 @@ After you indicate a web search is needed, the user will be shown your suggested
         }
 
         if is_api_model {
-            system_prompt.push_str(&format!(r#"PERSONAL FACT EXTRACTION:
+            system_prompt.push_str(&format!(r#"HOW TO SAVE PERSONAL FACTS
 Examine every clause in the user's message — whether phrased as a statement, question, or aside — for personal facts the user is stating or implying. A question can contain a fact just as clearly as a statement.
 
 To save a fact, include this line at the end of your response:
@@ -273,6 +273,7 @@ MEMORY_EXTRACT: [all personal facts combined into one third-person statement sta
 
 Rules:
 - At most ONE MEMORY_EXTRACT line per message. Combine all facts into a single statement.
+- That line must begin with the exact text MEMORY_EXTRACT: — never write any other label or heading (such as "FACT EXTRACTION" or "PART 1") in your reply.
 - Omit MEMORY_EXTRACT entirely if no personal facts are present — this is the expected outcome for most messages.
 - Do NOT emit for: general knowledge, chitchat, current events, or messages that are only asking about the user's existing memories with no new fact stated.
 
@@ -292,11 +293,11 @@ When NOT to extract:
 "#
             ));
         } else {
-            system_prompt.push_str(&format!(r#"PART 1 — FACT EXTRACTION:
+            system_prompt.push_str(&format!(r#"PART 1 — MEMORY_EXTRACT
 Scan the user's message for personal facts (name, age, job, location, family, pets, feelings, preferences, plans, health). If ANY personal facts are present, the VERY FIRST LINE of your output MUST be:
 MEMORY_EXTRACT: [one third-person statement combining all facts, starting with "{subject_label}"]
 
-Output MEMORY_EXTRACT before your conversational response. If no personal facts exist, omit it entirely and go straight to PART 2.
+Output MEMORY_EXTRACT before your conversational response. If no personal facts exist, omit it entirely and go straight to PART 2. Write that line exactly as shown, beginning with MEMORY_EXTRACT: — do not write any other label or heading (such as "FACT EXTRACTION") in your reply.
 
 Examples (first line of output when facts are present):
 - "I have a dog named Rex." → MEMORY_EXTRACT: {subject_label} has a dog named Rex.

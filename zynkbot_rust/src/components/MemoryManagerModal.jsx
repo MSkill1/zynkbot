@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import MemoryReportModal from './MemoryReportModal';
 import MemoryGraphModal from "./MemoryGraphModal";
 import "../styles/MemoryManagerModal.css";
+import { confirmDialog } from '../utils/confirmDialog';
 
 // Auto-masks MM/DD/YYYY input and converts to YYYY-MM-DD for the filter
 function maskDate(value) {
@@ -126,7 +127,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   };
 
   const handleRestore = async () => {
-    if (!window.confirm('Restore memories from cloud backup? Memories already on this device will be skipped.')) return;
+    if (!await confirmDialog('Restore memories from cloud backup? Memories already on this device will be skipped.')) return;
     setBackupStatus('busy'); setBackupMsg('Restoring…');
     try {
       const res = await invoke('restore_memories_from_r2', { userId });
@@ -289,7 +290,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   // Delete memory
   const handleDelete = async (memoryId) => {
-    if (!window.confirm('Are you sure you want to delete this memory?')) {
+    if (!await confirmDialog('Are you sure you want to delete this memory?')) {
       return;
     }
 
@@ -315,7 +316,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   // Delete relationship
   const handleDeleteRelationship = async (linkId) => {
-    if (!window.confirm('Are you sure you want to delete this relationship?')) {
+    if (!await confirmDialog('Are you sure you want to delete this relationship?')) {
       return;
     }
 
@@ -362,7 +363,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     }
 
     const count = selectedMemoryIds.length;
-    if (!window.confirm(`Are you sure you want to delete ${count} ${count === 1 ? 'memory' : 'memories'}?`)) {
+    if (!await confirmDialog(`Are you sure you want to delete ${count} ${count === 1 ? 'memory' : 'memories'}?`)) {
       return;
     }
 
@@ -486,7 +487,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   // Clear all memories for this user
   const handleClearAllMemories = async () => {
     // Double confirmation with strong warning
-    const firstConfirm = window.confirm(
+    const firstConfirm = await confirmDialog(
       '⚠️ WARNING: This will DELETE ALL memories for this user!\n\n' +
       'This includes:\n' +
       '- All memory content\n' +
@@ -501,7 +502,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     }
 
     // Second confirmation - make them type to confirm
-    const secondConfirm = window.confirm(
+    const secondConfirm = await confirmDialog(
       '⚠️ FINAL CONFIRMATION ⚠️\n\n' +
       'You are about to permanently delete ALL memories.\n\n' +
       'Click OK to proceed with deletion, or Cancel to abort.'
@@ -516,7 +517,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         userId: userId
       });
 
-      const clearHistory = window.confirm(
+      const clearHistory = await confirmDialog(
         `Cleared ${result.deleted_count} memories.\n\nWould you also like to clear your conversation history for a complete fresh start?`
       );
       if (clearHistory) {
