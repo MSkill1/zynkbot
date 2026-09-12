@@ -257,8 +257,27 @@ object NativeVoiceAnswerer {
         if (!initOk) { Log.w(TAG, "TTS init failed"); return null }
         engine.language = Locale.US
         pickBestVoice(engine)
+        warmUp(engine)
         tts = engine
         return engine
+    }
+
+    /** The first utterance after the engine connects is reported as played but nothing
+     *  reaches the speaker (GrapheneOS TTS on the Pixel, 2026-09-12: the spoken error
+     *  line was "done" in 4.4 s and inaudible; the same line 30 s later was heard word
+     *  for word). A short silent utterance takes that hit instead of the user's line. */
+    private fun warmUp(engine: TextToSpeech) {
+        val done = CountDownLatch(1)
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) { done.countDown() }
+            @Deprecated("required override") override fun onError(utteranceId: String?) { done.countDown() }
+            override fun onError(utteranceId: String?, errorCode: Int) { done.countDown() }
+        })
+        if (engine.playSilentUtterance(150, TextToSpeech.QUEUE_FLUSH, "zynk-warmup") == TextToSpeech.SUCCESS) {
+            done.await(2000, TimeUnit.MILLISECONDS)
+        }
+        Log.i(TAG, "TTS warmed up")
     }
 
     /** The engine's default en-US voice is whatever it falls back to when its good voice
