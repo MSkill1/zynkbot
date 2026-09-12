@@ -15,9 +15,16 @@ function dateLabel(dateStr) {
   return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
-function groupSessions(sessions) {
+function groupSessions(sessions, currentSessionId) {
   const groups = {};
+  // The thread the user is in right now goes first, above Pinned. Without this it
+  // sat unmarked under "Today", below every pinned thread, and the user could not
+  // find it to pin it (2026-09-11). It only appears once its first exchange has
+  // been saved — a thread with no messages yet has no row to show.
+  const current = currentSessionId ? sessions.find((s) => s.session_id === currentSessionId) : null;
+  if (current) groups["Current thread"] = [current];
   for (const s of sessions) {
+    if (current && s.session_id === current.session_id) continue;
     // Pinned conversations sit in their own group at the top, whatever their date.
     const label = s.pinned ? "Pinned" : dateLabel(s.last_active);
     if (!groups[label]) groups[label] = [];
@@ -26,7 +33,7 @@ function groupSessions(sessions) {
   return groups;
 }
 
-export default function ConversationHistoryPanel({ isOpen, onClose, userId, containmentMode, onResume }) {
+export default function ConversationHistoryPanel({ isOpen, onClose, userId, containmentMode, onResume, currentSessionId }) {
   const [sessions, setSessions] = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -205,7 +212,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     }
   };
 
-  const groups = groupSessions(sessions);
+  const groups = groupSessions(sessions, currentSessionId);
 
   return (
     <div className="conv-history-panel" style={panelStyle}>
@@ -345,6 +352,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                       padding: "10px 20px 10px 16px",
                       cursor: "pointer",
                       borderBottom: "1px solid rgba(68,71,90,0.4)",
+                      borderLeft: session.session_id === currentSessionId ? "3px solid #8be9fd" : "3px solid transparent",
                       display: "flex",
                       justifyContent: "space-between",
                       alignItems: "flex-start",

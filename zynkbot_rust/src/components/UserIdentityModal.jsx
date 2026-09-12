@@ -236,20 +236,30 @@ export default function UserIdentityModal({ isOpen, onClose, apiBaseUrl, session
             </p>
           </section>
         </div>
-      </div>
 
-      {/* Floating close button - bottom right, like settings panel */}
-      <button
-        onClick={onClose}
-        style={{
-          position: 'fixed', bottom: '20px', right: '20px',
-          width: '56px', height: '56px', borderRadius: '50%',
-          background: '#44475a', color: '#f8f8f2', border: 'none',
-          fontSize: '1.5rem', cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }}
-      >✕</button>
+        {/* Close button — sticky inside the scrolling panel so it hugs the panel's
+            own bottom-right corner at every window size (same fix as the API Keys
+            modal, KI-041): position:fixed pinned it to the VIEWPORT corner, which
+            floats far right of the centred panel on desktop and stacks on top of
+            anything else living in that corner. */}
+        <div style={{
+          position: 'sticky', bottom: '0px',
+          display: 'flex', justifyContent: 'flex-end',
+          pointerEvents: 'none', marginTop: '8px',
+        }}>
+          <button
+            onClick={onClose}
+            style={{
+              width: '56px', height: '56px', borderRadius: '50%',
+              background: '#44475a', color: '#f8f8f2', border: 'none',
+              fontSize: '1.5rem', cursor: 'pointer',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+              pointerEvents: 'auto',
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}
+          >✕</button>
+        </div>
+      </div>
     </div>
   );
 }

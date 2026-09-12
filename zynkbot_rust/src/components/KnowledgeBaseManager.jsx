@@ -457,9 +457,25 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
                   <p>No documents indexed yet.</p>
                   <p className="kb-hint">
                     {window.AndroidPaths
-                      ? 'Tap "Add files" to import documents, then index them below.'
+                      ? 'Pick documents on this phone to add them, then index them.'
                       : 'Add files to your KB folder and index them below.'}
                   </p>
+                  {/* The same button as in the Available Files header, repeated here
+                      because this empty state is what a new user sees first — the
+                      header copy sat below the fold on a phone and went unfound
+                      (2026-09-11). On Android the system picker is the only way in
+                      (KI-015), so this is the button. */}
+                  {window.AndroidPaths?.copyToKnowledgeBase && (
+                    <button
+                      onClick={importOnAndroid}
+                      disabled={isScanning || isIndexing || isImporting}
+                      className="kb-scan-button"
+                      style={{ marginTop: '10px' }}
+                      title="Pick documents on this phone to add to your knowledge base"
+                    >
+                      {isImporting ? 'Importing…' : '📂 Add files'}
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="kb-document-list">

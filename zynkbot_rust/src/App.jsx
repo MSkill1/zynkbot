@@ -2399,6 +2399,7 @@ export default function App() {
       />
       <UserIdentityModal isOpen={showUserIdentity} onClose={() => setShowUserIdentity(false)} apiBaseUrl={API_BASE_URL} sessionId={sessionId} />
       <ConversationHistoryPanel
+        currentSessionId={sessionId}
         isOpen={showConversationHistory}
         onClose={() => setShowConversationHistory(false)}
         userId={userId}
