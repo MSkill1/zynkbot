@@ -2501,6 +2501,8 @@ export default function App() {
         onVoiceSourceChange={voice.setVoiceInputSource}
         heyZynkEnabled={voice.heyZynkEnabled}
         onHeyZynkChange={voice.setHeyZynkEnabled}
+        fruitlessTone={voice.fruitlessTone}
+        onFruitlessToneChange={voice.setFruitlessTone}
         wakeWordModelReady={voice.wakeWordModelReady}
         wakeWordDownloadProgress={voice.wakeWordDownloadProgress}
         wakeWordDownloadError={voice.wakeWordDownloadError}

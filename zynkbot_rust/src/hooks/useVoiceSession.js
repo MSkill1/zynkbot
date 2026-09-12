@@ -136,6 +136,9 @@ export function useVoiceSession({ setMessages }) {
   const [voiceInputSource, setVoiceInputSourceRaw] = useState(
     () => localStorage.getItem('zynkbot_voice_input_source') || 'vosk'
   );
+  const [fruitlessTone, setFruitlessToneRaw] = useState(
+    () => localStorage.getItem('zynkbot_fruitless_tone') === 'true'
+  );
   const [keepScreenAwake, setKeepScreenAwakeRaw] = useState(
     // Replaces 'zynkbot_conversation_mode', whose toggle was labelled "Keep screen
     // awake" but also re-opened the microphone after every reply. That loop is gone;
@@ -170,6 +173,11 @@ export function useVoiceSession({ setMessages }) {
     // The hands-free assistant session runs natively and cannot read localStorage;
     // mirror the choice into Kotlin prefs so it dictates with the same engine (2026-09-08).
     try { window.AndroidPaths?.setVoiceInputSource?.(val); } catch (_) {}
+  };
+  const setFruitlessTone = (val) => {
+    setFruitlessToneRaw(val);
+    localStorage.setItem('zynkbot_fruitless_tone', val);
+    try { window.AndroidPaths?.setFruitlessTone?.(!!val); } catch (_) {}
   };
   const setKeepScreenAwake = (val) => {
     setKeepScreenAwakeRaw(val);
@@ -327,6 +335,7 @@ export function useVoiceSession({ setMessages }) {
     // Native prefs may lag localStorage (older build, cleared app data): push the
     // current engine choice before arming so the session matches the selector.
     try { window.AndroidPaths?.setVoiceInputSource?.(localStorage.getItem('zynkbot_voice_input_source') || 'vosk'); } catch (_) {}
+    try { window.AndroidPaths?.setFruitlessTone?.(localStorage.getItem('zynkbot_fruitless_tone') === 'true'); } catch (_) {}
 
     if (heyZynkEnabled) {
       armWakeWord();
@@ -403,6 +412,7 @@ export function useVoiceSession({ setMessages }) {
     ttsEnabled, setTtsEnabled,
     heyZynkEnabled, setHeyZynkEnabled,
     voiceInputSource, setVoiceInputSource,
+    fruitlessTone, setFruitlessTone,
     keepScreenAwake, setKeepScreenAwake,
     showVoiceModal, setShowVoiceModal,
     // Status state

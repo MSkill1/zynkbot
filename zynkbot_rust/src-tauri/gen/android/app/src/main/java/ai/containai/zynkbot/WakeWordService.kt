@@ -778,7 +778,7 @@ class WakeWordService : Service() {
         if (words.size < 2 || words.size > MAX_QUERY_WORDS) {
             Log.i(TAG, "Transcript rejected (${words.size} words) — not a question")
             releaseWakeLock()
-            playClosingTone()
+            if (MainActivity.fruitlessTone(this)) playClosingTone()
             endTurn(resume = true)
             return
         }

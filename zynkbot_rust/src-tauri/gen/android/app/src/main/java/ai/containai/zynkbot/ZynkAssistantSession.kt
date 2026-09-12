@@ -270,7 +270,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         stopListening()
         NativeVoiceAnswerer.stopSpeaking()
         Thread {
-            NativeVoiceAnswerer.playCloseTone(context)
+            if (MainActivity.fruitlessTone(context)) NativeVoiceAnswerer.playCloseTone(context)
             main.post { hide() }
         }.start()
     }
@@ -472,10 +472,11 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         }
         if (transcript.isBlank() || words.size < 2 || words.size > MAX_QUERY_WORDS) {
             WakeWordService.reportOutcome(false)
-            // Nothing heard (a false trigger on the air conditioner, say): close
-            // audibly so the user knows it fired and shut down, rather than vanishing.
+            // Nothing heard (a false trigger on the air conditioner, say). The closing
+            // tone is optional since 2026-09-12: with a verifier most such firings are
+            // the owner's own conversation, and two sounds per miss grated.
             Thread {
-                NativeVoiceAnswerer.playCloseTone(context)
+                if (MainActivity.fruitlessTone(context)) NativeVoiceAnswerer.playCloseTone(context)
                 main.post { hide() }
             }.start()
             return
@@ -487,7 +488,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             Log.i(TAG, "Strict mode: transcript is not a question or request — not sent")
             WakeWordService.reportOutcome(false)
             Thread {
-                NativeVoiceAnswerer.playCloseTone(context)
+                if (MainActivity.fruitlessTone(context)) NativeVoiceAnswerer.playCloseTone(context)
                 main.post { hide() }
             }.start()
             return

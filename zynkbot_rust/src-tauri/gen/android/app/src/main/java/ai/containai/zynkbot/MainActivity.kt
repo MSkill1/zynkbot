@@ -71,6 +71,13 @@ class MainActivity : TauriActivity() {
         fun voiceInputSource(context: Context): String =
             context.getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE)
                 .getString(VOICE_PREFS_INPUT_SOURCE, "vosk") ?: "vosk"
+
+        // Voice settings toggle "Play a tone when a trigger hears nothing". Off by default:
+        // a false trigger then costs one chime instead of two sounds (Matt, 2026-09-12).
+        private const val VOICE_PREFS_FRUITLESS_TONE = "fruitless_tone"
+        fun fruitlessTone(context: Context): Boolean =
+            context.getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE)
+                .getBoolean(VOICE_PREFS_FRUITLESS_TONE, false)
     }
 
     private var webViewRef: WeakReference<WebView>? = null
@@ -220,6 +227,12 @@ class MainActivity : TauriActivity() {
             if (src !in VOICE_INPUT_SOURCES) return
             getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE).edit()
                 .putString(VOICE_PREFS_INPUT_SOURCE, src).apply()
+        }
+
+        @JavascriptInterface
+        fun setFruitlessTone(on: Boolean) {
+            getSharedPreferences(VOICE_PREFS, Context.MODE_PRIVATE).edit()
+                .putBoolean(VOICE_PREFS_FRUITLESS_TONE, on).apply()
         }
 
         @JavascriptInterface

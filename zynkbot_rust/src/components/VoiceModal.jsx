@@ -177,6 +177,8 @@ export default function VoiceModal({
   onVoiceSourceChange,
   heyZynkEnabled,
   onHeyZynkChange,
+  fruitlessTone,
+  onFruitlessToneChange,
   wakeWordModelReady,
   wakeWordDownloadProgress,
   wakeWordDownloadError,
@@ -316,6 +318,19 @@ export default function VoiceModal({
               Running the detector shortens battery life — best while charging.
               During beta it can also fire on a television or other voices; turn it
               off if that happens.
+            </p>
+
+            <div style={rowStyle}>
+              <span style={labelStyle}>Play a tone when a trigger hears nothing</span>
+              <Toggle
+                id="fruitless-tone-toggle"
+                checked={!!fruitlessTone}
+                onChange={onFruitlessToneChange}
+              />
+            </div>
+            <p style={{ color: '#9aa5c4', fontSize: '0.8rem', lineHeight: 1.45, margin: '4px 0 0 0' }}>
+              Off: a false trigger costs one chime and then goes quiet. On: a second,
+              closing tone tells you it fired and shut down without sending anything.
             </p>
 
             {heyZynkEnabled && !wakeWordModelReady && (
