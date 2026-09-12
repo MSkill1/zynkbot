@@ -727,6 +727,14 @@ pub async fn search_kb_chunks(
     println!("[KB RAG] Found {} relevant chunks (best: {:.1}%)",
         search_results.len(),
         search_results.first().map(|r| r.similarity_score * 100.0).unwrap_or(0.0));
+    // Which documents answered: without this, "10 chunks" from the wrong file and
+    // "10 chunks" from the right one look identical in a problem report (2026-09-12).
+    if !search_results.is_empty() {
+        let sources: Vec<String> = search_results.iter()
+            .map(|r| format!("{}#{} {:.0}%", r.file_name, r.chunk_index, r.similarity_score * 100.0))
+            .collect();
+        println!("[KB RAG] Sources: {}", sources.join(", "));
+    }
 
     Ok(search_results)
 }
