@@ -195,7 +195,7 @@ export default function VoiceModal({
   const effectiveSource = voskAvailable ? (voiceInputSource || 'vosk') : 'openai';
 
   return (
-    <div style={overlayStyle} onClick={onClose}>
+    <div data-modal="" style={overlayStyle} onClick={onClose}>
       <div style={cardStyle} onClick={(e) => e.stopPropagation()}>
 
         {/* Header */}

@@ -558,7 +558,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   // ── Key Save Modal ─────────────────────────────────────────────────────────
   const KeySaveModal = showKeySaveModal ? (
-    <div style={{
+    <div data-modal="" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 2000,
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
     }}>
@@ -673,7 +673,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   // ── Mobile layout ─────────────────────────────────────────────────────────
   if (isMobile) {
     return (
-      <div style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div data-modal="" style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <MemoryReportModal isOpen={showReport} openSection={reportSection} onClose={() => { setShowReport(false); setReportSection(''); }} userId={userId}
         onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
         onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />

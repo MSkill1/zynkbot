@@ -45,14 +45,16 @@ const PROVIDERS = [
     link: "https://platform.openai.com/api-keys",
     description: "GPT and o-series models",
     models: [
+      // No "-pro" variants (gpt-5.x-pro, o1-pro) on purpose: OpenAI serves those only
+      // through its Responses API, and every request here goes to /v1/chat/completions,
+      // which answers 404 "This is not a chat model" (hit in ensemble mode, 2026-09-12).
+      // A pro id that is still stored from an older build is mapped to its chat sibling
+      // in src-tauri/src/llm/openai.rs (chat_model_for).
       { id: "gpt-5.5", label: "GPT-5.5" },
-      { id: "gpt-5.5-pro", label: "GPT-5.5 Pro" },
       { id: "gpt-5.4", label: "GPT-5.4" },
-      { id: "gpt-5.4-pro", label: "GPT-5.4 Pro" },
       { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
       { id: "gpt-5.4-nano", label: "GPT-5.4 Nano" },
       { id: "gpt-5.2", label: "GPT-5.2" },
-      { id: "gpt-5.2-pro", label: "GPT-5.2 Pro" },
       { id: "gpt-5.1", label: "GPT-5.1" },
       { id: "gpt-5", label: "GPT-5" },
       { id: "gpt-4.1", label: "GPT-4.1" },
@@ -62,7 +64,6 @@ const PROVIDERS = [
       { id: "gpt-4o-mini", label: "GPT-4o Mini" },
       { id: "o4-mini", label: "o4-mini (reasoning)" },
       { id: "o3", label: "o3 (reasoning)" },
-      { id: "o1-pro", label: "o1-pro (reasoning)" },
       { id: "o1", label: "o1 (reasoning)" },
     ],
     defaultModel: "gpt-5.5",
@@ -121,7 +122,8 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     'OPENAI_API_KEY',    'OPENAI_MODEL',
     'XAI_API_KEY',       'XAI_MODEL',
     'MISTRAL_API_KEY',   'MISTRAL_MODEL',
-    'CUSTOM_API_URL',    'CUSTOM_API_KEY', 'CUSTOM_MODEL',
+    // No CUSTOM_* here: the custom endpoint is machine-local. A phone reaches Ollama
+    // through the desktop's proxy, which substitutes the desktop's selected model.
     'R2_ENDPOINT',       'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET',
   ];
 
@@ -156,6 +158,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [r2Bucket, setR2Bucket] = useState("zynkbot-backups");
   const [r2SaveStatus, setR2SaveStatus] = useState({ type: "idle", message: "" });
   const [showOllama, setShowOllama] = useState(false);
+  const [ollamaLive, setOllamaLive] = useState(null); // {state, models} desktop-only live probe
   const [showR2, setShowR2] = useState(false);
 
   // Custom endpoint state
@@ -184,6 +187,9 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   useEffect(() => {
     if (isOpen) {
       loadAPIKeys();
+      if (!isAndroid) {
+        invoke('ollama_status').then(setOllamaLive).catch(() => setOllamaLive(null));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
@@ -440,8 +446,12 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     setIsConnecting(true);
     setCustomStatus({ type: "idle", message: "" });
     const proxyUrl = `https://${peer.host}:${peer.port}/api/ollama/v1`;
+    // The phone never picks a model. The desktop's proxy replaces whatever model name
+    // a request carries with the model selected on the desktop, so "desktop" here is
+    // only a placeholder that keeps the backend's "custom endpoint configured" checks
+    // (CUSTOM_API_URL + CUSTOM_MODEL) satisfied.
+    const model = 'desktop';
     try {
-      const model = await invoke('get_peer_ollama_config', { host: peer.host, port: peer.port });
       await invoke('set_api_key', { key: 'CUSTOM_API_URL', value: proxyUrl });
       await invoke('set_api_key', { key: 'CUSTOM_MODEL', value: model });
       await invoke('remove_api_key', { key: 'CUSTOM_API_KEY' });
@@ -449,7 +459,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       setCustomModel(model);
       setApiKeys(prev => ({ ...prev, CUSTOM_API_URL: proxyUrl, CUSTOM_MODEL: model }));
       delete apiKeys.CUSTOM_API_KEY;
-      setCustomStatus({ type: "success", message: `✓ Connected to ${peer.device_name} — using ${model}` });
+      setCustomStatus({ type: "success", message: `✓ Connected to ${peer.device_name} — uses whichever Ollama model is selected on that desktop` });
       // Auto-select the custom backend so the user doesn't have to change it manually
       // (especially important on Android where no local models exist to fall back to).
       localStorage.setItem('zynkbot_preferred_model', 'custom');
@@ -694,6 +704,15 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                {!isAndroid && ollamaLive && (
+                  <span style={{ fontSize: '0.75rem', whiteSpace: 'nowrap',
+                    color: ollamaLive.state === 'running' ? '#50fa7b'
+                      : ollamaLive.state === 'installed_not_running' ? '#ffb86c' : '#6272a4' }}>
+                    {ollamaLive.state === 'running' ? '🟢 Ollama running'
+                      : ollamaLive.state === 'installed_not_running' ? '🟡 Ollama installed, not started'
+                      : '⚪ Ollama not installed'}
+                  </span>
+                )}
                 {isCustomConfigured() ? (
                   <span className="status-configured">✅ Configured</span>
                 ) : (

@@ -108,7 +108,7 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
   const kindLabel = { person: 'People', place: 'Places', org: 'Organisations', thing: 'Things' };
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px' }}>
+    <div data-modal="" onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ background: '#22232a', color: '#f8f8f2', borderRadius: '10px', padding: '18px', width: 'min(760px, 96vw)', maxHeight: '92vh', overflowY: 'auto', border: '1px solid #44475a', position: 'relative' }}>
         <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
         <h2 style={{ margin: '0 0 4px 0', color: '#50fa7b', fontSize: '1.15rem' }}>What Zynkbot knows about you</h2>

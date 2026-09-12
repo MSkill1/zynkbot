@@ -6,6 +6,21 @@ use serde::{Deserialize, Serialize};
 #[allow(dead_code)]
 const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
 
+/// OpenAI's "-pro" models (gpt-5.x-pro, o1-pro) are only served by the Responses API;
+/// `/v1/chat/completions` answers 404 "This is not a chat model". Older builds offered
+/// them in the picker, so a stored pro id is mapped to its chat sibling here instead of
+/// failing the whole ensemble turn. Only applied when talking to api.openai.com — xAI
+/// and Ollama-compatible endpoints reuse this module and own their model names.
+fn chat_model_for<'a>(model: &'a str, api_url: &str) -> std::borrow::Cow<'a, str> {
+    if api_url.starts_with("https://api.openai.com/") {
+        if let Some(base) = model.strip_suffix("-pro") {
+            println!("[Rust OpenAI] {} is not a chat model; using {} instead", model, base);
+            return std::borrow::Cow::Owned(base.to_string());
+        }
+    }
+    std::borrow::Cow::Borrowed(model)
+}
+
 /// OpenAI API request structure
 #[derive(Debug, Serialize)]
 #[allow(dead_code)]
@@ -82,6 +97,7 @@ pub async fn send_message(
     temperature: Option<f32>,
 ) -> Result<LLMResponse, LLMError> {
     let client = reqwest::Client::new();
+    let model = chat_model_for(model, OPENAI_API_URL);
 
     let request_body = OpenAIRequest {
         model: model.to_string(),
@@ -166,6 +182,7 @@ pub async fn send_message_streaming<F>(
 where
     F: Fn(String),
 {
+    let model = chat_model_for(model, api_url);
 
     let request_body = OpenAIRequest {
         model: model.to_string(),
@@ -276,7 +293,7 @@ where
     content_blocks.push(serde_json::json!({ "type": "text", "text": text }));
 
     let body = serde_json::json!({
-        "model": model,
+        "model": chat_model_for(model, api_url).as_ref(),
         "stream": true,
         "max_completion_tokens": 4096,
         "messages": [{ "role": "user", "content": content_blocks }]

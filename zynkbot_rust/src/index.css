@@ -8,6 +8,23 @@
   will-change: transform;
 }
 
+/* While a modal is open, only the modal's contents are selectable (KI-045).
+   Overlays cover the page visually but not for text selection: a drag that
+   leaves the panel, or Ctrl+A, also grabbed the whole chat underneath.
+   Overlay roots are marked with data-modal="" (inline-styled ones) or one of
+   the overlay classes above; everything else under #root becomes unselectable
+   while any of them is mounted. */
+#root:has([data-modal], .modal-overlay, .zfb-overlay, .kb-manager-overlay,
+          .kb-selector-overlay, .graph-modal-overlay, .onboarding-modal-overlay) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+[data-modal], .modal-overlay, .zfb-overlay, .kb-manager-overlay,
+.kb-selector-overlay, .graph-modal-overlay, .onboarding-modal-overlay {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',

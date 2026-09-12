@@ -2466,6 +2466,7 @@ pub fn run() {
             commands::backup::restore_memories_from_r2,
             // Model and API key commands
             commands::models::get_models,
+            commands::models::ollama_status,
             commands::models::open_models_folder,
             commands::models::list_user_models,
             commands::models::delete_user_model,
@@ -2483,7 +2484,6 @@ pub fn run() {
             commands::models::fetch_custom_models,
             commands::models::pull_ollama_model,
             commands::models::stop_ollama_model,
-            commands::models::get_peer_ollama_config,
             commands::chat::send_message_with_memory,
             commands::chat::cancel_generation,
             commands::chat::run_ensemble,

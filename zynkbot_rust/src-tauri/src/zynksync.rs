@@ -3353,7 +3353,6 @@ impl ZynkSyncService {
             .route("/api/zynksync/push-api-key", post(handle_push_api_key))
             .route("/api/zynksync/pause", post(handle_pause))
             .route("/api/zynksync/resume", post(handle_resume))
-            .route("/api/ollama/info", axum::routing::get(handle_ollama_info))
             .route("/api/ollama/*path", any(handle_ollama_proxy))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(&self),
@@ -5095,19 +5094,6 @@ async fn handle_zynklink_notify_unpaired(
 // Ollama endpoints
 // =============================================================================
 
-/// Returns the Ollama model currently configured on this device.
-/// Mobile devices query this to adopt the desktop's model in one tap.
-/// Includes device_id so the caller can detect accidental self-connections.
-async fn handle_ollama_info(
-    State(service): State<Arc<ZynkSyncService>>,
-) -> impl axum::response::IntoResponse {
-    let model = std::env::var("CUSTOM_MODEL").unwrap_or_default();
-    axum::Json(serde_json::json!({
-        "model": model,
-        "available": !model.is_empty(),
-        "device_id": service.device_id,
-    }))
-}
 
 async fn handle_push_api_key(
     State(service): State<Arc<ZynkSyncService>>,
@@ -5134,7 +5120,9 @@ async fn handle_push_api_key(
         "OPENAI_API_KEY",    "OPENAI_MODEL",
         "XAI_API_KEY",       "XAI_MODEL",
         "MISTRAL_API_KEY",   "MISTRAL_MODEL",
-        "CUSTOM_API_URL",    "CUSTOM_API_KEY", "CUSTOM_MODEL",
+        // CUSTOM_* are deliberately absent: the custom endpoint is machine-local
+        // (a phone reaches Ollama through this desktop's proxy, which substitutes
+        // the desktop's model), so a pushed URL or model name would only mislead.
         "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
     ];
     // The backup encryption key is stored as a file, never in .env, and arriving
@@ -5189,6 +5177,14 @@ async fn handle_ollama_proxy(
         return (StatusCode::SERVICE_UNAVAILABLE,
             "Ollama not configured on this device").into_response();
     }
+    // The desktop decides which Ollama model paired devices use. Remote devices never
+    // pick a model: whatever they send is replaced below with this machine's selection,
+    // so changing it here propagates to every phone on the next request.
+    let desktop_model = std::env::var("CUSTOM_MODEL").unwrap_or_default();
+    if desktop_model.trim().is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            "No Ollama model selected on the desktop — pick one in Settings → API Keys → Custom / Ollama").into_response();
+    }
 
     // Strip /api/ollama prefix to get the target path
     let uri = request.uri().clone();
@@ -5220,6 +5216,21 @@ async fn handle_ollama_proxy(
     let body_bytes = match axum::body::to_bytes(request.into_body(), 10 * 1024 * 1024).await {
         Ok(b) => b,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("Failed to read body: {}", e)).into_response(),
+    };
+
+    // Replace the caller's model with the desktop's selection (chat/completions,
+    // generate, embeddings — anything that carries a "model" field).
+    let body_bytes = match serde_json::from_slice::<serde_json::Value>(&body_bytes) {
+        Ok(mut json) if json.get("model").is_some() => {
+            let requested = json["model"].as_str().unwrap_or("").to_string();
+            if requested != desktop_model {
+                println!("[OllamaProxy] {} asked for '{}'; using desktop selection '{}'",
+                    _service.device_id, requested, desktop_model);
+            }
+            json["model"] = serde_json::Value::String(desktop_model.clone());
+            axum::body::Bytes::from(json.to_string())
+        }
+        _ => body_bytes,
     };
 
     // Forward to local Ollama

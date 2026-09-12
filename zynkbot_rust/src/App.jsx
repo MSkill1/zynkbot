@@ -154,6 +154,22 @@ export default function App() {
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Startup Ollama check — runs once every launch. Ollama is local to the desktop
+  // (a phone reaches it through the desktop relay), so this is only meaningful there.
+  // It talks to Ollama over HTTP, so it needs no knowledge of where models are stored.
+  useEffect(() => {
+    if (window.AndroidPaths) return;
+    (async () => {
+      try {
+        const st = await invoke('ollama_status');
+        const extra = st.models && st.models.length ? ` — ${st.models.length} model(s): ${st.models.join(', ')}` : '';
+        console.log(`[Ollama] startup check: ${st.state}${extra}`);
+      } catch (e) {
+        console.warn('[Ollama] startup check failed:', e);
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Messages persist in session
   const [messages, setMessages] = useState(() => {
     try {

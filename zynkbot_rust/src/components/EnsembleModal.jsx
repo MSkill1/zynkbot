@@ -172,7 +172,7 @@ export default function EnsembleModal({
   };
 
   return (
-    <div
+    <div data-modal=""
       style={{
         position: 'fixed',
         top: 0,

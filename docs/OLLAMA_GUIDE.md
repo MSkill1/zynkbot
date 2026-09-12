@@ -52,7 +52,11 @@ When your Android phone is paired with your desktop via ZynkSync, the desktop ac
 2. Pair your phone and desktop via **Settings → ZynkSync** on both devices
 3. On Android, open **Settings → API Keys → Ollama (Local AI)**
 4. Tap **"Connect to Ollama on [your PC name]"** — Zynkbot auto-detects paired desktops
-5. Select the model from the picker
+
+There is no model picker on the phone. The desktop decides: whichever model is selected
+under **Settings → API Keys → Custom / Ollama** on the desktop is the one every connected
+phone uses, and changing it there takes effect on the phone's next message. If the desktop
+has no model selected, the phone gets a clear "No Ollama model selected on the desktop" error.
 
 Both devices must be on the same WiFi network for this to work.
 

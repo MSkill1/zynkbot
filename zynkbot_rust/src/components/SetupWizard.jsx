@@ -140,7 +140,7 @@ export default function SetupWizard({ onComplete }) {
   );
 
   if (screen === 'welcome') return (
-    <div style={S.overlay}>
+    <div data-modal="" style={S.overlay}>
       <div style={S.card}>
         <div style={S.title}>Welcome to Zynkbot</div>
         <p style={S.body}>
@@ -180,7 +180,7 @@ export default function SetupWizard({ onComplete }) {
   );
 
   if (screen === 'downloading_required') return (
-    <div style={S.overlay}>
+    <div data-modal="" style={S.overlay}>
       <div style={S.card}>
         <div style={S.title}>Downloading required models</div>
         <p style={S.body}>One-time download. Please keep the app open.</p>
@@ -203,7 +203,7 @@ export default function SetupWizard({ onComplete }) {
   );
 
   if (screen === 'llm_selection') return (
-    <div style={S.overlay}>
+    <div data-modal="" style={S.overlay}>
       <div style={S.card}>
         <div style={S.title}>Choose a local model (optional)</div>
         <p style={S.body}>
@@ -251,7 +251,7 @@ export default function SetupWizard({ onComplete }) {
   if (screen === 'downloading_llm') {
     const currentIdx = llmQueue.indexOf(currentLLM);
     return (
-      <div style={S.overlay}>
+      <div data-modal="" style={S.overlay}>
         <div style={S.card}>
           <div style={S.title}>Downloading local models</div>
           <p style={S.body}>This may take a while. Please keep the app open.</p>
@@ -292,7 +292,7 @@ export default function SetupWizard({ onComplete }) {
   }
 
   if (screen === 'complete') return (
-    <div style={S.overlay}>
+    <div data-modal="" style={S.overlay}>
       <div style={S.card}>
         <div style={S.title}>Setup complete</div>
         <p style={S.body}>

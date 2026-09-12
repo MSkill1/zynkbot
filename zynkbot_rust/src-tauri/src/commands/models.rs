@@ -462,72 +462,6 @@ pub async fn fetch_custom_models(base_url: String, api_key: String) -> Result<Ve
     Ok(models)
 }
 
-/// Query a paired desktop's /api/ollama/info to get its configured model name.
-/// Called from mobile when the user taps "Connect to Ollama on [PC]".
-#[tauri::command]
-pub async fn get_peer_ollama_config(host: String, port: u16) -> Result<String, String> {
-    let base_url = format!("https://{}:{}", host, port);
-    let url = format!("{}/api/ollama/info", base_url);
-
-    // Use the ZynkSync mTLS client if this host:port is a paired peer — the endpoint
-    // is behind require_verified_device and will 401 without a client certificate.
-    let client = {
-        let guard = crate::ZYNKSYNC_SERVICE.lock().await;
-        if let Some(service) = guard.as_ref() {
-            if let Some(c) = service.get_peer_client_for_url(&base_url).await {
-                c
-            } else {
-                reqwest::Client::builder()
-                    .danger_accept_invalid_certs(true)
-                    .timeout(std::time::Duration::from_secs(8))
-                    .build()
-                    .map_err(|e| e.to_string())?
-            }
-        } else {
-            reqwest::Client::builder()
-                .danger_accept_invalid_certs(true)
-                .timeout(std::time::Duration::from_secs(8))
-                .build()
-                .map_err(|e| e.to_string())?
-        }
-    };
-
-    let response = client.get(&url).send().await
-        .map_err(|e| format!("Can't reach desktop ({}): {}", host, e))?;
-
-    let status = response.status();
-    if status == 401 || status == 403 {
-        return Err(
-            "This device isn't paired with the desktop yet. \
-             Open ZynkSync on both devices and complete pairing first.".to_string()
-        );
-    }
-    if !status.is_success() {
-        return Err(format!("Desktop returned error {}", status));
-    }
-
-    let json: serde_json::Value = response.json().await
-        .map_err(|e| format!("Invalid response from desktop: {}", e))?;
-
-    // Detect self-connection: if the response comes from this device, the stored IP is wrong
-    let remote_device_id = json["device_id"].as_str().unwrap_or("");
-    if !remote_device_id.is_empty() {
-        if let Ok(my_id) = crate::user_identity::get_device_id() {
-            if remote_device_id == my_id {
-                return Err(format!(
-                    "This address ({}) points back to this device — the stored IP is incorrect. \
-                     Re-pair with ZynkSync to fix it.",
-                    host
-                ));
-            }
-        }
-    }
-
-    match json["model"].as_str() {
-        Some(m) if !m.is_empty() => Ok(m.to_string()),
-        _ => Err("Desktop has no Ollama model configured. Set one in the desktop's API settings first.".to_string()),
-    }
-}
 
 fn strip_ansi_codes(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -548,6 +482,75 @@ fn strip_ansi_codes(s: &str) -> String {
     result
 }
 
+#[derive(serde::Serialize)]
+pub struct OllamaStatus {
+    /// "running" | "installed_not_running" | "not_installed"
+    pub state: String,
+    pub models: Vec<String>,
+}
+
+/// Probe the local Ollama at startup or on demand. Uses Ollama's own HTTP API, so it works
+/// identically on Windows, Linux and Mac no matter where Ollama stores its model files —
+/// Zynkbot never reads that directory. "installed_not_running" is distinguished from
+/// "not_installed" by looking for the CLI in the standard install locations (see ollama_binary).
+#[tauri::command]
+pub async fn ollama_status() -> OllamaStatus {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+    match client.get("http://localhost:11434/api/tags").send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let models = resp
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|j| {
+                    j.get("models").and_then(|m| m.as_array()).map(|arr| {
+                        arr.iter()
+                            .filter_map(|m| m.get("name").and_then(|n| n.as_str()).map(String::from))
+                            .collect::<Vec<String>>()
+                    })
+                })
+                .unwrap_or_default();
+            OllamaStatus { state: "running".to_string(), models }
+        }
+        _ => {
+            let installed = ollama_binary().is_file();
+            OllamaStatus {
+                state: if installed { "installed_not_running" } else { "not_installed" }.to_string(),
+                models: vec![],
+            }
+        }
+    }
+}
+
+/// Locate the `ollama` CLI. PATH first; then the stock install locations, because a
+/// desktop app launched before Ollama was installed (or from a launcher with a minimal
+/// environment) does not see the PATH entry the installer added, and `Command::new("ollama")`
+/// fails with "program not found" even though Ollama is running (KI-046).
+fn ollama_binary() -> std::path::PathBuf {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join(if cfg!(windows) { "ollama.exe" } else { "ollama" }));
+        }
+    }
+    #[cfg(windows)]
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        candidates.push(std::path::Path::new(&local).join("Programs").join("Ollama").join("ollama.exe"));
+    }
+    #[cfg(windows)]
+    candidates.push(std::path::PathBuf::from(r"C:\Program Files\Ollama\ollama.exe"));
+    #[cfg(not(windows))]
+    for p in ["/usr/local/bin/ollama", "/usr/bin/ollama", "/opt/homebrew/bin/ollama",
+              "/Applications/Ollama.app/Contents/Resources/ollama"] {
+        candidates.push(std::path::PathBuf::from(p));
+    }
+    candidates.into_iter().find(|c| c.is_file())
+        .unwrap_or_else(|| std::path::PathBuf::from("ollama"))
+}
+
 /// Run `ollama stop <model_name>` to unload the model from GPU/RAM.
 /// Returns immediately; does not stream progress.
 #[tauri::command]
@@ -558,7 +561,7 @@ pub async fn stop_ollama_model(model_name: String) -> Result<String, String> {
         return Err(format!("Invalid model name: {}", model_name));
     }
 
-    let output = std::process::Command::new("ollama")
+    let output = std::process::Command::new(ollama_binary())
         .args(["stop", &model_name])
         .output()
         .map_err(|e| format!("Failed to run ollama: {}", e))?;
@@ -588,7 +591,7 @@ pub async fn pull_ollama_model(app: tauri::AppHandle, model_name: String) -> Res
     let name = model_name.clone();
     std::thread::spawn(move || {
         use std::io::{BufRead, BufReader};
-        let mut child = match std::process::Command::new("ollama")
+        let mut child = match std::process::Command::new(ollama_binary())
             .args(["pull", &name])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -596,7 +599,9 @@ pub async fn pull_ollama_model(app: tauri::AppHandle, model_name: String) -> Res
         {
             Ok(c) => c,
             Err(e) => {
-                let _ = tx.blocking_send(Err(format!("Failed to start ollama: {}", e)));
+                let _ = tx.blocking_send(Err(format!(
+                    "Failed to start ollama ({}): {} — is Ollama installed? Restart Zynkbot if you installed it while the app was open.",
+                    ollama_binary().display(), e)));
                 return;
             }
         };

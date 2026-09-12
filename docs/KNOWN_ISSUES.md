@@ -336,6 +336,31 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
+### KI-044 — OpenAI "Pro" models offered in the picker but rejected with 404 "This is not a chat model" (fixed)
+**Status:** Fixed on `voice` (2026-09-12)
+**Affected:** All platforms; surfaced in ensemble mode, where one failed provider spoils the round
+**Description:** The OpenAI model list in Settings → API Keys included `gpt-5.5-pro`, `gpt-5.4-pro`, `gpt-5.2-pro` and `o1-pro`. OpenAI serves those only through its Responses API; every Zynkbot request goes to `/v1/chat/completions`, which answers `404 This is not a chat model`. Selecting a Pro model therefore broke every OpenAI turn with an error that did not say what to change.
+**Fix:** the Pro entries are gone from the picker (`APIKeyModal.jsx`), and `openai.rs` maps a Pro id that is still stored from an older build to its chat sibling (`gpt-5.2-pro` → `gpt-5.2`, logged) when the target is api.openai.com. xAI and Ollama-compatible endpoints share that module and are left alone.
+**Note:** the second error seen in the same ensemble round — custom endpoint `model 'frozen-14b-pilot-v1:latest' not found` — was the desktop's own custom-model setting, restored from the Linux backup, naming a model the Windows Ollama does not have. Pick a model the desktop has (`llama3.2:3b`) until the Linux blobs are copied over. The same session also changed how phones get their model: the phone used to copy the desktop's model name once at connect time (and again on every key push) and send it with each request, so a change on the desktop did not reach the phone. Now the desktop proxy replaces the model in every request from a paired device with the desktop's current selection, the phone-side model query and the pushing of `CUSTOM_*` keys are removed, and the phone stores only a `desktop` placeholder. The remote device never picks a model.
+
+---
+
+### KI-045 — Selecting text in a modal also selects the page behind it (fixed)
+**Status:** Fixed on `voice` (2026-09-12); verify on desktop after the next rebuild, and on Android with the next APK
+**Affected:** All platforms; reported from the Ensemble modal on desktop
+**Description:** Modal overlays cover the page visually but not for text selection. Dragging a selection past the panel's edge, or pressing Ctrl+A inside it, highlighted the whole chat underneath as well, and a copy took all of it.
+**Fix:** `index.css` marks the page unselectable while any overlay is mounted (`#root:has(...)`) and restores selection inside the overlay itself. Class-based overlays (`modal-overlay`, `zfb-overlay`, `kb-manager-overlay`, `kb-selector-overlay`, `graph-modal-overlay`, `onboarding-modal-overlay`) are matched by class; inline-styled overlay roots carry `data-modal=""` (Ensemble, Cost guide, Memory manager, Memory report, Snap-ins, Z chat, ZynkSync, Voice, Setup wizard). Side drawers (history panel, settings sidebar) are deliberately not covered — the chat stays visible beside them, so selecting it is legitimate. New modals must use one of the overlay classes or add `data-modal=""` to their backdrop.
+
+---
+
+### KI-046 — Pull / Stop model failed with "Failed to start ollama: program not found" although Ollama was installed and running (fixed)
+**Status:** Fixed on `voice` (2026-09-12)
+**Affected:** Desktop (Windows seen; Linux and Mac exposed the same way)
+**Description:** Pull Model and Stop Model shell out to the `ollama` CLI by bare name. An app instance launched before Ollama was installed, or from a launcher with a minimal environment, does not have the PATH entry the installer added, so the spawn failed with "program not found" while Ollama itself was serving fine on 11434.
+**Fix:** the CLI is looked up on PATH first and then in the stock install locations (`%LOCALAPPDATA%\Programs\Ollama`, `C:\Program Files\Ollama`, `/usr/local/bin`, `/usr/bin`, Homebrew, the Mac app bundle). The error now names the path it tried and suggests a restart.
+
+---
+
 ### KI-025 — LLM responses are not streamed; nothing appears until the full response arrives
 **Status:** Open — Tier 1 v1.0 item
 **Affected:** All platforms, all backends

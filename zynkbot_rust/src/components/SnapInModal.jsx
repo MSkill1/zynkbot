@@ -41,7 +41,7 @@ export default function SnapInModal({ isOpen, onClose, userId }) {
   };
 
   return (
-    <div style={{
+    <div data-modal="" style={{
       position: 'fixed',
       top: 0,
       left: 0,

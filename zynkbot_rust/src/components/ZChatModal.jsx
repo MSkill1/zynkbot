@@ -166,7 +166,7 @@ export default function ZChatModal({
 
   // Render modal to document.body to avoid clipping by parent containers
   return ReactDOM.createPortal(
-    <div
+    <div data-modal=""
       style={{
         position: 'fixed',
         top: 0,

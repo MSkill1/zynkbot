@@ -24,6 +24,16 @@ Running `tauri android init` again will overwrite these files with Tauri's defau
 breaking the foreground service, the ZynkbotShare folder, and the permission setup.
 If you need to re-init for any reason, diff first and reapply the changes manually.
 
+## Windows: build and run in RELEASE, not debug
+
+On Windows the app must be built and run in the release profile (`npm run tauri build`, or
+`npm run tauri dev -- --release`). A debug build aborts at startup with a UCRT
+`is_block_type_valid` assertion (`debug_heap.cpp`): the MSVC debug heap validates every free,
+and `libvosk.dll` is built with MinGW, so memory it allocates and frees trips the check. The
+release profile does not run that validation, so it launches normally. This is a local
+build-mode issue, not a code bug, and does not affect Linux (no library locking, no debug-heap
+mismatch).
+
 ## Building Android APKs
 
 Must use Android Studio's bundled JDK (system Java 8 JRE won't compile Gradle):
