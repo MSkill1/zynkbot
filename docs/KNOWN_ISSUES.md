@@ -129,6 +129,15 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-050 — Reinstalling the app on a phone leaves a stale second device in every peer's ZynkSync list
+**Status:** Open — post-beta. Cause known; fix deferred because it touches the pairing path. Workaround is a delete.
+**Affected:** Any device that is reinstalled (or has its app data wiped, including a release build installed over a debug build) and then pairs again. Seen 2026-09-12: the OnePlus paired as `12R` before the reinstall and as `Oneplus-453A` after, from the same address; the desktop, the Pixel and the Windows install each kept both entries until the old one was deleted by hand.
+**Description:** A device's identity is a UUID written to a file in the app's private data (`user_identity.rs`, `get_or_create_device_id`). Uninstalling removes the file; the next launch mints a new UUID and, on Android, a new default name from its last four characters. `zynk_devices` is keyed on `device_id` (UNIQUE), and the pairing handler upserts `ON CONFLICT (device_id)`, so a new id is a new row; nothing compares the incoming `device_ip` against existing rows. The old row stays "paired", its cert stays pinned, and every peer keeps trying to sync with it.
+**Workaround:** delete the old entry in ZynkSync (it is expelled from all peers); re-pair if needed.
+**Fix candidates:** (1) in the pairing-verify handler, before the upsert, expel any paired row with the same `device_ip` and a different `device_id`, logging the swap — about fifteen lines using the existing `expel_device`; risk is a home router handing an old phone's address to a different device, which would then need to re-pair; (2) carry the device id through the encrypted backup so a restore reclaims it, which also fixes the personal wake verifier being keyed to a device id that a reinstall changes. Decide after the beta.
+
+---
+
 ### KI-009 — Unsyncing a device also removes the ZynkLink pairing
 **Status:** Fixed in this release  
 **Affected:** Users who have both ZynkSync and ZynkLink active between the same two devices  
