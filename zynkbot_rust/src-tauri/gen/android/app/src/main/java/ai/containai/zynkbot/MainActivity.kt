@@ -964,12 +964,29 @@ class MainActivity : TauriActivity() {
         // compositor render the WebView now, without waiting for input. It runs once
         // per return (the flag), so it does not blink on ordinary focus changes.
         webViewRef?.get()?.let { wv ->
+            Log.i("MainActivity", "KI-040: window surface was recreated — forcing a WebView frame")
+            // Third attempt (OnePlus/OxygenOS, 2026-09-13): the visibility toggle made the
+            // window draw, but the WebView's renderer still produced no frame until a touch.
+            // During onboarding the next permission prompt lands on top within 70 ms of the
+            // return and focus flaps three times, so the nudge runs now and once more after
+            // the dust settles.
+            forceWebViewFrame(wv)
+            wv.postDelayed({ forceWebViewFrame(wv) }, 400)
+        }
+    }
+
+    /** Pause/resume the WebView so its compositor re-attaches to the current surface,
+     *  blink it for one frame, then make the page paint from inside: a resize event
+     *  forces a layout and a compositor commit whatever the view system believes. */
+    private fun forceWebViewFrame(wv: WebView) {
+        wv.post {
+            wv.onPause()
+            wv.onResume()
+            wv.visibility = View.INVISIBLE
             wv.post {
-                wv.visibility = View.INVISIBLE
-                wv.post {
-                    wv.visibility = View.VISIBLE
-                    wv.invalidate()
-                }
+                wv.visibility = View.VISIBLE
+                wv.invalidate()
+                wv.evaluateJavascript("window.dispatchEvent(new Event('resize'));", null)
             }
         }
     }
