@@ -146,6 +146,15 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-054 — Windows installer put the program in the app's own data folder (fixed on `voice`, 2026-09-13; first installer with the fix is the next CI run)
+**Status:** Fixed in `tauri.windows.conf.json` (`bundle.windows.nsis.installMode: "perMachine"`); the installer from CI run 34723074602 still has it.
+**Affected:** Every Windows install from the NSIS installer so far.
+**Description:** The per-user NSIS installer targets `%LOCALAPPDATA%\Zynkbot`; the app stores its data in `%LOCALAPPDATA%\zynkbot` (`dirs::data_local_dir()/zynkbot`). Windows paths are case-insensitive, so they are one folder: after install, `app.exe`, `uninstall.exe` and the Vosk DLLs sat beside `zynkbot.db`, `.env`, the TLS identity and the downloaded models (laptop, 2026-09-13). Whether `uninstall.exe` removes the user's files depends on the NSIS uninstaller's behaviour and was being verified when this was filed; the exposure is the whole database, keys and models.
+**Fix:** install per machine (`C:\Program Files\Zynkbot`, admin prompt at install), which cannot collide with a per-user data folder. Alternative rejected for the beta: renaming the data folder, which would strand existing installs' data.
+**Also noted (not a bug, a cost):** the installer is unsigned, so Explorer shows SmartScreen's "Windows protected your PC" on first run (More info → Run anyway). A code-signing certificate is a purchase; roadmap, pre-1.0.
+
+---
+
 ### KI-053 — Deleting a stale device entry disconnected the live phone at the same address (fixed on `voice`, 2026-09-13; not yet in any installed build)
 **Status:** Fixed in `expel_device` / `handle_notify_unsynced`; the desktop `.deb` and the APKs installed on 2026-09-13 still carry the bug.
 **Affected:** Any mesh with a ghost entry (KI-050) — i.e. any phone that has been reinstalled — when someone deletes the ghost from another device.
