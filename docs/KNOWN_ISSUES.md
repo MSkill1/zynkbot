@@ -319,7 +319,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ### KI-019 — No offline dictation on Windows; Vosk is compiled out rather than unavailable (fixed)
 **Status:** Fixed on `voice`; verified on Windows 2026-09-11 — the four gates below are widened, `build.rs` emits the Windows link-search, MSVC accepted the MinGW import library (the predicted CRT mismatch surfaces only as `LNK4098`, a warning), the NSIS bundle carries the four DLLs and the Vosk model next to `app.exe`, and Vosk and Whisper dictation were both confirmed at runtime. The offline-first guarantee now holds on Windows. KI-020 remains.  
-**Affected:** All Windows users. Dictation on Windows requires an OpenAI API key and a network round-trip, so the offline-first guarantee does not hold on Windows.  
+**Affected (before the fix):** All Windows users — dictation required an OpenAI API key and a network round-trip. Verified again 2026-09-13 from the CI-built installer on the laptop: mic-button dictation works offline with no key.  
 **Description:** Vosk works on Windows — alphacep ships a prebuilt `vosk-win64-0.3.45` SDK containing `libvosk.lib` and `libvosk.dll`. Windows support is partly wired already: `install.bat` downloads that SDK into `zynkbot_rust/src-tauri/lib/vosk/`, and `START_ZYNKBOT.bat` adds that directory to `PATH` when `libvosk.dll` is present. The feature is nevertheless unreachable on Windows because four separate gates compile it out:
 
 1. `Cargo.toml` — `vosk = "0.3"` sits under `[target.'cfg(target_os = "linux")'.dependencies]`, so the crate is never built on Windows.
