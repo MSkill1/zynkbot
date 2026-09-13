@@ -120,6 +120,13 @@ object OpenAiDictation {
         var noiseFloor = 0.0
         var elapsedMs = 0L
         var silenceMs = 0L
+        // Quietest level seen in the last ~2 s while speaking. The pre-speech floor was
+        // frozen at the moment speech started; with an air conditioner running that
+        // floor was 36 while the room never dropped below ~100, so "quiet" was never
+        // reached and every turn ran to the 30 s cap (Pixel, 2026-09-13 14:11). Steady
+        // noise is whatever the recent minimum is; a pause in speech falls to it.
+        val recentRms = ArrayDeque<Double>()
+        val recentChunks = (2_000L / CHUNK_MS).toInt().coerceAtLeast(4)
         try {
             audio.startRecording()
             if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
@@ -151,14 +158,20 @@ object OpenAiDictation {
                     }
                 } else {
                     out.write(bytes)
-                    val quiet = max(noiseFloor * 1.5, MIN_SPEECH_RMS / 2)
+                    recentRms.addLast(rms)
+                    while (recentRms.size > recentChunks) recentRms.removeFirst()
+                    val floorNow = max(noiseFloor, recentRms.minOrNull() ?: noiseFloor)
+                    val quiet = max(floorNow * 1.5, MIN_SPEECH_RMS / 2)
                     silenceMs = if (rms < quiet) silenceMs + CHUNK_MS else 0L
-                    if (silenceMs >= TRAILING_SILENCE_MS) break
+                    if (silenceMs >= TRAILING_SILENCE_MS) {
+                        Log.i(TAG, "Trailing silence at ${elapsedMs}ms (floor≈${floorNow.toInt()}, quiet<${quiet.toInt()})")
+                        break
+                    }
                 }
             }
             if (recorder.isCancelled) return null
             if (!speaking) return ByteArray(0)
-            if (elapsedMs >= MAX_TOTAL_MS) Log.i(TAG, "Recording cap reached")
+            if (elapsedMs >= MAX_TOTAL_MS) Log.i(TAG, "Recording cap reached (floor≈${noiseFloor.toInt()}, recent min≈${(recentRms.minOrNull() ?: 0.0).toInt()})")
             return out.toByteArray()
         } finally {
             try { audio.stop() } catch (_: Exception) {}
