@@ -146,6 +146,22 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-056 — An Anthropic key created at organisation level fails: the API now requires an `anthropic-workspace-id` header for keys not scoped to a workspace (open)
+**Status:** Open, found 2026-09-13. Workaround: create the key inside a workspace in the Anthropic Console (the key page shows which workspace it belongs to), or keep using a workspace-scoped key.
+**Affected:** Anthropic backend, any platform, for keys created without a workspace.
+**Description:** A freshly created key returned HTTP 400 `invalid_request_error: "This API key is not scoped to a workspace, so this request must include the anthropic-workspace-id header…"` on a minimal `/v1/messages` call; the previous key (workspace-scoped) returned 200 on the identical call. The app never sends that header, and its error message to the user did not carry the API's explanation, so it looked like a bad key.
+**Fix:** an optional `ANTHROPIC_WORKSPACE_ID` in Settings → API Keys, sent as the header when present; and surface the API's own error text in the reply so the user can act on it. Both small.
+
+---
+
+### KI-055 — A device that pairs after the keys were saved never receives them (open; workaround: Push to all devices)
+**Status:** Open, found on the four-device first-time-user run 2026-09-13. Not a beta blocker; the button works.
+**Affected:** Every new device in the natural order: keys entered on the desktop first, phone paired afterwards.
+**Description:** Keys leave a device in exactly two cases — `set_api_key` pushes the one key just saved to the peers that exist at that moment, and the "Push to all devices" button pushes everything. Pairing itself pushes nothing in either direction. On 2026-09-13 the desktop had its Anthropic key saved at about 13:45; both phones paired at 13:49 and 13:50 and showed no keys; the OnePlus log has no "Received API key push" after pairing. Matt pushed by hand.
+**Fix candidates:** after `handle_verify_pairing` accepts a client, the host pushes its allow-listed keys to that one device (the push code exists; it needs a single-peer variant); or the client asks for them once after adopting the host's identity. First-run guides should say "pair, then keys arrive" — today they arrive only if entered later or pushed by hand.
+
+---
+
 ### KI-054 — Windows installer put the program in the app's own data folder (fixed on `voice`, 2026-09-13; first installer with the fix is the next CI run)
 **Status:** Fixed in `tauri.windows.conf.json` (`bundle.windows.nsis.installMode: "perMachine"`); the installer from CI run 34723074602 still has it.
 **Affected:** Every Windows install from the NSIS installer so far.
