@@ -411,8 +411,11 @@ pub(crate) fn generate_title_from_content(content: &str) -> String {
         }
     } else {
         // Truncate at word boundary
-        let truncated = &first_sentence[..50];
-        let last_space = truncated.rfind(' ').unwrap_or(50);
+        // Character-based cut (a byte slice panics inside an accented letter or an em
+        // dash, KI-058); rfind(' ') returns a byte index at an ASCII space, so the
+        // second slice is safe.
+        let truncated: String = first_sentence.chars().take(50).collect();
+        let last_space = truncated.rfind(' ').unwrap_or(truncated.len());
         let mut result = truncated[..last_space].trim().to_string();
 
         // Capitalize first letter
@@ -550,7 +553,7 @@ Return ONLY valid JSON starting with {{:
             Ok((result.title, rels, result.extras))
         }
         Err(e) => {
-            println!("[Memory Relations] Failed to parse JSON: {} — raw: {}", e, &json_str[..json_str.len().min(120)]);
+            println!("[Memory Relations] Failed to parse JSON: {} — raw: {}", e, json_str.chars().take(120).collect::<String>());
             Err(format!("Failed to parse relationship JSON: {}", e))
         }
     }

@@ -175,11 +175,10 @@ impl ConversationEngine {
             let text_for_llm = mem.original_text.as_ref().unwrap_or(&mem.content);
             let date_str = mem.created_at.format("%B %-d, %Y").to_string();
             context.push_str(&format!("{}. ({}) {}\n", idx + 1, date_str, text_for_llm));
-            let preview = if text_for_llm.len() > 60 {
-                &text_for_llm[..60]
-            } else {
-                text_for_llm
-            };
+            // Character-based, not byte-based: a byte slice panics inside a multi-byte
+            // character (an em dash at bytes 59..62 killed a Spanish translation
+            // request on 2026-09-13 — the request died with no reply).
+            let preview: String = text_for_llm.chars().take(60).collect();
             println!("[Engine]   Including: {}...", preview);
         }
         context.push('\n');

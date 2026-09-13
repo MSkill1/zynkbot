@@ -70,7 +70,8 @@ pub fn validate_event_date(raw: Option<&str>, text: &str, today: NaiveDate) -> O
     if s.is_empty() || s.eq_ignore_ascii_case("null") {
         return None;
     }
-    let d = NaiveDate::parse_from_str(&s[..s.len().min(10)], "%Y-%m-%d").ok()?;
+    let head: String = s.chars().take(10).collect();
+    let d = NaiveDate::parse_from_str(&head, "%Y-%m-%d").ok()?;
     if d.year() < 1900 || d > today + chrono::Duration::days(366 * 2) {
         return None;
     }

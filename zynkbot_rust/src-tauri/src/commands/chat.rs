@@ -885,7 +885,7 @@ pub async fn generate_reply(
                     .count();
                 let keep = (overlap as f32 / msg_content_words.len() as f32) < 0.75;
                 if !keep {
-                    println!("[RUST] ⚠️ Discarding MEMORY_EXTRACT that rephrases the message: {}", &fact[..fact.len().min(80)]);
+                    println!("[RUST] ⚠️ Discarding MEMORY_EXTRACT that rephrases the message: {}", fact.chars().take(80).collect::<String>());
                 }
                 keep
             });
@@ -901,7 +901,7 @@ pub async fn generate_reply(
                 let fact_lower = fact.to_lowercase();
                 let grounded = msg_content_words.iter().any(|w| fact_lower.contains(*w));
                 if !grounded {
-                    println!("[RUST] ⚠️ Discarding MEMORY_EXTRACT: fact shares no words with message — likely hallucination: {}", &fact[..fact.len().min(80)]);
+                    println!("[RUST] ⚠️ Discarding MEMORY_EXTRACT: fact shares no words with message — likely hallucination: {}", fact.chars().take(80).collect::<String>());
                 }
                 grounded
             });
@@ -922,7 +922,7 @@ pub async fn generate_reply(
             let fact_lower = fact.to_lowercase();
             let is_meta = meta_question_patterns.iter().any(|p| fact_lower.contains(p));
             if is_meta {
-                println!("[RUST] ⚠️ Discarding meta-question MEMORY_EXTRACT: {}", &fact[..fact.len().min(80)]);
+                println!("[RUST] ⚠️ Discarding meta-question MEMORY_EXTRACT: {}", fact.chars().take(80).collect::<String>());
             }
             !is_meta
         });

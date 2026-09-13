@@ -146,6 +146,14 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-058 — A request died with no reply when a stored memory contained a multi-byte character at a byte-60 boundary (fixed on `voice`, 2026-09-13)
+**Status:** Fixed; needs new builds on every platform (desktop packages via CI, phone APK and Play bundle locally).
+**Affected:** All platforms, any backend. Trigger: a recalled memory whose text has a non-ASCII character (an em dash, an accented letter) spanning byte 60; the request thread panicked and the user saw nothing.
+**Description:** `conversation_engine.rs` cut a log preview of each recalled memory with a byte slice (`&text[..60]`); Rust panics when a slice ends inside a multi-byte character. Seen 2026-09-13 15:1x on the desktop: a Spanish translation request pulled in a memory with "—" at bytes 59..62, the tokio worker panicked ("end byte index 60 is not a char boundary"), and the reply never came. Three similar slices in `commands/chat.rs` (`&fact[..fact.len().min(80)]`) had the same latent fault.
+**Fix:** character-based previews (`chars().take(n)`) in all four places; a crate-wide scan found no other byte slices on user text (device ids and hashes are ASCII).
+
+---
+
 ### KI-057 — A false wake-word trigger produced a memory: Whisper hallucinated "Aum. Namaste. Thank you." from fan noise, the model answered it, and the extractor stored "gratitude greeting" (open)
 **Status:** Open, seen 2026-09-13 14:15 on the Pixel (Whisper engine, air conditioner running, verifier log-only). Not a sync bug; the junk memory then synced correctly to all four devices.
 **Affected:** Hands-free turns on the OpenAI Whisper engine in steady noise (Vosk produces no words from a hum, so it does not do this); any small model that extracts eagerly.
