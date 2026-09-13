@@ -104,7 +104,7 @@ hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }  # TokioIo
 # tempfile = "3.8"     # Temporary audio files
 
 # Candle ML stack - BERT NER, embeddings, safety classifier
-# Requires +fullfp16 rustflag on aarch64-linux-android (set in .cargo/config.toml)
+# Requires the +fp16 rustflag on aarch64-linux-android (set in .cargo/config.toml)
 # Targets ARMv8.2-A+ (Snapdragon 730+, Dimensity 700+, all ~2018+ phones)
 candle-core = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773" }
 candle-nn = { git = "https://github.com/huggingface/candle.git", rev = "1dd2d2c70a41d2969f13d5aa5c512251dc353773" }

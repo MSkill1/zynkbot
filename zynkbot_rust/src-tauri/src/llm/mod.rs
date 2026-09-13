@@ -17,6 +17,10 @@ pub mod local_models {
 
     pub struct LocalModelSession;
 
+    // `load` mirrors the desktop API; on Android nothing calls it because on-device
+    // GGUF inference is compiled out, so silence the dead-code warning rather than
+    // let every phone build print it.
+    #[allow(dead_code)]
     impl LocalModelSession {
         pub fn load(_path: &str) -> Result<Self, LLMError> {
             Err(LLMError::APIError("Local models not supported on Android".to_string()))

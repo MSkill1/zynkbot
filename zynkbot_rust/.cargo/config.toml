@@ -36,5 +36,8 @@ rustflags = ["-C", "target-cpu=x86-64"]
 
 [target.aarch64-linux-android]
 # Enable fp16 arithmetic — required by candle's gemm dependency; supported on all modern Android
-# phones (ARMv8.2-A, i.e. Snapdragon 730+ / Dimensity / Exynos 9 series and later, ~2018+)
-rustflags = ["-C", "target-feature=+fullfp16,+fp16"]
+# phones (ARMv8.2-A, i.e. Snapdragon 730+ / Dimensity / Exynos 9 series and later, ~2018+).
+# `fp16` is rustc's name for the ARM half-precision extension (LLVM calls it fullfp16);
+# passing the LLVM spelling as well only produced an "unknown feature" warning on every
+# Android build (removed 2026-09-13).
+rustflags = ["-C", "target-feature=+fp16"]
