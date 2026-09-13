@@ -4,7 +4,7 @@
 
 Zynkbot is a private assistant with a memory: it runs on your own desktop and phone, keeps what it learns about you on your devices, and syncs between them directly over your home network. No account, no server in the middle. This beta is the first cut of the version headed for Google Play.
 
-## What's new since 0.9.5
+## What's new since 0.9.4
 
 - **The phone version is now the phone's assistant.** Zynkbot asks to become Android's digital assistant at setup. "Hey Zynk" then works with the screen off or locked: a chime, a Z on screen (tap to cancel), the answer spoken aloud, and timers, alarms and the stopwatch set straight in the clock app with no AI model involved. Nothing in that path goes to Google. Decline the role and Zynkbot still works as an app; you only lose hands-free.
 - **Offline dictation everywhere.** The mic button uses Vosk on the device on Linux, Windows and Android; no key, no cloud. OpenAI Whisper remains an option.
