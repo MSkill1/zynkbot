@@ -146,6 +146,14 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-057 — A false wake-word trigger produced a memory: Whisper hallucinated "Aum. Namaste. Thank you." from fan noise, the model answered it, and the extractor stored "gratitude greeting" (open)
+**Status:** Open, seen 2026-09-13 14:15 on the Pixel (Whisper engine, air conditioner running, verifier log-only). Not a sync bug; the junk memory then synced correctly to all four devices.
+**Affected:** Hands-free turns on the OpenAI Whisper engine in steady noise (Vosk produces no words from a hum, so it does not do this); any small model that extracts eagerly.
+**Description:** Three things lined up: the wake word fired on the air conditioner; Whisper turned the hum into words (KI-029); the turn was answered and the extractor decided the "greeting" was a personal fact. Strict mode only began after the third misfire, a minute later. Related: the same session produced a second "favourite pie is cherry" memory (id 2, namespace personal, 14:12) from a turn that merely *mentioned* the earlier one (id 1, kitchen, 13:58) — the write-time consolidation item on the roadmap, not a sync fault.
+**Fix candidates:** skip memory extraction for a hands-free turn whose transcript came from Whisper with no speech-energy evidence (the endpointer knows whether speech ever crossed the onset); treat a transcript of ≤3 words as not extractable; and the roadmap's write-time consolidation for the near-duplicate.
+
+---
+
 ### KI-056 — An Anthropic key created at organisation level fails: the API now requires an `anthropic-workspace-id` header for keys not scoped to a workspace (open)
 **Status:** Open, found 2026-09-13. Workaround: create the key inside a workspace in the Anthropic Console (the key page shows which workspace it belongs to), or keep using a workspace-scoped key.
 **Affected:** Anthropic backend, any platform, for keys created without a workspace.

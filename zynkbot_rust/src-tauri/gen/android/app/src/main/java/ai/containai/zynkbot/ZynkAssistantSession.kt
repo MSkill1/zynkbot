@@ -487,8 +487,12 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         if (WakeWordService.isStrict() && VoiceCommands.parse(transcript) == null && !looksAddressedToAssistant(transcript)) {
             Log.i(TAG, "Strict mode: transcript is not a question or request — not sent")
             WakeWordService.reportOutcome(false)
+            // The user did say something and got nothing back (Pixel 2026-09-13 14:16:
+            // "this is a second test just respond affirmative" dropped in silence after
+            // three air-conditioner misfires). The quiet-close toggle is for empty
+            // firings; a dropped sentence always gets the tone, and a word of why.
             Thread {
-                if (MainActivity.fruitlessTone(context)) NativeVoiceAnswerer.playCloseTone(context)
+                NativeVoiceAnswerer.say(context, "Were you asking me a question? I'm only answering questions for a few minutes.")
                 main.post { hide() }
             }.start()
             return

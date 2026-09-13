@@ -5231,6 +5231,11 @@ async fn handle_ollama_proxy(
 
     let target_url = format!("http://localhost:11434{}{}", path, query);
 
+    // Who is asking: the verified peer's name (the log used to print our own id).
+    let caller = request.extensions().get::<VerifiedDevice>()
+        .map(|v| v.device_name.clone())
+        .unwrap_or_else(|| "unverified device".to_string());
+
     // Read request body
     let method_str = request.method().as_str().to_string();
     let req_content_type = request.headers()
@@ -5250,7 +5255,7 @@ async fn handle_ollama_proxy(
             let requested = json["model"].as_str().unwrap_or("").to_string();
             if requested != desktop_model {
                 println!("[OllamaProxy] {} asked for '{}'; using desktop selection '{}'",
-                    _service.device_id, requested, desktop_model);
+                    caller, requested, desktop_model);
             }
             json["model"] = serde_json::Value::String(desktop_model.clone());
             axum::body::Bytes::from(json.to_string())
