@@ -1073,11 +1073,18 @@ impl ZynkSyncService {
                 }
             }
 
-            // Best-effort: notify the expelled device itself so its UI clears
+            // Best-effort: notify the expelled device itself so its UI clears. It is
+            // addressed by IP, and a stale entry (a reinstalled phone's old identity,
+            // KI-050) shares its IP with the live one — so name the intended target,
+            // and the receiver ignores it unless the target is itself (2026-09-13: the
+            // live OnePlus dropped the desktop when the ghost OnePlus was deleted).
             if let Some(ip) = target_ip {
                 if !ip.is_empty() {
                     let url = format!("https://{}:57963/api/zynksync/notify-unsynced", ip);
-                    let self_payload = serde_json::json!({ "removed_device_id": local_device_id });
+                    let self_payload = serde_json::json!({
+                        "removed_device_id": local_device_id,
+                        "target_device_id": target_id
+                    });
                     let _ = http_client.post(&url).json(&self_payload).send().await;
                 }
             }
@@ -4265,6 +4272,16 @@ async fn handle_notify_unsynced(
     let removed_device_id = payload.get("removed_device_id")
         .and_then(|v| v.as_str())
         .ok_or("Missing removed_device_id")?;
+
+    // A "you were removed" notice names its target since 2026-09-13; if it is not us,
+    // it was meant for a stale entry that shared our address — leave our peers alone.
+    if let Some(target) = payload.get("target_device_id").and_then(|v| v.as_str()) {
+        if target != service.device_id {
+            println!("[ZynkSync] Ignoring removal notice addressed to {} (we are {})",
+                &target[..8.min(target.len())], &service.device_id[..8.min(service.device_id.len())]);
+            return Ok(Json(serde_json::json!({"success": true, "ignored": true})));
+        }
+    }
 
     // cascade_device_id: a third device we're being asked to remove (mesh cascade)
     // If absent, we remove the sender (removed_device_id) as before.

@@ -92,6 +92,11 @@ class WakeWordService : Service() {
          *  question was answered or a command ran; false = nothing heard or NO_QUERY. */
         @JvmStatic fun reportOutcome(useful: Boolean) { instance?.noteOutcome(useful) }
 
+        /** Label the newest clip without touching the back-off: an answered question is
+         *  a real "Hey Zynk" for training purposes, but only clock commands count as
+         *  proof against the TV for the strict-mode logic (2026-09-13). */
+        @JvmStatic fun labelClip(real: Boolean) { instance?.labelLastClip(real) }
+
         /** Counts behind the Voice-settings "Send my wake-word clips" button. */
         @JvmStatic fun clipStats(context: Context): org.json.JSONObject {
             val dir = File(context.filesDir, "zynkbot/wake_triggers")
@@ -837,6 +842,7 @@ class WakeWordService : Service() {
             playClosingTone()
             val spoke = NativeVoiceAnswerer.answer(this, transcript)
             if (spoke) {
+                labelLastClip(true)
                 releaseWakeLock()
                 endTurn(resume = true)
             } else {

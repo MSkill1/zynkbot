@@ -513,7 +513,10 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
             // "Sent" tone: without it the user sits in silence for the whole network
             // round trip thinking nothing happened. Same chime the wake-word path uses.
             NativeVoiceAnswerer.playCloseTone(context)
-            NativeVoiceAnswerer.answer(context, transcript)
+            val spoke = NativeVoiceAnswerer.answer(context, transcript)
+            // A spoken reply to an uncancelled question: label the clip real so the
+            // "Send my wake-word clips" count reflects ordinary use, not just timers.
+            if (spoke && !cancelled) WakeWordService.labelClip(true)
             // Whether or not it succeeded, the session's job is done either way —
             // WakeWordService's screen-off path is the one with a WebView fallback;
             // this entry point has no equivalent to fall back to yet.

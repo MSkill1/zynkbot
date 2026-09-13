@@ -146,6 +146,14 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-053 — Deleting a stale device entry disconnected the live phone at the same address (fixed on `voice`, 2026-09-13; not yet in any installed build)
+**Status:** Fixed in `expel_device` / `handle_notify_unsynced`; the desktop `.deb` and the APKs installed on 2026-09-13 still carry the bug.
+**Affected:** Any mesh with a ghost entry (KI-050) — i.e. any phone that has been reinstalled — when someone deletes the ghost from another device.
+**Description:** Expelling a device sends every other peer a cascade ("remove X") and, best-effort, tells the expelled device itself "I have unsynced from you" so its screen clears. That last notice is addressed by IP only. The ghost "Oneplus-453A" (yesterday's identity) had the same address as the live OnePlus, so the live phone received "the desktop unsynced from you", removed the desktop from its peer list and cleared its tombstones ("No peers remain"). The desktop still listed the phone, so from the desktop it merely looked as if the phone had gone quiet. Seen 2026-09-13 09:28:55.
+**Fix:** the notice carries the intended `target_device_id`; a receiver whose own id differs ignores it (logged as "Ignoring removal notice addressed to …"). Recovery on affected builds: re-pair the live phone (code generated on the desktop, entered on the phone).
+
+---
+
 ### KI-052 — First spoken line after the TTS engine connects is inaudible (fixed)
 **Status:** Fixed on `voice` (2026-09-12, `45424bc`); verified on the Pixel: the spoken error line was heard on the first try after the fix.
 **Affected:** GrapheneOS Pixel with its bundled TTS engine (`app.grapheneos.speechservices`); not reproduced on the OnePlus.
