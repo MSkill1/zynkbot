@@ -1047,9 +1047,11 @@ pub async fn generate_reply(
                 if t.contains("MEMORY_EXTRACT:") { return None; }
                 // Handle "PART N — ..." lines from local models following the two-part format.
                 // If content follows the separator, keep it. If it's just a header, drop the line.
-                if t.starts_with("PART ") && t.len() > 5 {
+                // Case-insensitive and colon-tolerant: Mistral 7B spoke "Part 2: This is a test
+                // question…" through the phone's TTS on 2026-09-13.
+                if t.to_uppercase().starts_with("PART ") && t.len() > 5 {
                     if t.chars().nth(5).map_or(false, |c| c.is_ascii_digit()) {
-                        for sep in &[" \u{2014} ", " \u{2013} ", " - "] {
+                        for sep in &[" \u{2014} ", " \u{2013} ", " - ", ": ", ":"] {
                             if let Some(pos) = t.find(sep) {
                                 let content = t[pos + sep.len()..].trim_start();
                                 return if content.is_empty() { None } else { Some(content.to_string()) };

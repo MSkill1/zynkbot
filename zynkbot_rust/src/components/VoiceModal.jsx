@@ -193,12 +193,15 @@ export default function VoiceModal({
   const [showCommands, setShowCommands] = useState(false);
   // Wake-clip counts for the export button (Android only; null elsewhere).
   const [wakeClipStats, setWakeClipStats] = useState(null);
+  // Re-read every time the modal opens: it stays mounted while hidden, so a
+  // mount-only read showed "0 of 30" forever (OnePlus, 2026-09-13).
   useEffect(() => {
+    if (!isOpen) return;
     try {
       const raw = window.AndroidPaths?.getWakeClipStats?.();
       if (raw) setWakeClipStats(JSON.parse(raw));
     } catch (_) {}
-  }, []);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -344,15 +347,21 @@ export default function VoiceModal({
             {wakeClipStats && (() => {
               const ready = wakeClipStats.real >= wakeClipStats.needed;
               return (
-                <div style={{ ...rowStyle, alignItems: 'flex-start', gap: '12px' }}>
-                  <div>
+                <div style={{ ...rowStyle, alignItems: 'center', gap: '12px' }}>
+                  <div style={{ flex: 1 }}>
                     <span style={labelStyle}>Send my wake-word clips</span>
                     <div style={mutedStyle}>
                       {ready
-                        ? `${wakeClipStats.real} real clips collected — enough to train a voice profile.`
-                        : `${wakeClipStats.real} of ${wakeClipStats.needed} real clips collected; keep using "Hey Zynk".`}
-                      {' '}Clips stay on this phone until you send them; the share sheet lets you pick where.
+                        ? 'Enough real clips to train a voice profile.'
+                        : `Lights up at ${wakeClipStats.needed} real "Hey Zynk" clips; keep using it.`}
+                      {' '}Clips stay on this phone until you send them.
                     </div>
+                  </div>
+                  <div style={{ textAlign: 'center', minWidth: '56px' }}>
+                    <div style={{ fontSize: '1.6rem', fontWeight: 'bold', lineHeight: 1, color: ready ? '#50fa7b' : '#f8f8f2' }}>
+                      {wakeClipStats.real}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: '#9aa5c4' }}>of {wakeClipStats.needed}</div>
                   </div>
                   <button
                     disabled={!ready}
