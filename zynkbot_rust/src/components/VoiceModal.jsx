@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 // Offline Vosk dictation ships for Android, Linux desktop and Windows desktop.
 // macOS is still excluded: libvosk.dylib is not bundled, so the offline option is
@@ -191,6 +191,14 @@ export default function VoiceModal({
   onKeepScreenAwakeChange,
 }) {
   const [showCommands, setShowCommands] = useState(false);
+  // Wake-clip counts for the export button (Android only; null elsewhere).
+  const [wakeClipStats, setWakeClipStats] = useState(null);
+  useEffect(() => {
+    try {
+      const raw = window.AndroidPaths?.getWakeClipStats?.();
+      if (raw) setWakeClipStats(JSON.parse(raw));
+    } catch (_) {}
+  }, []);
 
   if (!isOpen) return null;
 
@@ -332,6 +340,34 @@ export default function VoiceModal({
               Off: a false trigger costs one chime and then goes quiet. On: a second,
               closing tone tells you it fired and shut down without sending anything.
             </p>
+
+            {wakeClipStats && (() => {
+              const ready = wakeClipStats.real >= wakeClipStats.needed;
+              return (
+                <div style={{ ...rowStyle, alignItems: 'flex-start', gap: '12px' }}>
+                  <div>
+                    <span style={labelStyle}>Send my wake-word clips</span>
+                    <div style={mutedStyle}>
+                      {ready
+                        ? `${wakeClipStats.real} real clips collected — enough to train a voice profile.`
+                        : `${wakeClipStats.real} of ${wakeClipStats.needed} real clips collected; keep using "Hey Zynk".`}
+                      {' '}Clips stay on this phone until you send them; the share sheet lets you pick where.
+                    </div>
+                  </div>
+                  <button
+                    disabled={!ready}
+                    onClick={() => { try { window.AndroidPaths?.shareWakeClips?.(); } catch (_) {} }}
+                    style={{
+                      padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', whiteSpace: 'nowrap',
+                      background: ready ? '#50fa7b' : '#44475a', color: ready ? '#282a36' : '#9aa5c4',
+                      cursor: ready ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    Send
+                  </button>
+                </div>
+              );
+            })()}
 
             {heyZynkEnabled && !wakeWordModelReady && (
               <div style={{

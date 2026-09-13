@@ -58,7 +58,9 @@ class WakeWordService : Service() {
         const val TRIGGER_CLIP_CHUNKS = 40  // ~3.2 s: covers the models' full context (~2.5 s)
         const val MAX_LISTEN_MS = 30_000L   // hard cap on one dictation, ongoing speech cannot extend it (12 s cut off dictated paragraphs; matches ZynkAssistantSession since 2026-09-12)
         const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
-        const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers
+        const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers (phones with an enforcing verifier)
+        const val TRIGGER_CLIPS_KEPT_UNVERIFIED = 60   // no verifier yet: keep enough to train one (Matt's took 33 real clips)
+        const val CLIPS_NEEDED_FOR_VERIFIER = 30       // real clips before "Send my wake-word clips" lights up
         // Detections on audio quieter than this are ignored. Set from the Pixel's log of
         // 2026-09-08: a real "Hey Zynk" from ~20 ft measured -31.5 dBFS; ten of the
         // twenty-two false firings that morning sat between -40 and -47. Stricter still
@@ -89,6 +91,35 @@ class WakeWordService : Service() {
         /** Called by the session / answerer when a trigger ends: `useful` = a real
          *  question was answered or a command ran; false = nothing heard or NO_QUERY. */
         @JvmStatic fun reportOutcome(useful: Boolean) { instance?.noteOutcome(useful) }
+
+        /** Counts behind the Voice-settings "Send my wake-word clips" button. */
+        @JvmStatic fun clipStats(context: Context): org.json.JSONObject {
+            val dir = File(context.filesDir, "zynkbot/wake_triggers")
+            val wavs = dir.listFiles { f -> f.name.endsWith(".wav") } ?: emptyArray()
+            var real = 0; var falseCount = 0
+            for (w in wavs) {
+                val stem = w.name.removeSuffix(".wav")
+                if (File(dir, "$stem.real").exists()) real++ else if (File(dir, "$stem.false").exists()) falseCount++
+            }
+            return org.json.JSONObject().put("total", wavs.size).put("real", real).put("false", falseCount).put("needed", CLIPS_NEEDED_FOR_VERIFIER)
+        }
+
+        /** Every clip with its labels and score files, zipped into the cache dir for the
+         *  share sheet. Nothing is sent by this code; the user picks where it goes. */
+        @JvmStatic fun zipClips(context: Context): File? {
+            val dir = File(context.filesDir, "zynkbot/wake_triggers")
+            val files = dir.listFiles()?.filter { it.isFile } ?: return null
+            if (files.isEmpty()) return null
+            val out = File(context.cacheDir, "zynkbot-wake-clips-${SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())}.zip")
+            java.util.zip.ZipOutputStream(FileOutputStream(out)).use { zip ->
+                for (f in files.sortedBy { it.name }) {
+                    zip.putNextEntry(java.util.zip.ZipEntry(f.name))
+                    f.inputStream().use { it.copyTo(zip) }
+                    zip.closeEntry()
+                }
+            }
+            return out
+        }
         /** True while backing off after repeated fruitless triggers. */
         @JvmStatic fun isStrict(): Boolean = (instance?.strictUntil ?: 0L) > System.currentTimeMillis()
 
@@ -597,7 +628,7 @@ class WakeWordService : Service() {
                     .writeText(scoreSnap.joinToString("\n") { "%.4f".format(Locale.US, it) })
                 dir.listFiles { f -> f.name.endsWith(".wav") }
                     ?.sortedByDescending { it.name }
-                    ?.drop(TRIGGER_CLIPS_KEPT)
+                    ?.drop(if (verifier?.enforcesOn(this) == true) TRIGGER_CLIPS_KEPT else TRIGGER_CLIPS_KEPT_UNVERIFIED)
                     ?.forEach { val stem = it.name.removeSuffix(".wav"); it.delete(); for (ext in listOf(".scores.txt", ".real", ".false")) File(dir, stem + ext).delete() }
                 Log.i(TAG, "Trigger clip saved: ${file.name}")
             } catch (e: Exception) {

@@ -235,6 +235,26 @@ class MainActivity : TauriActivity() {
                 .putBoolean(VOICE_PREFS_FRUITLESS_TONE, on).apply()
         }
 
+        /** {"total","real","false","needed"} for the wake-clip export button. */
+        @JavascriptInterface
+        fun getWakeClipStats(): String = WakeWordService.clipStats(this@MainActivity).toString()
+
+        /** Zips the wake-word clips and opens the system share sheet; the user chooses
+         *  the destination (email, Drive, a messenger). Returns false if there is nothing. */
+        @JavascriptInterface
+        fun shareWakeClips(): Boolean {
+            val zip = WakeWordService.zipClips(this@MainActivity) ?: return false
+            val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.fileprovider", zip)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "Zynkbot wake-word clips")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            runOnUiThread { startActivity(Intent.createChooser(send, "Send wake-word clips")) }
+            return true
+        }
+
         @JavascriptInterface
         fun getShareDir(): String {
             return try {
