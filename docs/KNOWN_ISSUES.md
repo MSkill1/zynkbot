@@ -147,7 +147,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ### KI-058 — A request died with no reply when a stored memory contained a multi-byte character at a byte-60 boundary (fixed on `voice`, 2026-09-13)
-**Status:** Fixed; needs new builds on every platform (desktop packages via CI, phone APK and Play bundle locally).
+**Status:** Fixed and verified on the desktop (CI 34777233423 build, 2026-09-13 15:4x): the same translation request that had panicked was answered in 8 s, with the culprit memory — a chilli recipe holding an emoji, a curly apostrophe and an em dash near byte 60 — recalled and previewed safely. Verified on the Pixel the same afternoon with the same request (APK 1ae94bf5…).
 **Affected:** All platforms, any backend. Trigger: a recalled memory whose text has a non-ASCII character (an em dash, an accented letter) spanning byte 60; the request thread panicked and the user saw nothing.
 **Description:** `conversation_engine.rs` cut a log preview of each recalled memory with a byte slice (`&text[..60]`); Rust panics when a slice ends inside a multi-byte character. Seen 2026-09-13 15:1x on the desktop: a Spanish translation request pulled in a memory with "—" at bytes 59..62, the tokio worker panicked ("end byte index 60 is not a char boundary"), and the reply never came. Three similar slices in `commands/chat.rs` (`&fact[..fact.len().min(80)]`) had the same latent fault.
 **Fix:** character-based previews (`chars().take(n)`) in all four places; a crate-wide scan found no other byte slices on user text (device ids and hashes are ASCII).
@@ -275,8 +275,9 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Mobile UI
 
-### KI-040 — Black screen when returning to the app after a while away (reopened 2026-09-12; second fix pending verification)
-**Status:** First fix (2026-09-11) was not enough: on a fresh OnePlus install on 2026-09-12, coming back from the assistant-settings screen still showed black until the first tap. Second fix on `voice` (2026-09-12), to be verified on the next APK by repeating that exact flow.
+### KI-040 — Black screen when returning to the app after a while away (fixed; third fix verified on both phones 2026-09-13)
+**Status:** Fixed. The second fix (visibility blink on first focus) worked on the GrapheneOS Pixel (fresh install 2026-09-12) but not on the OnePlus (OxygenOS, fresh install 2026-09-13): there, the next permission prompt lands on top 70 ms after the return and the WebView's renderer still produced no frame. Third fix (`670f411`): on the first focus after resume, pause/resume the WebView so its compositor re-attaches, blink it, and force a page paint from inside with a resize event — run immediately and again 400 ms later. Verified on the OnePlus (fresh onboarding, 2026-09-13 09:1x) and on the Pixel (fresh onboarding, 13:48). History below.
+**First fix (2026-09-11) was not enough:** on a fresh OnePlus install on 2026-09-12, coming back from the assistant-settings screen still showed black until the first tap. Second fix on `voice` (2026-09-12).
 **Why the first fix missed:** it invalidated the WebView from `onResume`, but Android recreates the window surface after `onResume`, so the invalidate could land before there was a surface to draw into; nothing scheduled a frame once the surface appeared, and the first touch was what finally forced one.
 **Second fix:** `onResume` sets a flag; the first `onWindowFocusChanged(true)` after it, which fires only once the window is attached with its surface, consumes the flag and does a one-frame visibility toggle on the WebView, forcing the compositor to render without input. Once per return, so no blink on ordinary focus changes.
 **Description:** Android drops the window surface while another activity is up for long (16 s in Settings during onboarding did it). On return the WebView did not draw into the new surface until a touch generated input, so the app sat black. Tauri's base activity only resumes plugins.

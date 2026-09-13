@@ -6,7 +6,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## [Unreleased] — 0.9.6-beta1 (in progress) <!-- draft by Claude 2026-09-09, review wording -->
+## [Unreleased] — 0.9.6-beta1 (in progress) <!-- draft by Claude 2026-09-09, extended 2026-09-13 after the four-device test run; review wording -->
 
 ### Android voice
 - Every "Hey Zynk" now runs natively through the Android assistant role: chime, Z overlay, tap-Z-to-cancel, Stop, replies spoken with the built-in voice and joined to the current thread. The old in-app wake path is gone.
@@ -18,6 +18,29 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - "Remember colon …" saves a fact word for word by voice; Vosk's misspellings of "colon" are accepted.
 - Chime and spoken replies use the media volume.
 - A hands-free listen may run up to 30 seconds (was 12), long enough to dictate a paragraph.
+- Wake word is opt-in (off by default) with the battery and false-trigger facts stated on the toggle.
+- The detector skips its models while the room is quiet (below −52 dBFS for 2 s): an overnight run had it working at full rate under the screen-off wake lock and drained a Pixel.
+- Coming back from the assistant-settings screen no longer leaves a black screen until the first tap (three attempts; the last one verified on stock Android and GrapheneOS).
+- First-run fixes on Android: a startup deadlock, the assistant picker, keys pushed from another device showing without a restart, the name asked twice, and the desktop's model-download prompt no longer offered on a phone.
+- The screen-off path (used when the assistant service is not bound) now plays the sent tone *before* the round trip, listens up to 30 s, and keeps the detector paused until the reply has been spoken — it used to hear the phone's own answer and fire on it.
+- The first spoken line after the text-to-speech engine connects is no longer swallowed (GrapheneOS engine).
+- "Play a tone when a trigger hears nothing" toggle in Voice Settings, off by default: a false trigger costs one chime and then silence.
+- When the wake word is being cautious after repeated empty firings and drops a plain statement, it now says "Were you asking me a question? I'm only answering questions for a few minutes" instead of nothing.
+- Whisper dictation in a noisy room: the silence detector follows the quietest level of the last two seconds, so an air conditioner no longer keeps it recording to the 30 s cap.
+- Phones without a trained voice profile keep the 60 newest wake clips (20 with one), and Voice Settings has a "Send my wake-word clips" button with a live count that lights up at 30 real clips and hands a zip to the share sheet — nothing is sent by the app itself. An answered question labels its clip as real, not only clock commands.
+- The personal verifier's threshold is 0.55; the shipped profile enforces for its owner only.
+
+### Desktop
+- Every "are you sure?" prompt is a native dialog on all platforms. On Windows the browser's own prompts were being skipped as if answered "yes": the Einstein demo loaded and Clear All deleted 59 memories with no question asked.
+- Ollama is detected on startup and when Settings opens (running / installed but not running / not installed), with the live model list; the Ollama command is found in its standard install locations even when the app was launched with a minimal PATH.
+- Paired phones always get the model selected on the desktop through the Ollama proxy; the phone no longer chooses, and custom-endpoint settings are no longer pushed between devices.
+- OpenAI's "-pro" models are no longer offered (they are not chat models and returned 404); selecting text in a dialog no longer selects the page behind it; one close button per dialog.
+- History shows the current thread first; the empty knowledge base offers "Add files"; the safety classifier fails open on very long input instead of falling back to keyword matching.
+
+### Windows
+- Offline Vosk dictation works on Windows: the installer carries the Vosk library, its runtime DLLs and the model. (Previously compiled out; Whisper was the only option.)
+- The installer now installs per machine, under `C:\Program Files\Zynkbot`. The per-user location it used before was the app's own data folder under a different letter case, so program files sat beside the database and models. The uninstaller never deleted user data, but an older installer will quietly add a second, per-user copy next to the fixed one — remove it from Settings → Apps if you installed an earlier beta.
+- The uninstaller's "delete all data" also removes the WebView profile that had let a "fresh" install inherit old preferences.
 
 ### Build and release
 - The release workflow builds and signs the Linux (.deb, .rpm, AppImage), Windows (NSIS) and Android (APK and AAB) packages on a tag, and can be run by hand without one; Linux and Windows packages carry the Vosk library and model.
@@ -34,15 +57,31 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - Memories stored with "Remember:" are marked when written; a "Remembered on request" checkbox in the Memory Manager shows only them, and About me opens with a "You asked me to remember" section (20 at a time). Memories stored before this build carry no mark.
 - Explicit Remember is stored even when it contradicts an older memory; a contradiction no longer blocks it.
 - One timestamp format everywhere; duplicate conversation rows removed and prevented.
+- Small local models that echo the prompt's headings instead of the memory marker are tolerated: the fact is still stored, the heading no longer leaks into the reply or the spoken answer ("Part 2:" included).
+- A request no longer dies silently when a recalled memory holds an emoji, an accented letter or an em dash at a particular position (a byte-based cut in a log line; six such places replaced).
+- The model is given the current date and time, so it stops trying to search for the date.
+
+### Sync
+- Deleting a stale device entry can no longer knock a live device at the same address off the mesh: removal notices name their target and are ignored by anyone else.
+- The Ollama proxy log names the requesting device.
 
 ### Knowledge base
 - Fabrication guard: the model is told what the search found (real matches, weak matches, nothing) and the reply header says when an answer is not grounded; no memory is extracted from an ungrounded reply.
 - Android: Add files through the system picker; "All files access" no longer requested.
+- The log names the document, chunk and score behind every knowledge-base answer.
 
 ### App
 - Report a problem: a local text report (version, build, device, masked log tail, optional conversation) from System Controls or under any reply.
 - Pinned threads; the current thread is restored after a restart; renamed peers show their new name; a peer's changed address is learned from its own requests; the backup key travels with "Push to all devices".
 - 16 KB page-size alignment (Vosk 0.3.75, ONNX Runtime 1.29); full-screen-intent and photo permissions removed; Google Play readiness plan in the roadmap.
+- Continuous integration runs the unit tests, the Tauri command-contract guards and an Android compile check on every push; the Android build compiles without warnings.
+
+### Known at release (see docs/KNOWN_ISSUES.md)
+- A device that pairs *after* the keys were saved does not receive them; press "Push to all devices" once (KI-055).
+- An Anthropic key created at organisation level needs a workspace; create the key inside a workspace (KI-056).
+- A false wake-word trigger in steady noise on the Whisper engine can produce a junk memory; use Vosk, the default (KI-057).
+- Reinstalling a phone leaves a stale copy of it in other devices' lists; delete it (KI-050).
+- Conversation-history sync can duplicate or skip threads; rebuilt after the beta (KI-028).
 
 ---
 
