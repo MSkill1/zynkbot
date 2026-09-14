@@ -413,11 +413,9 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                     <button
                       onClick={(e) => startRename(e, session)}
                       title="Rename"
-                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.95rem", padding: "0 0 0 8px", flexShrink: 0, opacity: 0.5 }}
-                      onMouseOver={(e) => e.currentTarget.style.opacity = "1"}
-                      onMouseOut={(e) => e.currentTarget.style.opacity = "0.5"}
+                      style={{ background: "none", border: "none", color: "#f8f8f2", cursor: "pointer", fontSize: "1.05rem", padding: "0 0 0 8px", flexShrink: 0 }}
                     >
-                      ✎
+                      ✏️
                     </button>
                     <button
                       onClick={(e) => togglePin(e, session)}
