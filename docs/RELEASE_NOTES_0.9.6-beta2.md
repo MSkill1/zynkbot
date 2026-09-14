@@ -24,4 +24,12 @@ Not changed in this release: syncing of conversation history between devices is 
 | `Zynkbot_0.9.6-beta2_amd64.deb` / `.rpm` / `.AppImage` | Linux | `sudo apt install ./Zynkbot_0.9.6-beta2_amd64.deb` (or the rpm, or run the AppImage). |
 | `Zynkbot_0.9.6-beta2.apk` | Android 8+ (arm64) | Sideload: open the file on the phone and allow the install. Installs over beta1 from the same key without losing data. |
 
-SHA-256 checksums: *(filled in at publish)*.
+SHA-256 checksums (`SHA256SUMS.txt` is attached to the release):
+
+```
+616570c348405eca021d86e2d587df591247f710605b22a6aa10b231c32eaef5  Zynkbot-0.9.6-beta2-1.x86_64.rpm
+425d4eb624223da4e628eef198c88dda6852f219fdb26b7659f951a35e9f59eb  Zynkbot_0.9.6-beta2_amd64.AppImage
+7cfcfaddb88fa573647d738cc9631dafe32bc4247c1425d12aa68f69ce4bffdb  Zynkbot_0.9.6-beta2_amd64.deb
+daaad9d75f67b07fca0536ae617a2138a609e02492b63049e626ab2f74d4e424  Zynkbot_0.9.6-beta2.apk
+6685641cf7ec67a0cf5c7f36a46f6c2713a450c8aa7e9fea707178d28ad2fe81  Zynkbot_0.9.6-beta2_x64-setup.exe
+```
