@@ -427,7 +427,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                     <button
                       onClick={(e) => deleteSession(e, session.session_id)}
                       title="Delete conversation"
-                      style={{ background: "none", border: "none", color: "#6272a4", cursor: "pointer", fontSize: "1rem", padding: "0 0 0 8px", flexShrink: 0 }}
+                      style={{ background: "none", border: "none", color: "#6272a4", cursor: "pointer", fontSize: "1.4rem", lineHeight: 1, padding: "4px 4px 4px 12px", minWidth: "36px", flexShrink: 0 }}
                       onMouseOver={(e) => e.target.style.color = "#ff5555"}
                       onMouseOut={(e) => e.target.style.color = "#6272a4"}
                     >

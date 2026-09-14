@@ -11,7 +11,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 ### Conversation history
 - "New" starts a new thread. It used to empty the screen and keep the same thread, so everything said afterwards — typed or hands-free — was appended to the conversation the user thought they had left, and History showed one thread holding several conversations with no previous one to go back to.
 - A thread appears in History as soon as its first message is sent, under "Current thread", instead of only after the first reply had finished.
-- Threads can be renamed (✎ next to the pin). A blank name goes back to the automatic one.
+- Threads can be renamed (pencil next to the pin). A blank name goes back to the automatic one. The delete × in History is larger and easier to tap on a phone.
 - Message counts were 2 short on every thread (a one-exchange thread read "0 messages"); counted correctly now, and existing counts are repaired on first start.
 - Android: a hands-free exchange that finished while the app was in the background is shown in the chat when the app comes back to the front.
 
