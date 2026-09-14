@@ -363,7 +363,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
             )}
             {!isLoading && Object.entries(groups).map(([label, group]) => (
               <div key={label}>
-                <div style={{ padding: "6px 16px 4px", fontSize: "0.75rem", color: "#6272a4", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                <div style={{ padding: "6px 16px 4px", fontSize: "0.75rem", color: "#a4acd0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                   {label}
                 </div>
                 {group.map((session) => (
@@ -404,7 +404,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                           {session.title || `Voice conversation · ${new Date(session.started_at).toLocaleDateString()}`}
                         </div>
                       )}
-                      <div style={{ color: "#6272a4", fontSize: "0.75rem", marginTop: "3px" }}>
+                      <div style={{ color: "#a4acd0", fontSize: "0.75rem", marginTop: "3px" }}>
                         {session.message_count} messages
                         {session.model_backend && ` · ${session.model_backend}`}
                         {" · "}{new Date(session.last_active).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
