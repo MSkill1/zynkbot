@@ -626,10 +626,17 @@ export default function App() {
 
   // Voice input now handled by VoiceButton component (using whisper.cpp)
 
-  const handleClearConversation = async () => {
-    if (await confirmDialog('Clear conversation history? This will remove all messages from the current chat.')) {
-      setMessages([]);
-    }
+  // "New" starts a new thread. Until 0.9.6-beta2 it only emptied the screen and
+  // kept the same session id, so every later message — and every hands-free turn —
+  // was appended to the thread the user thought they had left; History then showed
+  // one thread holding several conversations and no "previous" one to go back to
+  // (tester report, 2026-09-14). The old thread stays in History untouched.
+  const handleNewConversation = async () => {
+    if (messages.length > 0 && !(await confirmDialog('Start a new conversation? The current one stays in Conversation History.'))) return;
+    const fresh = uuidv4();
+    setSessionId(fresh);
+    try { sessionStorage.setItem('zynkbot_session_id', fresh); } catch (_) {}
+    setMessages([]);
   };
 
   const handleCopyAll = () => {
@@ -1763,7 +1770,7 @@ export default function App() {
               <h2 style={{margin: 0, color: '#8be9fd'}}>Conversation</h2>
               <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                 <button
-                  onClick={handleClearConversation}
+                  onClick={handleNewConversation}
                   title="Start a new conversation"
                   style={{
                     padding: '5px 12px',

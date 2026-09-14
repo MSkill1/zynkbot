@@ -662,7 +662,16 @@ class MainActivity : TauriActivity() {
                 putExtra("threshold", threshold)
                 putExtra("modelDir", modelDir.absolutePath)
             }
-            ContextCompat.startForegroundService(this@MainActivity, intent)
+            // The page's JS keeps running while the app is in the background, so this
+            // can be called with the app not visible; Android 12+ then throws
+            // ForegroundServiceStartNotAllowedException at the caller. Report it to
+            // the page instead of crashing.
+            try {
+                ContextCompat.startForegroundService(this@MainActivity, intent)
+            } catch (e: Exception) {
+                Log.w("WakeWordBridge", "Could not start the wake-word service now: ${e.javaClass.simpleName}: ${e.message}")
+                fire("window.__wakeWordError&&window.__wakeWordError('Wake word could not start while the app is in the background; open the app and try again');")
+            }
         }
 
         @JavascriptInterface
@@ -916,6 +925,10 @@ class MainActivity : TauriActivity() {
             wv.post {
                 wv.requestLayout()
                 wv.invalidate()
+                // Hands-free exchanges finished while the page was paused are queued
+                // in NativeVoiceAnswerer; the nudge sent at the time may have landed
+                // on a WebView that was not running JS. Ask again now that it is.
+                wv.evaluateJavascript("window.__nativeTurns&&window.__nativeTurns();", null)
             }
         }
         // The surface may not exist yet at this point; onWindowFocusChanged finishes
@@ -1265,6 +1278,13 @@ class MainActivity : TauriActivity() {
 
     private fun startSyncService() {
         val intent = Intent(this, SyncForegroundService::class.java)
-        ContextCompat.startForegroundService(this, intent)
+        try {
+            ContextCompat.startForegroundService(this, intent)
+        } catch (e: Exception) {
+            // Android 12+ refuses a foreground-service start from the background
+            // (ForegroundServiceStartNotAllowedException). The sync server itself
+            // runs in the Rust core regardless; only the notification is lost.
+            Log.w(TAG_LIFECYCLE, "Sync foreground service not started: ${e.javaClass.simpleName}: ${e.message}")
+        }
     }
 }

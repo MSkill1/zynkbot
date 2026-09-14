@@ -1,6 +1,6 @@
 {
   "name": "zynkbot",
-  "version": "0.9.6-beta1",
+  "version": "0.9.6-beta2",
   "engines": {
     "node": ">=18"
   },

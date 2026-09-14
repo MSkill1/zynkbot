@@ -2013,7 +2013,9 @@ impl ZynkSyncService {
                       model_backend, containment_mode)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (session_id) DO UPDATE SET
-                     title            = COALESCE(EXCLUDED.title, conversation_sessions.title),
+                     title            = CASE WHEN coalesce(conversation_sessions.title, '') = ''
+                                             THEN COALESCE(EXCLUDED.title, conversation_sessions.title)
+                                             ELSE conversation_sessions.title END,
                      last_active      = CASE WHEN EXCLUDED.last_active > conversation_sessions.last_active THEN EXCLUDED.last_active ELSE conversation_sessions.last_active END,
                      message_count    = CASE WHEN EXCLUDED.message_count > conversation_sessions.message_count THEN EXCLUDED.message_count ELSE conversation_sessions.message_count END,
                      model_backend    = COALESCE(EXCLUDED.model_backend, conversation_sessions.model_backend),

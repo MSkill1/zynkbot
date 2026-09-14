@@ -67,6 +67,22 @@ pub async fn set_session_pinned(
         .map_err(|e: sqlx::Error| e.to_string())
 }
 
+/// Rename a conversation in History. An empty title clears the custom name.
+#[tauri::command]
+pub async fn set_session_title(
+    session_id: String,
+    user_id: String,
+    title: String,
+) -> Result<bool, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url)
+        .await
+        .map_err(|e: sqlx::Error| e.to_string())?;
+    conversation_history::set_session_title(&pool, &session_id, &user_id, &title)
+        .await
+        .map_err(|e: sqlx::Error| e.to_string())
+}
+
 #[tauri::command]
 pub async fn delete_conversation_session(
     session_id: String,

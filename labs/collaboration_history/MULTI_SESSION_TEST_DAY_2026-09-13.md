@@ -42,3 +42,18 @@ About a day and a half of Matt's attention; roughly a dozen local Android builds
 - Freeze the code before the final all-device pass; every device gets the same commit; the Windows installer only exists once CI has run on that commit.
 - Wipe order for a full new-user pass: back up the desktop's small data folder (identity + database, not the models), uninstall everywhere, install everywhere, onboard the desktop first, pair the rest to it, verify, then restore the desktop from the backup and re-pair.
 - Keep the "local vs published" wording, always.
+
+## Postscript, 2026-09-14: "can these bugs be extrapolated?"
+
+The morning after the beta went out, two reports arrived: the tester's phone was crashing on its own (a sticky sync service restarted by Android in the background, where a foreground service is refused; the refusal was uncaught), and conversation history "did not reflect what took place" (the "New conversation" button only cleared the screen and never changed the thread id, so every later message landed in the old thread). Both were fixed within the hour.
+
+Matt then asked a question the agent had not asked itself: *can we extrapolate any other potential problems Mike might run into from the bugs we just fixed?* Each fix had cousins, and the question found them:
+
+- The crash: two other places start a foreground service and one of them caught only `SecurityException`, which the Android 12+ refusal is not. Three more guards added.
+- The thread fix: creating the History row at the first message would also have created a row for a hands-free turn the model later judged to be television — a thread titled with a TV line, the exact thing an earlier fix had prevented. Hands-free turns now wait for the reply, as before.
+- A rename made on one device would have been overwritten by the next sync from a peer that still had the automatic title. The receiving side now keeps a title it already has.
+- A thread whose first reply failed would sit in the list as "0 messages" on every device. Empty threads are shown only while they are the current one.
+
+The general form of the question is worth keeping: *what else in this codebase has the same shape as the bug we just fixed?* An agent that has just fixed something has the pattern loaded and can grep for it in seconds; a human who has just read the diagnosis is the one who thinks to ask. The same session's lesson from the day before ("measure, don't assert") applies in reverse here: after a fix, search, don't assume the fix was the only instance.
+
+Matt's second question that morning — whether guides already exist that cover all of this, and whether writing this record is a waste of his time — is answered in the reply of the same date, and the short answer was: the mechanics are well covered (official Claude Code best-practices docs, many 2026 workflow guides, one academic case study of a Claude Code multi-agent build); what is not covered is a dated, first-person record of a programmer new to Rust, acting as product owner, and an agent shipping a real product to real testers over months, with the mistakes left in. That is what this directory is.

@@ -6,7 +6,19 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## [Unreleased] — 0.9.6-beta1 (in progress) <!-- draft by Claude 2026-09-09, extended 2026-09-13 after the four-device test run; review wording -->
+## [Unreleased] — 0.9.6-beta2 <!-- drafted by Claude 2026-09-14 from a tester's history report; review wording -->
+
+### Conversation history
+- "New" starts a new thread. It used to empty the screen and keep the same thread, so everything said afterwards — typed or hands-free — was appended to the conversation the user thought they had left, and History showed one thread holding several conversations with no previous one to go back to.
+- A thread appears in History as soon as its first message is sent, under "Current thread", instead of only after the first reply had finished.
+- Threads can be renamed (✎ next to the pin). A blank name goes back to the automatic one.
+- Message counts were 2 short on every thread (a one-exchange thread read "0 messages"); counted correctly now, and existing counts are repaired on first start.
+- Android: a hands-free exchange that finished while the app was in the background is shown in the chat when the app comes back to the front.
+
+### Android stability
+- Fixed a repeating crash ("Unable to start service SyncForegroundService") when Android restarted the app's sync service after reclaiming memory: the restart happens with the app in the background, where a foreground service is not allowed, and the refusal was not handled. The service now declines such restarts instead of crashing (reported by a tester on Android 17, reproduced on a Pixel 10 Pro XL, 2026-09-14).
+
+## [0.9.6-beta1] — 2026-09-13 <!-- draft by Claude 2026-09-09, extended 2026-09-13 after the four-device test run; review wording -->
 
 ### Android voice
 - Every "Hey Zynk" now runs natively through the Android assistant role: chime, Z overlay, tap-Z-to-cancel, Stop, replies spoken with the built-in voice and joined to the current thread. The old in-app wake path is gone.

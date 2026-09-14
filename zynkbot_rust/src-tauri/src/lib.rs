@@ -2617,6 +2617,7 @@ pub fn run() {
             commands::conversation::search_conversations,
             commands::conversation::delete_conversation_session,
             commands::conversation::set_session_pinned,
+            commands::conversation::set_session_title,
             // Feedback / training data collection
             commands::conversation::store_message_feedback,
             // Setup wizard

@@ -26,6 +26,10 @@ function groupSessions(sessions, currentSessionId) {
   if (current) groups["Current thread"] = [current];
   for (const s of sessions) {
     if (current && s.session_id === current.session_id) continue;
+    // A thread is listed from its first message, so one whose first reply failed
+    // (or an empty one that arrived from another device) has no messages. Only the
+    // current thread is worth showing in that state.
+    if (!s.message_count) continue;
     // Pinned conversations sit in their own group at the top, whatever their date.
     const label = s.pinned ? "Pinned" : dateLabel(s.last_active);
     if (!groups[label]) groups[label] = [];
@@ -44,6 +48,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [copiedMsgId, setCopiedMsgId] = useState(null);
+  const [renaming, setRenaming] = useState(null); // { id, value } while a title is being edited
 
   const copyMessage = async (id, text) => {
     try {
@@ -213,6 +218,22 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     }
   };
 
+  // Rename: the title turns into a text box in place; Enter saves, Escape cancels.
+  const startRename = (e, session) => {
+    e.stopPropagation();
+    setRenaming({ id: session.session_id, value: session.title || "" });
+  };
+  const commitRename = async () => {
+    const { id, value } = renaming;
+    setRenaming(null);
+    try {
+      await invoke("set_session_title", { sessionId: id, userId, title: value.trim() });
+      setSessions((prev) => prev.map((s) => (s.session_id === id ? { ...s, title: value.trim() } : s)));
+    } catch (err) {
+      console.error("[History] rename failed:", err);
+    }
+  };
+
   const groups = groupSessions(sessions, currentSessionId);
 
   return (
@@ -363,15 +384,41 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                     onMouseOut={(e) => e.currentTarget.style.background = "transparent"}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ color: "#f8f8f2", fontSize: "0.9rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {session.title || `Voice conversation · ${new Date(session.started_at).toLocaleDateString()}`}
-                      </div>
+                      {renaming?.id === session.session_id ? (
+                        <input
+                          autoFocus
+                          value={renaming.value}
+                          maxLength={120}
+                          placeholder="Name this conversation"
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setRenaming({ id: session.session_id, value: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); commitRename(); }
+                            if (e.key === "Escape") { e.preventDefault(); setRenaming(null); }
+                          }}
+                          onBlur={commitRename}
+                          style={{ width: "100%", boxSizing: "border-box", padding: "3px 6px", background: "#21222c", border: "1px solid #8be9fd", borderRadius: "4px", color: "#f8f8f2", fontSize: "0.9rem", outline: "none" }}
+                        />
+                      ) : (
+                        <div style={{ color: "#f8f8f2", fontSize: "0.9rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {session.title || `Voice conversation · ${new Date(session.started_at).toLocaleDateString()}`}
+                        </div>
+                      )}
                       <div style={{ color: "#6272a4", fontSize: "0.75rem", marginTop: "3px" }}>
                         {session.message_count} messages
                         {session.model_backend && ` · ${session.model_backend}`}
                         {" · "}{new Date(session.last_active).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </div>
                     </div>
+                    <button
+                      onClick={(e) => startRename(e, session)}
+                      title="Rename"
+                      style={{ background: "none", border: "none", cursor: "pointer", fontSize: "0.95rem", padding: "0 0 0 8px", flexShrink: 0, opacity: 0.5 }}
+                      onMouseOver={(e) => e.currentTarget.style.opacity = "1"}
+                      onMouseOut={(e) => e.currentTarget.style.opacity = "0.5"}
+                    >
+                      ✎
+                    </button>
                     <button
                       onClick={(e) => togglePin(e, session)}
                       title={session.pinned ? "Unpin" : "Pin to top"}

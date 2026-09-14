@@ -175,6 +175,24 @@ pub async fn generate_reply(
     // KB search, and conversation history. Falls back to `message` when no file is attached.
     let query = user_query.unwrap_or_else(|| message.clone());
 
+    // Put the thread in History now, not after the reply: a thread whose first
+    // answer was still streaming was invisible there (2026-09-14). HIPAA keeps no
+    // history at all. Hands-free turns wait for the reply as before: the model may
+    // judge the transcript a TV line (NO_QUERY), and such a turn must never open or
+    // name a thread. A failure here must not cost the user the reply.
+    if containment_mode.to_lowercase() != "hipaa" && !skip_containment.unwrap_or(false) && !hands_free {
+        match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+            Ok(pool) => {
+                if let Err(e) = crate::conversation_history::open_session(
+                    &pool, &session_id, &user_id, &query, &forced_backend, &containment_mode,
+                ).await {
+                    eprintln!("[ConvHistory] ⚠️ Could not open thread {}: {}", &session_id.chars().take(8).collect::<String>(), e);
+                }
+            }
+            Err(e) => eprintln!("[ConvHistory] ⚠️ DB pool error: {}", e),
+        }
+    }
+
     // STEP 1: Safety check via containment layer (skip for internal operations like web search synthesis)
     let mut warning_prefix: Option<String> = None;
 

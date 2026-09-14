@@ -314,8 +314,13 @@ class WakeWordService : Service() {
                     startForeground(NOTIFICATION_ID, notification)
                 }
                 isForegrounded = true
-            } catch (e: SecurityException) {
-                Log.w(TAG, "App not in foreground, cannot start FGS: ${e.message}")
+            } catch (e: Exception) {
+                // SecurityException on Android 14 (microphone type from the
+                // background); ForegroundServiceStartNotAllowedException — an
+                // IllegalStateException, not a SecurityException — on Android 12+
+                // when the app is in the background. The sync service crashed the
+                // app on exactly that one (2026-09-14); catch everything here.
+                Log.w(TAG, "Cannot start as a foreground service now: ${e.javaClass.simpleName}: ${e.message}")
                 stopSelf()
                 return START_NOT_STICKY
             }

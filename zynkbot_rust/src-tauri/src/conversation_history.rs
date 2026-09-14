@@ -60,8 +60,76 @@ pub async fn ensure_tables(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             println!("[ConvHistory] normalised {} timestamp rows", fixed);
         }
     }
+    // Repair message counts that drifted: until 0.9.6-beta2 the first exchange of a
+    // thread was never counted (the INSERT left the column at its default of 0 and
+    // only the ON CONFLICT path added 2), so every thread read 2 short and a
+    // one-exchange thread said "0 messages". Only rows that are wrong are touched.
+    let recounted = sqlx::query(
+        "UPDATE conversation_sessions SET message_count = (
+             SELECT COUNT(*) FROM conversation_messages m WHERE m.session_id = conversation_sessions.session_id
+         ) WHERE message_count <> (
+             SELECT COUNT(*) FROM conversation_messages m WHERE m.session_id = conversation_sessions.session_id
+         )",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    if recounted > 0 {
+        println!("[ConvHistory] repaired message_count on {} threads", recounted);
+    }
     println!("[ConvHistory] ✅ Tables ready");
     Ok(())
+}
+
+/// Give a thread a name of the user's choosing. An empty name clears the custom
+/// title, which puts the automatic one (first message) back the next time a
+/// message is logged.
+pub async fn set_session_title(
+    pool: &SqlitePool,
+    session_id: &str,
+    user_id: &str,
+    title: &str,
+) -> Result<bool, sqlx::Error> {
+    let title: String = title.trim().chars().take(120).collect();
+    let result = sqlx::query(
+        "UPDATE conversation_sessions SET title = ? WHERE session_id = ? AND user_id = ?",
+    )
+    .bind(&title)
+    .bind(session_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Make a thread visible in History the moment its first message is sent, rather
+/// than after the reply has streamed and been logged. Until 0.9.6-beta2 a thread had
+/// no row until `log_exchange` ran, so opening History while the first reply was
+/// still coming showed nothing for it, and "Current thread" could not label it
+/// (2026-09-14). Idempotent: an existing row is left exactly as it is;
+/// `log_exchange` then updates it as before.
+pub async fn open_session(
+    pool: &SqlitePool,
+    session_id: &str,
+    user_id: &str,
+    first_message: &str,
+    model_backend: &str,
+    containment_mode: &str,
+) -> Result<bool, sqlx::Error> {
+    let title_snippet: String = first_message.chars().take(60).collect();
+    let result = sqlx::query(
+        "INSERT OR IGNORE INTO conversation_sessions
+             (session_id, user_id, title, started_at, last_active, message_count, model_backend, containment_mode)
+         VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), 0, ?, ?)",
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(&title_snippet)
+    .bind(model_backend)
+    .bind(containment_mode)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Pin or unpin a conversation; pinned ones are listed first.
@@ -98,24 +166,28 @@ pub async fn log_exchange(
     input_mode: &str,
 ) -> Result<(), sqlx::Error> {
     // Auto-title: first 60 chars of the first message that is allowed to name the
-    // thread. Hands-free turns pass name_thread = false: a "Hey Zynk" test or a stray
-    // TV line joining the current thread must not become its title (a Baldur's Gate
-    // conversation was filed as "claude this is just a test to see if the voice
-    // wake up is wo", 2026-09-07). A thread named by nobody keeps an empty title
-    // until an in-app message arrives; the history panel shows a placeholder.
+    // thread (callers pass name_thread = false for turns that must not — fragments
+    // and NO_QUERY turns never reach here; since 2026-09-08 real hands-free
+    // exchanges may name a thread, otherwise a thread whose first questions were
+    // spoken stayed untitled and unfindable). A thread named by nobody keeps an
+    // empty title; the history panel shows a placeholder. The user can rename it.
     let title_snippet: String = if name_thread {
         user_message.chars().take(60).collect()
     } else {
         String::new()
     };
 
+    // The row is normally created up front by open_session; a hands-free turn
+    // creates it here. message_count is recomputed from the rows below after the
+    // messages are stored, so it is exact even when a repeat is ignored. Before
+    // 0.9.6-beta2 a fresh row was left at 0 and only the conflict path added 2, so
+    // every thread's count read 2 short.
     sqlx::query(
         "INSERT INTO conversation_sessions
-             (session_id, user_id, title, started_at, last_active, model_backend, containment_mode)
-         VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), ?, ?)
+             (session_id, user_id, title, started_at, last_active, message_count, model_backend, containment_mode)
+         VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), 0, ?, ?)
          ON CONFLICT (session_id) DO UPDATE SET
              last_active   = strftime('%Y-%m-%dT%H:%M:%S+00:00','now'),
-             message_count = conversation_sessions.message_count + 2,
              model_backend = EXCLUDED.model_backend,
              title         = CASE WHEN coalesce(conversation_sessions.title, '') = ''
                                   THEN EXCLUDED.title ELSE conversation_sessions.title END",
@@ -154,6 +226,15 @@ pub async fn log_exchange(
     .bind(assistant_message)
     .bind(model_backend)
     .bind(containment_mode)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "UPDATE conversation_sessions SET message_count = (
+             SELECT COUNT(*) FROM conversation_messages m WHERE m.session_id = conversation_sessions.session_id
+         ) WHERE session_id = ?",
+    )
+    .bind(session_id)
     .execute(pool)
     .await?;
 
@@ -286,4 +367,76 @@ pub async fn delete_session(
     .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn test_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory DB failed");
+        sqlx::migrate!("./migrations").run(&pool).await.expect("migration failed");
+        pool
+    }
+
+    async fn count(pool: &SqlitePool, sid: &str) -> i32 {
+        sqlx::query_scalar("SELECT message_count FROM conversation_sessions WHERE session_id = ?")
+            .bind(sid).fetch_one(pool).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn thread_is_listed_from_the_first_message_and_counts_every_exchange() {
+        let pool = test_pool().await;
+        // The first message opens the thread before any reply exists.
+        assert!(open_session(&pool, "s1", "u1", "my car is a 2019 Outback, what oil does it take", "anthropic", "guardian").await.unwrap());
+        let listed = list_sessions(&pool, "u1", 10, 0).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title.as_deref(), Some("my car is a 2019 Outback, what oil does it take"));
+        assert_eq!(listed[0].message_count, 0);
+        // Opening it again is a no-op.
+        assert!(!open_session(&pool, "s1", "u1", "something else", "anthropic", "guardian").await.unwrap());
+
+        log_exchange(&pool, "s1", "u1", "my car is a 2019 Outback, what oil does it take", "0W-20.", "anthropic", "guardian", true, "typed").await.unwrap();
+        assert_eq!(count(&pool, "s1").await, 2, "first exchange must be counted");
+        log_exchange(&pool, "s1", "u1", "and the filter?", "Subaru 15208AA170.", "anthropic", "guardian", true, "typed").await.unwrap();
+        assert_eq!(count(&pool, "s1").await, 4);
+        assert_eq!(get_messages(&pool, "s1").await.unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn a_thread_logged_without_open_session_still_counts_its_first_exchange() {
+        let pool = test_pool().await;
+        log_exchange(&pool, "s2", "u1", "hello", "hi", "anthropic", "guardian", true, "hands_free").await.unwrap();
+        assert_eq!(count(&pool, "s2").await, 2);
+    }
+
+    #[tokio::test]
+    async fn ensure_tables_repairs_drifted_counts_only() {
+        let pool = test_pool().await;
+        log_exchange(&pool, "s3", "u1", "q", "a", "anthropic", "guardian", true, "typed").await.unwrap();
+        sqlx::query("UPDATE conversation_sessions SET message_count = 0 WHERE session_id = 's3'").execute(&pool).await.unwrap();
+        ensure_tables(&pool).await.unwrap();
+        assert_eq!(count(&pool, "s3").await, 2);
+    }
+
+    #[tokio::test]
+    async fn rename_is_per_user_and_trimmed() {
+        let pool = test_pool().await;
+        open_session(&pool, "s4", "u1", "first words", "anthropic", "guardian").await.unwrap();
+        assert!(set_session_title(&pool, "s4", "u1", "  Outback maintenance  ").await.unwrap());
+        assert_eq!(list_sessions(&pool, "u1", 10, 0).await.unwrap()[0].title.as_deref(), Some("Outback maintenance"));
+        // Another user cannot rename it.
+        assert!(!set_session_title(&pool, "s4", "u2", "x").await.unwrap());
+        // A later exchange never overwrites a name the user chose.
+        log_exchange(&pool, "s4", "u1", "later question", "answer", "anthropic", "guardian", true, "typed").await.unwrap();
+        assert_eq!(list_sessions(&pool, "u1", 10, 0).await.unwrap()[0].title.as_deref(), Some("Outback maintenance"));
+        // Blank clears the custom name; the next exchange names it automatically again.
+        assert!(set_session_title(&pool, "s4", "u1", "   ").await.unwrap());
+        log_exchange(&pool, "s4", "u1", "fresh title source", "answer", "anthropic", "guardian", true, "typed").await.unwrap();
+        assert_eq!(list_sessions(&pool, "u1", 10, 0).await.unwrap()[0].title.as_deref(), Some("fresh title source"));
+    }
 }
