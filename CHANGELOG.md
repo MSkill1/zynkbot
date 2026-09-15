@@ -16,6 +16,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - Android: a hands-free exchange that finished while the app was in the background is shown in the chat when the app comes back to the front.
 
 ### Android stability
+- The wake-word verifier can be read from the app's data folder (a personal profile no longer needs a release), understands the new position-independent profile format, and a profile marked for "whoever owns this phone" enforces without knowing the user id.
 - The personal wake-word verifier no longer enforces for anyone (it still scores and logs, and clips are still collected): in use it rejected most of its owner's real "Hey Zynk"s. It returns once retrained.
 - Fixed a repeating crash ("Unable to start service SyncForegroundService") when Android restarted the app's sync service after reclaiming memory: the restart happens with the app in the background, where a foreground service is not allowed, and the refusal was not handled. The service now declines such restarts instead of crashing (reported by a tester on Android 17, reproduced on a Pixel 10 Pro XL, 2026-09-14).
 
