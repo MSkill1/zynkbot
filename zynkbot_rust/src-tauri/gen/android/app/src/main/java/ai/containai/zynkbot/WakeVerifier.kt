@@ -26,33 +26,47 @@ class WakeVerifier private constructor(
      *  new device id and the verifier silently stopped enforcing). For anyone else
      *  it scores and logs so labelled clips accumulate, but blocks nothing. */
     fun enforcesOn(context: Context): Boolean {
+        // "*" means "whoever this device belongs to": a verifier trained for one
+        // person and delivered to that person's phone (custom build or imported file).
+        if (owners.contains("*")) return true
         val id = try { java.io.File(context.filesDir, "zynkbot/.zynk_user_id").readText().trim() } catch (_: Exception) { "" }
         return id.isNotEmpty() && owners.contains(id)
     }
     companion object {
         private const val TAG = "WakeVerifier"
+        /** A verifier file in the app's data folder wins over the one built into the
+         *  APK, so a personal profile can arrive without a release (2026-09-15). */
         fun load(context: Context): WakeVerifier? = try {
-            val text = context.assets.open("wake-word-models/hey_zynk_verifier.json").bufferedReader().readText()
+            val local = java.io.File(context.filesDir, "zynkbot/wake-word-models/hey_zynk_verifier.json")
+            val (text, source) = if (local.isFile) local.readText() to "data folder"
+                                 else context.assets.open("wake-word-models/hey_zynk_verifier.json").bufferedReader().readText() to "built in"
             val j = JSONObject(text)
             fun arr(k: String): FloatArray { val a = j.getJSONArray(k); return FloatArray(a.length()) { a.getDouble(it).toFloat() } }
             val owners = mutableSetOf<String>()
             j.optJSONArray("owners")?.let { a -> for (i in 0 until a.length()) owners.add(a.getString(i)) }
             WakeVerifier(arr("mean"), arr("scale"), arr("coef"), j.getDouble("intercept").toFloat(),
                 j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"), owners)
-                .also { Log.i(TAG, "Loaded verifier (${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
+                .also { Log.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
         } catch (e: Exception) { Log.w(TAG, "No verifier: ${e.message}"); null }
     }
 
     /** Probability that this embedding window is the owner saying the wake word.
-     *  `flatEmb` is the classifier's input: 16 windows × 96 values, oldest first. */
+     *  `flatEmb` is the classifier's input: 16 windows × 96 values, oldest first.
+     *  Two file formats: v2 uses all 16×96 values in time order plus per-dimension
+     *  mean and max (1728 numbers) — that part made it sensitive to where in the
+     *  window the phrase sat (2026-09-15 analysis: one 80 ms frame of shift lost
+     *  3 of 33 real clips, three frames lost 23). v3 ("meanmax") uses only the
+     *  mean and max (192 numbers), which do not move with the phrase. */
     fun score(flatEmb: FloatArray, window: Int, dim: Int): Float {
-        val feats = FloatArray(window * dim + dim + dim)
-        System.arraycopy(flatEmb, 0, feats, 0, window * dim)
+        val meanMaxOnly = coef.size == dim + dim
+        val feats = FloatArray(if (meanMaxOnly) dim + dim else window * dim + dim + dim)
+        val base = if (meanMaxOnly) 0 else window * dim
+        if (!meanMaxOnly) System.arraycopy(flatEmb, 0, feats, 0, window * dim)
         for (d in 0 until dim) {
             var sum = 0f; var mx = Float.NEGATIVE_INFINITY
             for (w in 0 until window) { val v = flatEmb[w * dim + d]; sum += v; mx = max(mx, v) }
-            feats[window * dim + d] = sum / window
-            feats[window * dim + dim + d] = mx
+            feats[base + d] = sum / window
+            feats[base + dim + d] = mx
         }
         if (feats.size != coef.size) return -1f
         var z = intercept
