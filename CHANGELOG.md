@@ -6,7 +6,15 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## [Unreleased] — 0.9.6-beta2 <!-- drafted by Claude 2026-09-14 from a tester's history report; review wording -->
+## [Unreleased] — road to 1.0 <!-- branch v1, started 2026-09-15 -->
+
+### Desktop and phone
+- API Keys: once a key is stored, the provider button reads "View plan" and opens the provider's plan/billing page (it said "Get Key" and opened the key page whether or not you had one).
+
+### Android voice
+- The wake-word verifier can be read from the app's data folder (a personal profile no longer needs a release), understands the new position-independent profile format, and a profile marked for "whoever owns this phone" enforces without knowing the user id.
+
+## [0.9.6-beta2] — 2026-09-14 <!-- drafted by Claude 2026-09-14 from a tester's history report -->
 
 ### Conversation history
 - "New" starts a new thread. It used to empty the screen and keep the same thread, so everything said afterwards — typed or hands-free — was appended to the conversation the user thought they had left, and History showed one thread holding several conversations with no previous one to go back to.
@@ -15,11 +23,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - Message counts were 2 short on every thread (a one-exchange thread read "0 messages"); counted correctly now, and existing counts are repaired on first start.
 - Android: a hands-free exchange that finished while the app was in the background is shown in the chat when the app comes back to the front.
 
-### Desktop and phone
-- API Keys: once a key is stored, the provider button reads "View plan" and opens the provider's plan/billing page (it said "Get Key" and opened the key page whether or not you had one).
-
 ### Android stability
-- The wake-word verifier can be read from the app's data folder (a personal profile no longer needs a release), understands the new position-independent profile format, and a profile marked for "whoever owns this phone" enforces without knowing the user id.
 - The personal wake-word verifier no longer enforces for anyone (it still scores and logs, and clips are still collected): in use it rejected most of its owner's real "Hey Zynk"s. It returns once retrained.
 - Fixed a repeating crash ("Unable to start service SyncForegroundService") when Android restarted the app's sync service after reclaiming memory: the restart happens with the app in the background, where a foreground service is not allowed, and the refusal was not handled. The service now declines such restarts instead of crashing (reported by a tester on Android 17, reproduced on a Pixel 10 Pro XL, 2026-09-14).
 
