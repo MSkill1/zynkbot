@@ -22,6 +22,7 @@ const PROVIDERS = [
     modelKey: "ANTHROPIC_MODEL",
     placeholder: "sk-ant-...",
     link: "https://console.anthropic.com/settings/keys",
+    billing: "https://console.anthropic.com/settings/billing",
     description: "Claude models",
     models: [
       { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
@@ -44,6 +45,7 @@ const PROVIDERS = [
     modelKey: "OPENAI_MODEL",
     placeholder: "sk-...",
     link: "https://platform.openai.com/api-keys",
+    billing: "https://platform.openai.com/settings/organization/billing/overview",
     description: "GPT and o-series models",
     models: [
       // No "-pro" variants (gpt-5.x-pro, o1-pro) on purpose: OpenAI serves those only
@@ -75,6 +77,7 @@ const PROVIDERS = [
     modelKey: "XAI_MODEL",
     placeholder: "xai-...",
     link: "https://console.x.ai/",
+    billing: "https://console.x.ai/",
     description: "Grok models",
     models: [
       { id: "grok-4.5", label: "Grok 4.5" },
@@ -90,6 +93,7 @@ const PROVIDERS = [
     modelKey: "MISTRAL_MODEL",
     placeholder: "...",
     link: "https://console.mistral.ai/api-keys",
+    billing: "https://console.mistral.ai/billing",
     description: "Mistral and Codestral models",
     models: [
       { id: "mistral-large-latest", label: "Mistral Large" },
@@ -641,11 +645,16 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                         >
                           🗑️ Remove
                         </button>
+                        {/* With a key already stored, the reason to open the provider's
+                            site is almost always billing (topping up credits), not
+                            another key — the button used to say "Get Key" either way
+                            (2026-09-15). */}
                         <button
-                          onClick={() => openUrl(provider.link)}
+                          onClick={() => openUrl(provider.billing || provider.link)}
                           className="btn-get-key"
+                          title="Open your account at the provider: plan, usage, credits"
                         >
-                          🔗 Get Key
+                          💳 View plan
                         </button>
                       </div>
                     </>
@@ -661,7 +670,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                         onClick={() => openUrl(provider.link)}
                         className="btn-get-key"
                       >
-                        🔗 Get Key
+                        🔗 Get API key
                       </button>
                     </div>
                   )}
