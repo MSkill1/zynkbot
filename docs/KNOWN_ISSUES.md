@@ -146,6 +146,70 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-066 — About me timeline shows a date in the future for a memory that has none (open)
+**Status:** Open — reported by tester Mike 2026-09-15 ("December 2026" on a memory from 9/5/26 with nothing in the text to explain it).  
+**Affected:** All platforms; any memory whose date the model inferred wrongly.  
+**Description:** `memory_extras::validate_event_date` accepts any date up to two years after the day the memory was said, so a hallucinated or mis-inferred future date passes and the timeline sorts it to the top. The prompt asks for "the date the thing HAPPENED".  
+**Fix:** bound the date to the day after it was said (plans stay undated for now); one line plus a test. Also make About me state how many memories have no date, so a short timeline is not read as missing memories.
+
+---
+
+### KI-065 — "New conversation" never started a new conversation (fixed in 0.9.6-beta2)
+**Status:** Fixed in 0.9.6-beta2 (9792abc), verified on Linux, Windows (nine-step test with the tester at the keyboard) and the Pixel, 2026-09-14.  
+**Affected:** Every platform since History shipped.  
+**Description:** The button titled "Start a new conversation" only emptied the screen; the thread id never changed, so every later message — typed, dictated or hands-free — was appended to the thread the user thought they had left. History showed one thread holding several conversations and no previous one to go back to (GitHub #4, tester email 2026-09-14).  
+**Fix:** New creates a fresh thread; a typed thread is listed in History from its first message; threads can be renamed; message counts are exact and repaired at startup; empty threads are listed only while current.
+
+---
+
+### KI-064 — Repeating crash "Unable to start service SyncForegroundService" on Android 12+ (fixed in 0.9.6-beta2)
+**Status:** Fixed in 0.9.6-beta2 (9792abc); tester on Android 17 reports no crash since (GitHub #25, 2026-09-16).  
+**Affected:** Android 12 and later, all builds up to 0.9.6-beta1; seen on a tester's Pixel 9a (Android 17) and Matt's Pixel 10 Pro XL.  
+**Description:** The sync service returned `START_STICKY`, so after Android reclaimed the app's memory it re-created the process just to restart the service, with the app in the background — where `startForeground()` is refused (`ForegroundServiceStartNotAllowedException`). The refusal was uncaught; the app crashed, Android scheduled another restart, and it crashed again, on its own, with nobody using the app.  
+**Fix:** the service declines a restart with no intent and is no longer sticky; the call is wrapped; the wake-word service's catch (which took only `SecurityException`) and both `startForegroundService` callers are guarded the same way.
+
+---
+
+### KI-063 — Personal wake-word verifier enforcement suspended: it rejected most of its owner's real triggers and is not a voice lock (open)
+**Status:** Open — enforcement off since 6d7fc85 (`owners` emptied); replaced by on-device training on the roadmap.  
+**Affected:** The developer's phones only (it never enforced for testers).  
+**Description:** In use the v2 verifier accepted 4 of 17 real "Hey Zynk"s (scores mostly ≤ 0.02, a few 0.84–0.98, nothing between). Offline analysis on 2026-09-15 found the cause: 1,536 of its 1,728 inputs are the 16 embeddings in time order, so it learned *where in the window* the phrase sat in the 33 training clips; shifting the window by one 80 ms frame lost 3 of 33 clips, three frames lost 23. With a second tester's clips it also accepted 7 of his 31 triggers, so it separated "someone said Hey Zynk" from noise, not one voice from another.  
+**Fix:** the shift-invariant mean/max form (192 numbers) keeps the accuracy without the collapse and is what the phone now scores (v3 format, `v1` 14a29d9); the profile is trained on the phone from its own clips (roadmap). Present it as a TV/other-people filter, not security: about 6% of another voice gets through.
+
+---
+
+### KI-062 — Hands-free web search never runs when "auto-execute in voice sessions" is off (open)
+**Status:** Open — GitHub #26 (2026-09-15), five reports attached.  
+**Affected:** Android hands-free path.  
+**Description:** With auto-execute disabled the model answers "let me look that up for you" (it emitted `WEB_SEARCH_NEEDED`), but in the voice path there is no button to confirm, so the search is flagged and never run; asking again gets "not yet — I flagged it".  
+**Fix:** in hands-free turns either run the search when the setting allows it, or have the reply say plainly that searches are off in voice mode; never promise one.
+
+---
+
+### KI-061 — A timer set hands-free while the phone is asleep is confirmed but never fires (open)
+**Status:** Open — GitHub #29 (2026-09-17) with three problem reports; app open and awake works, screen-off does not.  
+**Affected:** Android hands-free path with the screen off (assistant session over the keyguard).  
+**Description:** "Set a timer for 60 seconds" is parsed natively and confirmed aloud ("timer set for 1 minute"), but no timer appears or rings. Hypothesis to confirm from the attached reports: the `AlarmClock.ACTION_SET_TIMER` intent is fired from the session with the phone locked, and the clock app either refuses the start from the background or shows its own UI over the keyguard where nothing completes; the confirmation is spoken before the result is known.  
+**Fix:** read the reports; confirm the start result before speaking; if the clock app cannot take the intent from the keyguard, keep the timer in the app (foreground service with its own alarm) and say so.
+
+---
+
+### KI-060 — An edited memory reverts after sync: the old version returns beside the new one (open)
+**Status:** Open — GitHub #28 (2026-09-16); GitHub #13 (2026-08-27) showed the same on an edit that reached Linux but not Android.  
+**Affected:** Any two devices syncing memories.  
+**Description:** After editing a memory in the Memory Manager the edit is saved, and later the pre-edit version reappears so both are listed; the user has to delete the old one. Most likely a peer that still holds the old row pushes it back on its next sync, and the receive path does not compare `updated_at` (or the content hash changed, so the old row looks like a new memory).  
+**Fix:** part of the ZynkSync rebuild (KI-028): last-writer-wins on `updated_at`, and an edit carries the old hash as a tombstone.
+
+---
+
+### KI-059 — "Remembered on request" filter in the Memory Manager never shows anything (open)
+**Status:** Open — reported by tester Mike 2026-09-15; cause confirmed in code 2026-09-16.  
+**Affected:** All platforms since the filter shipped (0.9.6-beta1, 736ef02).  
+**Description:** The sidebar list (`MemoryManager.jsx`) asks the backend which memories carry the "requested" mark and tags them; the full Memory Manager window (`MemoryManagerModal.jsx`), where the checkbox filter lives, fetches its own list and never asks, so `mem.requested` is always missing and the filter matches nothing. About me shows the same memories because it queries the mark directly.  
+**Fix:** call `list_requested_memory_ids` in the modal's fetch and map the flag, as the sidebar does; three lines plus a test.
+
+---
+
 ### KI-058 — A request died with no reply when a stored memory contained a multi-byte character at a byte-60 boundary (fixed on `voice`, 2026-09-13)
 **Status:** Fixed and verified on the desktop (CI 34777233423 build, 2026-09-13 15:4x): the same translation request that had panicked was answered in 8 s, with the culprit memory — a chilli recipe holding an emoji, a curly apostrophe and an em dash near byte 60 — recalled and previewed safely. Verified on the Pixel the same afternoon with the same request (APK 1ae94bf5…).
 **Affected:** All platforms, any backend. Trigger: a recalled memory whose text has a non-ASCII character (an em dash, an accented letter) spanning byte 60; the request thread panicked and the user saw nothing.
