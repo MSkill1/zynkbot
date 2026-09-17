@@ -360,3 +360,21 @@ ZynkCluster applies MoE's inherent expert-level parallelism to a deployment cont
 **Last Updated:** May 2026
 **Author:** Matt Skillman
 **License:** See main repository LICENSE file
+
+---
+
+## Discussion v0.2 (2026-09-17) — appended, nothing above changed
+
+*Notes from a review of this document against the transport layer built for the sync rebuild (`zynkbot_rust/src-tauri/src/transport.rs`) and against the home-hardware question. The design above is left as written; these are additions for the next revision to weigh.*
+
+**1. The per-token network cost is the first thing to measure, and it decides the topology.** Expert-parallel execution moves the hidden state (~4,096 values per token for Mixtral) to each active expert's device and back *at every layer*: roughly 32 round trips per generated token. On wired gigabit at ~0.5 ms per round trip that is ~15–30 ms per token of pure network time — tolerable. On Wi-Fi at 2–5 ms per round trip it is 60–160 ms per token, which makes the parallel gain irrelevant. So expert-parallelism is an Ethernet-room design. The "+25 ms first-token" estimate above should be read as "+25 ms *per token*, on Ethernet".
+
+**2. Layer-split (Petals-style) is the base case for a home, not the alternative to avoid.** Splitting a *dense* model by layers between two machines costs one network hop per token per boundary — one hop for laptop + desktop — which Wi-Fi handles. The comparison table above rates it "sequential"; that is true and does not matter when the goal is memory rather than speed. A 16 GB-VRAM desktop plus a 16–32 GB-RAM laptop can run a ~30–35 B model at Q4 that neither runs alone, at perhaps 5–10 tokens/s. That is the "larger model than any one device" outcome on hardware people already own. llama.cpp's RPC mode already implements this split over TCP; the missing piece is the integration (discover, pair, choose the split, one tap), which is where Zynkbot adds value.
+
+**3. Phones are clients, not hosts.** One Mixtral expert across all layers is ~5.6 B parameters (~3.3 GB at Q4); a flagship phone can hold one but computes it 30–50× slower than a desktop GPU, and pays that slowness and the Wi-Fi latency 32 times per token. Phones should submit queries and receive answers; they should not host experts or layers.
+
+**4. Buying hardware for this is not competitive with the market.** Four PCs with 12–16 GB cards (~$3–4k, four power supplies, a switch) reach roughly the model sizes one 128 GB unified-memory machine reaches (Mac Studio, AMD Strix Halo mini-PC, ~$2–5k), slower and with more failure points; two used 24 GB cards in one PC run 70 B at Q4. The only version of the pitch that beats the market is *"the model your house can already run"* — pooling what is owned, at no cost.
+
+**5. What the transport should provide, now, so this can be added later without changes below it:** a `capabilities` JSON column on `zynk_devices` (GPU memory, hosted experts or layer ranges, engines present) advertised in `/api/zynksync/info` and refreshed by heartbeat — one column rather than the three MoE-specific columns proposed above, since the desktop-model route needs the same thing; a fourth service registering `/api/cluster/*` with the transport, so mTLS, pairing and addressing come for free; and no design assumption that payloads are JSON — hidden states are binary tensors. These are recorded in `docs/ROADMAP.md` under the transport decision.
+
+**6. Suggested experiment before any cluster code:** laptop + desktop over the house Wi-Fi, llama.cpp RPC mode, a dense ~30 B model split by layers, measured tokens/s against the desktop alone. A weekend, no purchase. If the number is usable, the feature is worth building after 1.0 with the layer split as the base case and expert-parallelism as the Ethernet fast path; if not, the document stays a design note.
