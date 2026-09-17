@@ -3,6 +3,11 @@ name: Tests
 on:
   push:
     branches: ['**']
+    # Documentation-only pushes have nothing to test.
+    paths-ignore:
+      - 'docs/**'
+      - 'labs/**'
+      - '**/*.md'
   pull_request:
   workflow_dispatch:
 
@@ -65,6 +70,14 @@ jobs:
       - name: ESLint
         working-directory: zynkbot_rust
         run: npx eslint src --ext .js,.jsx --max-warnings=0
+
+      # The frontend unit tests (voice command parsing, native-turn merging, speech
+      # cleanup, ...) were only ever run by hand until 2026-09-17.
+      - name: Frontend unit tests
+        working-directory: zynkbot_rust
+        env:
+          CI: 'true'
+        run: npx react-scripts test --watchAll=false
 
   # Full unit suite. Several tests load the bundled ML models, which are not
   # committed to the repo, so they are fetched here the same way install.sh does.
@@ -209,3 +222,98 @@ jobs:
       - name: Check armv7 (armeabi-v7a)
         working-directory: zynkbot_rust/src-tauri
         run: cargo ndk -t armeabi-v7a check --lib
+
+  # Compiles the hand-written Kotlin. Nothing above does: the Rust check never runs
+  # Gradle, so a Kotlin error was only found by a full release build, twenty minutes
+  # into a tag (2026-09-17). The only way to compile the Kotlin is an APK build, so
+  # this job builds an UNSIGNED DEBUG APK inside the runner and throws it away: no
+  # artifact, no release, no signing key. It runs only when Kotlin or the manifest
+  # changed (or on a manual run), so ordinary pushes are not slowed by it.
+  kotlin-check:
+    name: Android Kotlin compile check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Did Kotlin or the manifest change?
+        id: kt
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          base="${{ github.event.before }}"
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then base="$(git rev-parse HEAD~1 2>/dev/null || echo "")"; fi
+          if [ -z "$base" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if git diff --name-only "$base" "${{ github.sha }}" | grep -qE '\.kt$|AndroidManifest\.xml$|build\.gradle\.kts$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "No Kotlin/manifest/Gradle change — skipping the APK compile."
+          fi
+
+      - name: Setup Java 17
+        if: steps.kt.outputs.changed == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        if: steps.kt.outputs.changed == 'true'
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Install Android NDK
+        if: steps.kt.outputs.changed == 'true'
+        run: |
+          sdkmanager "ndk;30.0.15729638"
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.15729638" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/30.0.15729638" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+      - name: Setup Node
+        if: steps.kt.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: zynkbot_rust/package-lock.json
+
+      - name: Setup Rust with Android target
+        if: steps.kt.outputs.changed == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Rust cache
+        if: steps.kt.outputs.changed == 'true'
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: zynkbot_rust/src-tauri -> target
+          key: android-kotlin-check
+
+      - name: Install system dependencies
+        if: steps.kt.outputs.changed == 'true'
+        run: sudo apt-get install -y libssl-dev perl
+
+      # app/build.gradle.kts insists on keystore.properties even for a debug build
+      # (it configures the release signing block unconditionally). A throwaway
+      # keystore satisfies it; the real key is never used here.
+      - name: Write a throwaway keystore
+        if: steps.kt.outputs.changed == 'true'
+        run: |
+          keytool -genkeypair -noprompt -keystore /tmp/ci-throwaway.jks -storepass citest1 -keypass citest1 \
+            -alias ci -keyalg RSA -keysize 2048 -validity 1 -dname "CN=ci-throwaway"
+          printf "storeFile=/tmp/ci-throwaway.jks\nstorePassword=citest1\nkeyAlias=ci\nkeyPassword=citest1\n" \
+            > zynkbot_rust/src-tauri/gen/android/keystore.properties
+
+      - name: Install frontend dependencies
+        if: steps.kt.outputs.changed == 'true'
+        working-directory: zynkbot_rust
+        run: npm ci
+
+      - name: Build a debug APK (compile check only; discarded)
+        if: steps.kt.outputs.changed == 'true'
+        working-directory: zynkbot_rust
+        run: npm run tauri android build -- --debug --apk --target aarch64
