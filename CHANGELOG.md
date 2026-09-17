@@ -6,7 +6,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## [Unreleased] — 0.9.6-beta2 <!-- drafted by Claude 2026-09-14 from a tester's history report; review wording -->
+## [0.9.6-beta2] — 2026-09-14 <!-- drafted by Claude 2026-09-14 from a tester's history report -->
 
 ### Conversation history
 - "New" starts a new thread. It used to empty the screen and keep the same thread, so everything said afterwards — typed or hands-free — was appended to the conversation the user thought they had left, and History showed one thread holding several conversations with no previous one to go back to.
