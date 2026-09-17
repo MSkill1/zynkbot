@@ -40,6 +40,7 @@ mod conversation_history;  // Persistent conversation log with full-text search
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
 mod transport; // shared peer-to-peer layer: identity, server, pinned client, registry (SDK Core)
+pub mod voice_prefs; // hands-free settings mirrored for the native path
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod vosk_desktop; // Offline dictation on Linux and Windows desktop (cpal + vosk)
 pub mod response_sink; // Where a chat response goes as it streams (Tauri today, native JNI later)
@@ -2616,6 +2617,7 @@ pub fn run() {
             // Web search
             commands::web_search::search_web,
             commands::web_search::execute_web_search,
+            voice_prefs::set_voice_pref,
             // Conversation History
             commands::conversation::list_conversation_sessions,
             commands::conversation::get_conversation_messages,

@@ -179,7 +179,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ### KI-062 — Hands-free web search never runs when "auto-execute in voice sessions" is off (open)
-**Status:** Open — GitHub #26 (2026-09-15), five reports attached.  
+**Status:** Fixed on `v1` (2026-09-17): the setting is mirrored to the Rust core (`voice_prefs.json`) and the hands-free path runs the search and answers from it. With the setting off it still asks, by design.  
 **Affected:** Android hands-free path.  
 **Description:** With auto-execute disabled the model answers "let me look that up for you" (it emitted `WEB_SEARCH_NEEDED`), but in the voice path there is no button to confirm, so the search is flagged and never run; asking again gets "not yet — I flagged it".  
 **Fix:** in hands-free turns either run the search when the setting allows it, or have the reply say plainly that searches are off in voice mode; never promise one.

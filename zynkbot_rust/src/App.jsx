@@ -240,6 +240,11 @@ export default function App() {
   );
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
   const memoryManagerRef = useRef(null);
+  // The hands-free (assistant-role) path runs in Rust and cannot read localStorage;
+  // mirror the auto-search setting so a spoken question that needs a search gets one.
+  useEffect(() => {
+    invoke('set_voice_pref', { key: 'web_search_auto', value: webSearchAutoExecute }).catch(() => {});
+  }, [webSearchAutoExecute]);
   const conversationEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const userScrolledUpRef = useRef(false);
@@ -2517,7 +2522,7 @@ export default function App() {
         ttsEnabled={voice.ttsEnabled}
         onTtsEnabledChange={voice.setTtsEnabled}
         webSearchAutoExecute={webSearchAutoExecute}
-        onWebSearchAutoExecuteChange={(v) => { setWebSearchAutoExecute(v); localStorage.setItem('zynkbot_web_search_auto', v.toString()); }}
+        onWebSearchAutoExecuteChange={(v) => { setWebSearchAutoExecute(v); localStorage.setItem('zynkbot_web_search_auto', v.toString()); invoke('set_voice_pref', { key: 'web_search_auto', value: v }).catch(() => {}); }}
         keepScreenAwake={voice.keepScreenAwake}
         onKeepScreenAwakeChange={voice.setKeepScreenAwake}
       />

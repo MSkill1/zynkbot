@@ -169,6 +169,12 @@ object NativeVoiceAnswerer {
                 object : ZynkCore.Callback {
                     override fun onToken(token: String) { speaker.feed(token) }
                     override fun onEvent(name: String, payloadJson: String) {
+                        if (name == "web-search") {
+                            // The model's first answer ("I don't have that stored…") is being
+                            // replaced by a searched one: stop voicing it and start fresh.
+                            speaker.reset()
+                            return
+                        }
                         if (name == "voice-session") {
                             sessionId = try { org.json.JSONObject(payloadJson).optString("session_id", "") } catch (_: Exception) { "" }
                         }
@@ -363,6 +369,16 @@ object NativeVoiceAnswerer {
 
         /** Nothing to say: drop unspoken text before finish() would voice it. */
         @Synchronized fun discard() { buffer.setLength(0); stopped = true }
+
+        /** A new reply is replacing the current one mid-turn (web search): drop what
+         *  has not been spoken yet, cut what is being spoken, and accept new tokens. */
+        @Synchronized fun reset() {
+            buffer.setLength(0)
+            stopped = false
+            try { engine.stop() } catch (_: Exception) {}
+            pending.clear()
+            synchronized(allDone) { allDone.notifyAll() }
+        }
 
         /** Stop pressed: nothing queued matters any more; release finish() at once. */
         fun abort() {

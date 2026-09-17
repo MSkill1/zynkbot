@@ -828,6 +828,38 @@ pub async fn generate_reply(
         None
     };
 
+    // Hands-free and the user asked for searches to run without confirmation: do the
+    // search here and answer from it, exactly as the page does after its own confirm
+    // step. Until 2026-09-17 only the page honoured the setting; the assistant-role
+    // path answered "want me to search?" instead (GitHub #26, KI-062). The synthesis
+    // is a second, memory-free turn; its reply is what the user hears.
+    if hands_free && web_search_query.is_some() && crate::voice_prefs::web_search_auto() {
+        let search_query = web_search_query.clone().unwrap_or_default();
+        sink.event("web-search", serde_json::json!({ "query": search_query }));
+        println!("[RUST] Hands-free auto search: {}", search_query);
+        let mut context = format!("Here are the web search results for \"{}\":\n\n", search_query);
+        match crate::web_search::search_with_content(&search_query, 5, 3).await {
+            Ok(results) if !results.results.is_empty() => {
+                for (i, r) in results.results.iter().enumerate() {
+                    context.push_str(&format!("Source {}: {}\nURL: {}\n", i + 1, r.title, r.url));
+                    if !r.snippet.is_empty() { context.push_str(&format!("Summary: {}\n", r.snippet)); }
+                    if let Some(body) = r.content.as_deref() { context.push_str(&format!("Content: {}\n", body.chars().take(800).collect::<String>())); }
+                    context.push('\n');
+                }
+            }
+            Ok(_) => context.push_str("No results found.\n"),
+            Err(e) => context.push_str(&format!("The search failed: {}\n", e)),
+        }
+        let prompt = format!(
+            "Answer the user's question using the web search results below. Be direct and concise — do not explain your reasoning process, do not narrate what you are doing, just answer.\n\nQuestion: \"{}\"\n\n{}\n\nAnswer directly based on the search results. If the results don't contain enough information, say so briefly.",
+            query, context);
+        let synthesized = Box::pin(generate_reply(
+            sink.clone(), prompt, user_id.clone(), session_id.clone(), forced_backend.clone(), containment_mode.clone(),
+            None, Some(true), Some(true), Some(kb_enabled), Some(query.clone()), None, true,
+        )).await?;
+        return Ok(ReplyResponse { original_query: Some(query.clone()), ..synthesized });
+    }
+
     // Parse MEMORY_EXTRACT facts from the LLM response — fires for any message type,
     // no is_question gate. Both API and local models use the same MEMORY_EXTRACT marker.
     let msg_lower = message.to_lowercase();

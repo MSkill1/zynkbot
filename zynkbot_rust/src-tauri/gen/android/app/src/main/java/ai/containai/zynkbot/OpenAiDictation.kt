@@ -53,6 +53,7 @@ object OpenAiDictation {
     // out and lets distant speech in.
     private const val MIN_SPEECH_RMS = 120.0               // PCM16 units; below this nothing counts as speech
     private const val ONSET_FLOOR_MULT = 2.5
+    private const val PEAK_QUIET_RATIO = 0.12           // "quiet" is also anything under 12% of the loudest speech so far
     private const val SPEECH_ONSET_CHUNKS = 2              // consecutive loud chunks before "speaking"
     const val HTTP_TIMEOUT_MS = 20_000
 
@@ -126,6 +127,8 @@ object OpenAiDictation {
         // reached and every turn ran to the 30 s cap (Pixel, 2026-09-13 14:11). Steady
         // noise is whatever the recent minimum is; a pause in speech falls to it.
         val recentRms = ArrayDeque<Double>()
+        var speechPeak = 0.0
+        var lastLevelLog = 0L
         val recentChunks = (2_000L / CHUNK_MS).toInt().coerceAtLeast(4)
         try {
             audio.startRecording()
@@ -162,9 +165,20 @@ object OpenAiDictation {
                     while (recentRms.size > recentChunks) recentRms.removeFirst()
                     val floorNow = max(noiseFloor, recentRms.minOrNull() ?: noiseFloor)
                     val quiet = max(floorNow * 1.5, MIN_SPEECH_RMS / 2)
-                    silenceMs = if (rms < quiet) silenceMs + CHUNK_MS else 0L
+                    // Second way to be "quiet": far below the speaker's own loudest level.
+                    // A room that settles at 60–90 after speech (fan, muted TV, breathing
+                    // near the mic) never dropped under the floor-based threshold and the
+                    // recording ran to the 30 s cap (Pixel, 2026-09-14 and 2026-09-17).
+                    // Speech at the mic is several times louder than that background.
+                    speechPeak = max(speechPeak, rms)
+                    val relQuiet = if (speechPeak > 200.0) speechPeak * PEAK_QUIET_RATIO else 0.0
+                    silenceMs = if (rms < quiet || rms < relQuiet) silenceMs + CHUNK_MS else 0L
+                    if (elapsedMs - lastLevelLog >= 2_000L) {
+                        Log.i(TAG, "level ${elapsedMs}ms rms≈${rms.toInt()} floor≈${floorNow.toInt()} quiet<${quiet.toInt()} peak≈${speechPeak.toInt()} relQuiet<${relQuiet.toInt()}")
+                        lastLevelLog = elapsedMs
+                    }
                     if (silenceMs >= TRAILING_SILENCE_MS) {
-                        Log.i(TAG, "Trailing silence at ${elapsedMs}ms (floor≈${floorNow.toInt()}, quiet<${quiet.toInt()})")
+                        Log.i(TAG, "Trailing silence at ${elapsedMs}ms (floor≈${floorNow.toInt()}, quiet<${quiet.toInt()}, peak≈${speechPeak.toInt()})")
                         break
                     }
                 }
