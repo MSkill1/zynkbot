@@ -31,6 +31,23 @@ pub async fn zchat_send_message(
     let device_id_clone = device_id_str.clone();
     let to_device_clone = to_device_id.clone();
     tokio::spawn(async move {
+        // Chat goes to any paired device (2026-09-17). A device paired for sync — one
+        // of the user's own — is reached over the transport's verified route; a device
+        // linked from another user still goes over the ZynkLink route until link
+        // pairing pins certificates too (ROADMAP: ZynkLink mTLS cert exchange).
+        let via_transport = {
+            let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+            match guard.as_ref() {
+                Some(svc) => Some(svc.deliver_zchat_messages_to_peer(&to_device_clone).await),
+                None => None,
+            }
+        };
+        match via_transport {
+            Some(Ok(count)) if count > 0 => { println!("[ZChat] Delivered {} message(s) to a synced device", count); return; }
+            Some(Ok(_)) => { println!("[ZChat] No messages to deliver"); return; }
+            Some(Err(e)) => println!("[ZChat] Not a synced device or unreachable ({}); trying the ZynkLink route", e),
+            None => {}
+        }
         let db_url = crate::db::get_db_url();
         let pool = match sqlx::SqlitePool::connect(&db_url).await {
             Ok(p) => p,

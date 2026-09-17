@@ -105,7 +105,7 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 
 **ZynkLink** (`zynklink.rs`) — P2P file sharing between paired devices over mTLS. Directory sharing with read/write access controls, file listing and content serving.
 
-**ZChat** (`zchat.rs`) — Device-to-device messaging with delivery and read tracking. No cloud storage, no relay server. Works on local network only.
+**ZChat** (`zchat.rs`) — Device-to-device messaging with delivery and read tracking, to any device in the transport's registry: the user's own devices (sync pairing) or another user's (link pairing). No cloud storage, no relay server. Works on local network only.
 
 ---
 

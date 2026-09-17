@@ -223,7 +223,6 @@ impl ZynkSyncService {
     pub fn set_device_name(&self, name: &str) { self.transport.set_device_name(name) }
     pub fn port(&self) -> u16 { self.transport.port() }
     pub async fn peer_port_by_id(&self, device_id: &str) -> u16 { self.transport.peer_port_by_id(device_id).await }
-    pub async fn peer_port_by_ip(&self, device_ip: &str) -> u16 { self.transport.peer_port_by_ip(device_ip).await }
     pub async fn rebuild_http_client(&self) -> Result<(), String> { self.transport.rebuild_http_client().await }
     pub async fn get_http_client(&self) -> reqwest::Client { self.transport.get_http_client().await }
     pub async fn get_peer_client_for_url(&self, url: &str) -> Option<reqwest::Client> { self.transport.get_peer_client_for_url(url).await }

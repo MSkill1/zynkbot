@@ -764,6 +764,33 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                   <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
                     {peer.is_online ? 'Online' : 'Offline'}
                   </div>
+                  {/* Chat with your own device — a note to your phone, a link to your PC.
+                      Any paired device can be messaged; no separate link needed (2026-09-17). */}
+                  {onOpenChat && (
+                    <button
+                      onClick={async () => {
+                        // The chat window needs this device's own id to tell sent from received.
+                        try {
+                          const identity = await invoke('get_user_identity');
+                          onOpenChat(peer, identity.device_id);
+                        } catch (e) {
+                          console.error('[ZynkSync] could not open chat:', e);
+                        }
+                      }}
+                      title={`Send a message to ${peer.device_name}`}
+                      style={{
+                        background: 'transparent',
+                        border: '1px solid #44475a',
+                        color: '#8be9fd',
+                        cursor: 'pointer',
+                        fontSize: '0.78rem',
+                        padding: '2px 8px',
+                        borderRadius: '3px',
+                        lineHeight: 1.3,
+                        flexShrink: 0
+                      }}
+                    >💬 Chat</button>
+                  )}
                   <button
                     onClick={() => handleExpelDevice(peer.device_id, peer.device_name)}
                     title={`Remove ${peer.device_name} from the network`}

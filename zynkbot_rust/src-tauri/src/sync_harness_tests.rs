@@ -299,3 +299,27 @@ fn b14_unpinned_client_cannot_talk_to_a_peer() {
         assert!(r.is_err(), "a client without the pinned certificate must fail the TLS handshake");
     });
 }
+
+// ---------------------------------------------------------------------------
+// 15. Chat between a user's own two devices: a message sent on the desktop to the
+//     phone arrives on the phone, over the sync pairing alone (no ZynkLink).
+// ---------------------------------------------------------------------------
+#[test]
+fn b15_chat_message_reaches_my_other_device_over_a_sync_pairing() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let (a_id, b_id) = (uuid::Uuid::parse_str(&a.device_id()).unwrap(), uuid::Uuid::parse_str(&b.device_id()).unwrap());
+        let uid = uuid::Uuid::parse_str(&a.user_id()).unwrap();
+
+        crate::zchat::send_message(&a.pool, a_id, b_id, "note to self: buy oil filter".into(), uid).await.expect("send");
+        let delivered = crate::zchat::deliver_to_peer(&a.svc.transport, &b.device_id()).await.expect("deliver");
+        assert_eq!(delivered, 1);
+
+        let on_phone = crate::zchat::get_messages(&b.pool, b_id, a_id, None).await.expect("get");
+        let texts: Vec<String> = on_phone.messages.iter().map(|m| m.message_text.clone()).collect();
+        assert_eq!(texts, vec!["note to self: buy oil filter".to_string()]);
+    });
+}
+
