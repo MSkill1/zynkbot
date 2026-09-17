@@ -722,7 +722,7 @@ pub async fn revoke_zynklink_pairing(
     // Fire-and-forget — if the remote is offline the auth check on their server
     // will block any further file/chat access anyway.
     if let Some(ip) = other_device_ip {
-        let notify_url = format!("https://{}:57963/api/zynklink/notify-unpaired", ip);
+        let notify_url = format!("https://{}:{}/api/zynklink/notify-unpaired", ip, crate::zynksync::DEFAULT_SYNC_PORT);
         let payload = serde_json::json!({ "unlinked_user_id": user_id });
         tokio::spawn(async move {
             match reqwest::Client::builder()
@@ -816,7 +816,7 @@ pub async fn deliver_zchat_to_peer(
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
-    let url = format!("https://{}:57963/api/zynklink/deliver-chat", device_ip);
+    let url = format!("https://{}:{}/api/zynklink/deliver-chat", device_ip, crate::zynksync::DEFAULT_SYNC_PORT);
 
     let response = match client
         .post(&url)

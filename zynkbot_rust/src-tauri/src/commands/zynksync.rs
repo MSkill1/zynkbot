@@ -276,6 +276,7 @@ pub async fn unsync_and_reset_identity() -> Result<String, String> {
 
     crate::user_identity::set_user_id(&new_user_id)
         .map_err(|e| format!("Failed to set new identity: {}", e))?;
+    if let Some(svc) = crate::ZYNKSYNC_SERVICE.lock().await.as_ref() { svc.set_user_id(&new_user_id); }
 
     println!("[ZynkSync] ✓ Left network — new user_id: {}…", &new_user_id[..8]);
     Ok(new_user_id)

@@ -2174,8 +2174,11 @@ async fn auto_start_http_server() -> Result<(), String> {
 
     // Create ZynkSync service (but don't start auto-sync yet)
     // Use 60 second interval to match UI expectations
+    let identity = crate::zynksync::SyncIdentity::from_files()
+        .map_err(|e| format!("Failed to read identity for ZynkSync: {}", e))?;
     let service = Arc::new(ZynkSyncService::new(
-        device_id.clone(),
+        identity,
+        None, // DEFAULT_SYNC_PORT
         db_pool,
         Some(60), // 60 second sync interval
         cert_pem,
@@ -2183,8 +2186,7 @@ async fn auto_start_http_server() -> Result<(), String> {
         cert_der,
     ));
 
-    // Start HTTP server on port 57963
-    println!("[HTTP Server] Starting HTTP server on port 57963...");
+    println!("[HTTP Server] Starting HTTP server on port {}...", crate::zynksync::DEFAULT_SYNC_PORT);
     match service.clone().start_http_server().await {
         Ok(port) => {
             println!("[HTTP Server] ✅ HTTP server started on port {}", port);
