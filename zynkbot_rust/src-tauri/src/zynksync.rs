@@ -14,37 +14,11 @@ use tokio::sync::RwLock;
 use tokio::time::{Duration, interval};
 use sqlx::{SqlitePool, Row};
 use chrono::{DateTime, Utc};
-use reqwest::Client as HttpClient;
-use tokio_rustls::TlsAcceptor;
-use tokio::net::{TcpListener, TcpSocket};
 
 /// Bind a TCP listener with SO_REUSEADDR and retry-on-failure. When the app is
 /// force-closed and quickly reopened, the previous process's socket may still
 /// be in TIME_WAIT holding port 57963. SO_REUSEADDR lets us reclaim it; the
 /// retry loop covers the brief window before the kernel releases it.
-async fn bind_with_reuseaddr(addr: SocketAddr, port: u16) -> Result<TcpListener, String> {
-    let mut last_err: Option<String> = None;
-    for attempt in 1..=6u32 {
-        let socket = TcpSocket::new_v4()
-            .map_err(|e| format!("Failed to create TCP socket: {}", e))?;
-        if let Err(e) = socket.set_reuseaddr(true) {
-            return Err(format!("Failed to set SO_REUSEADDR: {}", e));
-        }
-        match socket.bind(addr) {
-            Ok(()) => match socket.listen(1024) {
-                Ok(listener) => return Ok(listener),
-                Err(e) => last_err = Some(format!("listen() failed on port {}: {}", port, e)),
-            },
-            Err(e) => last_err = Some(format!("bind() failed on port {} (attempt {}): {}", port, attempt, e)),
-        }
-        // Backoff: 100ms, 200ms, 400ms, 800ms, 1600ms — total ~3s before giving up.
-        let delay_ms = 100u64 << (attempt - 1).min(4);
-        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-    }
-    Err(last_err.unwrap_or_else(|| format!("Failed to bind port {} after retries", port)))
-}
-use hyper_util::rt::{TokioIo, TokioExecutor};
-use hyper_util::server::conn::auto::Builder as HyperConnBuilder;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use axum::{
     routing::{post, any},
@@ -60,74 +34,14 @@ use crate::tls::{PeerCertDer, VerifiedDevice};
 use std::net::SocketAddr;
 use sha2::{Sha256, Digest};
 use crate::zchat;
-use crate::user_identity;
 use tauri::Emitter;
+pub use crate::transport::{DEFAULT_SYNC_PORT, PeerDevice, SyncIdentity, split_host_port};
+use crate::transport::Transport;
 
-/// The well-known port every Zynkbot listens on for ZynkSync, ZynkLink and ZChat.
-/// Defined once: an instance may override it (the sync test harness runs several
-/// peers in one process), and a peer's port is always taken from its stored
-/// device row, never assumed.
-pub const DEFAULT_SYNC_PORT: u16 = 57963;
 
-/// Who this service is. Owned by the service rather than read from the identity
-/// files at every call, so two services can coexist in one process and an identity
-/// change (pairing adoption, reset, rename) reaches the running service at once.
-#[derive(Clone, Debug)]
-pub struct SyncIdentity {
-    pub user_id: String,
-    pub device_id: String,
-    pub device_name: String,
-}
 
-impl SyncIdentity {
-    /// The production identity: whatever the identity files say right now.
-    pub fn from_files() -> Result<Self, String> {
-        let id = user_identity::get_identity()?;
-        Ok(Self { user_id: id.user_id, device_id: id.device_id, device_name: user_identity::get_device_name() })
-    }
-}
 
-/// "192.168.0.5" -> ("192.168.0.5", default); "192.168.0.5:4444" -> ("192.168.0.5", 4444).
-pub fn split_host_port(s: &str, default: u16) -> (String, u16) {
-    let s = s.trim();
-    if let Some((h, p)) = s.rsplit_once(':') {
-        if !h.contains(':') {
-            if let Ok(port) = p.parse::<u16>() { return (h.to_string(), port); }
-        }
-    }
-    (s.to_string(), default)
-}
 
-fn extract_host_port(url: &str) -> Option<(String, u16)> {
-    let without_scheme = url
-        .trim_start_matches("https://")
-        .trim_start_matches("http://");
-    let host_port = without_scheme.split('/').next()?;
-    if let Some(colon_pos) = host_port.rfind(':') {
-        let host = host_port[..colon_pos].to_string();
-        let port: u16 = host_port[colon_pos + 1..].parse().ok()?;
-        Some((host, port))
-    } else {
-        let port = if url.starts_with("https://") { 443 } else { 80 };
-        Some((host_port.to_string(), port))
-    }
-}
-
-/// Represents a peer device
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PeerDevice {
-    pub device_id: String,
-    pub device_name: String,
-    pub host: String,
-    pub port: u16,
-    pub url: String,
-    pub last_seen: DateTime<Utc>,
-    pub paired: bool,  // Whether this device is authorized to sync
-    pub pairing_code: Option<String>,  // 6-digit code for pairing
-    pub user_id: Option<String>,  // Host's user_id (for identity sync during pairing)
-    #[serde(default)]
-    pub is_online: bool,  // True if heartbeat received within the last 45 seconds
-}
 
 /// Represents a memory record for synchronization
 /// Contains ALL fields from the memories table for complete sync
@@ -255,17 +169,15 @@ pub struct ConversationSyncPayload {
 
 /// Core ZynkSync service managing device synchronization
 pub struct ZynkSyncService {
-    /// Unique identifier for this device
+    /// Everything shared with ZynkLink and ZChat: identity, certificate, server,
+    /// pinned client, device registry, presence. See crate::transport.
+    pub(crate) transport: Arc<Transport>,
+
+    /// Unique identifier for this device (copy of transport.identity().device_id)
     device_id: String,
 
     /// SQLite connection pool
     db_pool: SqlitePool,
-
-    /// HTTP client for peer communication (rebuilt after each new pairing to add pinned certs)
-    http_client: Arc<RwLock<HttpClient>>,
-
-    /// Peer devices (thread-safe)
-    peers: Arc<RwLock<HashMap<String, PeerDevice>>>,
 
     /// Last sync timestamps per peer (to track incremental syncs)
     last_sync: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
@@ -275,40 +187,6 @@ pub struct ZynkSyncService {
 
     /// Sync interval in seconds
     sync_interval_secs: u64,
-
-    /// Port this device is listening on
-    server_port: Arc<RwLock<Option<u16>>>,
-
-    /// Shutdown signal for HTTP server
-    shutdown_tx: Arc<RwLock<Option<tokio::sync::oneshot::Sender<()>>>>,
-
-    /// Current pairing code for this device
-    pairing_code: Arc<RwLock<Option<String>>>,
-
-    /// Failed pairing attempts per client IP — invalidate code after 5 misses
-    failed_pairing_attempts: Arc<RwLock<HashMap<String, u32>>>,
-
-    /// In-memory last-heartbeat timestamps per peer device_id (not persisted)
-    peer_last_seen: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
-
-    /// Debounce: last time a connection/TLS error was logged per peer device_id.
-    /// Prevents log spam when a known-paired peer is temporarily unreachable.
-    last_conn_error_logged: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
-
-    /// This device's TLS certificate PEM (for HTTPS server)
-    cert_pem: String,
-
-    /// This device's TLS private key PEM (for HTTPS server)
-    key_pem: String,
-
-    /// This device's TLS certificate DER (sent to peers during pairing)
-    cert_der: Vec<u8>,
-
-    /// Who this service is (user id, device id, device name). See SyncIdentity.
-    identity: std::sync::RwLock<SyncIdentity>,
-
-    /// The port this instance listens on (DEFAULT_SYNC_PORT in production; 0 = any free port).
-    port: u16,
 }
 
 impl ZynkSyncService {
@@ -322,150 +200,50 @@ impl ZynkSyncService {
         key_pem: String,
         cert_der: Vec<u8>,
     ) -> Self {
+        let device_id = identity.device_id.clone();
+        let transport = Arc::new(Transport::new(identity, port, db_pool.clone(), cert_pem, key_pem, cert_der));
         Self {
-            device_id: identity.device_id.clone(),
+            transport,
+            device_id,
             db_pool,
-            http_client: Arc::new(RwLock::new(HttpClient::new())),
-            peers: Arc::new(RwLock::new(HashMap::new())),
             last_sync: Arc::new(RwLock::new(HashMap::new())),
             auto_sync_enabled: Arc::new(RwLock::new(false)),
             sync_interval_secs: sync_interval_secs.unwrap_or(300),
-            server_port: Arc::new(RwLock::new(None)),
-            shutdown_tx: Arc::new(RwLock::new(None)),
-            pairing_code: Arc::new(RwLock::new(None)),
-            failed_pairing_attempts: Arc::new(RwLock::new(HashMap::new())),
-            peer_last_seen: Arc::new(RwLock::new(HashMap::new())),
-            last_conn_error_logged: Arc::new(RwLock::new(HashMap::new())),
-            cert_pem,
-            key_pem,
-            cert_der,
-            identity: std::sync::RwLock::new(identity),
-            port: port.unwrap_or(DEFAULT_SYNC_PORT),
         }
     }
 
-    // ---- identity and port (owned by the service; see SyncIdentity) ----
+    // ---- identity, port, client and registry live in the transport; these keep
+    //      their names so commands and the UI do not change ----
 
-    #[allow(dead_code)] // used by the sync test harness
-    pub fn identity(&self) -> SyncIdentity { self.identity.read().unwrap().clone() }
-
-    /// This device's user id. Err when the identity has no user id (never in practice).
-    pub fn user_id(&self) -> Result<String, String> {
-        let id = self.identity.read().unwrap().user_id.clone();
-        if id.is_empty() { Err("No user id".to_string()) } else { Ok(id) }
-    }
-
-    pub fn device_name(&self) -> String { self.identity.read().unwrap().device_name.clone() }
-
-    /// Called when this device adopts another user id (pairing) or resets.
-    pub fn set_user_id(&self, user_id: &str) { self.identity.write().unwrap().user_id = user_id.to_string(); }
-
-    /// Called when the user renames this device.
-    pub fn set_device_name(&self, name: &str) { self.identity.write().unwrap().device_name = name.to_string(); }
-
-    /// The port this instance listens on (0 until the listener reports the port it was given).
-    pub fn port(&self) -> u16 {
-        let p = self.port;
-        if p != 0 { return p; }
-        self.server_port.try_read().ok().and_then(|g| *g).unwrap_or(0)
-    }
-
-    /// The port a known peer listens on, from its stored row; the default if unknown.
-    pub async fn peer_port_by_id(&self, device_id: &str) -> u16 {
-        sqlx::query_scalar::<_, i64>("SELECT port FROM zynk_devices WHERE device_id = ?")
-            .bind(device_id).fetch_optional(&self.db_pool).await.ok().flatten()
-            .map(|p| p as u16).unwrap_or(DEFAULT_SYNC_PORT)
-    }
-
-    /// The port of the peer last seen at this address, from its stored row; the default if unknown.
-    pub async fn peer_port_by_ip(&self, device_ip: &str) -> u16 {
-        sqlx::query_scalar::<_, i64>("SELECT port FROM zynk_devices WHERE device_ip = ? ORDER BY last_seen_at DESC LIMIT 1")
-            .bind(device_ip).fetch_optional(&self.db_pool).await.ok().flatten()
-            .map(|p| p as u16).unwrap_or(DEFAULT_SYNC_PORT)
-    }
+    #[allow(dead_code)] // the chat and link services will take this
+    pub fn transport(&self) -> Arc<Transport> { Arc::clone(&self.transport) }
+    #[allow(dead_code)]
+    pub fn identity(&self) -> SyncIdentity { self.transport.identity() }
+    pub fn user_id(&self) -> Result<String, String> { self.transport.user_id() }
+    pub fn device_name(&self) -> String { self.transport.device_name() }
+    pub fn set_user_id(&self, user_id: &str) { self.transport.set_user_id(user_id) }
+    pub fn set_device_name(&self, name: &str) { self.transport.set_device_name(name) }
+    pub fn port(&self) -> u16 { self.transport.port() }
+    pub async fn peer_port_by_id(&self, device_id: &str) -> u16 { self.transport.peer_port_by_id(device_id).await }
+    pub async fn peer_port_by_ip(&self, device_ip: &str) -> u16 { self.transport.peer_port_by_ip(device_ip).await }
+    pub async fn rebuild_http_client(&self) -> Result<(), String> { self.transport.rebuild_http_client().await }
+    pub async fn get_http_client(&self) -> reqwest::Client { self.transport.get_http_client().await }
+    pub async fn get_peer_client_for_url(&self, url: &str) -> Option<reqwest::Client> { self.transport.get_peer_client_for_url(url).await }
+    pub async fn load_devices(&self) -> Result<(), String> { self.transport.load_devices().await }
+    pub async fn get_peers(&self) -> Vec<PeerDevice> { self.transport.get_peers().await }
+    pub async fn send_goodbye_to_peers(&self) { self.transport.send_goodbye_to_peers().await }
 
     /// Rebuild the shared HTTP client to trust all currently stored peer certificates.
     /// Called at startup (after load_devices) and after each new pairing.
-    pub async fn rebuild_http_client(&self) -> Result<(), String> {
-        let rows = sqlx::query(
-            "SELECT tls_cert_der FROM zynk_devices WHERE tls_cert_der IS NOT NULL AND sync_paired = 1"
-        )
-        .fetch_all(&self.db_pool)
-        .await
-        .map_err(|e| format!("Failed to load peer certs: {}", e))?;
-
-        let cert_count = rows.len();
-        // Tag every outgoing request with our device ID so the remote can
-        // reject it if we've been removed from their peer list. x-device-name rides
-        // along the same way so a rename propagates to every already-paired peer at
-        // its next contact, with no unpair/re-pair (which wipes sync state) needed —
-        // check_sync_authorized() below is where a peer updates our name on receipt.
-        let mut default_headers = reqwest::header::HeaderMap::new();
-        if let Ok(val) = reqwest::header::HeaderValue::from_str(&self.device_id) {
-            default_headers.insert("x-device-id", val);
-        }
-        // HeaderValue rejects non-ASCII; an emoji/unicode name just won't propagate this
-        // way and the peer keeps whatever name it captured at pairing — not fatal.
-        if let Ok(val) = reqwest::header::HeaderValue::from_str(&self.device_name()) {
-            default_headers.insert("x-device-name", val);
-        }
-
-        let mut pinned_ders: Vec<Vec<u8>> = Vec::new();
-        for row in rows {
-            let cert_der: Option<Vec<u8>> = row.try_get("tls_cert_der").ok().flatten();
-            if let Some(der) = cert_der {
-                println!("[TLS] Pinning peer cert ({} bytes)", der.len());
-                pinned_ders.push(der);
-            } else {
-                println!("[TLS] Warning: peer row has NULL tls_cert_der");
-            }
-        }
-        println!("[TLS] rebuild_http_client: {} peer cert(s) in DB, {} pinned", cert_count, pinned_ders.len());
-
-        let tls_config = match crate::tls::build_pinned_client_config_with_cert(
-            pinned_ders.clone(),
-            &self.cert_pem,
-            &self.key_pem,
-        ) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!("[TLS] Failed to build client config with cert: {}, falling back to no-cert", e);
-                crate::tls::build_pinned_client_config(pinned_ders)
-            }
-        };
-        let client = reqwest::ClientBuilder::new()
-            .use_preconfigured_tls(tls_config)
-            .timeout(std::time::Duration::from_secs(30))
-            .default_headers(default_headers)
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
-
-        *self.http_client.write().await = client;
-        println!("[TLS] HTTP client rebuilt with {} pinned peer certificates", cert_count);
-        Ok(())
-    }
 
     /// Return a clone of the shared DB pool for use by Tauri commands that need DB access
     pub fn get_db_pool(&self) -> SqlitePool {
         self.db_pool.clone()
     }
 
-    pub async fn get_http_client(&self) -> reqwest::Client {
-        self.http_client.read().await.clone()
-    }
 
     /// Returns the mTLS-capable HTTP client if `url` points to a known paired peer,
     /// otherwise returns None. Used by chat/memory callers to transparently upgrade to mTLS.
-    pub async fn get_peer_client_for_url(&self, url: &str) -> Option<reqwest::Client> {
-        let (host, port) = extract_host_port(url)?;
-        let peers = self.peers.read().await;
-        let is_peer = peers.values().any(|p| p.host == host && p.port == port);
-        if is_peer {
-            Some(self.get_http_client().await)
-        } else {
-            None
-        }
-    }
 
     /// Generate a new 6-digit pairing code
     pub async fn generate_pairing_code(&self) -> Result<String, String> {
@@ -474,7 +252,7 @@ impl ZynkSyncService {
 
         // Store in memory
         {
-            let mut pairing_code = self.pairing_code.write().await;
+            let mut pairing_code = self.transport.pairing_code.write().await;
             *pairing_code = Some(code.clone());
         }
 
@@ -512,57 +290,6 @@ impl ZynkSyncService {
     }
 
     /// Load devices from database
-    pub async fn load_devices(&self) -> Result<(), String> {
-        let rows = sqlx::query(
-            "SELECT device_id, device_name, device_ip, port, last_seen_at
-             FROM zynk_devices
-             WHERE sync_paired = 1
-             ORDER BY last_seen_at DESC"
-        )
-        .fetch_all(&self.db_pool)
-        .await
-        .map_err(|e| format!("Failed to load devices: {}", e))?;
-
-        let mut peers_map = self.peers.write().await;
-
-        for row in rows {
-            let device_id: String = row.get("device_id");
-
-            // Skip self from peer list (don't sync with ourselves)
-            if device_id == self.device_id {
-                continue;
-            }
-
-            let device_name: String = row.get("device_name");
-            let host: Option<String> = row.get("device_ip");
-            let port: i32 = row.get("port");
-            let last_seen: DateTime<Utc> = row.get("last_seen_at");
-
-            // Skip devices without IP address
-            let host = match host {
-                Some(h) => h,
-                None => continue,
-            };
-
-            let peer = PeerDevice {
-                device_id: device_id.clone(),
-                device_name,
-                host: host.clone(),
-                port: port as u16,
-                url: format!("https://{}:{}", host, port),
-                last_seen,
-                paired: true,
-                pairing_code: None,
-                user_id: None,  // Not relevant when loading from database
-                is_online: false,
-            };
-
-            peers_map.insert(device_id, peer);
-        }
-
-        println!("[ZynkSync] Loaded {} devices from database", peers_map.len());
-        Ok(())
-    }
 
     /// Add a device manually using IP address and pairing code
     /// Returns the peer device info including the host's user_id for identity sync
@@ -615,7 +342,7 @@ impl ZynkSyncService {
             "client_device_name": self.device_name(),
             "client_port": self.port(),
             "client_memory_count": client_memory_count,
-            "client_cert_der": BASE64.encode(&self.cert_der),
+            "client_cert_der": BASE64.encode(&self.transport.cert_der),
         });
 
         // Include client_user_id if available
@@ -753,7 +480,7 @@ impl ZynkSyncService {
         // If device is already in the peers map, evict it first so re-pairing works cleanly
         // (e.g. after a Remove that didn't fully propagate, or an IP/cert refresh).
         {
-            let mut peers_map = self.peers.write().await;
+            let mut peers_map = self.transport.peers.write().await;
             if peers_map.contains_key(&device_id) {
                 println!("[ZynkSync] Device {} already known — evicting for re-pair", &device_id[..8.min(device_id.len())]);
                 peers_map.remove(&device_id);
@@ -824,7 +551,7 @@ impl ZynkSyncService {
         };
 
         {
-            let mut peers_map = self.peers.write().await;
+            let mut peers_map = self.transport.peers.write().await;
             peers_map.insert(device_id.clone(), peer.clone());
         }
 
@@ -872,7 +599,7 @@ impl ZynkSyncService {
                 self.rebuild_http_client().await.ok();
 
                 // Step 3: send introduce request to each peer (best-effort)
-                let our_cert_b64 = BASE64.encode(&self.cert_der);
+                let our_cert_b64 = BASE64.encode(&self.transport.cert_der);
                 let our_id = self.device_id.clone();
                 let our_name = self.device_name();
                 let host_id = device_id.clone(); // the host who introduced us
@@ -887,14 +614,14 @@ impl ZynkSyncService {
 
                     // Skip already known
                     {
-                        let map = self.peers.read().await;
+                        let map = self.transport.peers.read().await;
                         if map.contains_key(&peer_id) { continue; }
                     }
 
                     if peer_ip.is_empty() { continue; }
 
                     let intro_url = format!("https://{}:{}/api/zynksync/introduce", peer_ip, peer_port_num);
-                    let http_client = self.http_client.read().await.clone();
+                    let http_client = self.transport.http_client.read().await.clone();
                     let mut payload = serde_json::json!({
                         "new_device_id": our_id,
                         "new_device_name": our_name,
@@ -909,7 +636,7 @@ impl ZynkSyncService {
                         Ok(resp) if resp.status().is_success() => {
                             println!("[ZynkSync] ✓ Introduced to peer: {}", peer_name);
                             // Add confirmed peer to in-memory map
-                            let mut map = self.peers.write().await;
+                            let mut map = self.transport.peers.write().await;
                             if !map.contains_key(&peer_id) {
                                 map.insert(peer_id.clone(), PeerDevice {
                                     device_id: peer_id.clone(),
@@ -998,11 +725,11 @@ impl ZynkSyncService {
 
         // Remove from in-memory peers map and online-status map
         {
-            let mut peers_map = self.peers.write().await;
+            let mut peers_map = self.transport.peers.write().await;
             peers_map.remove(device_id);
         }
         {
-            let mut map = self.peer_last_seen.write().await;
+            let mut map = self.transport.peer_last_seen.write().await;
             map.remove(device_id);
         }
 
@@ -1090,7 +817,7 @@ impl ZynkSyncService {
                 .bind(device_id).execute(&mut *tx).await
                 .map_err(|e| format!("Failed to delete device row: {}", e))?;
             // Remove from in-memory peers map (device is gone entirely)
-            let mut peers_map = self.peers.write().await;
+            let mut peers_map = self.transport.peers.write().await;
             peers_map.remove(device_id);
             // Must drop write lock before committing
             drop(peers_map);
@@ -1138,7 +865,7 @@ impl ZynkSyncService {
 
         let local_device_id = self.device_id.clone();
         let target_id = target_device_id.to_string();
-        let http_client = self.http_client.read().await.clone();
+        let http_client = self.transport.http_client.read().await.clone();
 
         tokio::spawn(async move {
             // Tell every other peer to remove the target via cascade field
@@ -1201,7 +928,7 @@ impl ZynkSyncService {
         }
 
         let local_device_id = self.device_id.clone();
-        let http_client = self.http_client.read().await.clone();
+        let http_client = self.transport.http_client.read().await.clone();
 
         tokio::spawn(async move {
             // Tell every peer: "remove me from your list"
@@ -1331,7 +1058,7 @@ impl ZynkSyncService {
 
         // Clear from peers map
         {
-            let mut peers_map = self.peers.write().await;
+            let mut peers_map = self.transport.peers.write().await;
             peers_map.clear();
         }
 
@@ -1596,7 +1323,7 @@ impl ZynkSyncService {
     /// Sync memories to a specific peer device
     pub async fn sync_to_peer(&self, peer_id: &str, user_id: Option<&str>) -> Result<SyncResult, String> {
         let peer = {
-            let peers_map = self.peers.read().await;
+            let peers_map = self.transport.peers.read().await;
             peers_map.get(peer_id).cloned()
                 .ok_or_else(|| format!("Peer {} not found", peer_id))?
         };
@@ -1627,7 +1354,7 @@ impl ZynkSyncService {
 
         // Send memories to peer
         let endpoint = format!("{}/api/zynksync/receive", peer.url);
-        let client = self.http_client.read().await.clone();
+        let client = self.transport.http_client.read().await.clone();
         let response = client
             .post(&endpoint)
             .json(&memories)
@@ -1703,7 +1430,7 @@ impl ZynkSyncService {
 
         // Send messages to peer
         let endpoint = format!("https://{}:{}/api/zchat/deliver", device_ip, self.peer_port_by_ip(&device_ip).await);
-        let client = self.http_client.read().await.clone();
+        let client = self.transport.http_client.read().await.clone();
         let response = client
             .post(&endpoint)
             .json(&messages)
@@ -2190,7 +1917,7 @@ impl ZynkSyncService {
         // Verbose push detail omitted — summary printed by caller
 
         let endpoint = format!("{}/api/zynksync/conversations/receive", peer.url);
-        let client = self.http_client.read().await.clone();
+        let client = self.transport.http_client.read().await.clone();
         let response = client
             .post(&endpoint)
             .json(&payload)
@@ -2219,7 +1946,7 @@ impl ZynkSyncService {
     /// Compares memory inventories and syncs from the device with most recent activity
     pub async fn sync_bidirectional(&self, peer_id: &str, user_id: &str) -> Result<SyncResult, String> {
         let peer = {
-            let peers_map = self.peers.read().await;
+            let peers_map = self.transport.peers.read().await;
             peers_map.get(peer_id).cloned()
                 .ok_or_else(|| format!("Peer {} not found", peer_id))?
         };
@@ -2239,7 +1966,7 @@ impl ZynkSyncService {
             user_id: user_id.to_string(),
         };
 
-        let client = self.http_client.read().await.clone();
+        let client = self.transport.http_client.read().await.clone();
         let response = client
             .post(&endpoint)
             .json(&request)
@@ -2385,7 +2112,7 @@ impl ZynkSyncService {
                             "content_hash": hash,
                             "deleted_at": deleted_at
                         });
-                        let client = self.http_client.read().await.clone();
+                        let client = self.transport.http_client.read().await.clone();
                         let _ = client.post(&endpoint).json(&payload)
                             .timeout(Duration::from_secs(10)).send().await;
                     }
@@ -2423,7 +2150,7 @@ impl ZynkSyncService {
                 let memories_to_send = self.get_memories_by_ids(&to_send).await?;
 
                 let endpoint = format!("{}/api/zynksync/receive", peer.url);
-                let client = self.http_client.read().await.clone();
+                let client = self.transport.http_client.read().await.clone();
                 let response = client
                     .post(&endpoint)
                     .json(&memories_to_send)
@@ -2465,7 +2192,7 @@ impl ZynkSyncService {
                     if !ids_to_delete.is_empty() {
                         println!("[ZynkSync] Requesting remote to delete {} memories", ids_to_delete.len());
                         let endpoint = format!("{}/api/zynksync/delete", peer.url);
-                        let client = self.http_client.read().await.clone();
+                        let client = self.transport.http_client.read().await.clone();
                         let response = client
                             .post(&endpoint)
                             .json(&ids_to_delete)
@@ -2508,7 +2235,7 @@ impl ZynkSyncService {
             if !to_receive.is_empty() {
                 println!("[ZynkSync] Requesting {} missing memories from remote", to_receive.len());
                 let endpoint = format!("{}/api/zynksync/fetch", peer.url);
-                let client = self.http_client.read().await.clone();
+                let client = self.transport.http_client.read().await.clone();
                 let response = client
                     .post(&endpoint)
                     .json(&to_receive)
@@ -2718,7 +2445,7 @@ impl ZynkSyncService {
     /// don't re-delete the restored memories on the next sync cycle.
     pub async fn clear_tombstones_on_peers(&self, hashes: &[String]) -> usize {
         let peers = {
-            let peers_map = self.peers.read().await;
+            let peers_map = self.transport.peers.read().await;
             peers_map.values()
                 .filter(|p| p.paired)
                 .cloned()
@@ -2728,7 +2455,7 @@ impl ZynkSyncService {
         let payload = serde_json::json!({ "hashes": hashes });
         for peer in peers {
             let endpoint = format!("{}/api/zynksync/clear-tombstones", peer.url);
-            let client = self.http_client.read().await.clone();
+            let client = self.transport.http_client.read().await.clone();
             match client
                 .post(&endpoint)
                 .json(&payload)
@@ -2835,7 +2562,7 @@ impl ZynkSyncService {
 
         // Get all paired peers
         let peers = {
-            let peers_map = self.peers.read().await;
+            let peers_map = self.transport.peers.read().await;
             peers_map.values()
                 .filter(|p| p.paired)
                 .cloned()
@@ -2860,7 +2587,7 @@ impl ZynkSyncService {
                 "deleted_at": deleted_at
             });
 
-            let client = self.http_client.read().await.clone();
+            let client = self.transport.http_client.read().await.clone();
             match client
                 .post(&endpoint)
                 .json(&payload)
@@ -2898,7 +2625,7 @@ impl ZynkSyncService {
         println!("[ZynkSync] Propagating memory update for ID {} to paired devices", memory_id);
 
         let peers = {
-            let peers_map = self.peers.read().await;
+            let peers_map = self.transport.peers.read().await;
             peers_map.values()
                 .filter(|p| p.paired)
                 .cloned()
@@ -2921,7 +2648,7 @@ impl ZynkSyncService {
 
         for peer in peers {
             let endpoint = format!("{}/api/zynksync/update-memory", peer.url);
-            let client = self.http_client.read().await.clone();
+            let client = self.transport.http_client.read().await.clone();
             match client
                 .post(&endpoint)
                 .json(&payload)
@@ -2966,7 +2693,7 @@ impl ZynkSyncService {
 
             // Get all paired devices
             let peers = {
-                let peers_map = self.peers.read().await;
+                let peers_map = self.transport.peers.read().await;
                 peers_map.values().cloned().collect::<Vec<_>>()
             };
 
@@ -2997,7 +2724,7 @@ impl ZynkSyncService {
         if pending.is_empty() { return; }
         println!("[ZynkSync] Retrying {} queued removal(s) for peer {}", pending.len(), &peer_id[..8.min(peer_id.len())]);
 
-        let http_client = self.http_client.read().await.clone();
+        let http_client = self.transport.http_client.read().await.clone();
         let peer_port = self.peer_port_by_id(peer_id).await;
         let mut delivered_ids: Vec<i64> = Vec::new();
 
@@ -3041,7 +2768,7 @@ impl ZynkSyncService {
 
             let device_id = self.device_id.clone();
             let peers = {
-                let peers_map = self.peers.read().await;
+                let peers_map = self.transport.peers.read().await;
                 peers_map.values().cloned().collect::<Vec<_>>()
             };
 
@@ -3049,7 +2776,7 @@ impl ZynkSyncService {
                 if !peer.paired { continue; }
                 let url = format!("https://{}:{}/api/presence/heartbeat", peer.host, peer.port);
                 let body = serde_json::json!({ "device_id": device_id });
-                let client = self.http_client.read().await.clone();
+                let client = self.transport.http_client.read().await.clone();
                 let result = client
                     .post(&url)
                     .json(&body)
@@ -3058,7 +2785,7 @@ impl ZynkSyncService {
                     .await;
                 if result.is_ok() {
                     {
-                        let mut map = self.peer_last_seen.write().await;
+                        let mut map = self.transport.peer_last_seen.write().await;
                         map.insert(peer.device_id.clone(), Utc::now());
                     }
                     // Deliver any cascade-remove notifications that failed when peer was offline
@@ -3069,27 +2796,6 @@ impl ZynkSyncService {
     }
 
     /// Send goodbye signal to all paired peers (called on clean shutdown)
-    pub async fn send_goodbye_to_peers(&self) {
-        let device_id = self.device_id.clone();
-        let peers = {
-            let peers_map = self.peers.read().await;
-            peers_map.values().cloned().collect::<Vec<_>>()
-        };
-
-        for peer in peers {
-            if !peer.paired { continue; }
-            let url = format!("https://{}:{}/api/presence/goodbye", peer.host, peer.port);
-            let body = serde_json::json!({ "device_id": device_id });
-            let client = self.http_client.read().await.clone();
-            let _ = client
-                .post(&url)
-                .json(&body)
-                .timeout(Duration::from_secs(3))
-                .send()
-                .await;
-        }
-        println!("[Presence] Goodbye sent to all peers");
-    }
 
     /// Start automatic synchronization loop
     pub async fn start_auto_sync(self: Arc<Self>) {
@@ -3116,7 +2822,7 @@ impl ZynkSyncService {
 
             // Get all peers
             let peers = {
-                let peers_map = self.peers.read().await;
+                let peers_map = self.transport.peers.read().await;
                 peers_map.values().cloned().collect::<Vec<_>>()
             };
 
@@ -3170,7 +2876,7 @@ impl ZynkSyncService {
                             || e.contains("timed out");
                         if is_conn_error {
                             let should_log = {
-                                let map = self.last_conn_error_logged.read().await;
+                                let map = self.transport.last_conn_error_logged.read().await;
                                 match map.get(&peer.device_id) {
                                     Some(last) => Utc::now().signed_duration_since(*last).num_seconds() >= 30,
                                     None => true,
@@ -3179,7 +2885,7 @@ impl ZynkSyncService {
                             if should_log {
                                 eprintln!("[ZynkSync] ✗ Auto-sync failed with {} (connection error — suppressing repeats for 30 s): {}",
                                     peer.device_name, e);
-                                self.last_conn_error_logged.write().await.insert(peer.device_id.clone(), Utc::now());
+                                self.transport.last_conn_error_logged.write().await.insert(peer.device_id.clone(), Utc::now());
                             }
                         } else {
                             eprintln!("[ZynkSync] ✗ Auto-sync failed with {}: {}", peer.device_name, e);
@@ -3202,13 +2908,13 @@ impl ZynkSyncService {
     pub async fn broadcast_pause_to_peers(&self) -> usize {
         println!("[ZynkSync] Broadcasting pause to all paired devices");
         let peers = {
-            let peers_map = self.peers.read().await;
+            let peers_map = self.transport.peers.read().await;
             peers_map.values().filter(|p| p.paired).cloned().collect::<Vec<_>>()
         };
         let mut count = 0;
         for peer in peers {
             let endpoint = format!("{}/api/zynksync/pause", peer.url);
-            let client = self.http_client.read().await.clone();
+            let client = self.transport.http_client.read().await.clone();
             match client
                 .post(&endpoint)
                 .header("X-Device-ID", &self.device_id)
@@ -3231,13 +2937,13 @@ impl ZynkSyncService {
     pub async fn broadcast_resume_to_peers(&self) -> usize {
         println!("[ZynkSync] Broadcasting resume to all paired devices");
         let peers = {
-            let peers_map = self.peers.read().await;
+            let peers_map = self.transport.peers.read().await;
             peers_map.values().filter(|p| p.paired).cloned().collect::<Vec<_>>()
         };
         let mut count = 0;
         for peer in peers {
             let endpoint = format!("{}/api/zynksync/resume", peer.url);
-            let client = self.http_client.read().await.clone();
+            let client = self.transport.http_client.read().await.clone();
             match client
                 .post(&endpoint)
                 .header("X-Device-ID", &self.device_id)
@@ -3263,36 +2969,6 @@ impl ZynkSyncService {
     }
 
     /// Get list of peer devices
-    pub async fn get_peers(&self) -> Vec<PeerDevice> {
-        // A peer's rename arrives through the x-device-name header and is written to
-        // zynk_devices (check_sync_authorized), but the in-memory map still holds the
-        // name captured at pairing time. The UI reads this list, so a renamed peer
-        // showed its old name until the app restarted (Pixel listed the OnePlus as
-        // "Android-1193" while the row already said "12R", 2026-09-07). Prefer the
-        // stored name; fall back to the cached one if the lookup fails.
-        let stored_names: std::collections::HashMap<String, String> =
-            sqlx::query("SELECT device_id, device_name FROM zynk_devices WHERE sync_paired = 1")
-                .fetch_all(&self.db_pool)
-                .await
-                .map(|rows| rows.iter().filter_map(|r| {
-                    let id: String = r.try_get("device_id").ok()?;
-                    let name: String = r.try_get("device_name").ok()?;
-                    if name.trim().is_empty() { None } else { Some((id, name)) }
-                }).collect())
-                .unwrap_or_default();
-        let peers_map = self.peers.read().await;
-        let online_map = self.peer_last_seen.read().await;
-        let threshold = Utc::now() - chrono::Duration::seconds(45);
-        peers_map.values().map(|peer| {
-            let mut p = peer.clone();
-            if let Some(name) = stored_names.get(&peer.device_id) {
-                p.device_name = name.clone();
-            }
-            p.is_online = online_map.get(&peer.device_id)
-                .map_or(false, |&t| t > threshold);
-            p
-        }).collect()
-    }
 
     /// Public wrapper for get_local_inventory (for Tauri commands)
     pub async fn get_local_inventory_public(&self, user_id: &str) -> Result<MemoryInventory, String> {
@@ -3306,7 +2982,7 @@ impl ZynkSyncService {
             user_id: user_id.to_string(),
         };
 
-        let client = self.http_client.read().await.clone();
+        let client = self.transport.http_client.read().await.clone();
         let response = client
             .post(&endpoint)
             .json(&request)
@@ -3329,7 +3005,7 @@ impl ZynkSyncService {
 
         // Update peer with pairing code
         {
-            let mut peers_map = self.peers.write().await;
+            let mut peers_map = self.transport.peers.write().await;
             if let Some(peer) = peers_map.get_mut(peer_id) {
                 peer.pairing_code = Some(pairing_code.clone());
                 println!("[ZynkSync] Generated pairing code {} for {}", pairing_code, peer.device_name);
@@ -3343,7 +3019,7 @@ impl ZynkSyncService {
 
     /// Verify pairing code and authorize peer
     pub async fn verify_pairing_code(&self, peer_id: &str, code: &str) -> Result<(), String> {
-        let mut peers_map = self.peers.write().await;
+        let mut peers_map = self.transport.peers.write().await;
 
         if let Some(peer) = peers_map.get_mut(peer_id) {
             match &peer.pairing_code {
@@ -3384,17 +3060,6 @@ impl ZynkSyncService {
     /// a device that never generated a pairing code (a phone that only ever entered
     /// one) could not record its sync timestamps: every sync it started failed with a
     /// foreign-key error. Found by the two-peer harness, 2026-09-17.
-    pub async fn ensure_own_device_row(&self) -> Result<(), String> {
-        sqlx::query(
-            "INSERT INTO zynk_devices (device_id, device_name, is_paired, port, created_at, last_seen_at)
-             VALUES (?, ?, 1, ?, ?, ?)
-             ON CONFLICT (device_id) DO UPDATE SET device_name = excluded.device_name, port = excluded.port"
-        )
-        .bind(&self.device_id).bind(&self.device_name()).bind(self.port() as i32).bind(Utc::now()).bind(Utc::now())
-        .execute(&self.db_pool).await
-        .map(|_| ())
-        .map_err(|e| format!("Failed to record this device: {}", e))
-    }
 
     pub async fn start_http_server(self: Arc<Self>) -> Result<u16, String> {
         // Clean up any old process using port 57963 (handles hot reload issues)
@@ -3465,117 +3130,7 @@ impl ZynkSyncService {
             .with_state(Arc::clone(&self));
 
         // Build TLS config with optional client certificate request (mTLS)
-        let server_config = crate::tls::build_server_config_with_optional_client_auth(
-            &self.cert_pem, &self.key_pem,
-        ).map_err(|e| format!("Failed to build TLS config: {}", e))?;
-        let tls_acceptor = TlsAcceptor::from(Arc::new(server_config));
-
-        // Bind TCP listener on fixed port 57963 with SO_REUSEADDR so we can
-        // recover from a quick app-restart where the previous process's socket
-        // is still in TIME_WAIT. Retries a few times with backoff for the case
-        // where the old process hasn't fully released the port yet.
-        let port: u16 = self.port;
-        let addr = SocketAddr::from(([0, 0, 0, 0], port));
-        let tcp_listener = bind_with_reuseaddr(addr, port).await?;
-        // With port 0 the OS picked one; report what we actually got.
-        let port: u16 = tcp_listener.local_addr().map(|a| a.port()).unwrap_or(port);
-        {
-            let mut server_port = self.server_port.write().await;
-            *server_port = Some(port);
-        }
-        self.ensure_own_device_row().await?;
-
-        // Store the port
-        {
-            let mut server_port = self.server_port.write().await;
-            *server_port = Some(port);
-        }
-
-        println!("[ZynkSync] HTTPS server listening on port {}", port);
-
-        // Create shutdown channel
-        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        {
-            let mut tx = self.shutdown_tx.write().await;
-            *tx = Some(shutdown_tx);
-        }
-
-        // Accept loop: accept TCP → TLS handshake → serve per-connection via hyper
-        // ConnectInfo<SocketAddr> is injected manually into each request extension so
-        // handlers can read the client IP without needing axum::serve's built-in mechanism.
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = &mut shutdown_rx => {
-                        println!("[ZynkSync] HTTPS server shutting down");
-                        break;
-                    }
-                    result = tcp_listener.accept() => {
-                        let (tcp_stream, peer_addr) = match result {
-                            Ok(pair) => pair,
-                            Err(e) => { eprintln!("[ZynkSync] TCP accept error: {}", e); break; }
-                        };
-                        let acceptor = tls_acceptor.clone();
-                        let router = app.clone();
-                        tokio::spawn(async move {
-                            let tls_stream = match acceptor.accept(tcp_stream).await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    // HandshakeFailure from a known-paired IP is expected when a
-                                    // peer's cert hasn't been pinned yet or when an unpaired device
-                                    // probes the port. Log at debug level only to avoid logcat spam
-                                    // on Android. Unexpected I/O errors still log at error level.
-                                    let e_str = e.to_string();
-                                    if e_str.contains("HandshakeFailure")
-                                        || e_str.contains("handshake")
-                                        || e_str.contains("AlertReceived")
-                                        || e_str.contains("corrupt message")
-                                    {
-                                        #[cfg(debug_assertions)]
-                                        eprintln!("[ZynkSync] TLS handshake failed from {} (debug): {}", peer_addr, e);
-                                    } else {
-                                        eprintln!("[ZynkSync] TLS accept error from {}: {}", peer_addr, e);
-                                    }
-                                    return;
-                                }
-                            };
-                            // Extract client cert DER presented during mTLS handshake (may be None)
-                            let peer_cert_der: Option<PeerCertDer> = tls_stream
-                                .get_ref()
-                                .1
-                                .peer_certificates()
-                                .and_then(|certs| certs.first())
-                                .map(|c| PeerCertDer(c.as_ref().to_vec()));
-                            let io = TokioIo::new(tls_stream);
-                            let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
-                                let mut router = router.clone();
-                                let peer_cert_der = peer_cert_der.clone();
-                                async move {
-                                    let (parts, body) = req.into_parts();
-                                    let body = axum::body::Body::new(body);
-                                    let mut req = hyper::Request::from_parts(parts, body);
-                                    req.extensions_mut().insert(ConnectInfo(peer_addr));
-                                    if let Some(cert) = peer_cert_der {
-                                        req.extensions_mut().insert(cert);
-                                    }
-                                    use tower::Service;
-                                    router.call(req).await
-                                }
-                            });
-                            if let Err(e) = HyperConnBuilder::new(TokioExecutor::new())
-                                .serve_connection(io, svc)
-                                .await
-                            {
-                                println!("[ZynkSync] Connection from {} closed: {}", peer_addr, e);
-                            }
-                        });
-                    }
-                }
-            }
-            println!("[ZynkSync] HTTPS server stopped");
-        });
-
-        Ok(port)
+        self.transport.clone().serve(app).await
     }
 }
 
@@ -3615,7 +3170,7 @@ async fn inject_verified_device(
                             .map(|r| r.rows_affected() > 0).unwrap_or(false);
                         if changed {
                             println!("[ZynkSync] {} is now at {} — address updated", device_name, ip);
-                            let mut peers = service.peers.write().await;
+                            let mut peers = service.transport.peers.write().await;
                             if let Some(p) = peers.get_mut(&device_id) {
                                 p.host = ip.clone();
                                 p.url = format!("https://{}:{}", ip, p.port);
@@ -3730,7 +3285,7 @@ async fn handle_verify_pairing(
     // Rate limit: invalidate the pairing code after 5 failed attempts from the same IP.
     // Collapses attacker odds from "a million tries in ten minutes" to "5 tries, ever."
     {
-        let attempts = service.failed_pairing_attempts.read().await;
+        let attempts = service.transport.failed_pairing_attempts.read().await;
         if attempts.get(&client_ip).copied().unwrap_or(0) >= 5 {
             drop(attempts);
             sqlx::query(
@@ -3762,7 +3317,7 @@ async fn handle_verify_pairing(
     match result {
         Some(_record) => {
             // Success — clear the failed attempt counter for this IP
-            service.failed_pairing_attempts.write().await.remove(&client_ip);
+            service.transport.failed_pairing_attempts.write().await.remove(&client_ip);
             println!("[ZynkSync] ✓ Pairing code verified! Auto-adding client: {} ({})",
                 client_device_name, client_device_id);
 
@@ -3815,7 +3370,7 @@ async fn handle_verify_pairing(
 
             // Add to peers map
             {
-                let mut peers_map = service.peers.write().await;
+                let mut peers_map = service.transport.peers.write().await;
                 peers_map.insert(client_device_id.to_string(), peer);
             }
 
@@ -3920,7 +3475,7 @@ async fn handle_verify_pairing(
                     .execute(&service.db_pool).await.ok();
 
                     {
-                        let mut map = service.peers.write().await;
+                        let mut map = service.transport.peers.write().await;
                         if !map.contains_key(&peer_id) {
                             map.insert(peer_id.clone(), PeerDevice {
                                 device_id: peer_id.clone(),
@@ -3995,7 +3550,7 @@ async fn handle_verify_pairing(
                     // We omit new_device_ip so the receiving peer falls back to addr.ip(),
                     // which is the host's IP (we are the sender and the introduced device).
                     if !client_peers_for_spawn.is_empty() {
-                        let host_cert_b64 = BASE64.encode(&svc.cert_der);
+                        let host_cert_b64 = BASE64.encode(&svc.transport.cert_der);
                         for peer_val in &client_peers_for_spawn {
                             let peer_ip = match peer_val.get("ip").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
                                 Some(ip) => ip.to_string(),
@@ -4011,7 +3566,7 @@ async fn handle_verify_pairing(
                                 "introducer_device_id": new_id,
                                 // no new_device_ip — addr.ip() on receiver will be the host's IP
                             });
-                            let http_client2 = svc.http_client.read().await.clone();
+                            let http_client2 = svc.transport.http_client.read().await.clone();
                             match http_client2.post(&url).json(&payload).send().await {
                                 Ok(r) if r.status().is_success() =>
                                     println!("[ZynkSync] ✓ Host introduced itself to client's peer at {}", peer_ip),
@@ -4024,9 +3579,9 @@ async fn handle_verify_pairing(
                     }
 
                     // Phase 2: notify all known peers (now including client's old peers) about the new client.
-                    let http_client = svc.http_client.read().await.clone();
+                    let http_client = svc.transport.http_client.read().await.clone();
                     let peers: Vec<PeerDevice> = {
-                        let map = svc.peers.read().await;
+                        let map = svc.transport.peers.read().await;
                         map.values()
                             .filter(|p| p.paired && p.device_id != new_id)
                             .cloned()
@@ -4062,7 +3617,7 @@ async fn handle_verify_pairing(
             let mut response = serde_json::json!({
                 "device_id": service.device_id,
                 "device_name": service.device_name(),
-                "cert_der": BASE64.encode(&service.cert_der),
+                "cert_der": BASE64.encode(&service.transport.cert_der),
                 "peers": mesh_peers,
             });
 
@@ -4094,7 +3649,7 @@ async fn handle_verify_pairing(
         }
         None => {
             // Wrong code — increment failed attempt counter for this IP
-            let mut attempts = service.failed_pairing_attempts.write().await;
+            let mut attempts = service.transport.failed_pairing_attempts.write().await;
             let count = attempts.entry(client_ip.clone()).or_insert(0);
             *count += 1;
             println!("[ZynkSync] ✗ Invalid pairing code from {} ({}/5 attempts)", client_ip, count);
@@ -4184,7 +3739,7 @@ async fn handle_introduce(
         service.rebuild_http_client().await.ok();
 
         // Add to in-memory peers map
-        let mut map = service.peers.write().await;
+        let mut map = service.transport.peers.write().await;
         if !map.contains_key(new_device_id) {
             map.insert(new_device_id.to_string(), PeerDevice {
                 device_id: new_device_id.to_string(),
@@ -4208,7 +3763,7 @@ async fn handle_introduce(
     Ok(Json(serde_json::json!({
         "device_id": service.device_id,
         "device_name": service.device_name(),
-        "cert_der": BASE64.encode(&service.cert_der),
+        "cert_der": BASE64.encode(&service.transport.cert_der),
     })))
 }
 
@@ -4230,7 +3785,7 @@ async fn handle_heartbeat(
     .map_err(|e| format!("Failed to update last_seen_at: {}", e))?;
 
     {
-        let mut map = service.peer_last_seen.write().await;
+        let mut map = service.transport.peer_last_seen.write().await;
         map.insert(device_id.to_string(), Utc::now());
     }
 
@@ -4255,7 +3810,7 @@ async fn handle_goodbye(
     .map_err(|e| format!("Failed to set offline: {}", e))?;
 
     {
-        let mut map = service.peer_last_seen.write().await;
+        let mut map = service.transport.peer_last_seen.write().await;
         map.remove(device_id);
     }
 
@@ -5222,7 +4777,7 @@ async fn handle_push_api_key(
     // Device identity is now verified by mTLS cert (require_verified_device middleware ran).
     // Keep IP check as defence-in-depth.
     let sender_ip = addr.ip().to_string();
-    let peers = service.peers.read().await;
+    let peers = service.transport.peers.read().await;
     let trusted = peers.values().any(|p| p.host == sender_ip && p.paired);
     drop(peers);
     if !trusted {
@@ -5391,18 +4946,4 @@ async fn handle_ollama_proxy(
         .header("access-control-allow-origin", "*")
         .body(Body::from_stream(stream))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-}
-
-#[cfg(test)]
-mod port_tests {
-    use super::*;
-
-    #[test]
-    fn host_port_parsing_defaults_and_overrides() {
-        assert_eq!(split_host_port("192.168.0.5", DEFAULT_SYNC_PORT), ("192.168.0.5".into(), 57963));
-        assert_eq!(split_host_port("192.168.0.5:4444", DEFAULT_SYNC_PORT), ("192.168.0.5".into(), 4444));
-        assert_eq!(split_host_port(" 10.0.0.2:1 ", DEFAULT_SYNC_PORT), ("10.0.0.2".into(), 1));
-        // a bad port falls back to the default rather than failing pairing
-        assert_eq!(split_host_port("10.0.0.2:notaport", DEFAULT_SYNC_PORT), ("10.0.0.2:notaport".into(), 57963));
-    }
 }

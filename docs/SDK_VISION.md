@@ -41,7 +41,7 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 
 | Layer | Modules |
 |-------|---------|
-| **Core** | Database, TLS/mTLS, User Identity, Sync Codes |
+| **Core** | Database, TLS/mTLS, Transport, User Identity, Sync Codes |
 | **AI** | LLM Backends, Local Model Inference, Local Embeddings, Memory System, NLP/Entity Extraction, LLM Fact Extractor |
 | **Feature** | Conversation Engine, Conversation History, Containment Layer, Safety Classifier, Knowledge Base/RAG, Web Search, Ensemble Mode, Backup |
 | **Network** | ZynkSync, ZynkLink, ZChat |
@@ -54,6 +54,8 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 **Database** (`db.rs`) — SQLite connection pool with WAL mode, foreign keys, 20-connection limit, platform-aware paths (Android-aware). Foundation everything else depends on.
 
 **TLS/mTLS** (`tls.rs`) — Self-signed cert generation, pinned cert verification, optional client auth. Required by all three network modules.
+
+**Transport** (`transport.rs`, added 2026-09-17) — What the three network modules share and nothing they don't: this device's identity and certificate, the HTTPS server and its TLS accept loop, the pinned mTLS client, the device registry (`zynk_devices`) and presence. ZynkSync, ZynkLink and ZChat are clients of it, each owning only its own tables and routes; a pairing of either kind (the same user's other device, or another user's device) pins a certificate here so every route is verified the same way. Identity and port are values the transport owns — several can coexist in one process, which is how the sync test harness runs two peers. A second carrier (Bluetooth, Wi-Fi Direct) would sit under this module without touching the services.
 
 **User Identity** (`user_identity.rs`) — Persistent user/device ID generation and storage, hostname-based device naming. Required for pairing and sync.
 

@@ -39,6 +39,7 @@ mod kb_prompt;  // Wording of the KB prompt block by search outcome (found / wea
 mod conversation_history;  // Persistent conversation log with full-text search
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
+mod transport; // shared peer-to-peer layer: identity, server, pinned client, registry (SDK Core)
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod vosk_desktop; // Offline dictation on Linux and Windows desktop (cpal + vosk)
 pub mod response_sink; // Where a chat response goes as it streams (Tauri today, native JNI later)
