@@ -2268,23 +2268,9 @@ impl ZynkSyncService {
         let local_is_active = if is_first_sync {
             // First sync: Device with MORE memories is always the source of truth
             // This prevents incomplete transfers when a freshly-synced device has newer timestamp
-            if local_inventory.memory_count == 0 && remote_inventory.memory_count == 0 {
-                println!("[ZynkSync] Both devices have no memories, nothing to sync");
-                // Still record the pairing row so future syncs are not treated as first sync.
-                // Without this, is_first_sync() returns true forever when both devices start empty.
-                self.update_sync_timestamp(&peer.device_id, true).await?;
-                return Ok(SyncResult {
-                    peer_device_id: peer.device_id,
-                    peer_device_name: peer.device_name,
-                    memories_sent: 0,
-                    memories_received: 0,
-                    conversations_sent: 0,
-                    conflicts_resolved: 0,
-                    success: true,
-                    error: None,
-                });
-            }
-            // Device with more memories is active (pull from them)
+            // No memories on either side is not "nothing to sync": conversation history
+            // is pushed further down and used to be skipped here (harness, 2026-09-17).
+            // Device with more memories is active (pull from them); equal counts — local.
             local_inventory.memory_count >= remote_inventory.memory_count
         } else {
             // Subsequent syncs: Use timestamp to determine which device has recent activity
@@ -2301,19 +2287,7 @@ impl ZynkSyncService {
                 },
                 (Some(_), None) => true,  // Local has memories, remote doesn't
                 (None, Some(_)) => false, // Remote has memories, local doesn't
-                (None, None) => {
-                    println!("[ZynkSync] Both devices have no memories, nothing to sync");
-                    return Ok(SyncResult {
-                        peer_device_id: peer.device_id,
-                        peer_device_name: peer.device_name,
-                        memories_sent: 0,
-                        memories_received: 0,
-                        conversations_sent: 0,
-                        conflicts_resolved: 0,
-                        success: true,
-                        error: None,
-                    });
-                }
+                (None, None) => true, // no memories anywhere; history may still need to move
             }
         };
 
@@ -3406,6 +3380,22 @@ impl ZynkSyncService {
 
     /// Start HTTP server to receive sync requests from peers
     /// Returns the actual port the server is listening on
+    /// This device's own row in zynk_devices. zynk_device_pairings references it, so
+    /// a device that never generated a pairing code (a phone that only ever entered
+    /// one) could not record its sync timestamps: every sync it started failed with a
+    /// foreign-key error. Found by the two-peer harness, 2026-09-17.
+    pub async fn ensure_own_device_row(&self) -> Result<(), String> {
+        sqlx::query(
+            "INSERT INTO zynk_devices (device_id, device_name, is_paired, port, created_at, last_seen_at)
+             VALUES (?, ?, 1, ?, ?, ?)
+             ON CONFLICT (device_id) DO UPDATE SET device_name = excluded.device_name, port = excluded.port"
+        )
+        .bind(&self.device_id).bind(&self.device_name()).bind(self.port() as i32).bind(Utc::now()).bind(Utc::now())
+        .execute(&self.db_pool).await
+        .map(|_| ())
+        .map_err(|e| format!("Failed to record this device: {}", e))
+    }
+
     pub async fn start_http_server(self: Arc<Self>) -> Result<u16, String> {
         // Clean up any old process using port 57963 (handles hot reload issues)
         // NOTE: Port cleanup is now handled in lib.rs start_zynksync() before creating the service
@@ -3489,6 +3479,11 @@ impl ZynkSyncService {
         let tcp_listener = bind_with_reuseaddr(addr, port).await?;
         // With port 0 the OS picked one; report what we actually got.
         let port: u16 = tcp_listener.local_addr().map(|a| a.port()).unwrap_or(port);
+        {
+            let mut server_port = self.server_port.write().await;
+            *server_port = Some(port);
+        }
+        self.ensure_own_device_row().await?;
 
         // Store the port
         {

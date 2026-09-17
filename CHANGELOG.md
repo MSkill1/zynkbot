@@ -11,6 +11,11 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 ### Desktop and phone
 - API Keys: once a key is stored, the provider button reads "View plan" and opens the provider's plan/billing page (it said "Get Key" and opened the key page whether or not you had one).
 
+### Sync
+- A device that had never generated a pairing code had no record of itself, so every sync it started failed while recording the sync time (foreign-key error). Found by the new two-peer sync test harness; the device now records itself when its server starts.
+- On the first sync between two devices with no memories, conversation history was never sent (the code returned early as "nothing to sync"). History now moves regardless.
+- Pairing accepts `host:port`; the sync port is defined once and a peer's port is always taken from its stored record.
+
 ### Android voice
 - The wake-word verifier can be read from the app's data folder (a personal profile no longer needs a release), understands the new position-independent profile format, and a profile marked for "whoever owns this phone" enforces without knowing the user id.
 

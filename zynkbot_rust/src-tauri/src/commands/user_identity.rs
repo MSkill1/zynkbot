@@ -7,12 +7,17 @@ pub async fn get_user_identity() -> Result<user_identity::UserIdentity, String> 
 
 #[tauri::command]
 pub async fn set_user_identity(user_id: String) -> Result<(), String> {
-    user_identity::set_user_id(&user_id)
+    user_identity::set_user_id(&user_id)?;
+    // The running sync service owns a copy of the identity (see SyncIdentity); until
+    // 0bdcc35 the handlers re-read the files on every call, so this keeps that behaviour.
+    if let Some(svc) = crate::ZYNKSYNC_SERVICE.lock().await.as_ref() { svc.set_user_id(&user_id); }
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn reset_user_identity() -> Result<user_identity::UserIdentity, String> {
     let (new_user_id, new_device_id) = user_identity::reset_all_identity()?;
+    if let Some(svc) = crate::ZYNKSYNC_SERVICE.lock().await.as_ref() { svc.set_user_id(&new_user_id); }
     println!("[Identity] Reset complete - New user_id: {}, New device_id: {}", new_user_id, new_device_id);
     user_identity::get_identity()
 }
