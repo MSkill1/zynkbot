@@ -442,6 +442,77 @@ impl Transport {
     }
 }
 
+// ---- verification middleware -------------------------------------------------
+
+use axum::{extract::{ConnectInfo, Request, State}, middleware::Next, response::{IntoResponse, Response}, http::StatusCode};
+use crate::tls::VerifiedDevice;
+
+/// Middleware: looks up the PeerCertDer extension (set by accept loop from mTLS handshake)
+/// against zynk_devices.tls_cert_der. On a match, injects a VerifiedDevice extension so
+/// downstream middleware and handlers have cryptographic proof of device identity.
+pub async fn inject_verified_device(
+    State(transport): State<Arc<Transport>>,
+    mut req: Request,
+    next: Next,
+) -> Response {
+    if let Some(peer_cert) = req.extensions().get::<PeerCertDer>().cloned() {
+        let result = sqlx::query(
+            "SELECT device_id, device_name FROM zynk_devices \
+             WHERE tls_cert_der = ? AND sync_paired = 1 LIMIT 1"
+        )
+        .bind(&peer_cert.0)
+        .fetch_optional(&transport.db_pool)
+        .await;
+
+        if let Ok(Some(row)) = result {
+            let device_id: String = row.try_get("device_id").unwrap_or_default();
+            let device_name: String = row.try_get("device_name").unwrap_or_default();
+            if !device_id.is_empty() {
+                // A peer whose DHCP address changed overnight kept its old address in
+                // zynk_devices and in the peers map, so ZChat delivery and outbound sync
+                // went to a dead IP even while that peer was talking to us (Pixel
+                // .158 → .185, 2026-09-08). Every certificate-verified request carries
+                // the true address; record it when it differs.
+                if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>().cloned() {
+                    let ip = addr.ip().to_string();
+                    if !ip.is_empty() && !ip.starts_with("127.") {
+                        let changed = sqlx::query(
+                            "UPDATE zynk_devices SET device_ip = ? WHERE device_id = ? AND COALESCE(device_ip, '') != ?")
+                            .bind(&ip).bind(&device_id).bind(&ip)
+                            .execute(&transport.db_pool).await
+                            .map(|r| r.rows_affected() > 0).unwrap_or(false);
+                        if changed {
+                            println!("[ZynkSync] {} is now at {} — address updated", device_name, ip);
+                            let mut peers = transport.peers.write().await;
+                            if let Some(p) = peers.get_mut(&device_id) {
+                                p.host = ip.clone();
+                                p.url = format!("https://{}:{}", ip, p.port);
+                            }
+                        }
+                    }
+                }
+                req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
+            }
+        }
+    }
+    next.run(req).await
+}
+
+/// Middleware: rejects requests that lack a VerifiedDevice extension (i.e. the peer did not
+/// present a cert that matches a paired device). Used on sensitive routes like push-api-key.
+pub async fn require_verified_device(
+    req: Request,
+    next: Next,
+) -> Response {
+    if req.extensions().get::<VerifiedDevice>().is_none() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "mTLS device verification required" })),
+        ).into_response();
+    }
+    next.run(req).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

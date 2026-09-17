@@ -26,14 +26,12 @@ use axum::{
     Json,
     extract::{State, ConnectInfo, Request},
     http::StatusCode,
-    middleware::Next,
     response::{Response, IntoResponse},
     body::Body,
 };
-use crate::tls::{PeerCertDer, VerifiedDevice};
+use crate::tls::VerifiedDevice;
 use std::net::SocketAddr;
 use sha2::{Sha256, Digest};
-use crate::zchat;
 use tauri::Emitter;
 pub use crate::transport::{DEFAULT_SYNC_PORT, PeerDevice, SyncIdentity, split_host_port};
 use crate::transport::Transport;
@@ -753,88 +751,17 @@ impl ZynkSyncService {
         Ok(())
     }
 
-    /// Clear ZynkLink pairing data for a device. Called by revoke_zynklink_pairing.
-    /// Preserves ZynkSync pairing if sync_paired = 1.
-    pub async fn clear_link_data(&self, device_id: &str) -> Result<(), String> {
-        println!("[ZynkLink] Clearing link data for device: {}", &device_id[..device_id.len().min(8)]);
-
-        let device_uuid = uuid::Uuid::parse_str(device_id)
-            .map_err(|e| format!("Invalid device ID: {}", e))?;
-
-        let mut tx = self.db_pool.begin().await
-            .map_err(|e| format!("Failed to start link removal transaction: {}", e))?;
-
-        // ZynkLink-specific tables
-
-        // zynk_file_manifest — child of zynk_linked_directories
-        sqlx::query("DELETE FROM zynk_file_manifest WHERE shared_directory_id IN (SELECT id FROM zynk_linked_directories WHERE device_id = ?)")
-            .bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete file manifests: {}", e))?;
-
-        // zynk_link_manifest — child of zynk_linked_directories
-        sqlx::query("DELETE FROM zynk_link_manifest WHERE linked_directory_id IN (SELECT id FROM zynk_linked_directories WHERE device_id = ?)")
-            .bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete link manifests: {}", e))?;
-
-        // zynk_linked_directories
-        sqlx::query("DELETE FROM zynk_linked_directories WHERE device_id = ?")
-            .bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete linked directories: {}", e))?;
-
-        // zynklink_codes
-        sqlx::query("DELETE FROM zynklink_codes WHERE creator_device_id = ? OR accepted_by_device_id = ?")
-            .bind(device_id).bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete ZynkLink codes: {}", e))?;
-
-        // zynklink_pairings
-        sqlx::query("DELETE FROM zynklink_pairings WHERE device1_id = ? OR device2_id = ?")
-            .bind(device_id).bind(device_id).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete ZynkLink pairings: {}", e))?;
-
-        // zchat_messages — UUID blob columns
-        sqlx::query("DELETE FROM zchat_messages WHERE from_device_id = ? OR to_device_id = ?")
-            .bind(device_uuid).bind(device_uuid).execute(&mut *tx).await
-            .map_err(|e| format!("Failed to delete chat history: {}", e))?;
-
-        // Check if sync pairing is still active
-        let sync_paired: Option<i64> = sqlx::query_scalar(
-            "SELECT sync_paired FROM zynk_devices WHERE device_id = ?"
-        )
-        .bind(device_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| format!("Failed to check sync_paired: {}", e))?
-        .flatten();
-
-        if sync_paired == Some(1) {
-            // Sync is still active — just clear the link flag
-            sqlx::query("UPDATE zynk_devices SET is_paired = 0 WHERE device_id = ?")
-                .bind(device_id).execute(&mut *tx).await
-                .map_err(|e| format!("Failed to clear is_paired: {}", e))?;
-        } else {
-            // No sync either — delete the device row entirely
-            sqlx::query("DELETE FROM zynk_devices WHERE device_id = ?")
-                .bind(device_id).execute(&mut *tx).await
-                .map_err(|e| format!("Failed to delete device row: {}", e))?;
-            // Remove from in-memory peers map (device is gone entirely)
-            let mut peers_map = self.transport.peers.write().await;
-            peers_map.remove(device_id);
-            // Must drop write lock before committing
-            drop(peers_map);
-        }
-
-        tx.commit().await
-            .map_err(|e| format!("Failed to commit link removal: {}", e))?;
-
-        println!("[ZynkLink] ✓ Cleared link data for device {}", &device_id[..device_id.len().min(8)]);
-        Ok(())
-    }
 
     /// Leave the sync network entirely: notify all peers to remove this device,
     /// then clear all local peer data. The device_id parameter is ignored —
     /// pressing Unsync always departs the full mesh, not just one connection.
     /// Remove a specific remote device from this device and all other peers in the mesh.
     /// Used when an admin device wants to expel a ghost or unwanted peer.
+    /// Kept for existing callers; ZynkLink owns this now (zynklink::clear_link_data).
+    pub async fn clear_link_data(&self, device_id: &str) -> Result<(), String> {
+        crate::zynklink::clear_link_data(&self.transport, device_id).await
+    }
+
     pub async fn expel_device(&self, target_device_id: &str) -> Result<(), String> {
         // Get the target's IP before clearing it
         let target_row: Option<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
@@ -1389,75 +1316,15 @@ impl ZynkSyncService {
         })
     }
 
-    /// Deliver undelivered ZChat messages to a specific peer device
-    pub async fn deliver_zchat_messages_to_peer(
-        &self,
-        to_device_id: &str,
-    ) -> Result<usize, String> {
-        // Query database for peer device IP address (similar to how ZynkLink does it)
-        // Note: device_id column is TEXT, so bind as string
-        let peer_info = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
-        )
-        .bind(to_device_id)
-        .fetch_optional(&self.db_pool)
-        .await
-        .map_err(|e| format!("Failed to query peer device: {}", e))?
-        .ok_or_else(|| format!("Peer device {} not found in database", to_device_id))?;
-
-        // Get current device ID and parse for zchat functions
-        let from_device_id = uuid::Uuid::parse_str(&self.device_id)
-            .map_err(|e| format!("Invalid device ID: {}", e))?;
-        let to_device_uuid = uuid::Uuid::parse_str(to_device_id)
-            .map_err(|e| format!("Invalid device ID: {}", e))?;
-
-        let device_ip = peer_info.0
-            .ok_or_else(|| format!("No IP address found for device {}", to_device_id))?;
-
-        // Get undelivered messages
-        let messages = zchat::get_undelivered_messages(&self.db_pool, from_device_id, to_device_uuid).await?;
-
-        if messages.is_empty() {
-            return Ok(0);
-        }
-
-        println!("[ZChat] Delivering {} messages to {}...", messages.len(), &to_device_id[..8]);
-
-        // Extract message IDs for marking as delivered
-        let message_ids: Vec<uuid::Uuid> = messages.iter()
-            .filter_map(|m| uuid::Uuid::parse_str(&m.id).ok())
-            .collect();
-
-        // Send messages to peer
-        let endpoint = format!("https://{}:{}/api/zchat/deliver", device_ip, self.peer_port_by_ip(&device_ip).await);
-        let client = self.transport.http_client.read().await.clone();
-        let response = client
-            .post(&endpoint)
-            .json(&messages)
-            .timeout(Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| format!("Failed to deliver messages: {}", e))?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(format!("Message delivery failed with status {}: {}", status, error_text));
-        }
-
-        // Mark messages as delivered
-        if !message_ids.is_empty() {
-            zchat::mark_delivered(&self.db_pool, message_ids).await?;
-        }
-
-        println!("[ZChat] ✓ Delivered {} messages to {}...", messages.len(), &to_device_id[..8]);
-
-        Ok(messages.len())
-    }
 
     /// Receive and store memories from a peer device.
     /// Memories are written under the local user_id so they are immediately visible
     /// regardless of which user_id the sending device used.
+    /// Kept for the existing ZChat command; the work lives in zchat::deliver_to_peer.
+    pub async fn deliver_zchat_messages_to_peer(&self, to_device_id: &str) -> Result<usize, String> {
+        crate::zchat::deliver_to_peer(&self.transport, to_device_id).await
+    }
+
     pub async fn receive_from_peer(&self, local_user_id: &str, memories: Vec<SyncMemory>) -> Result<usize, String> {
         use std::collections::HashMap;
 
@@ -3067,37 +2934,19 @@ impl ZynkSyncService {
         // Self::cleanup_port_57963();
 
         // Public routes — reachable without a client cert (pairing bootstrap only).
-        let public_routes = Router::new()
+        let transport = self.transport.clone();
+
+        // ZynkSync's own routes: pairing and sync codes are public (a device that is
+        // not yet paired must reach them); everything else needs a verified peer.
+        let sync_public = Router::new()
             .route("/api/zynksync/info", axum::routing::get(handle_device_info))
             .route("/api/zynksync/verify-pairing", post(handle_verify_pairing))
             .route("/api/identity/verify-sync-code", post(handle_verify_sync_code))
             .route("/api/identity/consume-sync-code", post(handle_consume_sync_code))
-            .route("/api/zynklink/verify-code", post(handle_zynklink_verify_code))
-            .route("/api/zynklink/accept-code", post(handle_zynklink_accept_code))
             .with_state(Arc::clone(&self));
 
-        // ZynkLink routes — reachable without a client cert. ZynkLink pairing
-        // does not yet exchange TLS certs, so gating these behind
-        // require_verified_device broke file listing / transfer / chat
-        // (see roadmap: "ZynkLink mTLS cert exchange"). Auth is enforced by
-        // check_zynklink_authorized inside each handler, which validates the
-        // requester's user_id against zynklink_pairings — matching v0.9.2
-        // behavior. Move back under require_verified_device once pairing
-        // exchanges certs.
-        let zynklink_routes = Router::new()
-            .route("/api/zynklink/directories", post(handle_zynklink_directories))
-            .route("/api/zynklink/files", post(handle_zynklink_files))
-            .route("/api/zynklink/download", post(handle_zynklink_download))
-            .route("/api/zynklink/deliver-chat", post(handle_zynklink_deliver_chat))
-            .route("/api/zynklink/notify-unpaired", post(handle_zynklink_notify_unpaired))
-            .with_state(Arc::clone(&self));
-
-        // Protected routes — require a verified client cert (mTLS).
-        // inject_verified_device (outer layer) must have already set VerifiedDevice before
-        // require_verified_device (inner layer) checks for it.
-        let protected_routes = Router::new()
+        let sync_protected = Router::new()
             .route("/api/zynksync/receive", post(handle_receive_sync))
-            .route("/api/zchat/deliver", post(handle_zchat_deliver))
             .route("/api/zynksync/inventory", post(handle_get_inventory))
             .route("/api/zynksync/delete", post(handle_delete_memories))
             .route("/api/zynksync/delete-by-hash", post(handle_delete_by_hash))
@@ -3114,91 +2963,27 @@ impl ZynkSyncService {
             .route("/api/zynksync/resume", post(handle_resume))
             .route("/api/ollama/*path", any(handle_ollama_proxy))
             .layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&self),
-                require_verified_device,
+                Arc::clone(&transport),
+                crate::transport::require_verified_device,
             ))
             .with_state(Arc::clone(&self));
 
+        // The other two services register their own bundles with the transport.
         let app = Router::new()
-            .merge(public_routes)
-            .merge(zynklink_routes)
-            .merge(protected_routes)
+            .merge(sync_public)
+            .merge(sync_protected)
+            .merge(crate::zynklink::routes(Arc::clone(&transport)))
+            .merge(crate::zchat::routes(Arc::clone(&transport)))
             .layer(axum::middleware::from_fn_with_state(
-                Arc::clone(&self),
-                inject_verified_device,
-            ))
-            .with_state(Arc::clone(&self));
+                Arc::clone(&transport),
+                crate::transport::inject_verified_device,
+            ));
 
-        // Build TLS config with optional client certificate request (mTLS)
         self.transport.clone().serve(app).await
     }
 }
 
-/// Middleware: looks up the PeerCertDer extension (set by accept loop from mTLS handshake)
-/// against zynk_devices.tls_cert_der. On a match, injects a VerifiedDevice extension so
-/// downstream middleware and handlers have cryptographic proof of device identity.
-async fn inject_verified_device(
-    State(service): State<Arc<ZynkSyncService>>,
-    mut req: Request,
-    next: Next,
-) -> Response {
-    if let Some(peer_cert) = req.extensions().get::<PeerCertDer>().cloned() {
-        let result = sqlx::query(
-            "SELECT device_id, device_name FROM zynk_devices \
-             WHERE tls_cert_der = ? AND sync_paired = 1 LIMIT 1"
-        )
-        .bind(&peer_cert.0)
-        .fetch_optional(&service.db_pool)
-        .await;
 
-        if let Ok(Some(row)) = result {
-            let device_id: String = row.try_get("device_id").unwrap_or_default();
-            let device_name: String = row.try_get("device_name").unwrap_or_default();
-            if !device_id.is_empty() {
-                // A peer whose DHCP address changed overnight kept its old address in
-                // zynk_devices and in the peers map, so ZChat delivery and outbound sync
-                // went to a dead IP even while that peer was talking to us (Pixel
-                // .158 → .185, 2026-09-08). Every certificate-verified request carries
-                // the true address; record it when it differs.
-                if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>().cloned() {
-                    let ip = addr.ip().to_string();
-                    if !ip.is_empty() && !ip.starts_with("127.") {
-                        let changed = sqlx::query(
-                            "UPDATE zynk_devices SET device_ip = ? WHERE device_id = ? AND COALESCE(device_ip, '') != ?")
-                            .bind(&ip).bind(&device_id).bind(&ip)
-                            .execute(&service.db_pool).await
-                            .map(|r| r.rows_affected() > 0).unwrap_or(false);
-                        if changed {
-                            println!("[ZynkSync] {} is now at {} — address updated", device_name, ip);
-                            let mut peers = service.transport.peers.write().await;
-                            if let Some(p) = peers.get_mut(&device_id) {
-                                p.host = ip.clone();
-                                p.url = format!("https://{}:{}", ip, p.port);
-                            }
-                        }
-                    }
-                }
-                req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
-            }
-        }
-    }
-    next.run(req).await
-}
-
-/// Middleware: rejects requests that lack a VerifiedDevice extension (i.e. the peer did not
-/// present a cert that matches a paired device). Used on sensitive routes like push-api-key.
-async fn require_verified_device(
-    req: Request,
-    next: Next,
-) -> Response {
-    if req.extensions().get::<VerifiedDevice>().is_none() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({ "error": "mTLS device verification required" })),
-        ).into_response();
-    }
-    next.run(req).await
-}
 
 /// Axum handler for receiving sync memories from a peer
 async fn handle_receive_sync(
@@ -3966,21 +3751,6 @@ async fn handle_notify_unsynced(
     Ok(Json(serde_json::json!({ "success": true })))
 }
 
-/// Axum handler for receiving chat messages from a peer device
-async fn handle_zchat_deliver(
-    State(service): State<Arc<ZynkSyncService>>,
-    Json(messages): Json<Vec<zchat::DeliverMessageData>>,
-) -> Result<Json<serde_json::Value>, String> {
-    println!("[ZChat] Received {} messages from peer", messages.len());
-
-    // Call zchat deliver_messages function
-    let result = zchat::deliver_messages(&service.db_pool, messages).await?;
-
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "delivered": result.received_count
-    })))
-}
 
 /// Axum handler for verifying sync codes (device-to-device authentication)
 async fn handle_verify_sync_code(
@@ -4322,190 +4092,7 @@ async fn handle_update_memory(
 // ZynkLink HTTP Handlers - File Sharing Between Devices
 // =============================================================================
 
-/// Verify a ZynkLink code (like verify_sync_code but for file sharing)
-async fn handle_zynklink_verify_code(
-    State(service): State<Arc<ZynkSyncService>>,
-    Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let code = request.get("code")
-        .and_then(|c| c.as_str())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing code parameter".to_string()))?;
 
-    println!("[ZynkLink] Verifying code: {}", code);
-
-    // Query database to verify the ZynkLink code, also fetch device_name via join
-    let result = sqlx::query_as::<_, (String, String, Option<String>)>(
-        "SELECT lc.creator_user_id, lc.creator_device_id, zd.device_name
-         FROM zynklink_codes lc
-         LEFT JOIN zynk_devices zd ON zd.device_id = lc.creator_device_id
-         WHERE lc.code = ? AND lc.expires_at > datetime('now') AND lc.is_active = 1"
-    )
-    .bind(code)
-    .fetch_optional(&service.db_pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Database query failed: {}", e)))?;
-
-    match result {
-        Some(record) => {
-            println!("[ZynkLink] Code verified for user: {}", record.0);
-            Ok(Json(serde_json::json!({
-                "user_id": record.0,
-                "device_id": record.1,
-                "device_name": record.2
-            })))
-        }
-        None => {
-            println!("[ZynkLink] Code not found or expired: {}", code);
-            Err((StatusCode::NOT_FOUND, "Invalid or expired ZynkLink code".to_string()))
-        }
-    }
-}
-
-/// Accept a ZynkLink code and create pairing
-async fn handle_zynklink_accept_code(
-    State(service): State<Arc<ZynkSyncService>>,
-    Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let code = request.get("code")
-        .and_then(|c| c.as_str())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing code parameter".to_string()))?;
-
-    let acceptor_user_id = request.get("acceptor_user_id")
-        .and_then(|u| u.as_str())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing acceptor_user_id parameter".to_string()))?;
-
-    let acceptor_device_id = request.get("acceptor_device_id")
-        .and_then(|d| d.as_str())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing acceptor_device_id parameter".to_string()))?;
-
-    let acceptor_device_ip = request.get("acceptor_device_ip")
-        .and_then(|ip| ip.as_str());
-
-    let acceptor_device_name = request.get("acceptor_device_name")
-        .and_then(|n| n.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| format!("Remote Device {}", &acceptor_device_id[..8.min(acceptor_device_id.len())]));
-
-    println!("[ZynkLink] Accept code request: {} from user: {}..., IP: {:?}, name: {}",
-             code, &acceptor_user_id[..8], acceptor_device_ip, acceptor_device_name);
-
-    // Ensure acceptor's device exists in zynk_devices (required for foreign key constraint)
-    println!("[ZynkLink] Device A: Ensuring acceptor's device is registered...");
-    sqlx::query(
-        &format!("INSERT INTO zynk_devices (device_id, device_name, device_ip, owner_user_id, is_paired, port, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, true, {}, datetime('now'), datetime('now'))
-         ON CONFLICT (device_id) DO UPDATE
-         SET device_ip = ?, owner_user_id = ?, device_name = excluded.device_name, last_seen_at = datetime('now')", DEFAULT_SYNC_PORT)
-    )
-    .bind(acceptor_device_id)
-    .bind(&acceptor_device_name)
-    .bind(acceptor_device_ip)
-    .bind(acceptor_user_id)
-    .bind(acceptor_device_ip)
-    .bind(acceptor_user_id)
-    .execute(&service.db_pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to ensure acceptor device entry: {}", e)))?;
-
-    println!("[ZynkLink] Device A: Acceptor device registered successfully");
-
-    // Get Device A's IP address to send back to Device B
-    let creator_device_ip = {
-        use std::net::UdpSocket;
-        match UdpSocket::bind("0.0.0.0:0") {
-            Ok(socket) => {
-                match socket.connect("8.8.8.8:80") {
-                    Ok(_) => {
-                        socket.local_addr()
-                            .map(|addr| addr.ip().to_string())
-                            .ok()
-                    }
-                    Err(_) => None
-                }
-            }
-            Err(_) => None
-        }
-    };
-
-    println!("[ZynkLink] Device A: Our IP: {:?}", creator_device_ip);
-
-    // Use the zynklink module function
-    println!("[ZynkLink] Device A: Calling accept_zynklink_code...");
-    let mut result = match crate::zynklink::accept_zynklink_code(
-        &service.db_pool,
-        code,
-        acceptor_user_id,
-        acceptor_device_id
-    ).await {
-        Ok(r) => {
-            println!("[ZynkLink] Device A: ✅ Pairing created successfully");
-            r
-        }
-        Err(e) => {
-            println!("[ZynkLink] Device A: ❌ Failed to create pairing: {}", e);
-            return Err((StatusCode::BAD_REQUEST, e));
-        }
-    };
-
-    // Store Device A's (creator's) own IP in the database
-    if let Some(ref creator_ip) = creator_device_ip {
-        // Get the creator device ID from the code record
-        let creator_device_id = sqlx::query_scalar::<_, String>(
-            "SELECT creator_device_id FROM zynklink_codes WHERE code = ?"
-        )
-        .bind(code)
-        .fetch_one(&service.db_pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to get creator device ID: {}", e)))?;
-
-        println!("[ZynkLink] Device A: Storing our own IP {} in database", creator_ip);
-        sqlx::query(
-            "UPDATE zynk_devices SET device_ip = ?, last_seen_at = datetime('now') WHERE device_id = ?"
-        )
-        .bind(creator_ip)
-        .bind(&creator_device_id)
-        .execute(&service.db_pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to update creator device IP: {}", e)))?;
-
-        println!("[ZynkLink] Device A: ✅ Our IP stored successfully");
-    }
-
-    // Add Device A's IP to the response so Device B can store it
-    if let Some(result_obj) = result.as_object_mut() {
-        if let Some(creator_ip) = creator_device_ip {
-            result_obj.insert("creator_device_ip".to_string(), serde_json::Value::String(creator_ip));
-        }
-    }
-
-    // Emit event to refresh UI immediately on Device A (the code creator)
-    println!("[ZynkLink] Device A: Attempting to emit zynklink-pairing-updated event");
-    match crate::APP_HANDLE.lock() {
-        Ok(app_handle_guard) => {
-            match app_handle_guard.as_ref() {
-                Some(app_handle) => {
-                    println!("[ZynkLink] Device A: APP_HANDLE acquired, emitting event");
-                    match app_handle.emit("zynklink-pairing-updated", serde_json::json!({
-                        "acceptor_user_id": acceptor_user_id,
-                        "acceptor_device_id": acceptor_device_id
-                    })) {
-                        Ok(_) => println!("[ZynkLink] Device A: ✅ Event emitted successfully"),
-                        Err(e) => println!("[ZynkLink] Device A: ❌ Failed to emit event: {}", e),
-                    }
-                }
-                None => {
-                    println!("[ZynkLink] Device A: ⚠️ APP_HANDLE is None - cannot emit event");
-                }
-            }
-        }
-        Err(e) => {
-            println!("[ZynkLink] Device A: ❌ Failed to lock APP_HANDLE: {}", e);
-        }
-    }
-
-    Ok(Json(result))
-}
 
 /// Check that the requesting device_id has an active entry in zynk_device_pairings.
 /// Used to reject sync requests from devices that have been removed on this side.
@@ -4552,162 +4139,10 @@ async fn check_sync_authorized(
     Ok(())
 }
 
-/// List shared directories from a device
-/// Check that requester_user_id has an active ZynkLink pairing with this device's user.
-async fn check_zynklink_authorized(service: &ZynkSyncService, requester_user_id: &str) -> Result<(), String> {
-    let local_user_id = service.user_id()
-        .map_err(|e| format!("Failed to get local user ID: {}", e))?;
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM zynklink_pairings
-         WHERE is_active = 1
-         AND ((user1_id = ? AND user2_id = ?) OR (user1_id = ? AND user2_id = ?))"
-    )
-    .bind(&local_user_id).bind(requester_user_id)
-    .bind(requester_user_id).bind(&local_user_id)
-    .fetch_one(&service.db_pool)
-    .await
-    .map_err(|e| format!("Failed to check ZynkLink authorization: {}", e))?;
-    if count == 0 {
-        Err("Not authorized: no active ZynkLink pairing with this user".to_string())
-    } else {
-        Ok(())
-    }
-}
 
-async fn handle_zynklink_directories(
-    State(service): State<Arc<ZynkSyncService>>,
-    Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let requester_user_id = request.get("requester_user_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing requester_user_id"}))))?;
 
-    check_zynklink_authorized(&service, requester_user_id).await
-        .map_err(|e| (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": e}))))?;
 
-    let local_device_id = Ok::<String, String>(service.device_id.clone())
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
-    let response = crate::zynklink::list_my_shared_directories(
-        &service.db_pool,
-        &local_device_id
-    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
-    serde_json::to_value(response)
-        .map(Json)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))
-}
-
-/// List files in a shared directory
-async fn handle_zynklink_files(
-    State(service): State<Arc<ZynkSyncService>>,
-    Json(request): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let requester_user_id = request.get("requester_user_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing requester_user_id"}))))?;
-
-    check_zynklink_authorized(&service, requester_user_id).await
-        .map_err(|e| (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": e}))))?;
-
-    let share_id = request.get("share_id")
-        .and_then(|s| s.as_i64())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing share_id parameter"}))))? as i32;
-
-    println!("[ZynkLink] File list request for share_id: {}", share_id);
-
-    // List files in the shared directory
-    let response = crate::zynklink::list_files(
-        &service.db_pool,
-        share_id
-    ).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
-
-    serde_json::to_value(response)
-        .map(Json)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))
-}
-
-/// Download a file from a shared directory
-async fn handle_zynklink_download(
-    State(service): State<Arc<ZynkSyncService>>,
-    Json(request): Json<serde_json::Value>,
-) -> Result<axum::response::Response, (StatusCode, Json<serde_json::Value>)> {
-    use tokio::io::AsyncReadExt;
-
-    let requester_user_id = request.get("requester_user_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing requester_user_id"}))))?;
-
-    check_zynklink_authorized(&service, requester_user_id).await
-        .map_err(|e| (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": e}))))?;
-
-    let share_id = request.get("share_id")
-        .and_then(|s| s.as_i64())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing share_id parameter"}))))? as i32;
-
-    let relative_path = request.get("relative_path")
-        .and_then(|p| p.as_str())
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing relative_path parameter"}))))?;
-
-    println!("[ZynkLink] Download request for share_id: {}, path: {}", share_id, relative_path);
-
-    let file_path = crate::zynklink::get_file_path(
-        &service.db_pool,
-        share_id,
-        relative_path
-    ).await.map_err(|e| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": e}))))?;
-
-    // Open the file and read metadata for the Content-Length header. Previously this
-    // function read the entire file into a single Vec<u8> via tokio::fs::read(), which
-    // allocated as many GBs as the file is large — a 4GB gguf transfer would allocate
-    // 4GB on the sender. Now we stream 64KB chunks via futures::stream::unfold so
-    // memory stays bounded regardless of file size.
-    let file = tokio::fs::File::open(&file_path).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to open file: {}", e)}))))?;
-    let file_size = file.metadata().await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": format!("Failed to read file metadata: {}", e)}))))?
-        .len();
-
-    let filename = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("download")
-        .to_string();
-
-    println!("[ZynkLink] Streaming {} ({} bytes)", filename, file_size);
-
-    let stream = futures::stream::unfold(file, |mut file| async move {
-        let mut buf = vec![0u8; 65536];
-        match file.read(&mut buf).await {
-            Ok(0) => None,
-            Ok(n) => {
-                buf.truncate(n);
-                Some((Ok::<_, std::io::Error>(buf), file))
-            }
-            Err(e) => Some((Err(e), file)),
-        }
-    });
-
-    axum::response::Response::builder()
-        .header("Content-Type", "application/octet-stream")
-        .header("Content-Length", file_size.to_string())
-        .header("Content-Disposition", format!("attachment; filename=\"{}\"", filename))
-        .body(axum::body::Body::from_stream(stream))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))
-}
-
-/// Receive and store chat messages from a ZynkLink-paired device
-async fn handle_zynklink_deliver_chat(
-    State(service): State<Arc<ZynkSyncService>>,
-    Json(messages): Json<Vec<crate::zchat::DeliverMessageData>>,
-) -> Result<axum::Json<crate::zchat::DeliverMessagesResponse>, String> {
-    println!("[ZynkLink] Received {} chat message(s) for delivery", messages.len());
-
-    // Call zchat deliver_messages function
-    let result = crate::zchat::deliver_messages(&service.db_pool, messages).await?;
-
-    println!("[ZynkLink] ✓ Delivered {} message(s)", result.received_count);
-    Ok(axum::Json(result))
-}
 
 /// Receive conversation sessions and messages from a peer device
 async fn handle_receive_conversations(
@@ -4730,35 +4165,6 @@ async fn handle_receive_conversations(
     })))
 }
 
-/// Handle notification that a remote device has unlinked.
-/// Removes the local pairing record and emits a UI refresh event.
-async fn handle_zynklink_notify_unpaired(
-    State(service): State<Arc<ZynkSyncService>>,
-    Json(payload): Json<serde_json::Value>,
-) -> Result<axum::Json<serde_json::Value>, String> {
-    let unlinked_device_id = payload.get("unlinked_device_id")
-        .and_then(|v| v.as_str())
-        // fall back to legacy field name for older clients
-        .or_else(|| payload.get("unlinked_user_id").and_then(|v| v.as_str()))
-        .ok_or("Missing unlinked_device_id")?;
-
-    // Delegate full ZynkLink cleanup to clear_link_data — preserves ZynkSync if active
-    match service.clear_link_data(unlinked_device_id).await {
-        Ok(_) => println!("[ZynkLink] ✓ Remote unlink: cleared link data for peer {}", &unlinked_device_id[..unlinked_device_id.len().min(8)]),
-        Err(e) => println!("[ZynkLink] Note: clear_link_data on notify-unpaired failed (non-fatal): {}", e),
-    }
-
-    if let Ok(guard) = crate::APP_HANDLE.lock() {
-        if let Some(app) = guard.as_ref() {
-            let _ = app.emit("zynklink-pairing-updated", serde_json::json!({
-                "unlinked": true,
-                "remote_device_id": unlinked_device_id
-            }));
-        }
-    }
-
-    Ok(axum::Json(serde_json::json!({ "success": true })))
-}
 
 // =============================================================================
 // Ollama endpoints

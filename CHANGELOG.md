@@ -12,7 +12,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - API Keys: once a key is stored, the provider button reads "View plan" and opens the provider's plan/billing page (it said "Get Key" and opened the key page whether or not you had one).
 
 ### Sync
-- Internal: the shared peer-to-peer layer (identity, certificate, HTTPS server, pinned client, device registry, presence) is its own module, `transport`, with ZynkSync as its first client; ZynkLink and ZChat follow. No behaviour change; the two-peer harness is the check.
+- Internal: the shared peer-to-peer layer (identity, certificate, HTTPS server, pinned client, device registry, presence, peer verification) is its own module, `transport`. ZynkSync, ZynkLink and ZChat are now three services on it, each registering its own routes and owning its own tables. No behaviour change; the two-peer harness is the check.
 - A device that had never generated a pairing code had no record of itself, so every sync it started failed while recording the sync time (foreign-key error). Found by the new two-peer sync test harness; the device now records itself when its server starts.
 - On the first sync between two devices with no memories, conversation history was never sent (the code returned early as "nothing to sync"). History now moves regardless.
 - Pairing accepts `host:port`; the sync port is defined once and a peer's port is always taken from its stored record.

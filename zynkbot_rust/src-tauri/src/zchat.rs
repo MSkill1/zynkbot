@@ -393,3 +393,105 @@ pub async fn get_undelivered_messages(
 
     Ok(result)
 }
+
+// ============================================================================
+// HTTP route and delivery — served by the transport (crate::transport), 2026-09-17.
+// ZChat owns its messages; the transport provides the server, the pinned client
+// and the device registry. Delivery goes to any device in the registry, which is
+// what lets a user message their own devices as well as a linked user's.
+// ============================================================================
+
+use axum::{extract::State, routing::post, Json, Router};
+use std::sync::Arc;
+use std::time::Duration;
+use crate::transport::Transport;
+
+/// ZChat's route bundle: message delivery, verified peers only.
+pub fn routes(transport: Arc<Transport>) -> Router {
+    Router::new()
+        .route("/api/zchat/deliver", post(handle_zchat_deliver))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&transport),
+            crate::transport::require_verified_device,
+        ))
+        .with_state(transport)
+}
+
+/// Axum handler for receiving chat messages from a peer device
+async fn handle_zchat_deliver(
+    State(transport): State<Arc<Transport>>,
+    Json(messages): Json<Vec<DeliverMessageData>>,
+) -> Result<Json<serde_json::Value>, String> {
+    println!("[ZChat] Received {} messages from peer", messages.len());
+
+    // Call zchat deliver_messages function
+    let result = deliver_messages(&transport.db_pool, messages).await?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "delivered": result.received_count
+    })))
+}
+
+/// Deliver undelivered ZChat messages to a specific peer device
+pub async fn deliver_to_peer(transport: &Transport, to_device_id: &str) -> Result<usize, String> {
+    // Query database for peer device IP address (similar to how ZynkLink does it)
+    // Note: device_id column is TEXT, so bind as string
+    let peer_info = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT device_ip FROM zynk_devices WHERE device_id = ?"
+    )
+    .bind(to_device_id)
+    .fetch_optional(&transport.db_pool)
+    .await
+    .map_err(|e| format!("Failed to query peer device: {}", e))?
+    .ok_or_else(|| format!("Peer device {} not found in database", to_device_id))?;
+
+    // Get current device ID and parse for zchat functions
+    let from_device_id = uuid::Uuid::parse_str(&transport.device_id())
+        .map_err(|e| format!("Invalid device ID: {}", e))?;
+    let to_device_uuid = uuid::Uuid::parse_str(to_device_id)
+        .map_err(|e| format!("Invalid device ID: {}", e))?;
+
+    let device_ip = peer_info.0
+        .ok_or_else(|| format!("No IP address found for device {}", to_device_id))?;
+
+    // Get undelivered messages
+    let messages = get_undelivered_messages(&transport.db_pool, from_device_id, to_device_uuid).await?;
+
+    if messages.is_empty() {
+        return Ok(0);
+    }
+
+    println!("[ZChat] Delivering {} messages to {}...", messages.len(), &to_device_id[..8]);
+
+    // Extract message IDs for marking as delivered
+    let message_ids: Vec<uuid::Uuid> = messages.iter()
+        .filter_map(|m| uuid::Uuid::parse_str(&m.id).ok())
+        .collect();
+
+    // Send messages to peer
+    let endpoint = format!("https://{}:{}/api/zchat/deliver", device_ip, transport.peer_port_by_ip(&device_ip).await);
+    let client = transport.http_client.read().await.clone();
+    let response = client
+        .post(&endpoint)
+        .json(&messages)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("Failed to deliver messages: {}", e))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Message delivery failed with status {}: {}", status, error_text));
+    }
+
+    // Mark messages as delivered
+    if !message_ids.is_empty() {
+        mark_delivered(&transport.db_pool, message_ids).await?;
+    }
+
+    println!("[ZChat] ✓ Delivered {} messages to {}...", messages.len(), &to_device_id[..8]);
+
+    Ok(messages.len())
+}
