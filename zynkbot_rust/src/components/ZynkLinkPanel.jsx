@@ -759,6 +759,41 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             >
               📂 Open in Files App
             </button>
+            {window.AndroidPaths?.pickFile && (() => {
+              // Files put into ZynkbotShare by other apps are invisible to Zynkbot under
+              // scoped storage (KI-015); the only way in is this picker, which copies the
+              // file. It existed on the Kotlin side but had no button (2026-09-17).
+              const zynkDir = sharedDirs.find(d => d.local_path === androidShareDir);
+              return (
+                <button
+                  onClick={async () => {
+                    try {
+                      const dest = await new Promise((resolve, reject) => {
+                        window.__zfpResolve = resolve; window.__zfpReject = reject;
+                        window.AndroidPaths.pickFile();
+                      });
+                      setMessage(`✓ Added ${dest.split('/').pop()}`);
+                      if (zynkDir) await handleRescanDirectory(zynkDir.id, zynkDir.share_name);
+                    } catch (e) {
+                      if (e !== 'cancelled') setMessage(`✗ Could not add file: ${e}`);
+                    }
+                  }}
+                  disabled={loading}
+                  style={{
+                    padding: '10px 16px',
+                    background: '#bd93f9',
+                    border: 'none',
+                    borderRadius: '4px',
+                    color: '#282a36',
+                    fontSize: '0.9rem',
+                    fontWeight: 'bold',
+                    cursor: loading ? 'wait' : 'pointer'
+                  }}
+                >
+                  ➕ Add file
+                </button>
+              );
+            })()}
             {(() => {
               const zynkDir = sharedDirs.find(d => d.local_path === androidShareDir);
               return zynkDir ? (

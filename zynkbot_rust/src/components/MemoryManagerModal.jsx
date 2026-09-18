@@ -177,7 +177,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         dateTo: filterDateTo || null
       });
       console.log('Fetched memories:', result);
-      setMemories(result);
+      // KI-059: the "Remembered on request" filter reads mem.requested, which this
+      // fetch never set (only the sidebar list asked for the ids), so it matched nothing.
+      let requestedIds = new Set();
+      try { requestedIds = new Set(await invoke('list_requested_memory_ids', { userId })); } catch (_) {}
+      setMemories((result || []).map(m => ({ ...m, requested: requestedIds.has(m.id) })));
     } catch (error) {
       console.error('Failed to fetch memories:', error);
       alert(`Error fetching memories: ${error}`);

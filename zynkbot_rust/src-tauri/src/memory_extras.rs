@@ -72,7 +72,10 @@ pub fn validate_event_date(raw: Option<&str>, text: &str, today: NaiveDate) -> O
     }
     let head: String = s.chars().take(10).collect();
     let d = NaiveDate::parse_from_str(&head, "%Y-%m-%d").ok()?;
-    if d.year() < 1900 || d > today + chrono::Duration::days(366 * 2) {
+    // `today` is the day after the memory was said (callers add one day for time
+    // zones). The model is asked for the date something HAPPENED; a future date is a
+    // hallucination (a memory from 9/5 filed under December, KI-066).
+    if d.year() < 1900 || d > today {
         return None;
     }
     if d.month() == 1 && d.day() == 1 {
@@ -172,6 +175,8 @@ mod tests {
         assert_eq!(validate_event_date(None, "no date", today()), None);
         assert_eq!(validate_event_date(Some("1850-03-04"), "absurd", today()), None);
         assert_eq!(validate_event_date(Some("2031-03-04"), "too far", today()), None);
+        assert_eq!(validate_event_date(Some("2026-12-05"), "spoke on 9/5 about nothing dated", today()), None, "KI-066: no future dates");
+        assert_eq!(validate_event_date(Some("2026-09-07"), "today", today()), NaiveDate::from_ymd_opt(2026, 9, 7));
         assert_eq!(validate_event_date(Some("not a date"), "x", today()), None);
     }
 

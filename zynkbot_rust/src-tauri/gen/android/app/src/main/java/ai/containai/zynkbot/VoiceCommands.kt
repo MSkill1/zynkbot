@@ -48,7 +48,7 @@ object VoiceCommands {
 
     private const val UNIT = "(hours?|hrs?|minutes?|mins?|seconds?|secs?)"
     private val TIMER_RES = listOf(
-        Regex("(?:set\\s+(?:a\\s+)?)?timer\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*$UNIT"),
+        Regex("(?:set\\s+(?:a\\s+)?)?time(?:r)?\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*$UNIT"),  // "time" too: dictation drops the r (tester, #29)
         Regex("(\\d+(?:\\.\\d+)?)\\s*$UNIT\\s+timer"),
     )
     private val ALARM_RE = Regex(

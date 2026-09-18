@@ -76,7 +76,7 @@ export function parseVoiceCommand(text) {
   const t = normalizeNumbers(text.toLowerCase().trim());
 
   const timerRes = [
-    /(?:set\s+(?:a\s+)?)?timer\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)/,
+    /(?:set\s+(?:a\s+)?)?time(?:r)?\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)/, // "time" too: dictation drops the r (tester, #29)
     /(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)\s+timer/,
   ];
   for (const re of timerRes) {

@@ -19,6 +19,14 @@ describe('parseVoiceCommand stop phrases', () => {
   });
 });
 
+describe('parseVoiceCommand timers — what dictation actually produces', () => {
+  test('"set a time for five minutes" is the same timer as "set a timer for five minutes" (#29)', () => {
+    const withR = parseVoiceCommand('set a timer for five minutes');
+    expect(withR).not.toBeNull();
+    expect(parseVoiceCommand('set a time for five minutes')).toEqual(withR);
+  });
+});
+
 describe('shouldSpeakReply — answer in the channel you used', () => {
   test('hands-free request is always spoken, even with the in-app toggle off', () => {
     expect(shouldSpeakReply({ handsFree: true, speakInApp: false })).toBe(true);

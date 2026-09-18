@@ -29,7 +29,7 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
     const lines = [];
     lines.push(`What Zynkbot knows about you (${(t.first_at || '').slice(0, 10)} to ${(t.last_at || '').slice(0, 10)})`);
     lines.push(`${t.memories} memories, ${t.links} links between them, ${t.entities} named things, ${t.sessions} conversations, ${t.messages} messages`);
-    lines.push(`${t.dated} memories carry a real event date; ${t.tagged} have tags`);
+    lines.push(`${t.dated} memories carry a real event date (${t.memories - t.dated} have none and are not on the timeline); ${t.tagged} have tags`);
     lines.push('');
     lines.push('Categories: ' + list(report.namespaces, (x) => `${x.name} ${x.count}`));
     lines.push('Tags: ' + list(report.tags, (x) => `${x.tag} ${x.count}`));
@@ -124,7 +124,7 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
             </div>
 
             <p style={p}>{t.memories} memories, {t.links} links between them, {t.entities} named things, across {t.sessions} conversations.</p>
-            <p style={muted}>From {(t.first_at || '').slice(0, 10)} to {(t.last_at || '').slice(0, 10)}. {t.dated} memories carry the date something happened and {t.tagged} have tags.{t.pending_enrichment > 0 ? ` ${t.pending_enrichment} older memories are still being annotated in the background; reopen this later.` : ''}</p>
+            <p style={muted}>From {(t.first_at || '').slice(0, 10)} to {(t.last_at || '').slice(0, 10)}. {t.dated} memories carry the date something happened and {t.tagged} have tags.{t.memories - t.dated > 0 ? ` ${t.memories - t.dated} have no date and are not on the timeline.` : ''}{t.pending_enrichment > 0 ? ` ${t.pending_enrichment} older memories are still being annotated in the background; reopen this later.` : ''}</p>
 
             {report.requested?.length > 0 && (
               <Section id="requested" title="You asked me to remember" count={report.requested.length} open>

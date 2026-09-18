@@ -147,7 +147,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ### KI-066 — About me timeline shows a date in the future for a memory that has none (open)
-**Status:** Open — reported by tester Mike 2026-09-15 ("December 2026" on a memory from 9/5/26 with nothing in the text to explain it).  
+**Status:** Fixed on `v1` (2026-09-18): an event date after the day the memory was said is dropped; About me states how many memories have no date.  
 **Affected:** All platforms; any memory whose date the model inferred wrongly.  
 **Description:** `memory_extras::validate_event_date` accepts any date up to two years after the day the memory was said, so a hallucinated or mis-inferred future date passes and the timeline sorts it to the top. The prompt asks for "the date the thing HAPPENED".  
 **Fix:** bound the date to the day after it was said (plans stay undated for now); one line plus a test. Also make About me state how many memories have no date, so a short timeline is not read as missing memories.
@@ -203,7 +203,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ### KI-059 — "Remembered on request" filter in the Memory Manager never shows anything (open)
-**Status:** Open — reported by tester Mike 2026-09-15; cause confirmed in code 2026-09-16.  
+**Status:** Fixed on `v1` (2026-09-18): the Memory Manager window now asks for the requested ids and tags the list, as the sidebar did.  
 **Affected:** All platforms since the filter shipped (0.9.6-beta1, 736ef02).  
 **Description:** The sidebar list (`MemoryManager.jsx`) asks the backend which memories carry the "requested" mark and tags them; the full Memory Manager window (`MemoryManagerModal.jsx`), where the checkbox filter lives, fetches its own list and never asks, so `mem.requested` is always missing and the filter matches nothing. About me shows the same memories because it queries the mark directly.  
 **Fix:** call `list_requested_memory_ids` in the modal's fetch and map the flag, as the sidebar does; three lines plus a test.

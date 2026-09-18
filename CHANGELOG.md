@@ -15,6 +15,15 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - A hands-free question that needs a web search now gets one when "Auto-execute in voice sessions" is on; the assistant-role path had been asking "want me to search?" regardless of the setting (GitHub #26, KI-062).
 - A hands-free listen ends when the room falls well below your own speaking level, not only when it falls to the pre-speech floor; a room that settled at a steady murmur after you finished kept the recording running to the 30 s cap. The level is logged every 2 s while listening.
 
+### Memory
+- The "Remembered on request" filter in the Memory Manager now shows the memories stored with "Remember:"; it had matched nothing since the feature shipped (KI-059).
+- A memory can no longer be given a date in the future (a memory from 9/5 was filed under December, KI-066).
+- About me says how many memories have no date and so are not on the timeline.
+
+### Android voice (tester report)
+- "Set a time for five minutes" sets a timer: dictation often drops the r in "timer" (GitHub #29).
+- The share folder has an "Add file" button on Android. Files placed in `Download/ZynkbotShare` by other apps are invisible to Zynkbot under scoped storage; the picker copies the file in. The Kotlin side existed, the button did not.
+
 ### Chat
 - You can message your own devices. Any device paired for sync now shows a Chat button in ZynkSync settings; a message to it travels over the verified sync connection, so a note typed on the PC arrives on the phone with no link pairing. Messages to another user's linked device work as before.
 
