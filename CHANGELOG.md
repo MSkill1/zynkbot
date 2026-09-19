@@ -32,6 +32,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - Android: the Link panel says that only files added with ➕ Add file are visible to Zynkbot; files moved into the folder by another app are skipped by the scan and are now named in the log instead of vanishing (KI-015).
 
 ### Sync
+- A desktop's conversation history now reaches the phones. The "sent up to here" marker for history lived in memory, so every app start re-sent the whole history in one request, the phone rejected it as too large, and the backlog was silently dropped. The marker is now stored per peer and moved only once the peer has accepted the push; a push carries at most 300 messages, so a large history arrives over a few sync cycles (KI-068).
 - Internal: the shared peer-to-peer layer (identity, certificate, HTTPS server, pinned client, device registry, presence, peer verification) is its own module, `transport`. ZynkSync, ZynkLink and ZChat are now three services on it, each registering its own routes and owning its own tables. No behaviour change; the two-peer harness is the check.
 - A device that had never generated a pairing code had no record of itself, so every sync it started failed while recording the sync time (foreign-key error). Found by the new two-peer sync test harness; the device now records itself when its server starts.
 - On the first sync between two devices with no memories, conversation history was never sent (the code returned early as "nothing to sync"). History now moves regardless.

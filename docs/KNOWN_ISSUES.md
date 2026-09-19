@@ -147,10 +147,10 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ### KI-068 — Desktop conversation history never reaches the phones: push rejected as too large (open)
-**Status:** Open, found 2026-09-19 on e1273a1. Desktop log: `Conversation sync failed (non-fatal): Conversation push rejected by peer: 413 Payload Too Large`, once per phone.  
+**Status:** Fixed on `v1` (2026-09-19): the marker is persisted per peer (`zynk_conversation_push_state`), advanced only after the peer accepts a push, and a push carries at most 300 messages; the receiving cap is raised to 32 MB in rebuilt peers. Harness tests b08c (marker survives a restart) and b08d (a backlog arrives over cycles, nothing duplicated). Found 2026-09-19 on e1273a1. Desktop log: `Conversation sync failed (non-fatal): Conversation push rejected by peer: 413 Payload Too Large`, once per phone.  
 **Affected:** Any device with a large conversation history syncing to a peer.  
 **Description:** The "what changed since the last push" marker for conversations is kept in memory only, so the first sync after the app starts has no marker and sends everything (up to 500 sessions and 5,000 messages) in one request. The receiving side caps a request at 2 MB (the web server default); the desktop's 1,886 messages exceed it. The memory sync in the same cycle succeeds and advances the marker, so the next cycle is incremental again and the backlog is silently never sent.  
-**Fix (proposed):** persist the marker per peer and advance it only after a successful push; send a first-ever backlog in chunks.
+**Fix:** persist the marker per peer and advance it only after a successful push; a first-ever backlog goes over a few cycles.
 
 ---
 

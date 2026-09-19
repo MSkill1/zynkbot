@@ -54,6 +54,19 @@ impl Peer {
         Peer { name, svc, pool, dir, port }
     }
 
+    /// The same device after an app restart: same folder, database, certificate and
+    /// identity; a fresh service with nothing in memory. Keep the original alive until
+    /// the test ends — dropping it deletes the folder.
+    async fn respawn(&self) -> Peer {
+        let (cert_pem, key_pem, cert_der) = crate::tls::load_or_generate_cert(&self.dir).expect("cert");
+        let svc = Arc::new(ZynkSyncService::new(self.svc.identity(), Some(0), self.pool.clone(), Some(3600), cert_pem, key_pem, cert_der));
+        let port = svc.clone().start_http_server().await.expect("start server");
+        svc.load_devices().await.expect("reload devices");
+        svc.rebuild_http_client().await.expect("rebuild client");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        Peer { name: self.name, svc, pool: self.pool.clone(), dir: self.dir.clone(), port }
+    }
+
     fn user_id(&self) -> String { self.svc.user_id().unwrap() }
     fn device_id(&self) -> String { self.svc.identity().device_id }
     fn addr(&self) -> String { format!("127.0.0.1:{}", self.port) }
@@ -246,6 +259,76 @@ fn b08b_two_messages_in_the_same_second_both_arrive() {
         assert_eq!(thread_counts(&a, "thread-3").await, (1, 4));
         a.sync_with(&b).await;
         assert_eq!(thread_counts(&b, "thread-3").await, (1, 4), "phone lost messages that shared a timestamp");
+    });
+}
+
+// 8c. The "sent up to here" marker for history survives a restart, so the whole
+//     history is not pushed again every time the app starts (KI-068), and what is
+//     logged after the restart still arrives.
+#[test]
+fn b08c_history_marker_survives_a_restart() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let uid = a.user_id();
+        for i in 0..2 {
+            crate::conversation_history::log_exchange(&a.pool, "thread-4", &uid, &format!("q{}", i), &format!("a{}", i), "anthropic", "guardian", true, "typed").await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        }
+        a.sync_with(&b).await;
+        assert_eq!(thread_counts(&b, "thread-4").await, (1, 4));
+
+        let a2 = a.respawn().await;
+        // Only the boundary second may be offered again (timestamps are whole seconds and
+        // the peer deduplicates); without the persisted marker all 4 would be.
+        let (payload, _) = a2.svc.get_modified_conversations(&b.device_id(), &uid).await.unwrap();
+        assert!(payload.messages.len() <= 2, "after a restart only the last second's messages may be offered again, got {}", payload.messages.len());
+
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        crate::conversation_history::log_exchange(&a2.pool, "thread-4", &uid, "q2", "a2", "anthropic", "guardian", true, "typed").await.unwrap();
+        a2.sync_with(&b).await;
+        assert_eq!(thread_counts(&b, "thread-4").await, (1, 6), "an exchange logged after the restart must still arrive");
+        drop(a2);
+    });
+}
+
+// 8d. A history bigger than one push (a desktop's first sync to a new phone) arrives
+//     over a few cycles, capped per request, with nothing duplicated (KI-068).
+#[test]
+fn b08d_a_history_bigger_than_one_push_arrives_over_cycles() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let uid = a.user_id();
+        let cap = crate::zynksync::CONVERSATION_PUSH_MAX_MESSAGES;
+        let total = cap + 50;
+        // Two threads, one message per second, written the way the app writes them (RFC 3339).
+        let t0 = chrono::Utc::now() - chrono::Duration::seconds(total as i64 + 60);
+        for s in ["big-1", "big-2"] {
+            sqlx::query("INSERT INTO conversation_sessions (session_id, user_id, title, started_at, last_active) VALUES (?, ?, ?, ?, ?)")
+                .bind(s).bind(&uid).bind(s).bind(t0).bind(t0 + chrono::Duration::seconds(total as i64))
+                .execute(&a.pool).await.unwrap();
+        }
+        for i in 0..total {
+            let session = if i % 2 == 0 { "big-1" } else { "big-2" };
+            let role = if i % 4 < 2 { "user" } else { "assistant" };
+            sqlx::query("INSERT INTO conversation_messages (session_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)")
+                .bind(session).bind(&uid).bind(role).bind(format!("message {}", i)).bind(t0 + chrono::Duration::seconds(i as i64))
+                .execute(&a.pool).await.unwrap();
+        }
+        let count = |p: &Peer| {
+            let pool = p.pool.clone();
+            async move { sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversation_messages").fetch_one(&pool).await.unwrap() }
+        };
+        a.sync_with(&b).await;
+        let after_one = count(&b).await;
+        assert!(after_one as usize <= cap && after_one > 0, "one push is capped at {} messages, got {}", cap, after_one);
+        a.sync_with(&b).await;
+        assert_eq!(count(&b).await as usize, total, "the whole history arrives over a few cycles");
+        a.sync_with(&b).await;
+        assert_eq!(count(&b).await as usize, total, "a further cycle adds nothing");
     });
 }
 

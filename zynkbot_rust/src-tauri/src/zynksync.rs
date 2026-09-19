@@ -159,6 +159,9 @@ pub struct SyncConversationMessage {
 }
 
 /// Combined payload sent over the wire for conversation sync
+/// Most messages in one history push; the rest go on later cycles (KI-068).
+pub const CONVERSATION_PUSH_MAX_MESSAGES: usize = 300;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationSyncPayload {
     pub sessions: Vec<SyncConversationSession>,
@@ -1583,24 +1586,34 @@ impl ZynkSyncService {
     // Conversation history sync
     // -------------------------------------------------------------------------
 
-    /// Fetch conversation sessions and messages modified since the last sync with this peer.
-    /// On first sync (no last_sync entry) returns everything.
-    async fn get_modified_conversations(
+    /// Conversations changed since the last push this peer accepted, oldest first.
+    /// The marker is per peer and persisted (zynk_conversation_push_state), so an app
+    /// restart does not re-send the whole history; with no marker (first push to this
+    /// peer) everything is eligible. A push carries at most
+    /// CONVERSATION_PUSH_MAX_MESSAGES messages — the receiver caps a request at a few
+    /// megabytes — and the returned `through` is the marker to record once the peer
+    /// accepts it: the newest message sent, so what was left out goes next cycle.
+    /// Comparisons are `>=` because timestamps have one-second resolution; the peer
+    /// deduplicates what it already has.
+    pub(crate) async fn get_modified_conversations(
         &self,
         peer_id: &str,
         user_id: &str,
-    ) -> Result<ConversationSyncPayload, String> {
-        let last_sync_time = {
-            let map = self.last_sync.read().await;
-            map.get(peer_id).copied()
-        };
+    ) -> Result<(ConversationSyncPayload, Option<DateTime<Utc>>), String> {
+        let since: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT pushed_through FROM zynk_conversation_push_state WHERE peer_device_id = ?"
+        )
+        .bind(peer_id)
+        .fetch_optional(&self.db_pool)
+        .await
+        .map_err(|e| format!("Failed to read conversation push marker: {}", e))?;
 
-        let session_rows = match last_sync_time {
+        let session_rows = match since {
             Some(since) => sqlx::query(
                 "SELECT session_id, user_id, title, started_at, last_active, message_count,
                         model_backend, containment_mode
                  FROM conversation_sessions
-                 WHERE user_id = ? AND last_active > ?
+                 WHERE user_id = ? AND last_active >= ?
                  ORDER BY last_active ASC LIMIT 500"
             )
             .bind(user_id)
@@ -1631,18 +1644,20 @@ impl ZynkSyncService {
             message_count: row.get("message_count"),
             model_backend: row.get("model_backend"),
             containment_mode: row.get("containment_mode"),
-        }).collect();
+        }).collect::<Vec<_>>();
 
-        let message_rows = match last_sync_time {
+        let cap = CONVERSATION_PUSH_MAX_MESSAGES as i64;
+        let message_rows = match since {
             Some(since) => sqlx::query(
                 "SELECT session_id, user_id, role, content, created_at,
                         model_backend, containment_mode, entry_hash, prev_hash
                  FROM conversation_messages
-                 WHERE user_id = ? AND created_at > ?
-                 ORDER BY created_at ASC LIMIT 5000"
+                 WHERE user_id = ? AND created_at >= ?
+                 ORDER BY created_at ASC LIMIT ?"
             )
             .bind(user_id)
             .bind(since)
+            .bind(cap)
             .fetch_all(&self.db_pool)
             .await
             .map_err(|e| format!("Failed to fetch messages: {}", e))?,
@@ -1652,9 +1667,10 @@ impl ZynkSyncService {
                         model_backend, containment_mode, entry_hash, prev_hash
                  FROM conversation_messages
                  WHERE user_id = ?
-                 ORDER BY created_at ASC LIMIT 5000"
+                 ORDER BY created_at ASC LIMIT ?"
             )
             .bind(user_id)
+            .bind(cap)
             .fetch_all(&self.db_pool)
             .await
             .map_err(|e| format!("Failed to fetch messages: {}", e))?,
@@ -1670,9 +1686,23 @@ impl ZynkSyncService {
             containment_mode: row.get("containment_mode"),
             entry_hash: row.get("entry_hash"),
             prev_hash: row.get("prev_hash"),
-        }).collect();
+        }).collect::<Vec<_>>();
 
-        Ok(ConversationSyncPayload { sessions, messages })
+        // Marker to record on success. When the cap was hit, the newest message sent
+        // (older sessions may be re-sent next cycle; the peer merges them). Otherwise the
+        // newest thing sent, session or message.
+        let newest_message = messages.last().map(|m| m.created_at);
+        let newest_session = sessions.iter().map(|s| s.last_active).max();
+        let through = if messages.len() >= CONVERSATION_PUSH_MAX_MESSAGES {
+            newest_message
+        } else {
+            match (newest_message, newest_session) {
+                (Some(m), Some(s)) => Some(m.max(s)),
+                (m, s) => m.or(s),
+            }
+        };
+
+        Ok((ConversationSyncPayload { sessions, messages }, through))
     }
 
     /// Receive and upsert conversation sessions and messages from a peer.
@@ -1774,11 +1804,12 @@ impl ZynkSyncService {
         peer: &PeerDevice,
         user_id: &str,
     ) -> Result<(usize, usize), String> {
-        let payload = self.get_modified_conversations(&peer.device_id, user_id).await?;
+        let (payload, through) = self.get_modified_conversations(&peer.device_id, user_id).await?;
 
         if payload.sessions.is_empty() && payload.messages.is_empty() {
             return Ok((0, 0));
         }
+        let capped = payload.messages.len() >= CONVERSATION_PUSH_MAX_MESSAGES;
 
         // Verbose push detail omitted — summary printed by caller
 
@@ -1804,6 +1835,23 @@ impl ZynkSyncService {
 
         if messages_stored > 0 {
             println!("[ZynkSync] ✓ Peer stored {} sessions, {} new messages", sessions_stored, messages_stored);
+        }
+        if capped {
+            println!("[ZynkSync] History push to {} hit the {}-message cap; the rest goes next cycle",
+                peer.device_name, CONVERSATION_PUSH_MAX_MESSAGES);
+        }
+
+        // The peer accepted it: move the marker so this is not sent again.
+        if let Some(through) = through {
+            sqlx::query(
+                "INSERT INTO zynk_conversation_push_state (peer_device_id, pushed_through) VALUES (?, ?)
+                 ON CONFLICT (peer_device_id) DO UPDATE SET pushed_through = excluded.pushed_through"
+            )
+            .bind(&peer.device_id)
+            .bind(through)
+            .execute(&self.db_pool)
+            .await
+            .map_err(|e| format!("Failed to record conversation push marker: {}", e))?;
         }
         Ok((sessions_stored, messages_stored))
     }
@@ -2961,6 +3009,9 @@ impl ZynkSyncService {
             .route("/api/zynksync/pause", post(handle_pause))
             .route("/api/zynksync/resume", post(handle_resume))
             .route("/api/ollama/*path", any(handle_ollama_proxy))
+            // A history or memory push can exceed the 2 MB default (KI-068). Applies to
+            // the routes above it, which is how axum layers work.
+            .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
             .layer(axum::middleware::from_fn_with_state(
                 Arc::clone(&transport),
                 crate::transport::require_verified_device,
