@@ -330,6 +330,9 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
       if (!selectedPath) { setMessage('Cancelled'); setTimeout(() => setMessage(''), 2000); return; }
       setMessage(`Downloading ${filename}…`);
       const savedPath = await invoke('download_to_custom_location', { shareId, relativePath, deviceId, destinationPath: selectedPath });
+      // Android's Files app lists from the media index, which missed our .part rename
+      // (2026-09-19); ask it to index the finished file so the download is findable.
+      try { window.AndroidPaths?.scanFile?.(savedPath); } catch (_) {}
       setMessage(`✓ Saved to: ${savedPath}`);
       setTimeout(() => setMessage(''), 8000);
     } catch (err) {

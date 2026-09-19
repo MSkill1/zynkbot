@@ -27,6 +27,10 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 ### Chat
 - You can message your own devices. Any device paired for sync now shows a Chat button in ZynkSync settings; a message to it travels over the verified sync connection, so a note typed on the PC arrives on the phone with no link pairing. Messages to another user's linked device work as before.
 
+### Link
+- Android: a file downloaded from a linked device now shows up in the phone's Files app. The media index was missing it after the download was renamed into place; the app now asks Android to index the file, for downloads and for ➕ Add file (KI-067).
+- Android: the Link panel says that only files added with ➕ Add file are visible to Zynkbot; files moved into the folder by another app are skipped by the scan and are now named in the log instead of vanishing (KI-015).
+
 ### Sync
 - Internal: the shared peer-to-peer layer (identity, certificate, HTTPS server, pinned client, device registry, presence, peer verification) is its own module, `transport`. ZynkSync, ZynkLink and ZChat are now three services on it, each registering its own routes and owning its own tables. No behaviour change; the two-peer harness is the check.
 - A device that had never generated a pairing code had no record of itself, so every sync it started failed while recording the sync time (foreign-key error). Found by the new two-peer sync test harness; the device now records itself when its server starts.

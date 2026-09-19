@@ -323,6 +323,12 @@ async fn collect_files_recursive(
         .await
         .map_err(|e| format!("Failed to read directory: {}", e))?;
 
+    // Entries whose metadata cannot be read. On Android 11+ that is every file another
+    // app put in the folder: scoped storage lets Zynkbot read only files it created
+    // itself (KI-015). They used to vanish without a trace; now they are named once
+    // per scan so a "my file isn't showing" report can be checked against the log.
+    let mut unreadable: Vec<String> = Vec::new();
+
     while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
         if out.len() >= max_files {
             break;
@@ -331,7 +337,10 @@ async fn collect_files_recursive(
         let path = entry.path();
         let metadata = match fs::metadata(&path).await {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(_) => {
+                unreadable.push(entry.file_name().to_string_lossy().to_string());
+                continue;
+            }
         };
 
         if metadata.is_file() {
@@ -353,6 +362,10 @@ async fn collect_files_recursive(
         }
     }
 
+    if !unreadable.is_empty() {
+        println!("[ZynkLink] {} file(s) in {} skipped: not readable by Zynkbot (added by another app; KI-015): {}",
+            unreadable.len(), current_path.display(), unreadable.join(", "));
+    }
     Ok(())
 }
 

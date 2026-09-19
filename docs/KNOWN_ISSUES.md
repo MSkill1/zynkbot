@@ -146,6 +146,22 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-068 — Desktop conversation history never reaches the phones: push rejected as too large (open)
+**Status:** Open, found 2026-09-19 on e1273a1. Desktop log: `Conversation sync failed (non-fatal): Conversation push rejected by peer: 413 Payload Too Large`, once per phone.  
+**Affected:** Any device with a large conversation history syncing to a peer.  
+**Description:** The "what changed since the last push" marker for conversations is kept in memory only, so the first sync after the app starts has no marker and sends everything (up to 500 sessions and 5,000 messages) in one request. The receiving side caps a request at 2 MB (the web server default); the desktop's 1,886 messages exceed it. The memory sync in the same cycle succeeds and advances the marker, so the next cycle is incremental again and the backlog is silently never sent.  
+**Fix (proposed):** persist the marker per peer and advance it only after a successful push; send a first-ever backlog in chunks.
+
+---
+
+### KI-067 — A file downloaded into ZynkbotShare does not appear in the phone's Files app (open)
+**Status:** Fixed on `v1` (2026-09-19): after a download finishes, and after ➕ Add file copies a file in, the app asks Android to index the file.  
+**Affected:** Android.  
+**Description:** Downloads are written to a `.part` file and renamed. Android's media index, which the Files and Gallery apps list from, failed to record the rename (`MediaProvider: Database update failed while renaming …jpg.part`), so the file was on disk but not shown anywhere but Zynkbot's own share list.  
+**Fix:** `AndroidPaths.scanFile(path)` bridge calling `MediaScannerConnection.scanFile`, called from the download path and from the Add-file copy.
+
+---
+
 ### KI-066 — About me timeline shows a date in the future for a memory that has none (open)
 **Status:** Fixed on `v1` (2026-09-18): an event date after the day the memory was said is dropped; About me states how many memories have no date.  
 **Affected:** All platforms; any memory whose date the model inferred wrongly.  
@@ -325,7 +341,8 @@ Deletions are not propagated at all (no tombstones), which is #12.
 **Affected:** Android 11+ devices using ZynkLink file sharing or the Knowledge Base  
 **Description:** Files placed into `Downloads/ZynkbotShare/` by apps other than Zynkbot are invisible to Zynkbot's directory scan under scoped storage. Until 2026-09-07 the app declared and requested `MANAGE_EXTERNAL_STORAGE` ("All files access") to see them; Google Play only grants that permission to file managers and similar, so it was removed.  
 **Resolution:** files enter ZynkbotShare through the in-app **Add file** picker (`AndroidPaths.pickFile`, which copies the file into the folder) and the Knowledge Base through **Add files** in the KB Manager (`AndroidPaths.copyToKnowledgeBase`, which copies into the app-private KB folder). Files dropped into the folder by other apps remain invisible; that is now expected behaviour and is documented in INSTALLATION_TROUBLESHOOTING.md.  
-**Impact:** none for users who add files from inside the app.
+**Impact:** none for users who add files from inside the app.  
+**Note (2026-09-19, e1273a1):** confirmed again on the OnePlus: 19 files in the folder, 1 visible (the one added with ➕ Add file); the other 18 were moved in with the My Files app. The scan now logs the skipped names, and the Link panel says only ➕-added files show. The full fix (folder access through the system picker, SAF) stays on the roadmap.
 
 ---
 

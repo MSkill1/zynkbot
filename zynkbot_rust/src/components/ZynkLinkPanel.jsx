@@ -736,6 +736,9 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             lineHeight: '1.6'
           }}>
             Files here are visible to linked devices. Files you download from linked devices are saved here automatically.
+            <div style={{ marginTop: '6px', color: '#f1fa8c' }}>
+              Only files added with ➕ Add file show up in Zynkbot. Files moved into this folder by another app stay hidden to it.
+            </div>
             {androidShareDir && (
               <div style={{ marginTop: '8px', wordBreak: 'break-all', color: '#6272a4', fontSize: '0.78rem' }}>
                 📂 {androidShareDir}

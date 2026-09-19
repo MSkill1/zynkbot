@@ -147,6 +147,7 @@ class MainActivity : TauriActivity() {
                 contentResolver.openInputStream(uri)?.use { input ->
                     dest.outputStream().use { output -> input.copyTo(output) }
                 }
+                android.media.MediaScannerConnection.scanFile(this@MainActivity, arrayOf(dest.absolutePath), null, null)
                 val escaped = dest.absolutePath.replace("\\", "\\\\").replace("'", "\\'")
                 wv.post { wv.evaluateJavascript(
                     "window.__zfpResolve&&window.__zfpResolve('$escaped');window.__zfpResolve=null;window.__zfpReject=null;", null) }
@@ -221,6 +222,22 @@ class MainActivity : TauriActivity() {
     }
 
     inner class ZynkbotPathsBridge {
+        /**
+         * Tell Android's media index about a file Zynkbot just wrote into ZynkbotShare.
+         * The Files and Gallery apps list from that index, not the disk; a download that
+         * lands via a `.part` rename was not being recorded ("Database update failed
+         * while renaming" in the MediaProvider log), so the file existed but never
+         * appeared in Files (2026-09-19). Harmless for files that are already indexed.
+         */
+        @JavascriptInterface
+        fun scanFile(path: String) {
+            try {
+                android.media.MediaScannerConnection.scanFile(this@MainActivity, arrayOf(path), null, null)
+            } catch (e: Exception) {
+                android.util.Log.w("Zynkbot", "Media scan failed for $path: ${e.message}")
+            }
+        }
+
         /** Voice settings selector ('vosk' | 'openai'); anything else is ignored. */
         @JavascriptInterface
         fun setVoiceInputSource(src: String) {
