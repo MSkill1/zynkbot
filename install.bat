@@ -485,6 +485,13 @@ if errorlevel 1 goto cuda_none
 )
 echo.
 
+REM `goto cuda_none` above jumps here on any machine without an NVIDIA driver.
+REM The label was lost in a merge (959ed03, "Merge origin/main into voice",
+REM 2026-09-01); every run since on a non-NVIDIA machine has failed immediately
+REM with "cannot find the batch label specified", no pause, window just closes
+REM (found 2026-09-21 testing a fresh install on a no-GPU laptop).
+:cuda_none
+
 REM ============================================
 REM Step 5: Configure Environment
 REM ============================================
