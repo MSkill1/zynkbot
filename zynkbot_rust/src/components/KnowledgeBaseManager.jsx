@@ -314,7 +314,10 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
 
   // Delete the file itself, not just its index (2026-09-20).
   const handleDeleteFile = async (filePath, fileName) => {
-    const confirmed = window.confirm(
+    // confirmDialog, not window.confirm: on Windows a synchronous confirm returns true before
+    // the user has answered (KI-047), so this deleted the file first and only then showed the
+    // dialog, and Cancel could not stop it.
+    const confirmed = await confirmDialog(
       `Delete "${fileName}" from the Knowledge Base?\n\n` +
       `This removes it from the index and deletes the copy in the Knowledge Base folder. ` +
       `A copy in the Zynkbot share folder or elsewhere is not touched.`
