@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import '../styles/KnowledgeBaseManager.css';
@@ -105,6 +105,9 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
   // sat under Available Files as if nothing were happening (Matt, 2026-09-20). Show
   // it as indexing, with the count, from the download's own progress events.
   const [remoteIndexing, setRemoteIndexing] = useState({}); // file name -> { done, total }
+  // The listeners below are registered once, so they must not capture this render's
+  // loadData (it closes over userId). They call the latest one through this ref.
+  const loadDataRef = useRef(null);
   useEffect(() => {
     const offs = [];
     listen('zynklink:download:indexing', (event) => {
@@ -118,7 +121,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
       if (!relative_path) return;
       const name = relative_path.replace(/\\/g, '/').split('/').pop();
       setRemoteIndexing(prev => { const next = { ...prev }; delete next[name]; return next; });
-      loadData().catch(() => {});
+      Promise.resolve(loadDataRef.current?.()).catch(() => {});
     }).then(fn => offs.push(fn));
     return () => { offs.forEach(fn => fn()); };
   }, []);
@@ -142,6 +145,9 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
       setIsLoading(false);
     }
   };
+
+  // Keep the ref pointing at this render's loadData (see loadDataRef above).
+  useEffect(() => { loadDataRef.current = loadData; });
 
   const loadIndexedDocuments = async () => {
     try {

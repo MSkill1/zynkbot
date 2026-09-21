@@ -27,7 +27,6 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [unreadCounts, setUnreadCounts] = useState({}); // Map of device_id -> unread count
   const [showEnterCodeInput, setShowEnterCodeInput] = useState(false); // Toggle for enter code input
   const isAndroid = !!window.AndroidPaths;
-  const [androidShareDir, setAndroidShareDir] = useState('');
 
   const fetchSharedDirectories = useCallback(async () => {
     try {
@@ -121,8 +120,9 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
     };
 
     if (window.AndroidPaths) {
-      const dir = window.AndroidPaths.getShareDir();
-      setAndroidShareDir(dir);
+      // The folder path used to be kept in state for display; the redesigned panel no longer
+      // shows it. The call is kept exactly as it was.
+      window.AndroidPaths.getShareDir();
       // App.jsx keeps the share record right (one share, at this folder) and re-indexes
       // it; files can arrive through the Files app or the Share button at any time, so
       // do that again whenever the panel opens.

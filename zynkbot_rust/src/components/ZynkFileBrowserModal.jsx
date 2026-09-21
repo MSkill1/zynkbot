@@ -330,7 +330,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     const filename = relativePath.replace(/\\/g, '/').split('/').pop();
     setMessage(`Downloading ${filename} to Knowledge Base…`);
     try {
-      const savedPath = await invoke('download_to_knowledge_base', { shareId, relativePath, deviceId, userId });
+      await invoke('download_to_knowledge_base', { shareId, relativePath, deviceId, userId });
       setMessage(`✓ In the Knowledge Base and indexed: ${filename}`);
       setTimeout(() => setMessage(''), 5000);
     } catch (err) {
