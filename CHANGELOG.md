@@ -6,7 +6,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## [Unreleased] — road to 1.0 <!-- branch v1, started 2026-09-15 -->
+## [Unreleased] — 0.9.6-beta3 <!-- branch v1, started 2026-09-15; Link and Windows lines for beta3 drafted by Claude 2026-09-21, review wording -->
 
 ### Desktop and phone
 - API Keys: once a key is stored, the provider button reads "View plan" and opens the provider's plan/billing page (it said "Get Key" and opened the key page whether or not you had one).
@@ -40,11 +40,16 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - In-app dictation lets go of the microphone on every failure, not only on a clean stop. A dictation that broke mid-recording kept the microphone, and the wake-word listener, which pauses whenever anything else records, stayed deaf until the app was restarted (Pixel, 2026-09-19, twenty "Hey Zynk" attempts ignored). The listener also resumes on its own after two minutes paused, whatever is still recording.
 
 ### Link
+- The Refresh button shows its own status ("Refreshing…", then "✓ Refreshed") instead of a message at the bottom of the panel that vanished after two seconds.
+- Files shared from a Windows computer are listed with forward slashes. A file in a subfolder was recorded as `sub\file.txt`, which Linux and Android read as one oddly named file rather than a file in a folder (found in the laptop's share manifest, 2026-09-21).
 - Android: Zynkbot is now a location in the phone's Files app, beside Downloads and Drive, and appears in every app's Share menu. Anything put there, by Share, by moving it in Files, or with ➕ Add file, is shared with linked devices, and downloads from linked devices land there. Until now the share was a folder under Download, and Android hid every file another app put in it from Zynkbot (KI-015). Files Zynkbot owned in the old folder are moved over once.
 - Android: after downloading an image from a linked device, Zynkbot offers to add a copy to the photo gallery (Pictures/Zynkbot), since the new location is not a media folder.
 - Link: a file sent to the Knowledge Base from a linked device now shows "Indexing n / N pieces" after the transfer, and is marked done only once it can be asked about. On a phone a large PDF indexes for minutes after the transfer bar fills; before, the bar said finished while chat silently waited on the indexing.
 - Link: the "Shared With Me" list asks every linked device at once and waits at most 5 seconds for each, instead of one device at a time with a 60-second wait; a linked device that is switched off no longer holds the list back for a minute.
 - Android voice: strict mode is off. After three wakes that did not end in an answered question it demanded a level of confidence a real "Hey Zynk" rarely reaches and the phone went deaf for ten minutes. A wake that ends in an answer, spoken or on screen, now counts toward the "Send my wake-word clips" total.
+
+### Windows
+- Knowledge Base: deleting a file now waits for your answer. The confirmation used the browser's own prompt, which on Windows returns "yes" before the dialog appears (KI-047), so the file was deleted first and Cancel could not stop it.
 
 ### Sync
 - A desktop's conversation history now reaches the phones. The "sent up to here" marker for history lived in memory, so every app start re-sent the whole history in one request, the phone rejected it as too large, and the backlog was silently dropped. The marker is now stored per peer and moved only once the peer has accepted the push; a push carries at most 300 messages, so a large history arrives over a few sync cycles (KI-068).
