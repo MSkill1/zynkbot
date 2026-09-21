@@ -15,6 +15,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
   const [pairingIPPart, setPairingIPPart] = useState('');
   const [pairingNumPart, setPairingNumPart] = useState('');
   const [showAddDevice, setShowAddDevice] = useState(false);
+  const [showSyncedDevices, setShowSyncedDevices] = useState(false);
 
   // This device's name on the network. namePromptPurpose is null when the rename
   // control opened the prompt directly, or 'generate'/'add' when a pairing action
@@ -726,9 +727,15 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
 
       {/* Synced Devices List */}
       <div style={{ marginBottom: '15px' }}>
-        <div style={{ color: '#ffb86c', fontWeight: 'bold', marginBottom: '8px', fontSize: '0.9rem' }}>
-          📡 Synced Devices ({peers.length})
+        {/* Collapsible, closed by default, like Linked Devices (Matt, 2026-09-20). */}
+        <div
+          onClick={() => setShowSyncedDevices(v => !v)}
+          style={{ color: '#ffb86c', fontWeight: 'bold', marginBottom: showSyncedDevices ? '8px' : 0, fontSize: '0.9rem', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+        >
+          <span>📡 Synced Devices ({peers.length})</span>
+          <span style={{ fontSize: '0.8rem' }}>{showSyncedDevices ? '▼' : '▶'}</span>
         </div>
+        {showSyncedDevices && (<>
 
         {!isRunning ? (
           <div style={{
@@ -833,6 +840,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
             ))}
           </div>
         )}
+        </>)}
       </div>
 
       {/* Message */}

@@ -174,6 +174,40 @@
             </intent-filter>
         </service>
 
+        <!-- Zynkbot as a storage location: the "Zynkbot" entry in the Files app drawer
+             and in any app's file picker (KI-015, 2026-09-19). Guarded by MANAGE_DOCUMENTS
+             so only the system's documents UI can talk to it. -->
+        <provider
+            android:name=".ZynkShareProvider"
+            android:authorities="ai.containai.zynkbot.share"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
+        <!-- "Share to Zynkbot" from any app's Share menu: copies into the share folder. -->
+        <activity
+            android:name=".ShareReceiverActivity"
+            android:label="Zynkbot"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

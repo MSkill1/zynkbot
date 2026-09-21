@@ -215,6 +215,28 @@ pub async fn remove_kb_document(user_id: String, file_path: String) -> Result<()
     kb_rag::remove_document_index(&pool, &user_id, &file_path).await
 }
 
+/// Remove a file from the Knowledge Base for good: its index and the copy in the KB
+/// folder. The trash in the manager only forgot the contents and the file came back
+/// as "available to index", with no way to get rid of it on a phone (Matt, 2026-09-20).
+#[tauri::command]
+pub async fn delete_kb_file(user_id: String, file_path: String) -> Result<(), String> {
+    let kb_dir = kb_rag::get_kb_folder_path(&user_id)?;
+    let target = std::path::Path::new(&file_path);
+    let inside = match (target.canonicalize(), kb_dir.canonicalize()) {
+        (Ok(t), Ok(d)) => t.starts_with(&d),
+        _ => false,
+    };
+    if !inside {
+        return Err("Only files inside the Knowledge Base folder can be deleted here".to_string());
+    }
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Database connection failed: {}", e))?;
+    // Not indexed is fine; the file is what we are removing.
+    let _ = kb_rag::remove_document_index(&pool, &user_id, &file_path).await;
+    std::fs::remove_file(target).map_err(|e| format!("Could not delete the file: {}", e))
+}
+
 /// Clear all indexed documents for a user
 #[tauri::command]
 pub async fn clear_all_kb_documents(user_id: String) -> Result<i64, String> {

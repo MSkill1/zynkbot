@@ -27,9 +27,8 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
   const asText = () => {
     if (!report) return '';
     const lines = [];
-    lines.push(`What Zynkbot knows about you (${(t.first_at || '').slice(0, 10)} to ${(t.last_at || '').slice(0, 10)})`);
+    lines.push('What Zynkbot knows about you');
     lines.push(`${t.memories} memories, ${t.links} links between them, ${t.entities} named things, ${t.sessions} conversations, ${t.messages} messages`);
-    lines.push(`${t.dated} memories carry a real event date (${t.memories - t.dated} have none and are not on the timeline); ${t.tagged} have tags`);
     lines.push('');
     lines.push('Categories: ' + list(report.namespaces, (x) => `${x.name} ${x.count}`));
     lines.push('Tags: ' + list(report.tags, (x) => `${x.tag} ${x.count}`));
@@ -124,7 +123,6 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
             </div>
 
             <p style={p}>{t.memories} memories, {t.links} links between them, {t.entities} named things, across {t.sessions} conversations.</p>
-            <p style={muted}>From {(t.first_at || '').slice(0, 10)} to {(t.last_at || '').slice(0, 10)}. {t.dated} memories carry the date something happened and {t.tagged} have tags.{t.memories - t.dated > 0 ? ` ${t.memories - t.dated} have no date and are not on the timeline.` : ''}{t.pending_enrichment > 0 ? ` ${t.pending_enrichment} older memories are still being annotated in the background; reopen this later.` : ''}</p>
 
             {report.requested?.length > 0 && (
               <Section id="requested" title="You asked me to remember" count={report.requested.length} open>
@@ -136,7 +134,8 @@ export default function MemoryReportModal({ isOpen, onClose, userId, onOpenMemor
               </Section>
             )}
 
-            <Section id="timeline" title="Timeline, by when it happened" count={report.timeline?.length || 0} open>
+            <Section id="timeline" title="Timeline, the most recent events" count={report.timeline?.length || 0} open>
+              <p style={muted}>This timeline is built from events you have discussed with your Zynkbot. If you mention you are travelling on a certain date, that date goes on your timeline. If you mention something you are doing that day, it goes on the timeline under that day. Memories with no day attached, such as facts about you and your preferences, are listed in the sections below instead.</p>
               {report.timeline?.length ? byMonth(report.timeline).map((g) => (
                 <div key={g.month}>
                   <p style={{ ...muted, margin: '8px 0 2px 0', fontWeight: 600 }}>{monthName(g.month)}</p>

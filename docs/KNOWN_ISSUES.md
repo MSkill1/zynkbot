@@ -146,6 +146,12 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
+### KI-069 — The wake word fires in bursts on some ambient sound, not the owner's voice (open)
+**Status:** Open, found 2026-09-21 on the Pixel: 45 wake detections in a 96-minute stretch, in bursts of several 20–60 s apart (one burst: six in under four minutes), each at a real but sometimes quiet level (-21 to -46 dBFS) and a low match to the owner's trained verifier (mostly under 0.10). Not the owner's voice; likely a recurring ambient sound (fan, appliance, something electronic) whose source is unidentified.
+**Affected:** Any phone with the wake word on; worse since strict mode was removed 2026-09-20 (KI unfiled at the time — see the strict-mode change in the changelog). Strict mode's ten-minute lockout after three misses likely masked bursts like this before; removing it made them fully audible. The log does not reach back far enough to confirm this burst pattern predates strict mode's removal, only that its rate did not increase across today's builds specifically.
+**Ruled out as a fix:** any cooldown or backoff after a miss, including a plain time-based one that doesn't touch confidence. Matt, 2026-09-21: a real first attempt fails to wake the phone roughly a quarter of the time, so any lockout after a miss would block a genuine retry the same way strict mode's confidence bar did, just through a different mechanism.
+**Fix candidates, not started:** (1) an ambient-noise-adaptive threshold — raise the bar only while the recent noise floor is elevated, relax it when the room is quiet, rather than a fixed lockout regardless of the current moment (Matt's idea, 2026-09-21); (2) the verifier-gated response plan already on the roadmap (answer only when the trained verifier matches, whatever triggered the wake) — a different mechanism, addresses this as a side effect once it exists. Both are after-beta3, alongside the verifier retraining work.
+
 ### KI-068 — Desktop conversation history never reaches the phones: push rejected as too large (open)
 **Status:** Fixed on `v1` (2026-09-19): the marker is persisted per peer (`zynk_conversation_push_state`), advanced only after the peer accepts a push, and a push carries at most 300 messages; the receiving cap is raised to 32 MB in rebuilt peers. Harness tests b08c (marker survives a restart) and b08d (a backlog arrives over cycles, nothing duplicated). Found 2026-09-19 on e1273a1. Desktop log: `Conversation sync failed (non-fatal): Conversation push rejected by peer: 413 Payload Too Large`, once per phone.  
 **Affected:** Any device with a large conversation history syncing to a peer.  
@@ -154,8 +160,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-067 — A file downloaded into ZynkbotShare does not appear in the phone's Files app (open)
-**Status:** Fixed on `v1` (2026-09-19): after a download finishes, and after ➕ Add file copies a file in, the app asks Android to index the file.  
+### KI-067 — A file downloaded into ZynkbotShare does not appear in the phone's Files app
+**Status:** Fixed on `v1` (2026-09-19), verified on the Pixel 2026-09-20: downloads land in the Zynkbot storage location, which the Files app lists directly from the app (see KI-015), so the media index is no longer involved. An earlier same-day fix asked Android to index the file.  
 **Affected:** Android.  
 **Description:** Downloads are written to a `.part` file and renamed. Android's media index, which the Files and Gallery apps list from, failed to record the rename (`MediaProvider: Database update failed while renaming …jpg.part`), so the file was on disk but not shown anywhere but Zynkbot's own share list.  
 **Fix:** `AndroidPaths.scanFile(path)` bridge calling `MediaScannerConnection.scanFile`, called from the download path and from the Add-file copy.
@@ -337,7 +343,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ---
 
 ### KI-015 — Android scoped storage blocks scan of files created by other apps
-**Status:** Resolved on `voice` (build34, 2026-09-07) by design change  
+**Status:** Fixed on `v1` (2026-09-19), verified on the Pixel and the OnePlus 2026-09-20: the share folder is Zynkbot's own storage location, published to the Files app and every app's Share menu (`ZynkShareProvider`, `ShareReceiverActivity`); every file that enters is written by Zynkbot, so nothing is invisible. Tested: Share to Zynkbot from the Files app (8 files, sizes intact), listing from the linked phone, → KB with a working query, Save… landing in the folder, a 17 MB PDF each way. The picker-only design below is what shipped before.  
 **Affected:** Android 11+ devices using ZynkLink file sharing or the Knowledge Base  
 **Description:** Files placed into `Downloads/ZynkbotShare/` by apps other than Zynkbot are invisible to Zynkbot's directory scan under scoped storage. Until 2026-09-07 the app declared and requested `MANAGE_EXTERNAL_STORAGE` ("All files access") to see them; Google Play only grants that permission to file managers and similar, so it was removed.  
 **Resolution:** files enter ZynkbotShare through the in-app **Add file** picker (`AndroidPaths.pickFile`, which copies the file into the folder) and the Knowledge Base through **Add files** in the KB Manager (`AndroidPaths.copyToKnowledgeBase`, which copies into the app-private KB folder). Files dropped into the folder by other apps remain invisible; that is now expected behaviour and is documented in INSTALLATION_TROUBLESHOOTING.md.  

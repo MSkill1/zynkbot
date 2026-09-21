@@ -1097,17 +1097,22 @@ pub async fn resolve_memory_conflict_v2(
 
             println!("[Rust] ✅ Deleted old memory #{}", conflicting_memory_id);
 
-            // Propagate deletion to sync peers so they don't restore the old memory
+            // Propagate deletion to sync peers so they don't restore the old memory.
+            // In the background: each unreachable peer costs a 10 s timeout, and the
+            // user was sitting in the conflict dialog for all of them (2026-09-20).
+            // A peer that misses this catches up on its next sync.
             if let Some(hash) = content_hash {
-                let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
-                if let Some(service) = zynksync_service.as_ref() {
-                    if service.is_auto_sync_enabled().await {
-                        match service.propagate_deletion_by_hash(hash).await {
-                            Ok(count) => println!("[Rust] ✓ Deletion propagated to {} device(s)", count),
-                            Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to propagate deletion: {}", e),
+                tokio::spawn(async move {
+                    let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
+                    if let Some(service) = zynksync_service.as_ref() {
+                        if service.is_auto_sync_enabled().await {
+                            match service.propagate_deletion_by_hash(hash).await {
+                                Ok(count) => println!("[Rust] ✓ Deletion propagated to {} device(s)", count),
+                                Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to propagate deletion: {}", e),
+                            }
                         }
                     }
-                }
+                });
             }
 
             let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;

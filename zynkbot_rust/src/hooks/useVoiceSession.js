@@ -39,9 +39,11 @@ export function nativeTurnsToMessages(turns, sessionId) {
     .flatMap((t) => {
       const at = Number(t.at) || Date.now();
       const timestamp = new Date(at).toISOString();
+      const pre = (t.preAnswer || '').trim();
       return [
         { id: at, role: 'user', content: t.question, timestamp, source: 'voice' },
-        { id: at + 1, role: 'assistant', content: t.answer, timestamp, source: 'voice' },
+        ...(pre ? [{ id: at + 1, role: 'assistant', content: pre, timestamp, source: 'voice' }] : []),
+        { id: at + 2, role: 'assistant', content: t.answer, timestamp, source: 'voice' },
       ];
     });
 }
@@ -235,13 +237,13 @@ export function useVoiceSession({ setMessages }) {
     try {
       const keys = await invoke('get_api_keys');
       const apiKey = keys['OPENAI_API_KEY'];
-      if (!apiKey) return;
+      if (!apiKey) return false;
       const res = await fetch('https://api.openai.com/v1/audio/speech', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'tts-1', input: cleanForSpeech(text).slice(0, 4096), voice: 'alloy' }),
       });
-      if (!res.ok) return;
+      if (!res.ok) return false;
       const audioData = await res.arrayBuffer();
       const audioCtx = new AudioContext();
       ttsAudioCtxRef.current = audioCtx;
@@ -264,9 +266,11 @@ export function useVoiceSession({ setMessages }) {
         // wake-word listening. Never open another dictation window on our own.
         armWakeWord();
       };
+      return true;
     } catch (e) {
       console.error('[TTS]', e);
       setIsTtsSpeaking(false);
+      return false;
     }
   };
 

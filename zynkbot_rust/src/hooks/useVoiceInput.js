@@ -83,12 +83,27 @@ export function useVoiceInput() {
     return wavData;
   };
 
+  // Let go of the microphone and the audio graph. Every failure path calls this:
+  // a stream left open after an error kept the Pixel's native wake-word listener
+  // paused for 13 minutes (2026-09-19) — it pauses whenever anything else records.
+  const releaseMic = () => {
+    try { processorRef.current?.disconnect(); } catch (_) {}
+    processorRef.current = null;
+    try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch (_) {}
+    streamRef.current = null;
+    try { audioContextRef.current?.close(); } catch (_) {}
+    audioContextRef.current = null;
+  };
+
   const startRecordingDesktop = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
       streamRef.current = stream;
+      // Android ends the track itself when the capture pipe breaks; treat that as a
+      // stop so nothing is left holding the microphone.
+      stream.getTracks().forEach(track => { track.onended = () => { if (streamRef.current === stream) { releaseMic(); setIsRecording(false); } }; });
       audioBufferRef.current = [];
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
@@ -102,6 +117,7 @@ export function useVoiceInput() {
       processor.connect(audioContext.destination);
       setIsRecording(true);
     } catch (error) {
+      releaseMic();
       console.error('[VoiceInput] Failed to start recording:', error);
       const isLinux = navigator.platform.toLowerCase().includes('linux') && !window.AndroidPaths;
       alert(isLinux
@@ -116,9 +132,7 @@ export function useVoiceInput() {
     setIsRecording(false);
     setIsTranscribing(true);
     try {
-      if (processorRef.current) { processorRef.current.disconnect(); processorRef.current = null; }
-      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-      if (audioContextRef.current) { await audioContextRef.current.close(); audioContextRef.current = null; }
+      releaseMic();
 
       const totalLength = audioBufferRef.current.reduce((acc, chunk) => acc + chunk.length, 0);
       const audioData = new Float32Array(totalLength);
@@ -131,6 +145,7 @@ export function useVoiceInput() {
       const text = await invoke('transcribe_audio', { audioData: audioArray });
       return text;
     } catch (error) {
+      releaseMic();
       console.error('[VoiceInput] Transcription failed:', error);
       alert('Transcription failed: ' + error);
       return '';

@@ -177,6 +177,73 @@ pub fn estimate_token_count(text: &str) -> i32 {
 // DOCUMENT INDEXING
 // ============================================================================
 
+/// .html / .htm by extension.
+pub fn is_html_path(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".html") || lower.ends_with(".htm")
+}
+
+/// The visible text of an HTML page: <script>, <style> and comments dropped, tags
+/// removed, block tags turned into line breaks, the common entities decoded, runs of
+/// whitespace collapsed. Only for the Knowledge Base; a page attached to a message
+/// is still sent as it is. Not a parser, and does not need to be (2026-09-20).
+pub fn html_to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() / 4);
+    let mut rest = html;
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&rest[..lt]);
+        rest = &rest[lt..];
+        let lower_head: String = rest.chars().take(12).collect::<String>().to_ascii_lowercase();
+        // Skip whole blocks whose content is never shown.
+        let skip_to = if lower_head.starts_with("<script") { Some("</script>") }
+            else if lower_head.starts_with("<style") { Some("</style>") }
+            else if lower_head.starts_with("<!--") { Some("-->") }
+            else { None };
+        if let Some(end_tag) = skip_to {
+            let lower_rest = rest.to_ascii_lowercase();
+            match lower_rest.find(end_tag) {
+                Some(e) => { rest = &rest[e + end_tag.len()..]; }
+                None => { rest = ""; }
+            }
+            continue;
+        }
+        match rest.find('>') {
+            Some(gt) => {
+                let tag = rest[1..gt].trim_start_matches('/').to_ascii_lowercase();
+                let name: String = tag.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+                if matches!(name.as_str(), "p" | "div" | "br" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                    | "table" | "ul" | "ol" | "section" | "article" | "header" | "footer" | "blockquote" | "pre" | "hr" | "td" | "th") {
+                    out.push('\n');
+                } else {
+                    out.push(' ');
+                }
+                rest = &rest[gt + 1..];
+            }
+            None => { rest = ""; }
+        }
+    }
+    out.push_str(rest);
+    let decoded = out
+        .replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+        .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'");
+    // Collapse whitespace: runs of spaces to one, more than one blank line to one.
+    let mut text = String::with_capacity(decoded.len());
+    let mut blank_lines = 0;
+    for line in decoded.lines() {
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if line.is_empty() {
+            blank_lines += 1;
+            if blank_lines == 1 { text.push('\n'); }
+        } else {
+            blank_lines = 0;
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    text.trim().to_string()
+}
+
+
 /// Index a single document: chunk it, generate embeddings, store in database
 /// This is the main indexing function
 pub async fn index_document(
@@ -198,6 +265,11 @@ pub async fn index_document(
             return Err("PDF contains no extractable text. It may be a scanned image — OCR is not currently supported.".to_string());
         }
         text
+    } else if is_html_path(file_path) {
+        // A saved web page is mostly markup and script; index the words a reader
+        // sees. A 1.5 MB Wikipedia page went in as 3,936 chunks of tags (2026-09-20).
+        html_to_text(&fs::read_to_string(file_path)
+            .map_err(|e| format!("Failed to read file: {}", e))?)
     } else {
         fs::read_to_string(file_path)
             .map_err(|e| format!("Failed to read file: {}", e))?
@@ -353,6 +425,20 @@ pub async fn index_text_as_document(
     virtual_file_path: &str,
     content: &str,
 ) -> Result<i32, String> {
+    index_text_as_document_with_progress(pool, user_id, virtual_file_path, content, None).await
+}
+
+/// Same as `index_text_as_document`, reporting `(chunks done, chunks total)` after
+/// every embedding batch. A peer download into the Knowledge Base shows this in
+/// the file browser: on a phone a large PDF indexes for minutes after the transfer
+/// bar has filled, and until 2026-09-20 nothing on screen said so.
+pub async fn index_text_as_document_with_progress(
+    pool: &SqlitePool,
+    user_id: &str,
+    virtual_file_path: &str,
+    content: &str,
+    on_progress: Option<Box<dyn Fn(usize, usize) + Send + Sync>>,
+) -> Result<i32, String> {
     println!("[KB RAG] Indexing text as document: {}", virtual_file_path);
 
     // Extract file name from virtual path
@@ -376,8 +462,25 @@ pub async fn index_text_as_document(
     // Generate embeddings BEFORE opening the DB transaction — see index_document for rationale.
     println!("[KB RAG] Generating embeddings for {} chunks (batch)...", chunk_count);
     let chunk_texts: Vec<String> = chunks.iter().map(|s| s.to_string()).collect();
-    let embeddings = crate::llm::local_embeddings::generate_local_embeddings_batch(chunk_texts, None)
+    let total_chunks = chunk_texts.len();
+    if let Some(ref cb) = on_progress {
+        cb(0, total_chunks);
+    }
+    const EMBED_BATCH: usize = 32;
+    let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(total_chunks);
+    for (batch_idx, batch_texts) in chunk_texts.chunks(EMBED_BATCH).enumerate() {
+        let batch_vec = batch_texts.to_vec();
+        let batch_embeddings = tokio::task::spawn_blocking(move || {
+            crate::llm::local_embeddings::generate_local_embeddings_batch(batch_vec, Some(EMBED_BATCH))
+        })
+        .await
+        .map_err(|e| format!("Failed to run embedding task: {}", e))?
         .map_err(|e| format!("Failed to generate embeddings: {}", e))?;
+        embeddings.extend(batch_embeddings);
+        if let Some(ref cb) = on_progress {
+            cb(std::cmp::min((batch_idx + 1) * EMBED_BATCH, total_chunks), total_chunks);
+        }
+    }
     println!("[KB RAG] ✓ All {} embeddings generated", chunk_count);
 
     // Start transaction
@@ -788,4 +891,20 @@ pub async fn clear_all_documents(
     .map_err(|e| format!("Failed to clear documents: {}", e))?;
 
     Ok(result.rows_affected() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn html_to_text_keeps_the_words_and_drops_the_rest() {
+        let page = "<html><head><title>Delaware</title><style>p{color:red}</style><script>var x=1;</script></head>\
+<body><!-- note --><h1>Delaware</h1><p>Delaware is a state in the <b>Mid-Atlantic</b> region.&nbsp;It borders&amp;more.</p>\
+<ul><li>Dover</li><li>Wilmington</li></ul></body></html>";
+        // One blank line may separate blocks; the words and their order are what matter.
+        let text = html_to_text(page).replace("\n\n", "\n");
+        assert_eq!(text, "Delaware\nDelaware\nDelaware is a state in the Mid-Atlantic region. It borders&more.\nDover\nWilmington");
+        assert!(is_html_path("/x/Delaware - Wikipedia.html") && is_html_path("a.HTM") && !is_html_path("a.txt"));
+    }
 }

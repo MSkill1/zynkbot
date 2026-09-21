@@ -185,8 +185,6 @@ export default function VoiceModal({
   onDownloadModels,
   ttsEnabled,
   onTtsEnabledChange,
-  webSearchAutoExecute,
-  onWebSearchAutoExecuteChange,
   keepScreenAwake,
   onKeepScreenAwakeChange,
 }) {
@@ -216,87 +214,8 @@ export default function VoiceModal({
           <h2 style={{ margin: 0, color: '#8be9fd', fontSize: '1.2rem' }}>🎙️ Voice Settings</h2>
         </div>
 
-        {/* How It Works */}
-        {!!window.WakeWordBridge && (
-          <div style={{
-            background: '#1e1f29',
-            border: '1px solid #44475a',
-            borderRadius: '8px',
-            padding: '12px 14px',
-            marginTop: '12px',
-            marginBottom: '4px',
-          }}>
-            <p style={{ ...sectionHeadingStyle, margin: '0 0 8px 0' }}>How It Works</p>
-            <ol style={{ margin: 0, paddingLeft: '18px', color: '#9aa5c4', fontSize: '0.84rem', lineHeight: '1.6' }}>
-              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> and wait for the tone before speaking.</li>
-              <li>Speak your question or command.</li>
-              <li>Stop talking. After 1.5 seconds of silence you'll hear a second tone confirming your message was sent.</li>
-              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> again after each response to continue the conversation.</li>
-            </ol>
-          </div>
-        )}
-
-        {/* Dictation */}
-        <p style={{ ...sectionHeadingStyle, marginTop: '12px' }}>Dictation Engine</p>
-
-        <div
-          style={{
-            padding: '10px',
-            background: effectiveSource === 'vosk' ? '#1e1f29' : 'transparent',
-            borderRadius: '6px',
-            border: effectiveSource === 'vosk' ? '1px solid #44475a' : '1px solid transparent',
-            marginBottom: '6px',
-            cursor: voskAvailable ? 'pointer' : 'default',
-            opacity: voskAvailable ? 1 : 0.5,
-          }}
-          onClick={() => voskAvailable && onVoiceSourceChange('vosk')}
-        >
-          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: voskAvailable ? 'pointer' : 'default' }}>
-            <input
-              type="radio"
-              name="voiceSource"
-              value="vosk"
-              checked={effectiveSource === 'vosk'}
-              disabled={!voskAvailable}
-              onChange={() => onVoiceSourceChange('vosk')}
-              style={{ accentColor: '#8be9fd', cursor: voskAvailable ? 'pointer' : 'default' }}
-            />
-            <div>
-              <div style={{ ...labelStyle, fontWeight: '500' }}>
-                Offline — Vosk
-                {!voskAvailable && <span style={{ color: '#6272a4', fontWeight: '400' }}> (not available on macOS)</span>}
-              </div>
-              <div style={mutedStyle}>Runs on device. No internet needed. Produces no punctuation; large language models do not need punctuation to understand a request.</div>
-            </div>
-          </label>
-        </div>
-
-        <div
-          style={{
-            padding: '10px',
-            background: effectiveSource === 'openai' ? '#1e1f29' : 'transparent',
-            borderRadius: '6px',
-            border: effectiveSource === 'openai' ? '1px solid #44475a' : '1px solid transparent',
-            cursor: 'pointer',
-          }}
-          onClick={() => onVoiceSourceChange('openai')}
-        >
-          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-            <input
-              type="radio"
-              name="voiceSource"
-              value="openai"
-              checked={effectiveSource === 'openai'}
-              onChange={() => onVoiceSourceChange('openai')}
-              style={{ accentColor: '#8be9fd', cursor: 'pointer' }}
-            />
-            <div>
-              <div style={{ ...labelStyle, fontWeight: '500' }}>OpenAI Whisper</div>
-              <div style={mutedStyle}>Cloud transcription with punctuation. Requires OPENAI_API_KEY. Audio is sent to OpenAI; its API policy says it is not used for training and the transcription service keeps no audio for abuse monitoring (policy read 2026-09-09).</div>
-            </div>
-          </label>
-        </div>
-
+        {/* Hey Zynk first: the switch people open this screen for was below the fold,
+            behind the close button (Matt, 2026-09-20). */}
         {/* Hey Zynk — only shown on Android (window.WakeWordBridge present) */}
         {!!window.WakeWordBridge && (
           <>
@@ -323,12 +242,9 @@ export default function VoiceModal({
               lineHeight: 1.45,
               margin: '4px 0 0 0',
             }}>
-              Detects the phrase "Hey Zynk" on this device. Audio is checked and
-              discarded on the phone — never recorded or sent anywhere. (When the
-              word fires, a short clip stays on your phone to improve accuracy.)
-              Running the detector shortens battery life — best while charging.
-              During beta it can also fire on a television or other voices; turn it
-              off if that happens.
+              When the wake word is on, saying "Hey Zynk" lets you ask a question by voice and hear the answer.
+              Your voice data is respected: see the documentation for what is kept and what is not.
+              If it fires often on background noise or a television, turn it off.
             </p>
 
             <div style={rowStyle}>
@@ -438,6 +354,87 @@ export default function VoiceModal({
           </>
         )}
 
+        {/* Dictation */}
+        <p style={{ ...sectionHeadingStyle, marginTop: '12px' }}>Dictation Engine</p>
+
+        <div
+          style={{
+            padding: '10px',
+            background: effectiveSource === 'vosk' ? '#1e1f29' : 'transparent',
+            borderRadius: '6px',
+            border: effectiveSource === 'vosk' ? '1px solid #44475a' : '1px solid transparent',
+            marginBottom: '6px',
+            cursor: voskAvailable ? 'pointer' : 'default',
+            opacity: voskAvailable ? 1 : 0.5,
+          }}
+          onClick={() => voskAvailable && onVoiceSourceChange('vosk')}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: voskAvailable ? 'pointer' : 'default' }}>
+            <input
+              type="radio"
+              name="voiceSource"
+              value="vosk"
+              checked={effectiveSource === 'vosk'}
+              disabled={!voskAvailable}
+              onChange={() => onVoiceSourceChange('vosk')}
+              style={{ accentColor: '#8be9fd', cursor: voskAvailable ? 'pointer' : 'default' }}
+            />
+            <div>
+              <div style={{ ...labelStyle, fontWeight: '500' }}>
+                Offline — Vosk
+                {!voskAvailable && <span style={{ color: '#6272a4', fontWeight: '400' }}> (not available on macOS)</span>}
+              </div>
+              <div style={mutedStyle}>Runs on device. No internet needed. Produces no punctuation; large language models do not need punctuation to understand a request.</div>
+            </div>
+          </label>
+        </div>
+
+        <div
+          style={{
+            padding: '10px',
+            background: effectiveSource === 'openai' ? '#1e1f29' : 'transparent',
+            borderRadius: '6px',
+            border: effectiveSource === 'openai' ? '1px solid #44475a' : '1px solid transparent',
+            cursor: 'pointer',
+          }}
+          onClick={() => onVoiceSourceChange('openai')}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="voiceSource"
+              value="openai"
+              checked={effectiveSource === 'openai'}
+              onChange={() => onVoiceSourceChange('openai')}
+              style={{ accentColor: '#8be9fd', cursor: 'pointer' }}
+            />
+            <div>
+              <div style={{ ...labelStyle, fontWeight: '500' }}>OpenAI Whisper</div>
+              <div style={mutedStyle}>Cloud transcription with punctuation. Requires OPENAI_API_KEY. Audio is sent to OpenAI; its API policy says it is not used for training and the transcription service keeps no audio for abuse monitoring (policy read 2026-09-09).</div>
+            </div>
+          </label>
+        </div>
+
+        {/* How It Works */}
+        {!!window.WakeWordBridge && (
+          <div style={{
+            background: '#1e1f29',
+            border: '1px solid #44475a',
+            borderRadius: '8px',
+            padding: '12px 14px',
+            marginTop: '12px',
+            marginBottom: '4px',
+          }}>
+            <p style={{ ...sectionHeadingStyle, margin: '0 0 8px 0' }}>How It Works</p>
+            <ol style={{ margin: 0, paddingLeft: '18px', color: '#9aa5c4', fontSize: '0.84rem', lineHeight: '1.6' }}>
+              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> and wait for the tone before speaking.</li>
+              <li>Speak your question or command.</li>
+              <li>Stop talking. After 1.5 seconds of silence you'll hear a second tone confirming your message was sent.</li>
+              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> again after each response to continue the conversation.</li>
+            </ol>
+          </div>
+        )}
+
         {/* Voice Response */}
         <p style={sectionHeadingStyle}>Voice Response</p>
         <div style={rowStyle}>
@@ -458,19 +455,11 @@ export default function VoiceModal({
         </div>
 
 
-        {/* Web Search */}
-        <p style={sectionHeadingStyle}>Web Search</p>
-        <div style={{ ...rowStyle, borderBottom: 'none' }}>
-          <div>
-            <div style={labelStyle}>Auto-execute in voice sessions</div>
-            <div style={mutedStyle}>When off, Zynkbot pauses and asks before searching the web.</div>
-          </div>
-          <Toggle
-            id="web-search-auto-toggle"
-            checked={webSearchAutoExecute}
-            onChange={onWebSearchAutoExecuteChange}
-          />
-        </div>
+        {/* Web Search: the "Auto-execute in voice sessions" toggle was removed
+            2026-09-20 — hands-free always searches now, unconditionally (GitHub
+            #26: there was never a way to answer "want me to search?" by voice).
+            An "always search, skip the confirmation" setting for typed chat is a
+            different, unbuilt feature — see the roadmap. */}
 
         {/* Screen */}
         <p style={sectionHeadingStyle}>Screen</p>

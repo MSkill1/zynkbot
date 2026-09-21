@@ -219,6 +219,7 @@ pub async fn generate_reply(
                         web_search_needed: None,
                         web_search_query: None,
                         original_query: None,
+                        pre_search_reply: None,
                         kb_note: None,
                     });
                 }
@@ -242,6 +243,7 @@ pub async fn generate_reply(
                         web_search_needed: None,
                         web_search_query: None,
                         original_query: None,
+                        pre_search_reply: None,
                         kb_note: None,
                     });
                 }
@@ -272,6 +274,7 @@ pub async fn generate_reply(
                             web_search_needed: None,
                             web_search_query: None,
                             original_query: None,
+                            pre_search_reply: None,
                         kb_note: None,
                         });
                     }
@@ -828,12 +831,12 @@ pub async fn generate_reply(
         None
     };
 
-    // Hands-free and the user asked for searches to run without confirmation: do the
-    // search here and answer from it, exactly as the page does after its own confirm
-    // step. Until 2026-09-17 only the page honoured the setting; the assistant-role
-    // path answered "want me to search?" instead (GitHub #26, KI-062). The synthesis
-    // is a second, memory-free turn; its reply is what the user hears.
-    if hands_free && web_search_query.is_some() && crate::voice_prefs::web_search_auto() {
+    // Hands-free always searches, never asks first (Matt, 2026-09-20, GitHub #26):
+    // "want me to search?" has no way to be answered by voice — there is no button off
+    // screen, and a spoken "yes" just looked like a new, unrelated question, which the
+    // model sometimes "answered" by inventing a search for the word "yes" itself. The
+    // synthesis below is a second, memory-free turn; its reply is what the user hears.
+    if hands_free && web_search_query.is_some() {
         let search_query = web_search_query.clone().unwrap_or_default();
         sink.event("web-search", serde_json::json!({ "query": search_query }));
         println!("[RUST] Hands-free auto search: {}", search_query);
@@ -853,11 +856,31 @@ pub async fn generate_reply(
         let prompt = format!(
             "Answer the user's question using the web search results below. Be direct and concise — do not explain your reasoning process, do not narrate what you are doing, just answer.\n\nQuestion: \"{}\"\n\n{}\n\nAnswer directly based on the search results. If the results don't contain enough information, say so briefly.",
             query, context);
+        // What the model said before it decided to search is often worth keeping (a
+        // partial answer, a caveat). It stays as its own turn, on screen and in the
+        // history, and the searched answer follows it (Matt, 2026-09-20). The page
+        // does the same for a screen-on search.
+        let first_answer = reply_text.find("WEB_SEARCH_NEEDED:")
+            .map(|p| reply_text[..p].trim().to_string())
+            .unwrap_or_default();
+        let first_answer = if first_answer.is_empty() { None } else { Some(first_answer) };
+        if let Some(first) = first_answer.clone() {
+            if containment_mode.to_lowercase() != "hipaa" {
+                let (s, u, m, b, c) = (session_id.clone(), user_id.clone(), query.clone(), forced_backend.clone(), containment_mode.clone());
+                tokio::spawn(async move {
+                    if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        if let Err(e) = crate::conversation_history::log_exchange(&pool, &s, &u, &m, &first, &b, &c, true, "hands_free").await {
+                            eprintln!("[ConvHistory] ⚠️ Failed to log pre-search answer: {}", e);
+                        }
+                    }
+                });
+            }
+        }
         let synthesized = Box::pin(generate_reply(
             sink.clone(), prompt, user_id.clone(), session_id.clone(), forced_backend.clone(), containment_mode.clone(),
             None, Some(true), Some(true), Some(kb_enabled), Some(query.clone()), None, true,
         )).await?;
-        return Ok(ReplyResponse { original_query: Some(query.clone()), ..synthesized });
+        return Ok(ReplyResponse { original_query: Some(query.clone()), pre_search_reply: first_answer, ..synthesized });
     }
 
     // Parse MEMORY_EXTRACT facts from the LLM response — fires for any message type,
@@ -1170,6 +1193,7 @@ pub async fn generate_reply(
         web_search_needed: web_search_query.as_ref().map(|_| true),
         web_search_query: web_search_query.clone(),
         original_query: Some(query.clone()),
+        pre_search_reply: None,
         kb_note: kb_note.clone(),
     };
 
@@ -1181,7 +1205,12 @@ pub async fn generate_reply(
         let ch_session = session_id.clone();
         let ch_user = user_id.clone();
         let ch_message = query.clone();  // Store clean question, not file dump
-        let ch_reply = final_reply_text.clone();
+        // A reply that was only the WEB_SEARCH_NEEDED marker is empty once the marker is
+        // stripped; an empty assistant turn sat in History as a blank bubble (2026-09-20).
+        let ch_reply = match (&web_search_query, final_reply_text.trim().is_empty()) {
+            (Some(q), true) => format!("Web search needed: \"{}\"", q),
+            _ => final_reply_text.clone(),
+        };
         let ch_backend = forced_backend.clone();
         let ch_mode = containment_mode.clone();
         // Any real exchange may name the thread, hands-free included. The old rule

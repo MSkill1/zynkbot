@@ -12,7 +12,8 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - API Keys: once a key is stored, the provider button reads "View plan" and opens the provider's plan/billing page (it said "Get Key" and opened the key page whether or not you had one).
 
 ### Android voice
-- A hands-free question that needs a web search now gets one when "Auto-execute in voice sessions" is on; the assistant-role path had been asking "want me to search?" regardless of the setting (GitHub #26, KI-062).
+- A hands-free question that needs a web search always gets one now, no confirmation step. There was never a way to say "yes" to "want me to search?" by voice, so a spoken "yes" was heard as a new, unrelated question (GitHub #26). The "Auto-execute in voice sessions" toggle this used to depend on is removed; it no longer had anything to control.
+- Hands-free web search: the search fetches its three source pages at once instead of one after another, and says "Let me check that" as soon as it starts. The whole round trip used to be silent and could run past a minute (tester report, 2026-09-20).
 - A hands-free listen ends when the room falls well below your own speaking level, not only when it falls to the pre-speech floor; a room that settled at a steady murmur after you finished kept the recording running to the 30 s cap. The level is logged every 2 s while listening.
 
 ### Memory
@@ -24,12 +25,26 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - "Set a time for five minutes" sets a timer: dictation often drops the r in "timer" (GitHub #29).
 - The share folder has an "Add file" button on Android. Files placed in `Download/ZynkbotShare` by other apps are invisible to Zynkbot under scoped storage; the picker copies the file in. The Kotlin side existed, the button did not.
 
+### Everything
+- The app now starts in Sovereign mode, not Guardian. Guardian's blocking is a demo of a safety layer, built on a classifier not tuned for real conversation; a new user's first hard block from it was a bad first impression for a feature that exists to be shown, not to gate real use. Sovereign warns on the same triggers instead of refusing. Child and HIPAA modes are unchanged and still opt-in.
+
 ### Chat
 - You can message your own devices. Any device paired for sync now shows a Chat button in ZynkSync settings; a message to it travels over the verified sync connection, so a note typed on the PC arrives on the phone with no link pairing. Messages to another user's linked device work as before.
 
+### Chat
+- Every reply has a 🔊 Read aloud button next to Copy and Regenerate; tap again to stop. Uses the same voice as spoken replies, so it needs an OpenAI key.
+- When the model answers and then runs a web search on its own, its first answer now stays on screen and in the history as its own message, and the searched answer appears beneath it. It used to be replaced.
+- Resolving a memory contradiction closes the dialog the moment you confirm; the resolution runs behind it. It used to hold the dialog for the whole resolution, including a 10-second timeout for every paired device that was unreachable. The blocking pop-ups it showed are a short notice at the bottom of the window now.
+
+### Android voice
+- In-app dictation lets go of the microphone on every failure, not only on a clean stop. A dictation that broke mid-recording kept the microphone, and the wake-word listener, which pauses whenever anything else records, stayed deaf until the app was restarted (Pixel, 2026-09-19, twenty "Hey Zynk" attempts ignored). The listener also resumes on its own after two minutes paused, whatever is still recording.
+
 ### Link
-- Android: a file downloaded from a linked device now shows up in the phone's Files app. The media index was missing it after the download was renamed into place; the app now asks Android to index the file, for downloads and for ➕ Add file (KI-067).
-- Android: the Link panel says that only files added with ➕ Add file are visible to Zynkbot; files moved into the folder by another app are skipped by the scan and are now named in the log instead of vanishing (KI-015).
+- Android: Zynkbot is now a location in the phone's Files app, beside Downloads and Drive, and appears in every app's Share menu. Anything put there, by Share, by moving it in Files, or with ➕ Add file, is shared with linked devices, and downloads from linked devices land there. Until now the share was a folder under Download, and Android hid every file another app put in it from Zynkbot (KI-015). Files Zynkbot owned in the old folder are moved over once.
+- Android: after downloading an image from a linked device, Zynkbot offers to add a copy to the photo gallery (Pictures/Zynkbot), since the new location is not a media folder.
+- Link: a file sent to the Knowledge Base from a linked device now shows "Indexing n / N pieces" after the transfer, and is marked done only once it can be asked about. On a phone a large PDF indexes for minutes after the transfer bar fills; before, the bar said finished while chat silently waited on the indexing.
+- Link: the "Shared With Me" list asks every linked device at once and waits at most 5 seconds for each, instead of one device at a time with a 60-second wait; a linked device that is switched off no longer holds the list back for a minute.
+- Android voice: strict mode is off. After three wakes that did not end in an answered question it demanded a level of confidence a real "Hey Zynk" rarely reaches and the phone went deaf for ten minutes. A wake that ends in an answer, spoken or on screen, now counts toward the "Send my wake-word clips" total.
 
 ### Sync
 - A desktop's conversation history now reaches the phones. The "sent up to here" marker for history lived in memory, so every app start re-sent the whole history in one request, the phone rejected it as too large, and the backlog was silently dropped. The marker is now stored per peer and moved only once the peer has accepted the push; a push carries at most 300 messages, so a large history arrives over a few sync cycles (KI-068).

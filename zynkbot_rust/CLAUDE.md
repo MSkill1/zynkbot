@@ -5,7 +5,7 @@
 `src-tauri/gen/android/` is committed to git and contains hand-edited files (full table in
 `docs/architecture_and_development/ANDROID_ARCHITECTURE.md`, section 2):
 
-- `app/src/main/java/ai/containai/zynkbot/*.kt` — 13 hand-written Kotlin files: `MainActivity.kt`
+- `app/src/main/java/ai/containai/zynkbot/*.kt` — 15 hand-written Kotlin files: `MainActivity.kt`
   (activity, permission queue, model unpacking, JavaScript bridges), `WakeWordService.kt`,
   `ZynkAssistantService.kt`, `ZynkAssistantSessionService.kt`, `ZynkAssistantSession.kt`,
   `ZynkRecognitionService.kt`, `NativeVoiceAnswerer.kt`, `OpenAiDictation.kt`, `VoiceCommands.kt`,
@@ -51,25 +51,22 @@ Sign a debug build with the debug keystore (release builds are signed by Gradle 
   --out /tmp/app-signed.apk <unsigned.apk>
 ```
 
-## ZynkbotShare folder (Android)
+## Zynkbot share folder (Android)
 
-Files shared via ZynkLink on Android live in `Downloads/ZynkbotShare/`
-(`/storage/emulated/0/Download/ZynkbotShare/`). The app creates this at launch via
-`Environment.getExternalStoragePublicDirectory(DIRECTORY_DOWNLOADS)` — no storage
-permissions needed for files the app creates there. Files placed there by other apps
-(e.g. system Files app) may not be readable via raw File API on Android 11+ due to
-scoped storage. Resolved 2026-09-07: files are added through the in-app picker
-(`pickFile` copies into ZynkbotShare, `copyToKnowledgeBase` copies into the KB folder),
-so no storage permission is needed and none is requested.
+Since 2026-09-19 the share folder is Zynkbot's own storage location: `filesDir/ZynkbotShare`
+(`/data/user/0/ai.containai.zynkbot/files/ZynkbotShare`), published to the system by
+`ZynkShareProvider.kt` (a `DocumentsProvider`, authority `ai.containai.zynkbot.share`). It
+appears as "Zynkbot" in the Files app drawer and in any app's file picker; `ShareReceiverActivity.kt`
+puts Zynkbot in every app's Share menu. Every file that enters is written by this process, so
+Zynkbot owns it and the Rust scan reads it by plain path. No storage permission is declared or
+needed. Before that date the folder was `Download/ZynkbotShare`, where files other apps placed
+were invisible under scoped storage (KI-015); `MainActivity.migrateOldShareFolder()` moves the
+files we own out of it once. The location is not a media folder: images in it do not appear in
+the gallery unless the user accepts the "add to gallery" offer after a download
+(`AndroidPaths.saveToGallery`, which copies into `Pictures/Zynkbot`).
 
 ## CI
 
 The `release-android` job in `.github/workflows/release.yml` cannot work as written (KI-034): it runs
 `gradlew` without `tauri android build`, so the gitignored Tauri-generated Gradle files are missing.
 Release artefacts are built locally for now.
-
-## Phase 2 TODO (filed, not built)
-
-Proper arbitrary-folder sharing on Android via SAF (ACTION_OPEN_DOCUMENT_TREE +
-takePersistableUriPermission + Kotlin bridge to convert content:// URIs to paths
-readable by Rust std::fs). Tracked as task #6 / android-phase2.

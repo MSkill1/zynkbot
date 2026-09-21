@@ -411,6 +411,34 @@ impl NLPEnhancer {
         }
     }
 
+    /// A tagged word piece followed by untagged pieces came out as a fragment: for a
+    /// lowercase "vermont" BERT tagged "ve" as a place and "##rmont" as nothing, and
+    /// untagged pieces never reach the merge, so the entity was "ve" (2026-09-20).
+    /// Extend each entity to the end of the word it starts in and take the word from
+    /// the text. `start`/`end` are byte offsets into `text` from the tokenizer.
+    fn extend_to_word_end(text: &str, mut entities: Vec<Entity>) -> Vec<Entity> {
+        for e in entities.iter_mut() {
+            if e.start >= e.end || e.end > text.len()
+                || !text.is_char_boundary(e.start) || !text.is_char_boundary(e.end) {
+                continue;
+            }
+            // Only when the offsets really point at this word.
+            if !text[e.start..e.end].eq_ignore_ascii_case(&e.word) {
+                continue;
+            }
+            let mut end = e.end;
+            while let Some(c) = text[end..].chars().next() {
+                if c.is_alphanumeric() { end += c.len_utf8(); } else { break; }
+            }
+            if end > e.end {
+                e.word = text[e.start..end].to_string();
+                e.end = end;
+                e.offset.end = end as u32;
+            }
+        }
+        entities
+    }
+
     /// Merge BERT wordpiece tokens into complete words
     /// Example: ["o", "##ly", "##mp", "##ia"] → ["olympia"]
     /// BERT tokenizer splits words into subword units with ## prefix for continuations
@@ -531,7 +559,7 @@ impl NLPEnhancer {
         let fallback_entities = self.extract_entities_fallback(&normalized_content);
 
         // Step 3: Merge BERT wordpiece tokens (e.g., "o", "##ly", "##mp", "##ia" → "olympia")
-        let merged_bert_entities = Self::merge_wordpiece_tokens(bert_entities);
+        let merged_bert_entities = Self::extend_to_word_end(&normalized_content, Self::merge_wordpiece_tokens(bert_entities));
 
         // Step 4: Merge results, removing duplicates
         all_entities.extend(merged_bert_entities);
@@ -605,9 +633,10 @@ impl NLPEnhancer {
         let combined_results: Vec<Vec<Entity>> = bert_results
             .into_iter()
             .zip(fallback_results)
-            .map(|(bert_entities, fallback_entities)| {
+            .zip(contents.iter())
+            .map(|((bert_entities, fallback_entities), text)| {
                 // Merge BERT wordpiece tokens first
-                let merged_bert = Self::merge_wordpiece_tokens(bert_entities);
+                let merged_bert = Self::extend_to_word_end(text, Self::merge_wordpiece_tokens(bert_entities));
                 let mut all_entities = merged_bert;
 
                 // Add fallback entities that aren't duplicates
@@ -993,6 +1022,25 @@ impl Default for NLPEnhancer {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn extend_to_word_end_completes_a_fragment() {
+        // "vermont" tokenised as "ve" + "##rmont"; only "ve" was tagged.
+        let text = "what can you tell me about vermont from the knowledge base";
+        let start = text.find("vermont").unwrap();
+        let e = Entity { word: "ve".into(), score: 0.9, label: "LOC".into(), start, end: start + 2,
+            offset: Offset { begin: start as u32, end: (start + 2) as u32 } };
+        let out = NLPEnhancer::extend_to_word_end(text, vec![e]);
+        assert_eq!(out[0].word, "vermont");
+        assert_eq!(out[0].end, start + 7);
+        // A whole word is left alone; a stale offset is left alone.
+        let whole = Entity { word: "vermont".into(), score: 0.9, label: "LOC".into(), start, end: start + 7,
+            offset: Offset { begin: start as u32, end: (start + 7) as u32 } };
+        assert_eq!(NLPEnhancer::extend_to_word_end(text, vec![whole])[0].word, "vermont");
+        let stale = Entity { word: "ve".into(), score: 0.9, label: "LOC".into(), start: 0, end: 2,
+            offset: Offset { begin: 0, end: 2 } };
+        assert_eq!(NLPEnhancer::extend_to_word_end(text, vec![stale])[0].word, "ve");
+    }
     use super::*;
 
     #[test]

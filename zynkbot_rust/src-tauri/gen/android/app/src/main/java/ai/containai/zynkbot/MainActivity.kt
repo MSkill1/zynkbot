@@ -137,20 +137,36 @@ class MainActivity : TauriActivity() {
             try {
                 val destDir = zynkShareDir()
                 destDir.mkdirs()
+                val resolve = { f: File ->
+                    val escaped = f.absolutePath.replace("\\", "\\\\").replace("'", "\\'")
+                    wv.post { wv.evaluateJavascript(
+                        "window.__zfpResolve&&window.__zfpResolve('$escaped');window.__zfpResolve=null;window.__zfpReject=null;", null) }
+                }
+                // Picked from the Zynkbot location itself (the picker lists it since
+                // ZynkShareProvider, 2026-09-19): the file is already here. Copying it
+                // onto itself emptied it — the write below truncates the file before
+                // the read starts (two 0-byte files on the Pixel, 2026-09-20). Hand the
+                // existing path back instead.
+                if (uri.authority == ZynkShareProvider.AUTHORITY) {
+                    val existing = File(destDir, android.provider.DocumentsContract.getDocumentId(uri))
+                    if (existing.isFile && existing.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
+                        resolve(existing)
+                        return@Thread
+                    }
+                }
                 // Resolve a display name for the file
                 val fileName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                     val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                     cursor.moveToFirst()
                     if (nameIndex >= 0) cursor.getString(nameIndex) else null
                 } ?: uri.lastPathSegment ?: "file"
-                val dest = File(destDir, fileName)
+                // Never replace a file already here; "(2)" it, as the Share receiver does.
+                val dest = ZynkShareProvider.uniqueFile(destDir, fileName)
                 contentResolver.openInputStream(uri)?.use { input ->
                     dest.outputStream().use { output -> input.copyTo(output) }
                 }
-                android.media.MediaScannerConnection.scanFile(this@MainActivity, arrayOf(dest.absolutePath), null, null)
-                val escaped = dest.absolutePath.replace("\\", "\\\\").replace("'", "\\'")
-                wv.post { wv.evaluateJavascript(
-                    "window.__zfpResolve&&window.__zfpResolve('$escaped');window.__zfpResolve=null;window.__zfpReject=null;", null) }
+                ZynkShareProvider.notifyFilesApp(this@MainActivity)
+                resolve(dest)
             } catch (e: Exception) {
                 val msg = (e.message ?: "copy failed").replace("'", "\\'")
                 wv.post { wv.evaluateJavascript(
@@ -222,20 +238,43 @@ class MainActivity : TauriActivity() {
     }
 
     inner class ZynkbotPathsBridge {
+        /** A peer download or ➕ Add file landed in the share folder: refresh the Files app view. */
+        @JavascriptInterface
+        fun shareFileWritten(path: String) { ZynkShareProvider.notifyFilesApp(this@MainActivity) }
+
         /**
-         * Tell Android's media index about a file Zynkbot just wrote into ZynkbotShare.
-         * The Files and Gallery apps list from that index, not the disk; a download that
-         * lands via a `.part` rename was not being recorded ("Database update failed
-         * while renaming" in the MediaProvider log), so the file existed but never
-         * appeared in Files (2026-09-19). Harmless for files that are already indexed.
+         * Put a copy of an image from the share folder into the photo gallery
+         * (Pictures/Zynkbot). The share folder is app storage, which the gallery never
+         * indexes, so this is offered after an image download. No permission needed:
+         * an app may add its own media on Android 10+. Returns "" on success or an error.
          */
         @JavascriptInterface
-        fun scanFile(path: String) {
-            try {
-                android.media.MediaScannerConnection.scanFile(this@MainActivity, arrayOf(path), null, null)
-            } catch (e: Exception) {
-                android.util.Log.w("Zynkbot", "Media scan failed for $path: ${e.message}")
-            }
+        fun saveToGallery(path: String): String {
+            return try {
+                val src = File(path)
+                if (!src.isFile) return "file not found"
+                val ext = src.name.substringAfterLast('.', "").lowercase()
+                val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "image/*"
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, src.name)
+                    put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Zynkbot")
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+                val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                else android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                val uri = contentResolver.insert(collection, values) ?: return "could not create gallery entry"
+                contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
+                    ?: return "could not write gallery entry"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    contentResolver.update(uri, android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+                }
+                ""
+            } catch (e: Exception) { e.message ?: "failed" }
         }
 
         /** Voice settings selector ('vosk' | 'openai'); anything else is ignored. */
@@ -313,6 +352,12 @@ class MainActivity : TauriActivity() {
             } catch (e: Exception) { "" }
         }
 
+        /** MIME type the file's provider reports (e.g. "image/jpeg"), or "" if unknown. */
+        @JavascriptInterface
+        fun getMimeType(uriStr: String): String {
+            return try { contentResolver.getType(Uri.parse(uriStr)) ?: "" } catch (e: Exception) { "" }
+        }
+
         @JavascriptInterface
         fun getFileName(uriStr: String): String {
             return try {
@@ -383,57 +428,36 @@ class MainActivity : TauriActivity() {
             } catch (e: Exception) { "" }
         }
 
+        /** Open the Files app on the Zynkbot location (ZynkShareProvider). */
         @JavascriptInterface
         fun openShareFolder() {
-            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val dir = File(downloads, "ZynkbotShare").also { it.mkdirs() }
             runOnUiThread {
-                var opened = false
-
-                // Android 10+: raw: URI via Downloads provider
-                if (!opened && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    try {
-                        val uri = DocumentsContract.buildDocumentUri(
-                            "com.android.providers.downloads.documents",
-                            "raw:${dir.absolutePath}"
-                        )
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "vnd.android.document/directory")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        startActivity(intent)
-                        opened = true
-                    } catch (_: Exception) {}
+                val flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                val attempts = listOf(
+                    // What Settings → Storage uses to open a location in the Files app. A plain
+                    // ACTION_VIEW of the root "succeeded" but the Files app ignored it and
+                    // showed the last folder instead (Pixel, 2026-09-20).
+                    Intent("android.provider.action.BROWSE").apply {
+                        setDataAndType(DocumentsContract.buildRootUri(ZynkShareProvider.AUTHORITY, ZynkShareProvider.ROOT_ID),
+                            DocumentsContract.Root.MIME_TYPE_ITEM)
+                        addFlags(flags)
+                    },
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(DocumentsContract.buildRootUri(ZynkShareProvider.AUTHORITY, ZynkShareProvider.ROOT_ID),
+                            DocumentsContract.Root.MIME_TYPE_ITEM)
+                        addFlags(flags)
+                    },
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(DocumentsContract.buildDocumentUri(ZynkShareProvider.AUTHORITY, ZynkShareProvider.ROOT_DOC_ID),
+                            DocumentsContract.Document.MIME_TYPE_DIR)
+                        addFlags(flags)
+                    },
+                    Intent("android.intent.action.VIEW_DOWNLOADS").apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) },
+                )
+                for (intent in attempts) {
+                    try { startActivity(intent); return@runOnUiThread } catch (_: Exception) {}
                 }
-
-                // Android 10+: external storage provider fallback
-                // (Skipped on API <= 28 because documentsui on those versions crashes on this URI format)
-                if (!opened && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    try {
-                        val uri = DocumentsContract.buildDocumentUri(
-                            "com.android.externalstorage.documents",
-                            "primary:Download/ZynkbotShare"
-                        )
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "vnd.android.document/directory")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        startActivity(intent)
-                        opened = true
-                    } catch (_: Exception) {}
-                }
-
-                // Fallback: launch a file manager app
-                if (!opened) {
-                    try {
-                        val intent = packageManager.getLaunchIntentForPackage("com.sec.android.app.myfiles")
-                            ?: packageManager.getLaunchIntentForPackage("com.google.android.apps.nbu.files")
-                            ?: packageManager.getLaunchIntentForPackage("com.android.documentsui")
-                            ?: Intent(Intent.ACTION_VIEW).apply { type = "resource/folder" }
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        startActivity(intent)
-                    } catch (_: Exception) {}
-                }
+                android.widget.Toast.makeText(this@MainActivity, "Open the Files app and choose Zynkbot", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -604,6 +628,11 @@ class MainActivity : TauriActivity() {
 
     inner class WakeWordBridge {
         private val modelDir get() = File(filesDir, "wake-word-models")
+
+        /** The page answered a "Hey Zynk" question: label the trigger clip real, as the
+         *  screen-off path does, so the clip count grows from ordinary use (2026-09-20). */
+        @JavascriptInterface
+        fun markAnswered() { WakeWordService.reportOutcome(true) }
 
         // The three ONNX models ship inside the APK under assets/wake-word-models/
         // (~3 MB). They are copied out to filesDir rather than read in place because
@@ -928,6 +957,12 @@ class MainActivity : TauriActivity() {
         super.onResume()
         isInForeground = true
         Log.i(TAG_LIFECYCLE, "onResume — isInForeground=true")
+        // A file arrived through the Files app or the Share button while we were away.
+        if (ZynkShareProvider.takeChanged(this)) {
+            webViewRef?.get()?.let { wv ->
+                wv.post { wv.evaluateJavascript("window.__zynkShareChanged&&window.__zynkShareChanged();", null) }
+            }
+        }
         // Android may have destroyed and recreated this window's surface while we
         // were in another activity (16 s in Settings during onboarding did it — the
         // window came back NO_SURFACE -> DRAW_PENDING). Tauri's base activity only
@@ -1216,17 +1251,42 @@ class MainActivity : TauriActivity() {
         }
     }
 
-    private fun zynkShareDir(): File {
-        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val dir = File(downloads, "ZynkbotShare")
-        if (!dir.mkdirs() && !dir.exists()) {
-            error("Could not create ZynkbotShare in Downloads — check storage permissions")
-        }
-        return dir
-    }
+    /** The share folder is Zynkbot's own storage location now (ZynkShareProvider, KI-015). */
+    private fun zynkShareDir(): File = ZynkShareProvider.shareDir(this)
 
     private fun ensureShareDir() {
         zynkShareDir()
+        migrateOldShareFolder()
+    }
+
+    /**
+     * Until 2026-09-19 the share folder was Download/ZynkbotShare. Move the files we
+     * own there into the new location once. Files other apps had put there were never
+     * visible to us and cannot be moved; the user re-adds them. The page repoints the
+     * share record itself when it sees the new path (ZynkLinkPanel).
+     */
+    private fun migrateOldShareFolder() {
+        val prefs = getSharedPreferences("zynkbot_share", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("old_share_migrated", false)) return
+        Thread {
+            try {
+                val old = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ZynkbotShare")
+                val dest = zynkShareDir()
+                var moved = 0
+                for (f in old.listFiles() ?: emptyArray()) {
+                    if (!f.isFile || f.name.endsWith(".part")) continue
+                    val target = ZynkShareProvider.uniqueFile(dest, f.name)
+                    val ok = f.renameTo(target) || try {
+                        f.inputStream().use { i -> target.outputStream().use { o -> i.copyTo(o) } }; f.delete(); true
+                    } catch (_: Exception) { target.delete(); false }
+                    if (ok) moved++
+                }
+                if (moved > 0) { Log.i("Zynkbot", "Share: moved $moved file(s) from Download/ZynkbotShare"); ZynkShareProvider.markChanged(this) }
+            } catch (e: Exception) {
+                Log.w("Zynkbot", "Share migration skipped: ${e.message}")
+            }
+            prefs.edit().putBoolean("old_share_migrated", true).apply()
+        }.start()
     }
 
     private fun requestNotificationPermissionIfNeeded() {

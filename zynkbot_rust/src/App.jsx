@@ -133,6 +133,37 @@ export default function App() {
   // knows the thread hands-free turns were joining. Put it back on screen instead of
   // opening an empty one; a thread "disappeared" that way on 2026-09-08.
   const restoredRef = useRef(false);
+  // Android: a file arrived in the Zynkbot storage location through the Files app or
+  // the Share button while the app was in the background (ZynkShareProvider). Re-index
+  // the share even when the Link panel is not open — a linked phone lists from that index.
+  useEffect(() => {
+    if (!window.AndroidPaths) return;
+    // Also the one place the share record is kept right: exactly one share, at the
+    // current folder. Runs at startup, not only when the Link tab opens, so a peer
+    // browsing this phone sees the right folder after the location changed (2026-09-19).
+    window.__zynkShareChanged = async () => {
+      try {
+        const dir = window.AndroidPaths.getShareDir();
+        if (!dir) return;
+        const data = await invoke('list_my_shared_directories');
+        const dirs = data.shared_directories || [];
+        for (const d of dirs.filter(d => d.local_path !== dir)) {
+          await invoke('unshare_directory', { shareId: d.id }).catch(() => {});
+        }
+        let share = dirs.find(d => d.local_path === dir);
+        if (!share) {
+          const res = await invoke('share_directory', { localPath: dir, shareName: 'ZynkbotShare', isReadable: true, isWritable: false });
+          if (res?.success && res.share_id) share = { id: res.share_id };
+        }
+        if (share) await invoke('scan_shared_directory', { shareId: share.id, maxFiles: 1000 });
+      } catch (e) {
+        console.warn('[ZynkLink] Share registration / re-index failed:', e);
+      }
+    };
+    window.__zynkShareChanged();
+    return () => { window.__zynkShareChanged = null; };
+  }, []);
+
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
@@ -203,7 +234,11 @@ export default function App() {
     return localStorage.getItem('zynkbot_preferred_model') || 'local';
   });
   const [availableModels, setAvailableModels] = useState([]);
-  const [containmentMode, setContainmentMode] = useState("guardian");
+  // Sovereign, not Guardian: a new user's first real answer used to be an
+  // occasional hard block from a demo-grade classifier, which is a bad first
+  // impression for a safety layer that exists to be shown off, not to actually
+  // gate a real conversation. Sovereign warns instead of blocking (Matt, 2026-09-20).
+  const [containmentMode, setContainmentMode] = useState("sovereign");
   // "Report a problem" — opened from the sidebar or a reply's ⚑ button.
   const [showReport, setShowReport] = useState(false);
   const [reportContext, setReportContext] = useState('');
@@ -235,16 +270,8 @@ export default function App() {
   const [showSnapInModal, setShowSnapInModal] = useState(false);
   const [isLoadingEinstein, setIsLoadingEinstein] = useState(false);
   const [copyAllDone, setCopyAllDone] = useState(false);
-  const [webSearchAutoExecute, setWebSearchAutoExecute] = useState(() =>
-    localStorage.getItem('zynkbot_web_search_auto') === 'true'
-  );
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
   const memoryManagerRef = useRef(null);
-  // The hands-free (assistant-role) path runs in Rust and cannot read localStorage;
-  // mirror the auto-search setting so a spoken question that needs a search gets one.
-  useEffect(() => {
-    invoke('set_voice_pref', { key: 'web_search_auto', value: webSearchAutoExecute }).catch(() => {});
-  }, [webSearchAutoExecute]);
   const conversationEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const userScrolledUpRef = useRef(false);
@@ -668,9 +695,34 @@ export default function App() {
     }, 100);
   };
 
-  // Conflict Resolution Handlers
+  // A short non-blocking notice at the bottom of the window (2026-09-20). alert()
+  // blocks the page and needs a tap; this fades on its own.
+  const [notice, setNotice] = useState('');
+  const noticeTimerRef = useRef(null);
+  const notify = (text, ms = 4000) => {
+    setNotice(text);
+    clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => setNotice(''), ms);
+  };
+
+  // 🔊 on a reply: read it aloud, or stop if it is the one being read (2026-09-20).
+  const [speakingMessageId, setSpeakingMessageId] = useState(null);
+  const handleSpeakMessage = async (msg) => {
+    if (voice.isTtsSpeaking && speakingMessageId === msg.id) { voice.stopTts(); setSpeakingMessageId(null); return; }
+    setSpeakingMessageId(msg.id);
+    const ok = await voice.speakResponse(msg.content);
+    if (ok === false) { setSpeakingMessageId(null); notify('Read aloud needs an OpenAI key (Settings → API Keys)', 6000); }
+  };
+
+  // Conflict Resolution Handlers. The dialog closes the moment the user confirms;
+  // the resolution runs behind it (it used to hold the dialog open for the whole
+  // thing, including a 10 s timeout per unreachable sync peer — 2026-09-20).
   const handleConflictResolve = async (resolution) => {
     console.log('Conflict resolved:', resolution);
+    const conflict = currentConflict;
+    setShowConflictResolution(false);
+    setCurrentConflict(null);
+    if (!conflict) return;
 
     try {
       // Map frontend options to backend decisions
@@ -695,28 +747,28 @@ export default function App() {
 
       // Call the NEW resolve command with pending memory data
       const result = await invoke('resolve_memory_conflict_v2', {
-        pendingMemoryJson: JSON.stringify(currentConflict.pending_memory),
-        conflictingMemoryId: currentConflict.memoryA.id,
+        pendingMemoryJson: JSON.stringify(conflict.pending_memory),
+        conflictingMemoryId: conflict.memoryA.id,
         decision: decision,
         explanation: resolution.explanation || null,
-        relationshipsJson: JSON.stringify(currentConflict.relationships || []),
-        userId: currentConflict.user_id || userId,
-        sessionId: currentConflict.session_id || sessionId,
+        relationshipsJson: JSON.stringify(conflict.relationships || []),
+        userId: conflict.user_id || userId,
+        sessionId: conflict.session_id || sessionId,
       });
 
       console.log('✅ Conflict resolved successfully:', result);
 
       // Show success message
       if (decision === 'keep_old') {
-        alert('Kept existing memory, discarded new statement');
+        notify('Kept the existing memory; the new statement was discarded');
       } else if (decision === 'keep_new') {
-        alert('Kept new memory, deleted old memory');
+        notify('Kept the new memory; the old one was deleted');
       } else if (decision === 'not_a_contradiction') {
-        alert('Both memories kept — contradiction edge removed');
+        notify('Both memories kept; no longer marked as contradicting');
       } else if (decision === 'keep_both') {
-        alert('Both memories kept with contradiction edge. You can resolve this later in the Memory Manager.');
+        notify('Both memories kept, still marked as contradicting. You can resolve it later in the Memory Manager.', 6000);
       } else if (decision === 'both_with_explanation') {
-        alert('Both memories kept — explanation stored as a resolving memory');
+        notify('Both memories kept; your explanation was stored as a memory');
       }
 
       // Refresh the memory manager to show updated memories
@@ -725,11 +777,8 @@ export default function App() {
       }
     } catch (error) {
       console.error('Error resolving conflict:', error);
-      alert(`Failed to resolve conflict: ${error}`);
+      notify(`Could not resolve the conflict: ${error}`, 8000);
     }
-
-    setShowConflictResolution(false);
-    setCurrentConflict(null);
   };
 
   const IMAGE_EXTENSIONS = ['jpg','jpeg','png','gif','webp','bmp'];
@@ -744,6 +793,74 @@ export default function App() {
     if (kind === 'images') window.AndroidPaths.pickImages();
     else window.AndroidPaths.pickDocuments();
   });
+
+  // Read files (content:// URIs on Android, paths on desktop) into composer attachments.
+  // A file's first bytes say what it is regardless of its name or what Android
+  // could guess — the same way any image viewer identifies a file. Only called
+  // when both the extension and Android's own MIME lookup came back empty.
+  const sniffImageMimeFromBase64 = (b64) => {
+    try {
+      const head = atob(b64.slice(0, 64)); // ~48 bytes: plenty for every signature below
+      const b = (i) => head.charCodeAt(i);
+      if (b(0) === 0xFF && b(1) === 0xD8 && b(2) === 0xFF) return 'image/jpeg';
+      if (b(0) === 0x89 && b(1) === 0x50 && b(2) === 0x4E && b(3) === 0x47) return 'image/png';
+      if (b(0) === 0x47 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x38) return 'image/gif';
+      if (b(0) === 0x42 && b(1) === 0x4D) return 'image/bmp';
+      if (b(0) === 0x52 && b(1) === 0x49 && b(2) === 0x46 && b(3) === 0x46 &&
+          b(8) === 0x57 && b(9) === 0x45 && b(10) === 0x42 && b(11) === 0x50) return 'image/webp';
+      return null;
+    } catch (_) { return null; }
+  };
+
+  const attachFromPaths = async (paths) => {
+    const newFiles = [];
+    for (const path of paths) {
+      try {
+        // On Android, openFileDialog returns a content:// URI that Rust's fs::read can't open.
+        // Use the AndroidPaths bridge which reads via ContentResolver instead.
+        const name = window.AndroidPaths ? window.AndroidPaths.getFileName(path) : path.split('/').pop();
+        const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+        // Android: trust the provider's type over the name — a photo shared into the
+        // Zynkbot location can carry a bare id for a name (2026-09-20).
+        let providerType = '';
+        try { providerType = window.AndroidPaths?.getMimeType?.(path) || ''; } catch (_) {}
+        console.log('[Attach] picked', path, 'name:', name, 'type:', providerType);
+        if (IMAGE_EXTENSIONS.includes(ext) || providerType.startsWith('image/')) {
+          const base64 = window.AndroidPaths
+            ? window.AndroidPaths.readFileBase64(path)
+            : await invoke('read_file_base64', { path });
+          if (!base64) throw new Error(`Could not read image ${name}`);
+          const mimeType = MIME_TYPES[ext] || (providerType.startsWith('image/') ? providerType : 'image/jpeg');
+          newFiles.push({ name, base64, mimeType, size: base64.length, isImage: true });
+        } else {
+          // Neither the name nor Android's own answer said what this is — Android
+          // reports nothing for a file with no extension, and has no other way to
+          // check. Read it and look at its own first bytes before giving up and
+          // treating it as text; a renamed screenshot was sent as raw EXIF/JPEG
+          // text instead of a picture until this (Matt, 2026-09-20).
+          let sniffed = null;
+          if (window.AndroidPaths) {
+            try {
+              const probe = window.AndroidPaths.readFileBase64(path);
+              const mime = probe ? sniffImageMimeFromBase64(probe) : null;
+              if (mime) sniffed = { base64: probe, mimeType: mime };
+            } catch (_) { /* not readable as bytes either; fall through to text */ }
+          }
+          if (sniffed) {
+            newFiles.push({ name, base64: sniffed.base64, mimeType: sniffed.mimeType, size: sniffed.base64.length, isImage: true });
+          } else {
+            const content = window.AndroidPaths
+              ? window.AndroidPaths.readFileText(path)
+              : await invoke('read_text_file', { path });
+            newFiles.push({ name, content, size: content.length, isImage: false });
+          }
+        }
+      } catch (e) {
+        alert(`Could not read file: ${e}`);
+      }
+    }
+    if (newFiles.length > 0) setAttachedFiles(prev => [...prev, ...newFiles]);
+  };
 
   const handleAttachFile = async (kind) => {
     let result;
@@ -763,32 +880,7 @@ export default function App() {
       });
     }
     if (!result) return;
-    const paths = Array.isArray(result) ? result : [result];
-    const newFiles = [];
-    for (const path of paths) {
-      try {
-        // On Android, openFileDialog returns a content:// URI that Rust's fs::read can't open.
-        // Use the AndroidPaths bridge which reads via ContentResolver instead.
-        const name = window.AndroidPaths ? window.AndroidPaths.getFileName(path) : path.split('/').pop();
-        const ext = name.split('.').pop().toLowerCase();
-        if (IMAGE_EXTENSIONS.includes(ext)) {
-          const base64 = window.AndroidPaths
-            ? window.AndroidPaths.readFileBase64(path)
-            : await invoke('read_file_base64', { path });
-          if (!base64) throw new Error('Could not read image');
-          const mimeType = MIME_TYPES[ext] || 'image/jpeg';
-          newFiles.push({ name, base64, mimeType, size: base64.length, isImage: true });
-        } else {
-          const content = window.AndroidPaths
-            ? window.AndroidPaths.readFileText(path)
-            : await invoke('read_text_file', { path });
-          newFiles.push({ name, content, size: content.length, isImage: false });
-        }
-      } catch (e) {
-        alert(`Could not read file: ${e}`);
-      }
-    }
-    if (newFiles.length > 0) setAttachedFiles(prev => [...prev, ...newFiles]);
+    await attachFromPaths(Array.isArray(result) ? result : [result]);
   };
 
   const handleCameraCapture = async () => {
@@ -947,6 +1039,12 @@ export default function App() {
       });
 
       unlisten(); // Stop listening for tokens — stream is complete
+      // A "Hey Zynk" question the page answered counts as a real wake, the same as
+      // one the phone answers itself with the screen off. Without this the "Send my
+      // wake-word clips" count only grew from screen-off use (Matt, 2026-09-20).
+      if (triggeredByWake && response?.reply_text && !response.reply_text.trim().startsWith('NO_QUERY')) {
+        try { window.WakeWordBridge?.markAnswered?.(); } catch (_) {}
+      }
 
       console.log('=== RUST BACKEND RESPONSE ===');
       console.log('Full response:', response);
@@ -957,8 +1055,12 @@ export default function App() {
         console.log('[WebSearch] Query:', response.web_search_query);
         console.log('[WebSearch] Original query:', response.original_query);
 
-        if (webSearchAutoExecute && triggeredByWake) {
-          await handleExecuteWebSearch(streamId, response.web_search_query, response.original_query, speak);
+        // Hands-free always searches, never asks first (Matt, 2026-09-20, GitHub #26):
+        // there is no way to answer "want me to search?" by voice, so it always
+        // ran the search from here on; the `webSearchAutoExecute` toggle used to
+        // gate this and no longer does — see the Rust side of the same change.
+        if (triggeredByWake) {
+          await handleExecuteWebSearch(streamId, response.web_search_query, response.original_query, speak, response.reply_text || '');
           return;
         }
 
@@ -1114,21 +1216,38 @@ export default function App() {
   // Execute web search when user confirms
   // `speak` is decided by the request that triggered the search; the confirm
   // button in ChatMessage omits it, so a tapped search follows the in-app setting.
-  const handleExecuteWebSearch = async (messageId, searchQuery, originalQuery, speak = voice.ttsEnabled) => {
+  // firstAnswer: what the model said before deciding to search. When there is one it
+  // stays as its own message and the searched answer goes in a new message beneath
+  // it, instead of replacing it (Matt, 2026-09-20: "the original message was useful,
+  // and it disappeared").
+  const handleExecuteWebSearch = async (messageId, searchQuery, originalQuery, speak = voice.ttsEnabled, firstAnswer = '') => {
     console.log('[WebSearch] User confirmed web search');
     console.log('[WebSearch] Message ID:', messageId);
     console.log('[WebSearch] Search query:', searchQuery);
     console.log('[WebSearch] Original query:', originalQuery);
 
+    const keepFirst = !!(firstAnswer && firstAnswer.trim());
+    const targetId = keepFirst ? `${messageId}-search` : messageId;
     try {
       setIsLoading(true);
 
-      // Update the message to show that search is in progress
-      setMessages(prev => prev.map(msg =>
-        msg.id === messageId
-          ? { ...msg, content: `Searching the web for: "${searchQuery}"...`, web_search_needed: false }
-          : msg
-      ));
+      // Show that the search is in progress: in a new message under the first answer,
+      // or in place of the confirmation prompt when there was no answer to keep.
+      setMessages(prev => {
+        // The first answer lives in `messageId`; the search reply goes into a new
+        // message right after it. Looking the first answer up by the new id (which does
+        // not exist yet) put the search reply at the top of the conversation (2026-09-20).
+        const kept = prev.map(msg =>
+          msg.id === messageId ? { ...msg, web_search_needed: false, isStreaming: false, content: keepFirst ? firstAnswer : msg.content } : msg
+        );
+        if (!keepFirst) return kept.map(msg => msg.id === targetId ? { ...msg, content: `Searching the web for: "${searchQuery}"...` } : msg);
+        if (kept.some(msg => msg.id === targetId)) return kept;
+        const idx = kept.findIndex(msg => msg.id === messageId);
+        const first = idx >= 0 ? kept[idx] : null;
+        const searching = { id: targetId, role: 'assistant', content: `Searching the web for: "${searchQuery}"...`, timestamp: new Date().toISOString(), isStreaming: true, metadata: first?.metadata };
+        const at = idx < 0 ? kept.length : idx + 1;
+        return [...kept.slice(0, at), searching, ...kept.slice(at)];
+      });
 
       // Execute the web search
       const searchResults = await invoke('execute_web_search', {
@@ -1166,12 +1285,12 @@ export default function App() {
 
       // Clear the "Searching..." placeholder and start streaming tokens into the message
       setMessages(prev => prev.map(msg =>
-        msg.id === messageId ? { ...msg, content: '', isStreaming: true } : msg
+        msg.id === targetId ? { ...msg, content: '', isStreaming: true } : msg
       ));
 
       const unlisten = await listen('stream-token', (event) => {
         setMessages(prev => prev.map(msg =>
-          msg.id === messageId
+          msg.id === targetId
             ? { ...msg, content: msg.content + event.payload }
             : msg
         ));
@@ -1179,6 +1298,9 @@ export default function App() {
 
       const llmResponse = await invoke('send_message_with_memory', {
         message: llmPrompt,
+        // History stores the clean query, not the 5 KB prompt with the search results
+        // in it, which showed up in the thread as if the user had typed it (2026-09-20).
+        userQuery: `Web search: "${searchQuery}"`,
         userId,
         sessionId,
         backend: modelType,
@@ -1193,7 +1315,7 @@ export default function App() {
 
       // Finalize message with full metadata and search results for transparency
       setMessages(prev => prev.map(msg =>
-        msg.id === messageId
+        msg.id === targetId
           ? {
               ...msg,
               content: llmResponse.reply_text,
@@ -1213,7 +1335,7 @@ export default function App() {
 
       // Update message with error
       setMessages(prev => prev.map(msg =>
-        msg.id === messageId
+        msg.id === targetId
           ? { ...msg, content: `Web search failed: ${error}. Please try again.` }
           : msg
       ));
@@ -1899,6 +2021,8 @@ export default function App() {
                         onEdit={!isLoading && idx === lastUserIdx ? handleEditLastUser : undefined}
                         onRegenerate={!isLoading && idx === lastAssistantIdx ? handleRegenerateLast : undefined}
                         onReport={msg.role === 'assistant' ? openReport : undefined}
+                        onSpeak={msg.role === 'assistant' && !msg.isStreaming ? () => handleSpeakMessage(msg) : undefined}
+                        isSpeaking={voice.isTtsSpeaking && speakingMessageId === msg.id}
                         isEditing={editingMessageId === msg.id}
                         onSaveEdit={(newContent) => handleSaveEdit(msg.id, newContent)}
                         onCancelEdit={handleCancelEdit}
@@ -2451,6 +2575,11 @@ export default function App() {
         device={chatDevice}
         currentDeviceId={currentDeviceId}
       />
+      {notice && (
+        <div role="status" style={{ position: 'fixed', left: '50%', bottom: '24px', transform: 'translateX(-50%)', background: '#282a36', color: '#f8f8f2', border: '1px solid #6272a4', borderRadius: '8px', padding: '10px 16px', fontSize: '0.9rem', zIndex: 10000, maxWidth: '90vw', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}>
+          {notice}
+        </div>
+      )}
       <ConflictResolutionModal
         isOpen={showConflictResolution}
         conflict={currentConflict}
@@ -2521,8 +2650,6 @@ export default function App() {
         onDownloadModels={() => window.WakeWordBridge?.downloadModels()}
         ttsEnabled={voice.ttsEnabled}
         onTtsEnabledChange={voice.setTtsEnabled}
-        webSearchAutoExecute={webSearchAutoExecute}
-        onWebSearchAutoExecuteChange={(v) => { setWebSearchAutoExecute(v); localStorage.setItem('zynkbot_web_search_auto', v.toString()); invoke('set_voice_pref', { key: 'web_search_auto', value: v }).catch(() => {}); }}
         keepScreenAwake={voice.keepScreenAwake}
         onKeepScreenAwakeChange={voice.setKeepScreenAwake}
       />

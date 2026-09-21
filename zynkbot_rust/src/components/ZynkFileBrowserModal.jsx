@@ -228,8 +228,29 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
       });
     }).then(fn => unlisteners.push(fn));
 
+    // "→ KB": the transfer is done but the file is being indexed, which on a phone
+    // takes minutes for a big PDF. The row stays open and counts pieces until the
+    // complete event, which the backend now sends only after indexing (2026-09-20).
+    listen('zynklink:download:indexing', (event) => {
+      const { relative_path, done, total } = event.payload || {};
+      if (!relative_path) return;
+      setDownloads(prev => {
+        const existing = prev[relative_path] || { bytesWritten: 0, totalBytes: null, startedAt: Date.now() };
+        return {
+          ...prev,
+          [relative_path]: {
+            ...existing,
+            bytesWritten: existing.totalBytes ?? existing.bytesWritten,
+            status: 'indexing',
+            indexDone: done ?? 0,
+            indexTotal: total ?? 0,
+          },
+        };
+      });
+    }).then(fn => unlisteners.push(fn));
+
     listen('zynklink:download:complete', (event) => {
-      const { relative_path, total_bytes } = event.payload || {};
+      const { relative_path, total_bytes, indexed, index_error } = event.payload || {};
       if (!relative_path) return;
       setDownloads(prev => {
         const existing = prev[relative_path];
@@ -241,6 +262,8 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
             bytesWritten: total_bytes ?? existing.bytesWritten,
             totalBytes: total_bytes ?? existing.totalBytes,
             status: 'complete',
+            indexed: indexed ?? null,
+            indexError: index_error || null,
           },
         };
       });
@@ -308,7 +331,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     setMessage(`Downloading ${filename} to Knowledge Base…`);
     try {
       const savedPath = await invoke('download_to_knowledge_base', { shareId, relativePath, deviceId, userId });
-      setMessage(`✓ Downloaded to Knowledge Base: ${savedPath}`);
+      setMessage(`✓ In the Knowledge Base and indexed: ${filename}`);
       setTimeout(() => setMessage(''), 5000);
     } catch (err) {
       setMessage(`✗ Failed: ${err}`);
@@ -330,9 +353,25 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
       if (!selectedPath) { setMessage('Cancelled'); setTimeout(() => setMessage(''), 2000); return; }
       setMessage(`Downloading ${filename}…`);
       const savedPath = await invoke('download_to_custom_location', { shareId, relativePath, deviceId, destinationPath: selectedPath });
-      // Android's Files app lists from the media index, which missed our .part rename
-      // (2026-09-19); ask it to index the finished file so the download is findable.
-      try { window.AndroidPaths?.scanFile?.(savedPath); } catch (_) {}
+      if (window.AndroidPaths) {
+        // Refresh any open Files-app view of the Zynkbot location.
+        try { window.AndroidPaths.shareFileWritten?.(savedPath); } catch (_) {}
+        // The location is app storage, which the photo gallery never indexes; offer a
+        // copy in Pictures/Zynkbot for images (Matt, 2026-09-19).
+        if (/\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(filename) && window.AndroidPaths.saveToGallery) {
+          const wantsGallery = window.confirm(`Also add ${filename} to your photo gallery?`);
+          if (wantsGallery) {
+            const err = window.AndroidPaths.saveToGallery(savedPath);
+            if (err) { setMessage(`✓ Saved, but could not add to the gallery: ${err}`); setTimeout(() => setMessage(''), 8000); return; }
+            setMessage(`✓ Saved to the Zynkbot share folder on your phone and to your photo gallery`);
+            setTimeout(() => setMessage(''), 8000);
+            return;
+          }
+        }
+        setMessage(`✓ Saved to the Zynkbot share folder on your phone (open it in the Files app)`);
+        setTimeout(() => setMessage(''), 8000);
+        return;
+      }
       setMessage(`✓ Saved to: ${savedPath}`);
       setTimeout(() => setMessage(''), 8000);
     } catch (err) {
@@ -482,11 +521,37 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
               const etaSec = (haveTotal && speedBps > 0) ? remaining / speedBps : null;
 
               if (dl.status === 'complete') {
+                const tail = dl.indexed === true ? 'indexed, ready to ask about'
+                  : dl.indexed === false ? `saved, but not indexed: ${dl.indexError || 'unknown error'}`
+                  : 'finished';
                 return (
                   <div key={relPath} className="zfb-download-row zfb-download-complete">
-                    <div className="zfb-download-name">✓ {filename}</div>
+                    <div className="zfb-download-name">{dl.indexed === false ? '⚠' : '✓'} {filename}</div>
                     <div className="zfb-download-meta">
-                      {formatBytes(dl.bytesWritten)} · finished
+                      {formatBytes(dl.bytesWritten)} · {tail}
+                    </div>
+                  </div>
+                );
+              }
+
+              if (dl.status === 'indexing') {
+                const idxPct = dl.indexTotal > 0 ? Math.min(100, (dl.indexDone / dl.indexTotal) * 100) : null;
+                return (
+                  <div key={relPath} className="zfb-download-row">
+                    <div className="zfb-download-header">
+                      <div className="zfb-download-name">⚙ {filename}</div>
+                    </div>
+                    <div className="zfb-download-bar-wrapper">
+                      <div
+                        className={`zfb-download-bar ${idxPct === null ? 'zfb-download-bar-indeterminate' : ''}`}
+                        style={idxPct !== null ? { width: `${idxPct}%` } : undefined}
+                      />
+                    </div>
+                    <div className="zfb-download-meta">
+                      {dl.indexTotal > 0
+                        ? `Indexing ${dl.indexDone} / ${dl.indexTotal} chunks`
+                        : 'Reading the file for indexing'}
+                      {' · replies may be slow until this finishes'}
                     </div>
                   </div>
                 );

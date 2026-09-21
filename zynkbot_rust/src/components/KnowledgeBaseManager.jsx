@@ -100,6 +100,29 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
     return () => { if (unlisten) unlisten(); };
   }, []);
 
+  // A file sent here from a linked device ("→ KB" in the file browser) is indexed in
+  // the background after the transfer, minutes for a big one. Until it is done it
+  // sat under Available Files as if nothing were happening (Matt, 2026-09-20). Show
+  // it as indexing, with the count, from the download's own progress events.
+  const [remoteIndexing, setRemoteIndexing] = useState({}); // file name -> { done, total }
+  useEffect(() => {
+    const offs = [];
+    listen('zynklink:download:indexing', (event) => {
+      const { relative_path, done, total } = event.payload || {};
+      if (!relative_path) return;
+      const name = relative_path.replace(/\\/g, '/').split('/').pop();
+      setRemoteIndexing(prev => ({ ...prev, [name]: { done: done ?? 0, total: total ?? 0 } }));
+    }).then(fn => offs.push(fn));
+    listen('zynklink:download:complete', (event) => {
+      const { relative_path } = event.payload || {};
+      if (!relative_path) return;
+      const name = relative_path.replace(/\\/g, '/').split('/').pop();
+      setRemoteIndexing(prev => { const next = { ...prev }; delete next[name]; return next; });
+      loadData().catch(() => {});
+    }).then(fn => offs.push(fn));
+    return () => { offs.forEach(fn => fn()); };
+  }, []);
+
   const loadData = async () => {
     setIsLoading(true);
     try {
@@ -289,6 +312,25 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
     }
   };
 
+  // Delete the file itself, not just its index (2026-09-20).
+  const handleDeleteFile = async (filePath, fileName) => {
+    const confirmed = window.confirm(
+      `Delete "${fileName}" from the Knowledge Base?\n\n` +
+      `This removes it from the index and deletes the copy in the Knowledge Base folder. ` +
+      `A copy in the Zynkbot share folder or elsewhere is not touched.`
+    );
+    if (!confirmed) return;
+    try {
+      await invoke('delete_kb_file', { userId, filePath });
+      const freshDocs = await loadIndexedDocuments();
+      await scanKBFolder(kbFolderPath, freshDocs);
+      console.log('[KB Manager] Deleted file:', fileName);
+    } catch (error) {
+      console.error('[KB Manager] Error deleting file:', error);
+      alert(`Failed to delete the file: ${error}`);
+    }
+  };
+
   const handleReindexDocument = async (doc) => {
     const confirmed = await confirmDialog(
       `Re-index "${doc.file_name}"?\n\n` +
@@ -376,9 +418,16 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
                   <button
                     onClick={() => handleRemoveDocument(doc)}
                     className="kb-action-btn kb-delete-btn"
-                    title="Remove from index"
+                    title="Remove from index (keep the file)"
                   >
                     🗑️
+                  </button>
+                  <button
+                    onClick={() => handleDeleteFile(doc.file_path, doc.file_name)}
+                    className="kb-action-btn kb-delete-btn"
+                    title="Delete the file from the Knowledge Base"
+                  >
+                    ✕ Delete
                   </button>
                 </div>
               </div>
@@ -541,6 +590,15 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
                           </div>
                         </div>
                       </div>
+                      <div className="kb-doc-actions" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                      {remoteIndexing[file.name] ? (
+                        <div className="kb-file-meta" style={{ minWidth: '160px' }}>
+                          <div>⚙ Indexing{remoteIndexing[file.name].total > 0 ? ` ${remoteIndexing[file.name].done} / ${remoteIndexing[file.name].total} chunks` : '…'}</div>
+                          <div style={{ height: '4px', background: '#44475a', borderRadius: '2px', marginTop: '4px' }}>
+                            <div style={{ height: '4px', background: '#50fa7b', borderRadius: '2px', width: `${remoteIndexing[file.name].total > 0 ? Math.min(100, remoteIndexing[file.name].done / remoteIndexing[file.name].total * 100) : 5}%` }} />
+                          </div>
+                        </div>
+                      ) : (
                       <button
                         onClick={() => handleIndexFile(file.path, file.name)}
                         disabled={isIndexing}
@@ -548,6 +606,16 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
                       >
                         Index
                       </button>
+                      )}
+                      <button
+                        onClick={() => handleDeleteFile(file.path, file.name)}
+                        disabled={isIndexing}
+                        className="kb-action-btn kb-delete-btn"
+                        title="Delete the file from the Knowledge Base"
+                      >
+                        ✕ Delete
+                      </button>
+                      </div>
                     </div>
                   ))}
                 </div>

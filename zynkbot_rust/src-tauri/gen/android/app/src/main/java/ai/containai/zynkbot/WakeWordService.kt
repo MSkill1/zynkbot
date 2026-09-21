@@ -42,6 +42,8 @@ class WakeWordService : Service() {
         const val NOTIFICATION_ID = 1003
         const val TRANSCRIPT_NOTIFICATION_ID = 1005
         const val TAG = "WakeWordService"
+        /** Longest the listener stays paused for another recording before resuming (2026-09-20). */
+        private const val PAUSE_WATCHDOG_MS = 120_000L
 
         // openWakeWord pipeline — shapes verified empirically against the ONNX models:
         //   mel:       [1, 1280] float32  →  [1, 1, 5, 32]  (5 mel frames × 32 bins per 80ms chunk)
@@ -86,6 +88,13 @@ class WakeWordService : Service() {
         const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
         const val MISS_WINDOW_MS = 5 * 60_000L
         const val MISSES_TO_BACK_OFF = 3
+        /** Strict mode (back-off after misses) is switched off as of 2026-09-20. It was not a
+         *  TV detector: three ordinary misses in five minutes (a dismissed session, a
+         *  one-word transcript, a video playing nearby) locked the owner out for ten
+         *  minutes, because four consecutive slices at 0.90 is above the detector's own
+         *  noise on a real "Hey Zynk". The code stays, gated here, in case a gentler
+         *  version is wanted later; the plan is the owner's trained verifier instead. */
+        const val STRICT_MODE_ENABLED = false
         const val BACK_OFF_MS = 10 * 60_000L
 
         /** Called by the session / answerer when a trigger ends: `useful` = a real
@@ -185,7 +194,7 @@ class WakeWordService : Service() {
             }
             recentMisses.addLast(now)
             while (recentMisses.isNotEmpty() && now - recentMisses.first() > MISS_WINDOW_MS) recentMisses.removeFirst()
-            if (recentMisses.size >= MISSES_TO_BACK_OFF && strictUntil < now) {
+            if (STRICT_MODE_ENABLED && recentMisses.size >= MISSES_TO_BACK_OFF && strictUntil < now) {
                 strictUntil = now + BACK_OFF_MS
                 Log.i(TAG, "${recentMisses.size} fruitless triggers in 5 min — strict mode for 10 min (need $STRICT_HITS hits ≥ $STRICT_SCORE)")
             }
@@ -592,6 +601,9 @@ class WakeWordService : Service() {
      *  dictation — pauses detection. When the last such recording ends, detection
      *  resumes here (the other re-arm paths are refused while paused, so this is the
      *  one that counts). */
+    /** Counts pauses so a stale watchdog from an earlier pause does nothing. */
+    @Volatile private var pauseEpoch = 0
+
     private fun onRecordingsChanged(configs: List<AudioRecordingConfiguration>) {
         val mine = loopSessionId
         val others = configs.filter { it.clientAudioSessionId != mine }
@@ -601,6 +613,19 @@ class WakeWordService : Service() {
                 val what = others.joinToString { "src=${it.clientAudioSource}/session=${it.clientAudioSessionId}" }
                 Log.i(TAG, "Another recording is active ($what) — wake word paused")
                 if (running) { running = false; audioThread?.interrupt() }
+                // Watchdog: a page dictation stream that broke and was never released kept
+                // this paused for 13 minutes (Pixel, 2026-09-19). Nothing legitimately
+                // records for that long, and Android lets one app capture twice, so after
+                // the limit we resume regardless of what is still open.
+                val epoch = ++pauseEpoch
+                Thread {
+                    try { Thread.sleep(PAUSE_WATCHDOG_MS) } catch (_: InterruptedException) { return@Thread }
+                    if (pausedForOtherRecording && pauseEpoch == epoch) {
+                        pausedForOtherRecording = false
+                        Log.w(TAG, "Still paused for another recording after ${PAUSE_WATCHDOG_MS / 1000} s — resuming anyway")
+                        try { resumeMicAfterSession() } catch (e: Exception) { Log.w(TAG, "resume failed: ${e.message}") }
+                    }
+                }.start()
             }
         } else if (pausedForOtherRecording) {
             pausedForOtherRecording = false
@@ -636,10 +661,18 @@ class WakeWordService : Service() {
                 // Per-chunk scores next to the clip (one per line, oldest first).
                 File(dir, file.name.removeSuffix(".wav") + ".scores.txt")
                     .writeText(scoreSnap.joinToString("\n") { "%.4f".format(Locale.US, it) })
-                dir.listFiles { f -> f.name.endsWith(".wav") }
-                    ?.sortedByDescending { it.name }
-                    ?.drop(if (verifier?.enforcesOn(this) == true) TRIGGER_CLIPS_KEPT else TRIGGER_CLIPS_KEPT_UNVERIFIED)
-                    ?.forEach { val stem = it.name.removeSuffix(".wav"); it.delete(); for (ext in listOf(".scores.txt", ".real", ".false")) File(dir, stem + ext).delete() }
+                // A clip labelled real is training data and is never pruned by age alone —
+                // only the unlabelled/false pool is trimmed to the cap. Before this, heavy
+                // false-trigger churn (background noise, a video playing) could push the
+                // total past the cap and delete an older *real* clip along with it, so the
+                // "Send my wake-word clips" count went backwards even with frequent real use
+                // (Matt, 2026-09-21: 12 real clips over 12 hours' use, dropped to 11).
+                val allWavs = dir.listFiles { f -> f.name.endsWith(".wav") }?.toList() ?: emptyList()
+                val keepCount = if (verifier?.enforcesOn(this) == true) TRIGGER_CLIPS_KEPT else TRIGGER_CLIPS_KEPT_UNVERIFIED
+                val (real, rest) = allWavs.partition { File(dir, it.name.removeSuffix(".wav") + ".real").exists() }
+                rest.sortedByDescending { it.name }
+                    .drop(keepCount)
+                    .forEach { val stem = it.name.removeSuffix(".wav"); it.delete(); for (ext in listOf(".scores.txt", ".real", ".false")) File(dir, stem + ext).delete() }
                 Log.i(TAG, "Trigger clip saved: ${file.name}")
             } catch (e: Exception) {
                 Log.w(TAG, "Trigger clip not saved: ${e.message}")

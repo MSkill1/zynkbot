@@ -53,7 +53,15 @@ describe('nativeTurnsToMessages — hands-free exchanges join the thread on scre
     expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant']);
     expect(msgs[0].content).toBe('capital of arizona');
     expect(msgs[1].content).toBe('Phoenix.');
-    expect(msgs[1].id).toBe(msgs[0].id + 1);
+    expect(msgs[1].id).toBeGreaterThan(msgs[0].id);
+  });
+
+  test('what the model said before an automatic web search is its own message', () => {
+    const msgs = nativeTurnsToMessages([{ ...turn, preAnswer: 'I think Phoenix, but let me check.' }], 's1');
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant']);
+    expect(msgs[1].content).toBe('I think Phoenix, but let me check.');
+    expect(msgs[2].content).toBe('Phoenix.');
+    expect(new Set(msgs.map((m) => m.id)).size).toBe(3);
   });
 
   test('turns for another thread are left to Conversation History', () => {

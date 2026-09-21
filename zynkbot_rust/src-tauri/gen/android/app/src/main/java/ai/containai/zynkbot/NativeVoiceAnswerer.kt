@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit
 object NativeVoiceAnswerer {
     private const val TAG = "NativeVoiceAnswerer"
     private const val ERROR_LINE = "Zynkbot couldn't get an answer. Check the A I key in settings."
+    private const val SEARCHING_LINE = "Let me check that."
 
     /** The model's fixed reply when a hands-free transcript is not a request (see the
      *  hands-free note in android_jni.rs). Handled as "nothing to say": close tone, no
@@ -61,7 +62,7 @@ object NativeVoiceAnswerer {
     @Volatile private var currentSpeaker: SentenceSpeaker? = null
 
     /** One finished hands-free exchange, queued for the app's chat. */
-    data class Turn(val sessionId: String, val question: String, val answer: String, val at: Long)
+    data class Turn(val sessionId: String, val question: String, val answer: String, val at: Long, val preAnswer: String = "")
 
     private val pendingTurns = java.util.Collections.synchronizedList(mutableListOf<Turn>())
 
@@ -77,7 +78,7 @@ object NativeVoiceAnswerer {
             for (t in pendingTurns) {
                 arr.put(org.json.JSONObject()
                     .put("sessionId", t.sessionId).put("question", t.question)
-                    .put("answer", t.answer).put("at", t.at))
+                    .put("answer", t.answer).put("at", t.at).put("preAnswer", t.preAnswer))
             }
             pendingTurns.clear()
         }
@@ -165,7 +166,7 @@ object NativeVoiceAnswerer {
         var noQuery = false
         try {
             ZynkCore.nativeSendMessage(
-                transcript, "", "", "", "guardian",
+                transcript, "", "", "", "sovereign", // default mode, 2026-09-20 — see App.jsx
                 object : ZynkCore.Callback {
                     override fun onToken(token: String) { speaker.feed(token) }
                     override fun onEvent(name: String, payloadJson: String) {
@@ -173,6 +174,20 @@ object NativeVoiceAnswerer {
                             // The model's first answer ("I don't have that stored…") is being
                             // replaced by a searched one: stop voicing it and start fresh.
                             speaker.reset()
+                            // The search plus a second model call can take a minute or more,
+                            // and until now that whole stretch was silent after the "sent"
+                            // chime. Mike (2026-09-20) gave up waiting and asked again before
+                            // the first answer had finished. A short spoken cue here buys
+                            // back that time without changing anything about the search itself.
+                            // A brief pause first: stopping the engine and immediately asking it
+                            // to speak again raced silently in the field 2026-09-21 (timing in
+                            // the log matched how long the line takes to say, but nothing was
+                            // heard) — a short gap for the engine to settle after stop() is a
+                            // known workaround for Android's TextToSpeech doing this.
+                            try { Thread.sleep(150) } catch (_: InterruptedException) {}
+                            Log.i(TAG, "Speaking search filler: \"$SEARCHING_LINE\"")
+                            speaker.speakNow(SEARCHING_LINE)
+                            Log.i(TAG, "Search filler call returned (spokeAnything=${speaker.spokeAnything()})")
                             return
                         }
                         if (name == "voice-session") {
@@ -180,11 +195,13 @@ object NativeVoiceAnswerer {
                         }
                     }
                     override fun onDone(replyJson: String) {
-                        val replyText = try {
-                            org.json.JSONObject(replyJson).optString("reply_text", "")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Could not parse native reply: ${e.message}"); ""
+                        val parsed = try { org.json.JSONObject(replyJson) } catch (e: Exception) {
+                            Log.w(TAG, "Could not parse native reply: ${e.message}"); null
                         }
+                        val replyText = parsed?.optString("reply_text", "") ?: ""
+                        // What the model said before an automatic web search; shown as its
+                        // own message above the searched answer (2026-09-20).
+                        val preAnswer = parsed?.optString("pre_search_reply", "") ?: ""
                         Log.i(TAG, "Native reply: \"${replyText.take(80)}\"")
                         if (replyText.trim().startsWith(NO_QUERY)) {
                             Log.i(TAG, "Model judged the transcript not a request — staying silent")
@@ -194,7 +211,7 @@ object NativeVoiceAnswerer {
                         } else if (replyText.isNotBlank()) {
                             // Queue the exchange for the app's chat now, not after speech:
                             // if the app is open it shows the answer while it is being read.
-                            pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis()))
+                            pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis(), preAnswer))
                             try { onTurnCompleted?.invoke() } catch (_: Exception) {}
                         }
                         // Not reported as a real interaction: a fluent TV line the model

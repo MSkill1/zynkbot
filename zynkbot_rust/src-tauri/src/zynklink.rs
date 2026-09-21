@@ -1201,7 +1201,10 @@ async fn handle_zynklink_download(
         .unwrap_or("download")
         .to_string();
 
-    println!("[ZynkLink] Streaming {} ({} bytes)", filename, file_size);
+    println!("[ZynkLink] Streaming {} ({} bytes) from {}", filename, file_size, file_path.display());
+    if file_size == 0 {
+        eprintln!("[ZynkLink] ⚠️ {} is empty on disk — the receiver will get an empty file", filename);
+    }
 
     let stream = futures::stream::unfold(file, |mut file| async move {
         let mut buf = vec![0u8; 65536];

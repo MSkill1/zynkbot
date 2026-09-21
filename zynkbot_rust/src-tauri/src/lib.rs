@@ -237,6 +237,10 @@ pub struct ReplyResponse {
     web_search_query: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     original_query: Option<String>,
+    /// Hands-free auto web search: what the model answered before it decided to
+    /// search, kept as its own message (2026-09-20). None when there was nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_search_reply: Option<String>,
     /// Set when the KB button was on but the search found no real match, so the
     /// UI can show that the answer is not grounded in the user's documents.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2611,6 +2615,7 @@ pub fn run() {
             commands::knowledge_base::index_kb_document,
             commands::knowledge_base::list_kb_documents,
             commands::knowledge_base::remove_kb_document,
+            commands::knowledge_base::delete_kb_file,
             commands::knowledge_base::clear_all_kb_documents,
             commands::knowledge_base::search_kb,
             commands::knowledge_base::index_snapin_notes,

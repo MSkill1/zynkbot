@@ -428,56 +428,64 @@ pub async fn list_remote_directories() -> Result<serde_json::Value, String> {
     .await
     .map_err(|e| format!("Failed to get paired devices: {}", e))?;
 
-    let mut all_directories = Vec::new();
+    // Ask every linked device at the same time and give up on any that has not
+    // answered in 5 s. Until 2026-09-20 this asked them one after another with a
+    // 60 s timeout, so one linked device that was switched off (the laptop) held
+    // the "Shared With Me" list back for a minute.
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(5))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    for (remote_device_id, _remote_user_id, device_ip_opt) in paired_devices {
-        if let Some(device_ip) = device_ip_opt {
-            let url = format!("https://{}:57963/api/zynklink/directories", device_ip);
-
-            match client
-                .post(&url)
-                .json(&serde_json::json!({
-                    "device_id": remote_device_id,
-                    "requester_user_id": user_id
-                }))
-                .send()
-                .await
-            {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        let _ = sqlx::query(
-                            "UPDATE zynk_devices SET last_seen_at = datetime('now') WHERE device_id = ?"
-                        )
-                        .bind(&remote_device_id)
-                        .execute(&pool)
-                        .await;
-
-                        match response.json::<serde_json::Value>().await {
-                            Ok(data) => {
-                                if let Some(dirs) = data.get("shared_directories").and_then(|d| d.as_array()) {
-                                    for dir in dirs {
-                                        all_directories.push(dir.clone());
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                println!("[ZynkLink] Failed to parse response from {}: {}", device_ip, e);
-                            }
-                        }
-                    } else {
-                        println!("[ZynkLink] HTTP error from {}: {}", device_ip, response.status());
+    let fetches = paired_devices
+        .into_iter()
+        .filter_map(|(remote_device_id, _remote_user_id, device_ip_opt)| device_ip_opt.map(|ip| (remote_device_id, ip)))
+        .map(|(remote_device_id, device_ip)| {
+            let client = client.clone();
+            let pool = pool.clone();
+            let user_id = user_id.clone();
+            async move {
+                let url = format!("https://{}:57963/api/zynklink/directories", device_ip);
+                let response = match client
+                    .post(&url)
+                    .json(&serde_json::json!({
+                        "device_id": remote_device_id,
+                        "requester_user_id": user_id
+                    }))
+                    .send()
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(_) => return Vec::new(),
+                };
+                if !response.status().is_success() {
+                    println!("[ZynkLink] HTTP error from {}: {}", device_ip, response.status());
+                    return Vec::new();
+                }
+                let _ = sqlx::query(
+                    "UPDATE zynk_devices SET last_seen_at = datetime('now') WHERE device_id = ?"
+                )
+                .bind(&remote_device_id)
+                .execute(&pool)
+                .await;
+                match response.json::<serde_json::Value>().await {
+                    Ok(data) => data
+                        .get("shared_directories")
+                        .and_then(|d| d.as_array())
+                        .map(|dirs| dirs.to_vec())
+                        .unwrap_or_default(),
+                    Err(e) => {
+                        println!("[ZynkLink] Failed to parse response from {}: {}", device_ip, e);
+                        Vec::new()
                     }
                 }
-                Err(_e) => {}
             }
-        }
-    }
-
+        });
+    let all_directories: Vec<serde_json::Value> = futures::future::join_all(fetches)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
     Ok(serde_json::json!({
         "shared_directories": all_directories
     }))
@@ -745,15 +753,29 @@ pub async fn download_to_knowledge_base(
         tokio::fs::rename(&temp_path, &destination_path).await
             .map_err(|e| format!("Failed to finalize download (rename .part): {}", e))?;
 
-        let _ = app.emit("zynklink:download:complete", serde_json::json!({
-            "share_id": share_id,
-            "relative_path": &relative_path,
-            "destination": &destination_path_str,
-            "total_bytes": bytes_written,
-        }));
-
         println!("[KB Download] ✓ Remote file streamed to disk ({} bytes)", bytes_written);
     }
+
+    // The transfer is done but the file is not usable until it is indexed, which on a
+    // phone takes minutes for a large PDF. The browser row shows "Indexing n / N" from
+    // these events and only turns complete after indexing (Matt, 2026-09-20).
+    let total_bytes = tokio::fs::metadata(&destination_path).await.map(|m| m.len()).unwrap_or(0);
+    let _ = app.emit("zynklink:download:indexing", serde_json::json!({
+        "share_id": share_id,
+        "relative_path": &relative_path,
+        "done": 0,
+        "total": 0,
+    }));
+    let progress_app = app.clone();
+    let progress_path = relative_path.clone();
+    let on_progress: Option<Box<dyn Fn(usize, usize) + Send + Sync>> = Some(Box::new(move |done, total| {
+        let _ = progress_app.emit("zynklink:download:indexing", serde_json::json!({
+            "share_id": share_id,
+            "relative_path": &progress_path,
+            "done": done,
+            "total": total,
+        }));
+    }));
 
     println!("[KB Download] Indexing file into knowledge base...");
 
@@ -763,24 +785,38 @@ pub async fn download_to_knowledge_base(
             .await
             .map_err(|e| format!("Failed to read PDF: {}", e))?;
         match pdf_extract::extract_text_from_mem(&bytes) {
-            Ok(text) => kb_rag::index_text_as_document(&pool, &user_id, &filename, &text).await,
+            Ok(text) => kb_rag::index_text_as_document_with_progress(&pool, &user_id, &filename, &text, on_progress).await,
             Err(e) => Err(format!("Failed to extract PDF text: {}", e)),
         }
     } else {
-        let file_content = tokio::fs::read_to_string(&destination_path)
+        let mut file_content = tokio::fs::read_to_string(&destination_path)
             .await
             .map_err(|e| format!("Failed to read file for indexing: {}", e))?;
-        kb_rag::index_text_as_document(&pool, &user_id, &filename, &file_content).await
+        if kb_rag::is_html_path(&filename) {
+            file_content = kb_rag::html_to_text(&file_content);
+        }
+        kb_rag::index_text_as_document_with_progress(&pool, &user_id, &filename, &file_content, on_progress).await
     };
 
-    match index_result {
+    let index_error = match &index_result {
         Ok(doc_id) => {
             println!("[KB Download] ✓ File indexed successfully (doc_id: {})", doc_id);
+            None
         }
         Err(e) => {
             println!("[KB Download] ⚠️  Warning: File saved but indexing failed: {}", e);
+            Some(e.clone())
         }
-    }
+    };
+
+    let _ = app.emit("zynklink:download:complete", serde_json::json!({
+        "share_id": share_id,
+        "relative_path": &relative_path,
+        "destination": &destination_path_str,
+        "total_bytes": total_bytes,
+        "indexed": index_error.is_none(),
+        "index_error": index_error,
+    }));
 
     println!("[KB Download] ✓ Complete: {}", destination_path.display());
     Ok(destination_path.to_string_lossy().to_string())

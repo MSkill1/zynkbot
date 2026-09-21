@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import "../styles/ChatMessage.css";
 
-export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit, onReport }) {
+export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit, onReport, onSpeak, isSpeaking }) {
   const [editDraft, setEditDraft] = useState(message.content || "");
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (isEditing) setEditDraft(message.content || ""); }, [isEditing, message.content]);
@@ -169,7 +169,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
               <button
                 onClick={() => {
                   if (editedQuery.trim()) {
-                    onExecuteWebSearch(message.id, editedQuery.trim(), originalQuery);
+                    onExecuteWebSearch(message.id, editedQuery.trim(), originalQuery, undefined, message.content);
                     setShowSearchPrompt(false);
                   }
                 }}
@@ -311,6 +311,16 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
               aria-label="Report a problem with this reply"
             >
               ⚑ Report
+            </button>
+          )}
+          {onSpeak && (
+            <button
+              className="message-action-btn"
+              onClick={onSpeak}
+              title={isSpeaking ? 'Stop reading' : 'Read this reply aloud'}
+              aria-label={isSpeaking ? 'Stop reading' : 'Read this reply aloud'}
+            >
+              {isSpeaking ? '■ Stop' : '🔊 Read aloud'}
             </button>
           )}
         </div>

@@ -12,6 +12,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [newDirPath, setNewDirPath] = useState('');
   const [newShareName, setNewShareName] = useState('');
   const [browserShare, setBrowserShare] = useState(null);
+  const [showLinkedDevices, setShowLinkedDevices] = useState(false);
   const [codeToAccept, setCodeToAccept] = useState('');
   const [codeIPPart, setCodeIPPart] = useState('');
   const [codeNumPart, setCodeNumPart] = useState('');
@@ -119,28 +120,10 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
     if (window.AndroidPaths) {
       const dir = window.AndroidPaths.getShareDir();
       setAndroidShareDir(dir);
-      // Ensure exactly one shared directory entry: remove stale entries, register if missing
-      invoke('list_my_shared_directories').then(async data => {
-        const dirs = data.shared_directories || [];
-        const stale = dirs.filter(d => d.local_path !== dir);
-        const current = dirs.find(d => d.local_path === dir);
-        // Remove any entries from old paths (e.g. after folder location changed)
-        for (const d of stale) {
-          await invoke('unshare_directory', { shareId: d.id }).catch(() => {});
-        }
-        if (!current) {
-          const res = await invoke('share_directory', {
-            localPath: dir,
-            shareName: 'ZynkbotShare',
-            isReadable: true,
-            isWritable: false
-          }).catch(() => null);
-          if (res?.success && res.share_id) {
-            invoke('scan_shared_directory', { shareId: res.share_id, maxFiles: 1000 }).catch(() => {});
-          }
-        }
-        fetchSharedDirectories();
-      }).catch(() => {});
+      // App.jsx keeps the share record right (one share, at this folder) and re-indexes
+      // it; files can arrive through the Files app or the Share button at any time, so
+      // do that again whenever the panel opens.
+      Promise.resolve(window.__zynkShareChanged?.()).then(() => fetchSharedDirectories()).catch(() => {});
     }
 
     getDeviceId();
@@ -622,13 +605,16 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
           marginBottom: '20px',
           border: '1px solid #44475a'
         }}>
-          <div style={{ color: '#ffb86c', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: '6px' }}>
-            🔗 Linked Devices ({linkedUsers.length})
+          {/* Collapsed by default on request (Matt, 2026-09-20): the device cards are
+              tall and the folder sections below them are what people come here for. */}
+          <div
+            onClick={() => setShowLinkedDevices(v => !v)}
+            style={{ color: '#ffb86c', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: showLinkedDevices ? '10px' : 0, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <span>🔗 Linked Devices ({linkedUsers.length})</span>
+            <span style={{ fontSize: '0.8rem' }}>{showLinkedDevices ? '▼' : '▶'}</span>
           </div>
-          <div style={{ color: '#ff5555', fontSize: '0.8rem', marginBottom: '10px' }}>
-            Android devices are identified as "Android-XXXX" where XXXX is the last 4 digits of their device ID.
-          </div>
-          {linkedUsers.map(user => (
+          {showLinkedDevices && linkedUsers.map(user => (
             <div
               key={user.user_id}
               style={{
@@ -723,7 +709,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
       {isAndroid && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ color: '#f8f8f2', fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '8px' }}>
-            📁 Your Zynkbot Share Folder
+            📁 My shared folder
           </div>
           <div style={{
             background: '#1e1f29',
@@ -735,17 +721,10 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             color: '#9aa5c4',
             lineHeight: '1.6'
           }}>
-            Files here are visible to linked devices. Files you download from linked devices are saved here automatically.
-            <div style={{ marginTop: '6px', color: '#f1fa8c' }}>
-              Only files added with ➕ Add file show up in Zynkbot. Files moved into this folder by another app stay hidden to it.
-            </div>
-            {androidShareDir && (
-              <div style={{ marginTop: '8px', wordBreak: 'break-all', color: '#6272a4', fontSize: '0.78rem' }}>
-                📂 {androidShareDir}
-              </div>
-            )}
+            Zynkbot is a folder on this phone. Anything you put in it can be seen by your linked devices: use the Share button in any app and pick Zynkbot, or move a file into the Zynkbot folder. Files you save from a linked device land here too. Each linked device's folder is listed below under Shared With Me, named after the device.
+
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <button
               onClick={() => window.AndroidPaths?.openShareFolder()}
               style={{
@@ -760,66 +739,8 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                 cursor: 'pointer'
               }}
             >
-              📂 Open in Files App
+              📂 Open folder
             </button>
-            {window.AndroidPaths?.pickFile && (() => {
-              // Files put into ZynkbotShare by other apps are invisible to Zynkbot under
-              // scoped storage (KI-015); the only way in is this picker, which copies the
-              // file. It existed on the Kotlin side but had no button (2026-09-17).
-              const zynkDir = sharedDirs.find(d => d.local_path === androidShareDir);
-              return (
-                <button
-                  onClick={async () => {
-                    try {
-                      const dest = await new Promise((resolve, reject) => {
-                        window.__zfpResolve = resolve; window.__zfpReject = reject;
-                        window.AndroidPaths.pickFile();
-                      });
-                      setMessage(`✓ Added ${dest.split('/').pop()}`);
-                      if (zynkDir) await handleRescanDirectory(zynkDir.id, zynkDir.share_name);
-                    } catch (e) {
-                      if (e !== 'cancelled') setMessage(`✗ Could not add file: ${e}`);
-                    }
-                  }}
-                  disabled={loading}
-                  style={{
-                    padding: '10px 16px',
-                    background: '#bd93f9',
-                    border: 'none',
-                    borderRadius: '4px',
-                    color: '#282a36',
-                    fontSize: '0.9rem',
-                    fontWeight: 'bold',
-                    cursor: loading ? 'wait' : 'pointer'
-                  }}
-                >
-                  ➕ Add file
-                </button>
-              );
-            })()}
-            {(() => {
-              const zynkDir = sharedDirs.find(d => d.local_path === androidShareDir);
-              return zynkDir ? (
-                <button
-                  onClick={() => handleRescanDirectory(zynkDir.id, zynkDir.share_name)}
-                  disabled={loading}
-                  style={{
-                    padding: '10px 16px',
-                    background: '#50fa7b',
-                    border: 'none',
-                    borderRadius: '4px',
-                    color: '#282a36',
-                    fontSize: '0.9rem',
-                    fontWeight: 'bold',
-                    cursor: loading ? 'wait' : 'pointer',
-                    opacity: loading ? 0.5 : 1
-                  }}
-                  title="Rescan for new files"
-                >
-                  🔄 Rescan
-                </button>
-              ) : null;
-            })()}
           </div>
         </div>
       )}
@@ -1005,10 +926,10 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                 >
                   <div style={{ marginBottom: '8px' }}>
                     <div style={{ color: '#bd93f9', fontWeight: 'bold', marginBottom: '2px' }}>
-                      {dir.share_name || dir.local_path}
+                      Shared from {linkedUsers.find(u => u.device_id === dir.device_id)?.device_name || dir.device_id.substring(0, 8)}
                     </div>
                     <div style={{ color: '#9aa5c4', fontSize: '0.8rem' }}>
-                      From: {linkedUsers.find(u => u.device_id === dir.device_id)?.device_name || dir.device_id.substring(0, 8)}
+                      {dir.share_name || dir.local_path}
                     </div>
                     <div style={{ color: '#9aa5c4', fontSize: '0.8rem', marginBottom: '8px' }}>
                       Shared: {new Date(dir.created_at).toLocaleDateString()}

@@ -100,21 +100,25 @@ pub async fn search_with_content(query: &str, max_results: usize, fetch_top_n: u
     // First, get search results
     let mut response = search_duckduckgo(query, max_results).await?;
 
-    // Fetch content from top N results
+    // Fetch content from top N results. One after another used to mean up to
+    // fetch_count * 10s of the total wait, all of it silent on a hands-free question
+    // (Mike, 2026-09-20). Fetched together instead: the wait is now the slowest one
+    // page, not the sum of all of them.
     let fetch_count = fetch_top_n.min(response.results.len());
-    println!("[WebSearch] Fetching content from top {} results", fetch_count);
+    println!("[WebSearch] Fetching content from top {} results (in parallel)", fetch_count);
 
-    for i in 0..fetch_count {
-        let url = &response.results[i].url;
-
-        // Try to fetch content (ignore failures for individual pages)
-        match fetch_page_content(url).await {
+    let fetches = response.results[..fetch_count].iter().map(|r| {
+        let url = r.url.clone();
+        async move { let result = fetch_page_content(&url).await; (url, result) }
+    });
+    for (i, (url, result)) in futures::future::join_all(fetches).await.into_iter().enumerate() {
+        match result {
             Ok(content) => {
                 println!("[WebFetch] ✅ Successfully fetched {} chars from result #{}", content.len(), i + 1);
                 response.results[i].content = Some(content);
             }
             Err(e) => {
-                println!("[WebFetch] ⚠️ Failed to fetch result #{}: {}", i + 1, e);
+                println!("[WebFetch] ⚠️ Failed to fetch result #{} ({}): {}", i + 1, url, e);
                 // Continue with other results
             }
         }

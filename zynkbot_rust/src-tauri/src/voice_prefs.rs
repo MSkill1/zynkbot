@@ -9,7 +9,9 @@
 //! First such setting (2026-09-17): `web_search_auto` — "Auto-execute web searches in
 //! voice sessions". The page honoured it; the assistant-role path did not, so a
 //! hands-free question that needed a search was answered with "want me to search?"
-//! (GitHub #26, KI-062).
+//! (GitHub #26, KI-062). Removed 2026-09-20: hands-free always searches now,
+//! unconditionally — see `commands::chat::generate_reply`. The mirror mechanism
+//! (`get_bool`/`set`/`set_voice_pref`) stays for whatever voice setting needs it next.
 
 use std::path::PathBuf;
 
@@ -34,9 +36,6 @@ pub fn set(key: &str, value: serde_json::Value) -> Result<(), String> {
     std::fs::write(&p, serde_json::to_string_pretty(&serde_json::Value::Object(m)).map_err(|e| e.to_string())?)
         .map_err(|e| format!("Failed to write voice prefs: {}", e))
 }
-
-/// Web searches run without asking during hands-free turns.
-pub fn web_search_auto() -> bool { get_bool("web_search_auto") }
 
 #[tauri::command]
 pub async fn set_voice_pref(key: String, value: serde_json::Value) -> Result<(), String> {

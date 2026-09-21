@@ -23,11 +23,11 @@ All Rust-side state lives under the app-private files directory. `db::get_app_da
 | `vosk-model/` | `MainActivity.extractVoskModelIfNeeded` (copied from APK assets) | Vosk speech model. Note: directly under `files/`, not under `zynkbot/` |
 | `wake-word-models/` | `WakeWordBridge.extractModelsFromAssets` | the three ONNX wake-word models. Also directly under `files/` |
 
-Two SharedPreferences files hold Kotlin-only state: `zynkbot_voice` (key `input_source`, section 8) and `zynkbot_setup` (key `asked_assistant_role`, section 4).
+Three SharedPreferences files hold Kotlin-only state: `zynkbot_voice` (key `input_source`, section 8), `zynkbot_setup` (key `asked_assistant_role`, section 4) and `zynkbot_share` (keys `changed`, set by `ZynkShareProvider` when a file arrives outside the Rust index and consumed in `onResume`, and `old_share_migrated`).
 
-The one public location is `Downloads/ZynkbotShare/` (`/storage/emulated/0/Download/ZynkbotShare/`), created by `MainActivity.zynkShareDir()` via `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOWNLOADS)`. The page registers it as the device's single ZynkLink share (`ZynkLinkPanel.jsx` calls `AndroidPaths.getShareDir()` and then the `share_directory` command with `shareName: 'ZynkbotShare'`).
+The share folder is Zynkbot's own storage location since 2026-09-19: `filesDir/ZynkbotShare`, created by `ZynkShareProvider.shareDir()` and published to the system by `ZynkShareProvider` (a `DocumentsProvider`, authority `ai.containai.zynkbot.share`, registered in the manifest with the `DOCUMENTS_PROVIDER` intent filter and guarded by `MANAGE_DOCUMENTS`). It appears as "Zynkbot" in the Files app drawer and in any app's file picker; `ShareReceiverActivity` (`ACTION_SEND` / `ACTION_SEND_MULTIPLE`, `*/*`) puts Zynkbot in every app's Share menu and copies into the same folder. The page registers the folder as the device's single ZynkLink share (`ZynkLinkPanel.jsx` calls `AndroidPaths.getShareDir()`, removes any share record with another path and registers this one).
 
-Why the split: ZynkbotShare is the folder the user is meant to open in the phone's Files app (`ZynkbotPathsBridge.openShareFolder`) and receive ZynkLink files into, so it has to be a public folder; an app may create and read its own files there without any storage permission. The Knowledge Base stays app-private because the Rust scanner reads it with plain `std::fs`, and reading files another app put in a public folder would need `MANAGE_EXTERNAL_STORAGE`, which Google Play does not grant to an app like this (KI-015 in `docs/KNOWN_ISSUES.md`). So both folders are fed by copying: `pickFile` copies a picked file into ZynkbotShare, `copyToKnowledgeBase` copies into the KB folder, and files other apps drop into ZynkbotShare are invisible to the app by design.
+Why a provider: since Android 11 an app can read only the files it created itself in a public folder, so when the share lived in `Download/ZynkbotShare` anything another app put there was invisible to the Rust scan (KI-015). With the folder in app storage the provider is the one route in, every file is written by this process, and `std::fs` reads it unchanged. `MainActivity.migrateOldShareFolder()` moves the files we own out of the old Download folder once (preference `old_share_migrated`). The folder is not a media folder, so images in it are not in the gallery; after an image download the page offers a copy in `Pictures/Zynkbot` (`AndroidPaths.saveToGallery`). The Knowledge Base stays app-private for the same reason it always was.
 
 ## 2. The generated-but-hand-edited Android project
 
@@ -44,6 +44,8 @@ Hand-written and tracked in git (line counts from `wc -l` on 2026-09-09):
 | `OpenAiDictation.kt` | 241 | Native Whisper dictation with energy endpointing |
 | `VoiceCommands.kt` | 158 | Timer, alarm, stopwatch parsing and clock-app intents |
 | `ZynkAssistantService.kt` | 68 | `VoiceInteractionService` (assistant role) |
+| `ZynkShareProvider.kt` | 220 | `DocumentsProvider`: Zynkbot as a storage location in the Files app |
+| `ShareReceiverActivity.kt` | 67 | "Share to Zynkbot" from any app's Share menu |
 | `SyncForegroundService.kt` | 59 | `dataSync` foreground service |
 | `ZynkCore.kt` | 57 | JNI declaration for `nativeSendMessage` |
 | `WakeVerifier.kt` | 52 | Personal logistic-regression verifier over embeddings |
@@ -88,7 +90,7 @@ The `<queries>` block declares intents rather than package names so the app can 
 
 1. `enableEdgeToEdge()`, then `super.onCreate`. The content view gets a fixed background (`0xFF181A20`) and an insets listener that pads for status bar, gesture bar and cutout, because the WebView cannot pad for them itself (comment in code, targetSdk 36 makes edge-to-edge mandatory).
 2. `setShowWhenLocked(true)` and `setTurnScreenOn(true)` (or the legacy window flags below API 27).
-3. On SDK <= 28 without `WRITE_EXTERNAL_STORAGE`: request it (`REQ_WRITE_STORAGE`), and create ZynkbotShare in the result callback. Otherwise `ensureShareDir()` now.
+3. On SDK <= 28 without `WRITE_EXTERNAL_STORAGE`: request it (`REQ_WRITE_STORAGE`), and create the share folder in the result callback. Otherwise `ensureShareDir()` now, which also runs the one-time move out of `Download/ZynkbotShare`.
 4. The permission queue (`permissionQueue`, an `ArrayDeque` of lambdas) is filled in this order: `requestRecordAudioIfNeeded`, `requestNotificationPermissionIfNeeded`, `requestAssistantRoleIfNeeded`, `requestLocalNetworkPermissionIfNeeded`. `runNextPermissionRequest()` pops one. Each step either shows a dialog and returns, or calls `runNextPermissionRequest()` itself when nothing is needed. `onRequestPermissionsResult` advances the queue for `REQ_RECORD_AUDIO`, `REQ_NOTIFICATIONS` and `REQ_LOCAL_NETWORK`; the assistant-role step advances from its `registerForActivityResult` callback. One at a time because Android shows one permission dialog per Activity at once and the code comment records that firing all together silently dropped the microphone request. Microphone is first because the wake word needs it.
 5. `extractVoskModelIfNeeded()`: if `files/vosk-model` is missing or empty, copy `assets/vosk-model` recursively (`copyAssetDir`) on a background thread.
 6. `startSyncService()`: `startForegroundService` for `SyncForegroundService`.
@@ -112,7 +114,10 @@ Registered with `webView.addJavascriptInterface(...)` in `MainActivity.onWebView
 
 **`AndroidPaths`** (`ZynkbotPathsBridge`)
 - `setVoiceInputSource(src)`: store `'vosk'` or `'openai'` in SharedPreferences `zynkbot_voice/input_source`.
-- `getShareDir()`: absolute path of `Downloads/ZynkbotShare`, created if missing.
+- `getShareDir()`: absolute path of the share folder (`filesDir/ZynkbotShare`), created if missing.
+- `openShareFolder()`: opens the Files app on the Zynkbot location (root URI of `ZynkShareProvider`).
+- `shareFileWritten(path)`: a peer download or ➕ Add file landed; refresh any Files-app view.
+- `saveToGallery(path)`: copy an image from the share folder into `Pictures/Zynkbot` through MediaStore; returns `""` or an error.
 - `pickFile()`: `OpenDocument`, copies the file into ZynkbotShare on a thread; `__zfpResolve(path)` / `__zfpReject`.
 - `pickImages()`: `PickMultipleVisualMedia(20)`, image only; `__pickFilesResolve([uri...])` / `__pickFilesReject`.
 - `pickDocuments()`: `OpenMultipleDocuments("*/*")`; same callbacks.

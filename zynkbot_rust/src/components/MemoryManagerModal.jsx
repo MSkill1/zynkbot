@@ -771,7 +771,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               {requestedToggle}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <select value={filterNamespace} onChange={(e) => setFilterNamespace(e.target.value)} className="filter-select" style={{ flex: 1 }}>
-                  <option value="all">All Namespaces</option>
+                  <option value="all">Categories</option>
                   {namespaces.map((ns) => (
                     <option key={ns} value={ns}>{ns.charAt(0).toUpperCase() + ns.slice(1)}</option>
                   ))}
@@ -1095,7 +1095,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             onChange={(e) => setFilterNamespace(e.target.value)}
             className="filter-select"
           >
-            <option value="all">All Namespaces</option>
+            <option value="all">Categories</option>
             {namespaces.map((ns) => (
               <option key={ns} value={ns}>
                 {ns.charAt(0).toUpperCase() + ns.slice(1)}
