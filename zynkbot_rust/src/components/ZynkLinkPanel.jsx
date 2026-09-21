@@ -9,6 +9,9 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [remoteDirs, setRemoteDirs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  // Refresh status is shown on the button itself. It used to go through `message`, which is
+  // drawn at the bottom of the panel, far from the button, and cleared after 2 s.
+  const [refreshState, setRefreshState] = useState('idle'); // 'idle' | 'busy' | 'done'
   const [newDirPath, setNewDirPath] = useState('');
   const [newShareName, setNewShareName] = useState('');
   const [browserShare, setBrowserShare] = useState(null);
@@ -54,10 +57,10 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   }, []);
 
   const handleRefresh = useCallback(async () => {
-    setMessage('Refreshing...');
+    setRefreshState('busy');
     await Promise.all([fetchSharedDirectories(), fetchRemoteDirectories(), fetchLinkedUsers()]);
-    setMessage('✓ Refreshed');
-    setTimeout(() => setMessage(''), 2000);
+    setRefreshState('done');
+    setTimeout(() => setRefreshState('idle'), 2000);
   }, [fetchSharedDirectories, fetchRemoteDirectories, fetchLinkedUsers]);
 
   const fetchUnreadCounts = useCallback(async () => {
@@ -356,15 +359,16 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
       <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
         <button
           onClick={handleRefresh}
-          disabled={loading}
+          disabled={loading || refreshState === 'busy'}
+          aria-live="polite"
           style={{
             flex: 1,
             padding: '8px 16px',
-            background: '#6272a4',
-            color: '#f8f8f2',
+            background: refreshState === 'done' ? '#1e3a1e' : '#6272a4',
+            color: refreshState === 'done' ? '#50fa7b' : '#f8f8f2',
             border: 'none',
             borderRadius: '4px',
-            cursor: loading ? 'wait' : 'pointer',
+            cursor: loading || refreshState === 'busy' ? 'wait' : 'pointer',
             fontSize: '0.85rem',
             fontWeight: 'bold',
             transition: 'all 0.2s',
@@ -372,7 +376,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
           }}
           title="Refresh linked device list"
         >
-          🔄 Refresh
+          {refreshState === 'busy' ? '🔄 Refreshing...' : refreshState === 'done' ? '✓ Refreshed' : '🔄 Refresh'}
         </button>
         <button
           onClick={onOpenUserIdentity}
