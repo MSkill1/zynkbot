@@ -307,6 +307,67 @@ pub async fn scan_directory(
     }))
 }
 
+/// Path of `path` below `base`, always written with "/" separators.
+///
+/// The manifest built from this is sent to other devices, and Android and Linux treat
+/// a backslash as an ordinary filename character. Taking `to_string_lossy()` of the
+/// relative path stored a Windows host's subfolder file as "sub\file.txt", which a peer
+/// reads as one oddly named file rather than a file in a folder. The components are
+/// joined instead of replacing "\" with "/" because a backslash is a legal character in
+/// a Linux filename and must survive there.
+fn portable_relative_path(base: &Path, path: &Path) -> Result<String, String> {
+    let relative = path.strip_prefix(base).map_err(|e| e.to_string())?;
+    Ok(relative
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
+#[cfg(test)]
+mod portable_relative_path_tests {
+    use super::portable_relative_path;
+    use std::path::Path;
+
+    #[test]
+    fn top_level_file_has_no_separator() {
+        let got = portable_relative_path(Path::new("share"), Path::new("share").join("file.txt").as_path());
+        assert_eq!(got.unwrap(), "file.txt");
+    }
+
+    #[test]
+    fn nested_file_is_joined_with_forward_slashes() {
+        let path = Path::new("share").join("sub").join("dir").join("file.txt");
+        let got = portable_relative_path(Path::new("share"), &path);
+        assert_eq!(got.unwrap(), "sub/dir/file.txt");
+    }
+
+    #[test]
+    fn path_outside_the_base_is_an_error() {
+        assert!(portable_relative_path(Path::new("share"), Path::new("elsewhere").join("f.txt").as_path()).is_err());
+    }
+
+    /// The regression this exists for: a real Windows path with drive letter and "\".
+    #[cfg(windows)]
+    #[test]
+    fn windows_backslash_path_becomes_forward_slashes() {
+        let got = portable_relative_path(
+            Path::new(r"C:\Users\x\share"),
+            Path::new(r"C:\Users\x\share\sub\file.txt"),
+        );
+        assert_eq!(got.unwrap(), "sub/file.txt");
+    }
+
+    /// A backslash inside a Linux filename is data, not a separator; a blanket
+    /// replace("\\", "/") would corrupt it.
+    #[cfg(not(windows))]
+    #[test]
+    fn backslash_in_a_linux_filename_is_preserved() {
+        let got = portable_relative_path(Path::new("share"), Path::new("share/a\\b.txt"));
+        assert_eq!(got.unwrap(), "a\\b.txt");
+    }
+}
+
 /// Recursively collect file metadata into `out`; returns Err if the root directory
 /// cannot be read (caller decides whether to abort or ignore).
 async fn collect_files_recursive(
@@ -344,10 +405,7 @@ async fn collect_files_recursive(
         };
 
         if metadata.is_file() {
-            let relative_path = path.strip_prefix(base_path)
-                .map_err(|e| e.to_string())?
-                .to_string_lossy()
-                .to_string();
+            let relative_path = portable_relative_path(base_path, &path)?;
 
             let file_size = metadata.len() as i64;
             let last_modified = metadata.modified()
