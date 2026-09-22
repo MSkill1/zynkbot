@@ -602,6 +602,7 @@ Device-level parental controls — factory reset protection, app-level restricti
 ### Extended Cloud Services
 
 - **Encrypted memory backup tiers** — extended retention, cross-device restore history, priority restore bandwidth.
+- **Scheduled automatic backup** *(added 2026-09-22, Matt)* — an hourly or daily backup the user can switch on once they have their cloud account; today every backup is started by hand.
 - **Family sync service** — cloud relay for family-paired devices that aren't on the same LAN.
 
 ---
