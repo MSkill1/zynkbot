@@ -9,6 +9,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 ## [0.9.6-beta3] — 2026-09-22 <!-- branch v1, started 2026-09-15; Link and Windows lines drafted by Claude 2026-09-21, review wording -->
 
 ### Desktop and phone
+- A phone with only a cloud API key answers typed messages from the first one. The fresh-install placeholder "local" was kept as the model choice on a phone whose key was typed in by hand (a pushed key refreshed the choice, a typed one did not), so every typed message failed with "Local models not supported on Android" while "Hey Zynk" answered normally. Typed chat now falls back to a provider with a key the way hands-free always has, and a phone no longer stores "local" as a choice (tester, Pixel 7a, 2026-09-22).
 - API Keys: once a key is stored, the provider button reads "View plan" and opens the provider's plan/billing page (it said "Get Key" and opened the key page whether or not you had one).
 
 ### Android voice

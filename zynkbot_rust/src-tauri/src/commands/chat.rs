@@ -24,24 +24,71 @@ async fn build_custom_client(base_url: &str) -> reqwest::Client {
     crate::llm::openai::default_client(true)
 }
 
+/// Can the "local" backend (or this .gguf path) actually answer on this device?
+/// Never on Android: llm/mod.rs stubs local models out there.
+fn local_backend_usable(backend: &str) -> bool {
+    if cfg!(target_os = "android") {
+        return false;
+    }
+    if backend.ends_with(".gguf") {
+        return std::path::Path::new(backend).is_file();
+    }
+    crate::llm::local_models::resolve_default_model_path().is_ok()
+}
+
+/// Order: custom endpoint, a downloaded local model, then any API provider with a key
+/// (same provider order as the hands-free path). None only when nothing can answer.
 fn get_best_available_backend() -> Option<String> {
     let custom_url = std::env::var("CUSTOM_API_URL").unwrap_or_default();
     let custom_model = std::env::var("CUSTOM_MODEL").unwrap_or_default();
     if !custom_url.is_empty() && !custom_model.is_empty() {
         return Some("custom".to_string());
     }
-    let models_dir = crate::db::get_models_dir().join("user");
-    if let Ok(entries) = std::fs::read_dir(&models_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && path.extension().map(|e| e.eq_ignore_ascii_case("gguf")).unwrap_or(false)
-            {
-                return Some(path.to_string_lossy().to_string());
+    if !cfg!(target_os = "android") {
+        let models_dir = crate::db::get_models_dir().join("user");
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && path.extension().map(|e| e.eq_ignore_ascii_case("gguf")).unwrap_or(false)
+                {
+                    return Some(path.to_string_lossy().to_string());
+                }
             }
         }
     }
+    for (var, name) in [
+        ("ANTHROPIC_API_KEY", "anthropic"),
+        ("OPENAI_API_KEY", "openai"),
+        ("XAI_API_KEY", "xai"),
+        ("MISTRAL_API_KEY", "mistral"),
+    ] {
+        if !std::env::var(var).unwrap_or_default().is_empty() {
+            return Some(name.to_string());
+        }
+    }
     None
+}
+
+#[cfg(test)]
+mod backend_fallback_tests {
+    use super::local_backend_usable;
+
+    #[test]
+    fn a_gguf_path_that_does_not_exist_is_not_usable() {
+        assert!(!local_backend_usable("/definitely/not/here/model.gguf"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn a_gguf_file_that_exists_is_usable_on_desktop() {
+        let dir = std::env::temp_dir().join(format!("zb_gguf_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("tiny.gguf");
+        std::fs::write(&file, b"not a real model").unwrap();
+        assert!(local_backend_usable(file.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 fn format_api_error(backend: &str, raw: &str) -> String {
@@ -154,7 +201,15 @@ pub async fn generate_reply(
             b if b.contains("mistral") => {
                 !std::env::var("MISTRAL_API_KEY").unwrap_or_default().is_empty()
             }
-            _ => true, // local / custom — assume present until actually tried
+            // "local" is what a fresh install stores before anything is chosen. A phone
+            // has no local models at all, and a desktop may have nothing downloaded, so
+            // treat a local backend that cannot load like a provider with no key and fall
+            // through to whatever can answer, as the hands-free path already does
+            // (android_jni::resolve_voice_backend). A lone phone with a typed-in OpenAI
+            // key answered "Hey Zynk" but showed "Local models not supported on Android"
+            // for every typed message (tester, Pixel 7a, 2026-09-22).
+            b if b.contains("local") || b.ends_with(".gguf") => local_backend_usable(b),
+            _ => true, // custom — assume present until actually tried
         };
 
         if !has_key {

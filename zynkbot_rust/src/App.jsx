@@ -486,6 +486,12 @@ export default function App() {
   // backend's .env (ZYNK_MODEL_BACKEND) so the native Android voice path, which
   // cannot read localStorage, answers with the same model you picked here.
   useEffect(() => {
+    // 'local' is the placeholder the state starts with, not a choice. On a phone there are
+    // no local models, and persisting it here on the first render made fetchModels treat
+    // it as a stored preference and leave the typed path on a backend that cannot answer
+    // (tester, Pixel 7a, 2026-09-22). Leave nothing stored, so fetchModels picks the first
+    // provider with a key the moment there is one.
+    if (modelType === 'local' && window.AndroidPaths) return;
     localStorage.setItem('zynkbot_preferred_model', modelType);
     invoke('set_preferred_backend', { backend: modelType }).catch((e) =>
       console.warn('[Backend] could not persist preferred backend:', e)
