@@ -6,7 +6,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## [Unreleased] — 0.9.6-beta3 <!-- branch v1, started 2026-09-15; Link and Windows lines for beta3 drafted by Claude 2026-09-21, review wording -->
+## [0.9.6-beta3] — 2026-09-22 <!-- branch v1, started 2026-09-15; Link and Windows lines drafted by Claude 2026-09-21, review wording -->
 
 ### Desktop and phone
 - API Keys: once a key is stored, the provider button reads "View plan" and opens the provider's plan/billing page (it said "Get Key" and opened the key page whether or not you had one).
