@@ -64,6 +64,18 @@ describe('nativeTurnsToMessages — hands-free exchanges join the thread on scre
     expect(new Set(msgs.map((m) => m.id)).size).toBe(3);
   });
 
+  test('the sources of an automatic web search ride on the answer, as for a typed search', () => {
+    const sources = { query: 'weather miami', results: [{ title: 'NWS Miami', url: 'https://example.org/miami', snippet: '' }], num_results: 1 };
+    const msgs = nativeTurnsToMessages([{ ...turn, sources }], 's1');
+    expect(msgs[1].web_search_results).toEqual(sources);
+    expect(msgs[0].web_search_results).toBeUndefined();
+  });
+
+  test('a search with no results, or no search at all, attaches nothing', () => {
+    expect(nativeTurnsToMessages([{ ...turn, sources: { query: 'x', results: [] } }], 's1')[1].web_search_results).toBeUndefined();
+    expect(nativeTurnsToMessages([turn], 's1')[1].web_search_results).toBeUndefined();
+  });
+
   test('turns for another thread are left to Conversation History', () => {
     expect(nativeTurnsToMessages([turn], 'other')).toEqual([]);
   });

@@ -245,6 +245,12 @@ pub struct ReplyResponse {
     /// UI can show that the answer is not grounded in the user's documents.
     #[serde(skip_serializing_if = "Option::is_none")]
     kb_note: Option<String>,
+    /// Hands-free auto web search: the sources the answer was built from, in the shape
+    /// ChatMessage already renders under a typed search ({ query, results: [{title, url,
+    /// snippet}] }). The typed path attaches these on the page itself; the native path
+    /// has to carry them through the reply and the native-turn queue (2026-09-22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_search_results: Option<serde_json::Value>,
 }
 
 // ============================================================================

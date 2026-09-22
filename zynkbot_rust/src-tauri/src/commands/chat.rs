@@ -221,6 +221,7 @@ pub async fn generate_reply(
                         original_query: None,
                         pre_search_reply: None,
                         kb_note: None,
+                        web_search_results: None,
                     });
                 }
                 Ok(None) => {
@@ -245,6 +246,7 @@ pub async fn generate_reply(
                         original_query: None,
                         pre_search_reply: None,
                         kb_note: None,
+                        web_search_results: None,
                     });
                 }
             }
@@ -276,6 +278,7 @@ pub async fn generate_reply(
                             original_query: None,
                             pre_search_reply: None,
                         kb_note: None,
+                        web_search_results: None,
                         });
                     }
                 }
@@ -841,6 +844,9 @@ pub async fn generate_reply(
         sink.event("web-search", serde_json::json!({ "query": search_query }));
         println!("[RUST] Hands-free auto search: {}", search_query);
         let mut context = format!("Here are the web search results for \"{}\":\n\n", search_query);
+        // The sources go back with the reply so the chat can show the same "View n
+        // search sources" drop-down a typed search gets; page bodies stay out of it.
+        let mut web_sources: Option<serde_json::Value> = None;
         match crate::web_search::search_with_content(&search_query, 5, 3).await {
             Ok(results) if !results.results.is_empty() => {
                 for (i, r) in results.results.iter().enumerate() {
@@ -849,6 +855,13 @@ pub async fn generate_reply(
                     if let Some(body) = r.content.as_deref() { context.push_str(&format!("Content: {}\n", body.chars().take(800).collect::<String>())); }
                     context.push('\n');
                 }
+                web_sources = Some(serde_json::json!({
+                    "query": search_query,
+                    "results": results.results.iter().map(|r| serde_json::json!({
+                        "title": r.title, "url": r.url, "snippet": r.snippet,
+                    })).collect::<Vec<_>>(),
+                    "num_results": results.results.len(),
+                }));
             }
             Ok(_) => context.push_str("No results found.\n"),
             Err(e) => context.push_str(&format!("The search failed: {}\n", e)),
@@ -880,7 +893,7 @@ pub async fn generate_reply(
             sink.clone(), prompt, user_id.clone(), session_id.clone(), forced_backend.clone(), containment_mode.clone(),
             None, Some(true), Some(true), Some(kb_enabled), Some(query.clone()), None, true,
         )).await?;
-        return Ok(ReplyResponse { original_query: Some(query.clone()), pre_search_reply: first_answer, ..synthesized });
+        return Ok(ReplyResponse { original_query: Some(query.clone()), pre_search_reply: first_answer, web_search_results: web_sources, ..synthesized });
     }
 
     // Parse MEMORY_EXTRACT facts from the LLM response — fires for any message type,
@@ -1195,6 +1208,7 @@ pub async fn generate_reply(
         original_query: Some(query.clone()),
         pre_search_reply: None,
         kb_note: kb_note.clone(),
+        web_search_results: None,
     };
 
     // STEP 10: LOG EXCHANGE TO CONVERSATION HISTORY (non-blocking, skipped in HIPAA mode,

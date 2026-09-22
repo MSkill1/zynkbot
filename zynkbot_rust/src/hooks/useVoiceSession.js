@@ -40,10 +40,13 @@ export function nativeTurnsToMessages(turns, sessionId) {
       const at = Number(t.at) || Date.now();
       const timestamp = new Date(at).toISOString();
       const pre = (t.preAnswer || '').trim();
+      // Sources of an automatic web search, in the shape ChatMessage renders as the
+      // "View n search sources" drop-down under a typed search (2026-09-22).
+      const sources = t.sources && Array.isArray(t.sources.results) && t.sources.results.length > 0 ? t.sources : null;
       return [
         { id: at, role: 'user', content: t.question, timestamp, source: 'voice' },
         ...(pre ? [{ id: at + 1, role: 'assistant', content: pre, timestamp, source: 'voice' }] : []),
-        { id: at + 2, role: 'assistant', content: t.answer, timestamp, source: 'voice' },
+        { id: at + 2, role: 'assistant', content: t.answer, timestamp, source: 'voice', ...(sources ? { web_search_results: sources } : {}) },
       ];
     });
 }

@@ -1201,6 +1201,25 @@ async fn handle_zynklink_files(
 
     println!("[ZynkLink] File list request for share_id: {}", share_id);
 
+    // Rescan before answering, so a device asking what we share sees the folder as it
+    // is now rather than as it was when this side last opened its own ZynkLink menu
+    // (two images moved into the laptop's folder were invisible from the desktop,
+    // 2026-09-22). Throttled: "Shared With Me" asks every device at once, and a few
+    // devices opening it within seconds of each other should not each cause a walk.
+    let recently_scanned: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM zynk_file_manifest
+         WHERE shared_directory_id = ? AND indexed_at > datetime('now', '-5 seconds')"
+    )
+    .bind(share_id)
+    .fetch_one(&transport.db_pool)
+    .await
+    .unwrap_or(0);
+    if recently_scanned == 0 {
+        if let Err(e) = scan_directory(&transport.db_pool, &transport.device_id(), share_id, Some(1000)).await {
+            eprintln!("[ZynkLink] Rescan before file list failed, serving the last index: {}", e);
+        }
+    }
+
     // List files in the shared directory
     let response = list_files(
         &transport.db_pool,

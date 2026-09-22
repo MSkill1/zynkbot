@@ -61,8 +61,11 @@ object NativeVoiceAnswerer {
 
     @Volatile private var currentSpeaker: SentenceSpeaker? = null
 
-    /** One finished hands-free exchange, queued for the app's chat. */
-    data class Turn(val sessionId: String, val question: String, val answer: String, val at: Long, val preAnswer: String = "")
+    /** One finished hands-free exchange, queued for the app's chat. `sources` is the
+     *  reply's web_search_results object as JSON text, or "" when there was no search;
+     *  the page attaches it to the answer so the search-sources drop-down appears
+     *  exactly as it does for a typed search (2026-09-22). */
+    data class Turn(val sessionId: String, val question: String, val answer: String, val at: Long, val preAnswer: String = "", val sources: String = "")
 
     private val pendingTurns = java.util.Collections.synchronizedList(mutableListOf<Turn>())
 
@@ -76,9 +79,13 @@ object NativeVoiceAnswerer {
         val arr = org.json.JSONArray()
         synchronized(pendingTurns) {
             for (t in pendingTurns) {
-                arr.put(org.json.JSONObject()
+                val o = org.json.JSONObject()
                     .put("sessionId", t.sessionId).put("question", t.question)
-                    .put("answer", t.answer).put("at", t.at).put("preAnswer", t.preAnswer))
+                    .put("answer", t.answer).put("at", t.at).put("preAnswer", t.preAnswer)
+                if (t.sources.isNotEmpty()) {
+                    try { o.put("sources", org.json.JSONObject(t.sources)) } catch (_: Exception) {}
+                }
+                arr.put(o)
             }
             pendingTurns.clear()
         }
@@ -202,6 +209,7 @@ object NativeVoiceAnswerer {
                         // What the model said before an automatic web search; shown as its
                         // own message above the searched answer (2026-09-20).
                         val preAnswer = parsed?.optString("pre_search_reply", "") ?: ""
+                        val sources = parsed?.optJSONObject("web_search_results")?.toString() ?: ""
                         Log.i(TAG, "Native reply: \"${replyText.take(80)}\"")
                         if (replyText.trim().startsWith(NO_QUERY)) {
                             Log.i(TAG, "Model judged the transcript not a request — staying silent")
@@ -211,7 +219,7 @@ object NativeVoiceAnswerer {
                         } else if (replyText.isNotBlank()) {
                             // Queue the exchange for the app's chat now, not after speech:
                             // if the app is open it shows the answer while it is being read.
-                            pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis(), preAnswer))
+                            pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis(), preAnswer, sources))
                             try { onTurnCompleted?.invoke() } catch (_: Exception) {}
                         }
                         // Not reported as a real interaction: a fluent TV line the model

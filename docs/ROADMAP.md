@@ -311,6 +311,10 @@ The current web search (DuckDuckGo, top 3 pages fetched for content) is a first 
 - **Concrete example of the quality gap (2026-09-21):** a hands-free "what's the weather in Miami" pulled AccuWeather (blocked the fetch outright, "Access Denied"), weather.com and easeweather.com (both render the real forecast with JavaScript, so the fetch only got navigation menus and site chrome). The model correctly said it didn't have enough to answer rather than guessing — this is a real hands-free case, not a hypothetical one.
 - **Should there be a general "always search, don't ask" toggle, for typed chat too?** The old "Auto-execute in voice sessions" toggle (removed 2026-09-20; hands-free now always searches, unconditionally — see KNOWN_ISSUES / GitHub #26) never touched typed chat, which still always shows the confirm-the-search-query pop-up. Matt, 2026-09-20: open question whether a broader version of that toggle is worth building once the search itself is better, rather than now.
 
+### Development blog on containai.ai (possibility, after v1.0; Matt 2026-09-22)
+
+A regularly updated blog on the website about how Zynkbot is built, as a way to start bringing people to the site. The site (`containai-site` repo) is six hand-written HTML pages deployed by FTP with Plausible already installed, so a blog means adding a small static generator for a `/blog` section with an RSS feed; half a day to set up, the cost is the writing. Material exists already: the known-issues writeups, the changelog, decisions like CUDA becoming opt-in. Not decided. Suggested first step before building anything: one post from existing material on a plain page, shared in two places, and two weeks of Plausible to see whether it brings anyone.
+
 ## v1.2 - Android + SDK Foundation + Companion Enhancements (Q4 2026)
 
 **Focus:** Three co-primary tracks: Android launch, SDK Foundation groundwork, and companion/networking depth
