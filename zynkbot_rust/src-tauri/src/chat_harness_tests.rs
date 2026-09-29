@@ -36,7 +36,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-fn hold_env() -> MutexGuard<'static, ()> {
+/// Also used by the sync harness for the one behaviour that touches the process
+/// environment (API keys live in env vars and `.env`).
+pub(crate) fn hold_env() -> MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 

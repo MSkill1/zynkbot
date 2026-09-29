@@ -406,3 +406,209 @@ fn b15_chat_message_reaches_my_other_device_over_a_sync_pairing() {
     });
 }
 
+
+// ===========================================================================
+// The six behaviours whose numbers were reserved but never written (2026-09-29).
+// Each states what two devices must end up with. The ones that fail on today's code
+// are #[ignore]d with their known-issue number; they are the outbox rebuild's finish line.
+// ===========================================================================
+
+/// A data directory for the two behaviours that touch `.env` (API keys). The receiving
+/// side of a key push writes to the app's data directory, which is process-wide, so
+/// these hold the chat harness's environment lock and point the app at a temp dir.
+struct EnvDir { dir: PathBuf }
+impl EnvDir {
+    fn new() -> EnvDir {
+        let dir = std::env::temp_dir().join(format!("zynkbot-harness-env-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("zynkbot")).unwrap();
+        std::env::set_var("XDG_DATA_HOME", &dir);
+        EnvDir { dir }
+    }
+    fn env_file(&self) -> String {
+        std::fs::read_to_string(self.dir.join("zynkbot").join(".env")).unwrap_or_default()
+    }
+}
+impl Drop for EnvDir {
+    fn drop(&mut self) {
+        std::env::remove_var("OPENAI_API_KEY");
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Keys saved on the desktop before a phone pairs must reach that phone once it
+//    does (KI-055). Today the push only runs when a key is saved or the button is
+//    pressed, so a device that pairs afterwards gets nothing.
+// ---------------------------------------------------------------------------
+#[test]
+#[ignore = "KI-055: keys saved before a device pairs never reach it — until the outbox rebuild"]
+fn b02_keys_saved_before_pairing_reach_the_device_that_pairs_later() {
+    let _env = crate::chat_harness_tests::hold_env();
+    let data = EnvDir::new();
+    std::env::set_var("OPENAI_API_KEY", "sk-test-desktop-key");
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        a.sync_with(&b).await;
+        b.sync_with(&a).await;
+        let env_file = data.env_file();
+        assert!(env_file.contains("OPENAI_API_KEY=sk-test-desktop-key"),
+            "the phone never received the desktop's key; its .env holds: {:?}", env_file);
+    });
+}
+
+// 2b. The receiving side of a key push stores the key. (The half that works today;
+//     kept separate so it stays green while 2 waits on the rebuild.)
+#[test]
+fn b02b_a_pushed_key_is_stored_on_the_receiving_device() {
+    let _env = crate::chat_harness_tests::hold_env();
+    let data = EnvDir::new();
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+
+        let client = a.svc.get_http_client().await;
+        let url = format!("https://127.0.0.1:{}/api/zynksync/push-api-key", b.port);
+        let r = client.post(&url)
+            .json(&serde_json::json!({ "key": "OPENAI_API_KEY", "value": "sk-test-pushed" }))
+            .send().await.expect("push request");
+        assert!(r.status().is_success(), "the phone refused the pushed key: {}", r.status());
+        let env_file = data.env_file();
+        assert!(env_file.contains("OPENAI_API_KEY=sk-test-pushed"), "pushed key not stored; .env holds: {:?}", env_file);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 6. A contradiction resolved on one device ("keep the new fact") leaves both devices
+//    holding only the new fact. Mirrors what resolve_memory_conflict_v2 does on
+//    "keep_new": delete the old memory (tombstone, then peers), store the new one.
+// ---------------------------------------------------------------------------
+#[test]
+fn b06_a_contradiction_resolved_on_one_device_leaves_both_with_only_the_new_fact() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let old = a.add_memory("My dog is named Max").await;
+        a.sync_with(&b).await;
+        assert_eq!(b.memory_contents().await, vec!["My dog is named Max".to_string()]);
+
+        a.svc.propagate_deletion(old).await.expect("propagate deletion");
+        sqlx::query("DELETE FROM memories WHERE id = ?").bind(old).execute(&a.pool).await.unwrap();
+        a.add_memory("My dog is named Wendy").await;
+
+        a.sync_with(&b).await;
+        b.sync_with(&a).await;
+        assert_eq!(a.memory_contents().await, vec!["My dog is named Wendy".to_string()], "desktop");
+        assert_eq!(b.memory_contents().await, vec!["My dog is named Wendy".to_string()], "phone");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 7. A phone that already holds memories, then pairs, keeps them and shares them
+//    (KI-011). Today they stay under the phone's old user id and vanish from view.
+// ---------------------------------------------------------------------------
+#[test]
+#[ignore = "KI-011: a joining device's own memories stay under its old user id after pairing — until the outbox rebuild"]
+fn b07_memories_held_before_pairing_are_shared_after_it() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.add_memory("I have a cat named Pickles").await;   // under the phone's own user id
+        b.pair_with(&a).await;                                // the phone adopts the desktop's
+        a.add_memory("My car is a 2019 Outback").await;
+
+        b.sync_with(&a).await;
+        a.sync_with(&b).await;
+        let want = vec!["I have a cat named Pickles".to_string(), "My car is a 2019 Outback".to_string()];
+        assert_eq!(a.memory_contents().await, want, "desktop is missing the phone's earlier memory");
+        assert_eq!(b.memory_contents().await, want, "phone lost its own earlier memory when it paired");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 11. A phone that is wiped and paired again is listed once on the desktop, under its
+//     new identity, and syncs (KI-050: today the old entry stays beside the new one).
+// ---------------------------------------------------------------------------
+#[test]
+#[ignore = "KI-050: a reinstalled phone reappears beside its old entry on every peer — until device identity survives a reinstall"]
+fn b11_a_phone_that_is_wiped_and_paired_again_is_listed_once() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        a.add_memory("Oil change every 5000 miles").await;
+        a.sync_with(&b).await;
+
+        drop(b);                                              // the phone is wiped
+        let b2 = Peer::spawn("phone").await;                  // fresh install, new identity
+        b2.pair_with(&a).await;
+
+        let phones: Vec<_> = a.device_rows().await.into_iter()
+            .filter(|(_, name, _, paired)| name == "phone" && *paired == 1).collect();
+        assert_eq!(phones.len(), 1, "desktop lists the phone {} times after a reinstall: {:?}", phones.len(), phones);
+        assert_eq!(phones[0].0, b2.device_id(), "the surviving entry is the old identity, not the new one");
+        a.sync_with(&b2).await;
+        assert_eq!(b2.memory_contents().await, vec!["Oil change every 5000 miles".to_string()]);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 12. The newer memory fields travel with a memory: its tags and its "Remembered on
+//     request" mark (KI-030: today the sync payload has no room for them).
+// ---------------------------------------------------------------------------
+#[test]
+#[ignore = "KI-030: sync does not carry tags or the Remember mark — until the outbox rebuild"]
+fn b12_tags_and_the_remembered_on_request_mark_travel_with_a_memory() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let id = a.add_memory("Sourdough needs a 12-hour rise").await;
+        sqlx::query("UPDATE memories SET tags = ?, provenance_json = ? WHERE id = ?")
+            .bind(r#"["kitchen","bread"]"#).bind(r#"{"requested":true}"#).bind(id)
+            .execute(&a.pool).await.unwrap();
+        a.sync_with(&b).await;
+
+        let (tags, provenance): (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT tags, provenance_json FROM memories WHERE content = ?")
+                .bind("Sourdough needs a 12-hour rise").fetch_one(&b.pool).await.expect("memory on phone");
+        assert_eq!(tags.as_deref(), Some(r#"["kitchen","bread"]"#), "tags did not travel");
+        assert!(provenance.as_deref().map_or(false, |p| p.contains("requested")),
+            "the Remember mark did not travel: {:?}", provenance);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 13. A phone that was switched off while the desktop changed things catches up when
+//     it returns: it gains what was added and loses what was deleted, and the deleted
+//     memory does not come back to the desktop from the phone's stale copy.
+// ---------------------------------------------------------------------------
+#[test]
+fn b13_a_device_that_was_offline_catches_up_when_it_returns() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let stale = a.add_memory("Old phone number 555-0100").await;
+        a.sync_with(&b).await;
+        assert_eq!(b.memory_contents().await.len(), 1);
+
+        // The phone goes away: the desktop's record of it points at a port nothing listens on.
+        sqlx::query("UPDATE zynk_devices SET port = 1 WHERE device_id = ?").bind(b.device_id()).execute(&a.pool).await.unwrap();
+        a.svc.load_devices().await.unwrap();
+        a.add_memory("New phone number 555-0199").await;
+        let _ = a.svc.propagate_deletion(stale).await;        // reaches nobody
+        sqlx::query("DELETE FROM memories WHERE id = ?").bind(stale).execute(&a.pool).await.unwrap();
+
+        // The phone comes back.
+        sqlx::query("UPDATE zynk_devices SET port = ? WHERE device_id = ?").bind(b.port as i64).bind(b.device_id()).execute(&a.pool).await.unwrap();
+        a.svc.load_devices().await.unwrap();
+        b.sync_with(&a).await;
+        a.sync_with(&b).await;
+        assert_eq!(a.memory_contents().await, vec!["New phone number 555-0199".to_string()], "desktop: the deleted memory came back from the phone");
+        assert_eq!(b.memory_contents().await, vec!["New phone number 555-0199".to_string()], "phone: did not catch up");
+    });
+}
