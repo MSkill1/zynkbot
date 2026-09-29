@@ -17,6 +17,8 @@ macro_rules! eprintln {
 pub mod app_log;            // In-memory log tail for bug reports
 #[cfg(test)]
 mod sync_harness_tests; // two-peer ZynkSync harness (docs/TESTING.md)
+#[cfg(test)]
+mod chat_harness_tests; // the chat path end to end against a pretend model
 pub mod memory_extras;      // event date / namespace / tags / tone / entities from the decision call
 pub mod commands;           // Tauri command handlers (extracted from lib.rs)
 pub mod safety_classifier;  // TinyBERT toxicity classifier (Candle-based)

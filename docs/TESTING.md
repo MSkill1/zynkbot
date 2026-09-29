@@ -26,8 +26,10 @@ All commands from `zynkbot_rust/`.
 
 Continuous integration (`.github/workflows/test.yml`) runs the first four on every push (documentation-only pushes are skipped) and the Kotlin compile when Kotlin changed. The release workflow is separate and runs only on a `v*` tag.
 
-## What is covered today (2026-09-17)
+## What is covered today (2026-09-29)
 
+- **ZynkSync, two real peers in one process** (`sync_harness_tests.rs`): pairing, memory add/delete/edit, history threads and the 300-message cap, marker survives a restart, device rename, unpinned client refused, chat between own devices. Twelve behaviours, three `#[ignore]`d with their known-issue numbers until the outbox rebuild.
+- **The chat path end to end** (`chat_harness_tests.rs`): `generate_reply` runs exactly as the app runs it, against a pretend OpenAI-compatible model on a loopback port, in its own data directory. Five behaviours: a backend with no credentials falls back to one that can answer (the tester's phone bug of 2026-09-22), the reply streams token by token, a stored memory reaches the prompt, "Remember:" stores verbatim regardless of the model's decision, a marked fact becomes a memory and the marker is hidden. Uses the system models beside the source, as CI does.
 - **Conversation history** (`conversation_history.rs`): open / log / count / rename, count repair at startup.
 - **Memory extras** (`memory_extras.rs`): event-date validation, namespace resolution, tag cleaning.
 - **Prompt pieces**: KB fabrication guard, question extraction, NLP helpers, conversation-engine prompt assembly.
@@ -42,8 +44,8 @@ Continuous integration (`.github/workflows/test.yml`) runs the first four on eve
 
 In order of evidence (where the known issues came from):
 
-1. **ZynkSync** — pairing, key push, memory/history sync, deletions, edits, device identity. No tests. Plan: a two-peer harness (two service instances with separate in-memory databases and identities, real router, loopback) exercising the behaviours listed in the sync section below; it is also the acceptance test for the sync rebuild.
-2. **Chat pipeline end to end** — containment → recall → prompt → model → history → extraction. Plan: a fake model backend so `generate_reply` runs in-process.
+1. **ZynkSync** — the harness exists (above) but six numbered behaviours were never written and their content was never recorded: b02, b06, b07, b11, b12, b13. Proposed (2026-09-28): keys reaching a device that paired later (KI-055); first sync when both sides already hold memories (KI-011); an offline device catching up; unpair and re-pair (the ghost problems, KI-050/074/075); a resolved contradiction reaching the other device; the newer memory fields travelling (KI-030). Written to fail on today's code, they are the finish line for the outbox rebuild. Original plan: a two-peer harness (two service instances with separate in-memory databases and identities, real router, loopback) exercising the behaviours listed in the sync section below; it is also the acceptance test for the sync rebuild.
+2. **Chat pipeline end to end** — five behaviours covered by the chat harness (above). Still not covered: Child Mode's moderation step (it calls OpenAI's moderation endpoint directly, so it needs the real service), the hands-free path through `android_jni`, Ensemble, and the KB-grounding decision. Original plan: a fake model backend so `generate_reply` runs in-process.
 3. **Memory pipeline** — dedupe, contradiction, dates/tags. Mostly reached through (2).
 4. **Android Kotlin** — pure logic (command parsing, verifier scoring, speech cleanup) as JVM unit tests; everything else is manual (below).
 5. Deliberately untested: local GGUF model loading (hardware), the safety classifier's judgement (model behaviour), UI layout, the R2 upload itself (network).

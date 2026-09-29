@@ -179,6 +179,10 @@ class WakeWordService : Service() {
         val stem = lastClipStem ?: return
         try {
             val dir = File(filesDir, "zynkbot/wake_triggers")
+            // A trigger reports its outcome more than once as it moves through the session
+            // (fruitless first, then answered), so the last report has to win. Without this
+            // 27 of 87 clips carried both labels and were useless for training (KI-076).
+            File(dir, "$stem.${if (real) "false" else "real"}").delete()
             File(dir, "$stem.${if (real) "real" else "false"}").writeText(if (real) "real\n" else "false\n")
         } catch (e: Exception) { Log.w(TAG, "Could not label clip: ${e.message}") }
     }
