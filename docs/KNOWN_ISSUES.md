@@ -352,6 +352,45 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-070 — A file in a subfolder of a Windows share was listed as one oddly named file (fixed)
+**Status:** Fixed on `v1` (2026-09-22), shipped in 0.9.6-beta3. Verified between the Windows laptop and the Linux desktop.
+**Affected:** Anyone sharing from Windows to a Linux or Android device over ZynkLink.
+**Description:** The share manifest stored each file's path using the host's own separator, so a Windows host recorded `sub\file.txt`. Linux and Android treat a backslash as an ordinary filename character, so the peer showed one file with a strange name instead of a folder containing a file. One of six files in the laptop's manifest was affected.
+**Fix:** `portable_relative_path()` in `zynklink.rs` joins the path's components with `/` rather than replacing separators, so a backslash that is genuinely part of a Linux filename survives. Four unit tests cover it, two of them platform-gated.
+
+---
+
+### KI-071 — The ZynkLink Refresh button's status appeared far from the button and vanished (fixed)
+**Status:** Fixed on `v1` (2026-09-22), shipped in 0.9.6-beta3.
+**Affected:** Every platform with the ZynkLink panel.
+**Description:** Pressing Refresh wrote "Refreshing…" and then "✓ Refreshed" to a message area at the bottom of the panel, which cleared after two seconds. Users pressing the button at the top of the panel did not see it.
+**Fix:** the button shows its own state and returns to "Refresh" after two seconds.
+
+---
+
+### KI-072 — Another device saw a stale file list until the sharing computer opened its own ZynkLink menu (fixed)
+**Status:** Fixed on `v1` (2026-09-22), shipped in 0.9.6-beta3. Verified by a tester moving a file into the laptop's share and seeing it on the desktop after a Refresh.
+**Affected:** Anyone adding files to a shared folder outside the app.
+**Description:** The file list served to a peer came from the stored manifest, which was only rebuilt when the sharing device opened its own ZynkLink panel, pressed Rescan, added a share, or received a download. Files moved into the folder by the Files app or Explorer stayed invisible to every other device through any number of Refreshes.
+**Fix:** `handle_zynklink_files` rescans the share before answering, throttled to once per five seconds per share so that several devices opening "Shared With Me" at once do not each trigger a directory walk.
+
+---
+
+### KI-074 — A stale device entry at a device's own address makes it pair with itself
+**Status:** Open. Part of the ZynkSync refactor, not separate work: the introduction path is being rewritten there. Recorded so it is not rediscovered. Workaround: delete the stale entry.
+**Affected:** Any device re-paired after a wipe or reinstall while other devices still list its old identity.
+**Description:** A reinstall mints a new device id (KI-050), so peers keep an entry for the old one at the same address. Mesh introduction then tells every known peer about the newcomer, skipping the newcomer by id; the stale entry has a different id, so the introduction is sent to the newcomer's own address. The receiving handler checks that the introducer is trusted and that the device is not already paired, but never that the introduced device is itself, so it adds itself as a peer. Writing a sync timestamp for that pair then fails the `zynk_device_pairings_order` check constraint (the two ids in a pair must differ), once per sync cycle. Seen on a Pixel 2026-09-22, logging the failure every minute.
+**Impact:** Wasted sync cycles and a recurring error in the log. Nothing is lost or duplicated; the pairing row is never written.
+
+---
+
+### KI-075 — A freshly installed desktop does not receive the other devices by introduction
+**Status:** Open. Part of the ZynkSync refactor, not separate work. Workaround: pair the new device to each other device directly.
+**Affected:** A device reinstalled or set up fresh while its peers still hold its old identity.
+**Description:** Observed 2026-09-22 after installing the beta3 binaries on a fresh Linux desktop and pairing from the Pixel. The desktop did not learn about the other devices through mesh introduction and had to be paired to each by hand. Same underlying cause as KI-074: introductions are addressed against a peer list that still holds the old identity, so they reach the wrong entry.
+
+---
+
 ## Debug Logging
 
 ### KI-006 — Verbose debug output in development builds
@@ -463,6 +502,14 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 ---
 
+### KI-076 — A wake clip can carry both a `.real` and a `.false` label
+**Status:** Open. Blocks retraining the personal wake-word verifier, so it should be fixed before more clips are collected.
+**Affected:** Every phone collecting wake-word clips. 27 of the 87 clips in the 2026-09-22 set carried both labels; 14 were cleanly real and 6 had no label at all.
+**Description:** `WakeWordService.labelLastClip()` writes `<stem>.real` or `<stem>.false` next to the clip but never removes the opposite file. A single trigger can report its outcome more than once as it moves through the session (`ZynkAssistantSession` reports a fruitless outcome, then an answer arrives and `markAnswered()` reports a useful one), so both files end up present and the clip is ambiguous to the trainer.
+**Fix:** delete the opposite label when writing one, so the last outcome wins. Two lines. Then decide what to do with the existing ambiguous clips: discard them, or take the later file's timestamp as the answer.
+
+---
+
 ## Build
 
 ### KI-043 — Windows: the app cannot be rebuilt while it is running
@@ -550,8 +597,8 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-025 — LLM responses are not streamed; nothing appears until the full response arrives
-**Status:** Open — Tier 1 v1.0 item
+### KI-025 — LLM responses are not streamed; nothing appears until the full response arrives (fixed)
+**Status:** Fixed. Streaming has been in place since the pure-Rust backend landed: the backend emits a `stream-token` event per token (`response_sink.rs`) and the chat listens for it (`App.jsx`). Confirmed end to end in a tester's problem report 2026-09-22, where an OpenAI reply streamed on a Pixel 7a. This entry was simply never updated when the work shipped; the text below describes the old behaviour.
 **Affected:** All platforms, all backends
 **Description:** Asking for a long answer produces no visible output until the entire response has been generated. The response should begin rendering as soon as the first tokens are available.
 **Fix target:** Use `stream: true` for API backends (Claude, OpenAI, Grok) and llama.cpp's streaming generation callback for local and Ollama backends. This is a transport and rendering change only — it does not touch the memory graph, contradiction detection, or wake-word logic.
@@ -613,6 +660,14 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 **Status:** Fixed on `memory` (2026-09-09)  
 **Description:** The Memory Manager's list query did not include the new `tags` column, so the tag filter fell back to a text search and matched nothing. The query now returns tags.
 
+### KI-073 — A phone whose API key was typed in by hand failed every typed message (fixed)
+**Status:** Fixed on `v1` (2026-09-22), shipped in the republished 0.9.6-beta3. Reproduced on a wiped OnePlus with a hand-typed OpenAI key and verified from the log (`Backend: local` → `Falling back to: openai` → streamed reply).
+**Affected:** Any phone set up on its own, with a cloud API key entered by hand and no paired device. Found by a tester on a Pixel 7a.
+**Description:** A fresh install starts with `local` as the model choice and the page persisted it before any key existed. On a phone there are no local models, so every typed message failed with "API error: Local models not supported on Android", while "Hey Zynk" answered normally because the hands-free path already falls back to a provider that has a key. The model picker showed the OpenAI entry, which made the stored value invisible to the user. Devices in testing never hit it because a key *pushed* from a paired device triggers a model-list refresh that replaces the placeholder; a key typed by hand does not.
+**Fix:** two parts. In `commands/chat.rs`, a local backend that cannot load is treated like a provider with no key, and `get_best_available_backend()` now falls through to any API provider with a key (custom endpoint, then a downloaded model, then Anthropic, OpenAI, xAI, Mistral) instead of returning nothing. In `App.jsx`, Android no longer persists the `local` placeholder. The Rust half is the important one: it does not depend on what the page has stored.
+
+---
+
 ### KI-034 — The GitHub Actions Android release job has never worked (fixed)
 
 **Status:** Fixed 2026-09-09 — workflow rewritten (the Android job runs `tauri android build`, both desktop jobs get the Vosk library, Windows ships NSIS only, and the workflow can be run by hand without a tag); manual run 34419918942 on `voice` was green on all three jobs  
@@ -622,4 +677,4 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-*Last updated: 2026-09-09*
+*Last updated: 2026-09-28*
