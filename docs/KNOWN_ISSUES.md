@@ -419,6 +419,30 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-077 — Back closed the app and silently killed the sync server (fixed)
+**Status:** Fixed 2026-10-01 on `sync-rebuild` (`1401895`); verified on the OnePlus.
+**Affected:** Both phones, every build before the fix.
+**Description:** Zynkbot is one screen, so Back meant "close". Android finished the activity and Tauri's Android runtime then exited the whole process: the ZynkSync server, the auto-sync loop and the hands-free service's Rust side went with it. Android restarted only the Kotlin foreground service, in a process that never starts the server, so the phone neither served nor synced until the app was opened again. Found on the first outbox device pass, when a phone that had just been dismissed with Back dropped out of sync for twenty minutes.
+**Fix:** `MainActivity.onBackPressed` sends the app to the background (`moveTaskToBack`), as Home does; the service and server keep running.
+
+---
+
+### KI-078 — ONNX Runtime aborts while the app exits
+**Status:** Open — cosmetic since KI-077, but it is the "Zynkbot stopped" dialog a tester sees after closing the app.
+**Affected:** Android, when the process actually exits (swipe away from Recents, force stop, the pre-KI-077 Back).
+**Description:** On exit, C runtime teardown runs `libonnxruntime.so`'s destructors, one of which locks a mutex it has already destroyed; bionic aborts the process (`FORTIFY: pthread_mutex_lock called on a destroyed mutex`). Tombstone from the OnePlus, 2026-10-01: `exit` → `__cxa_finalize` → `libonnxruntime.so` → `abort`. The data is already saved by then; the only effect is the crash dialog and a crash entry.
+**Fix:** release the ONNX sessions (wake-word model, verifier) before the runtime exits, or stop the process with `_exit` once the app's own shutdown is done so no destructors run. Not part of the sync rebuild.
+
+---
+
+### KI-079 — A photo or screenshot cannot be sent on its own
+**Status:** Open (Matt, 2026-10-01).
+**Affected:** Both phones, desktop too.
+**Description:** Attaching a picture does not enable Send; some text has to be typed first. Asked for a screenshot, the user has to type "here it is" to send it.
+**Fix:** enable Send when there is an attachment and no text; send the attachment with an empty message.
+
+---
+
 ## Desktop UI
 
 ### KI-041 — Two close buttons on desktop modals, one of them closing the sidebar underneath (fixed)
