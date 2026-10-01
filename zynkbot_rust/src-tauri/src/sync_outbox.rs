@@ -493,7 +493,9 @@ async fn apply_session(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, s:
 }
 
 /// Upsert a message by sync_id. Unknown sync_id: match by the 0011 key (session, role,
-/// second, content) and adopt the incoming name; else insert. The thread must exist here
+/// second, content) and adopt the incoming name; else insert. The local copy may already
+/// carry a name of its own (the 0013 backfill named every row), so the match must not
+/// require it to be unnamed — that mistake returned 500s on the first device pass. The thread must exist here
 /// (its session travels in the same or an earlier batch); if it does not, the message
 /// waits for the next batch rather than failing the whole one.
 async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, msg: &SyncConversationMessage) -> Result<bool, String> {
@@ -507,7 +509,7 @@ async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, ms
         None => {
             let by_key: Option<i64> = sqlx::query_scalar(
                 "SELECT id FROM conversation_messages
-                 WHERE session_id = ? AND role = ? AND created_at = ? AND content = ? AND sync_id IS NULL
+                 WHERE session_id = ? AND role = ? AND created_at = ? AND content = ?
                  LIMIT 1")
                 .bind(&msg.session_id).bind(&msg.role).bind(msg.created_at).bind(&msg.content)
                 .fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: find by key: {}", e))?;
@@ -651,7 +653,9 @@ impl ZynkSyncService {
             .send().await
             .map_err(|e| format!("outbox pull from {} failed: {}", peer.device_name, e))?;
         if !response.status().is_success() {
-            return Err(format!("outbox pull from {} rejected: {}", peer.device_name, response.status()));
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("outbox pull from {} rejected: {} {}", peer.device_name, status, body.chars().take(300).collect::<String>()));
         }
         let v: serde_json::Value = response.json().await.map_err(|e| format!("outbox pull: bad reply: {}", e))?;
         Ok(DrainOutcome {
@@ -669,7 +673,9 @@ async fn post_batch(client: &reqwest::Client, endpoint: &str, batch: &OutboxBatc
         .send().await
         .map_err(|e| format!("outbox send failed: {}", e))?;
     if !response.status().is_success() {
-        return Err(format!("outbox batch rejected: {}", response.status()));
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(format!("outbox batch rejected: {} {}", status, body.chars().take(300).collect::<String>()));
     }
     response.json::<OutboxReceipt>().await.map_err(|e| format!("outbox: bad receipt: {}", e))
 }

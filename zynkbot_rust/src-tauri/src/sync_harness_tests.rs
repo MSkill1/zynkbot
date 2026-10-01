@@ -651,3 +651,36 @@ fn b16_pre_outbox_copies_of_one_memory_converge_instead_of_doubling() {
         assert_eq!(name_on(&a).await, name_on(&b).await, "the phone must adopt the desktop's name");
     });
 }
+
+// ---------------------------------------------------------------------------
+// 17. Messages that predate the outbox hold different random names on each device.
+//     When one side's copy arrives, the other must recognise it by the 0011 key
+//     (thread, speaker, second, text) even though its own copy already has a name —
+//     found on the OnePlus→Pixel echo, 2026-10-01: a 500 from the unique index.
+// ---------------------------------------------------------------------------
+#[test]
+fn b17_pre_outbox_copies_of_a_message_converge_instead_of_failing() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let uid = a.user_id();
+        let when = chrono::Utc::now() - chrono::Duration::minutes(5);
+        for p in [&a, &b] {
+            sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&p.pool).await.unwrap();
+            sqlx::query("INSERT INTO conversation_sessions (session_id, user_id, title, started_at, last_active) VALUES ('old-thread', ?, 'Old', ?, ?)")
+                .bind(&uid).bind(when).bind(when).execute(&p.pool).await.unwrap();
+            sqlx::query("INSERT INTO conversation_messages (session_id, user_id, role, content, created_at) VALUES ('old-thread', ?, 'user', 'Did we lock the shed?', ?)")
+                .bind(&uid).bind(when).execute(&p.pool).await.unwrap();
+            sqlx::query("DELETE FROM sync_suppress").execute(&p.pool).await.unwrap();
+        }
+        // The desktop touches its copy, which queues an update carrying the desktop's name.
+        sqlx::query("UPDATE conversation_messages SET content = content WHERE session_id = 'old-thread'").execute(&a.pool).await.unwrap();
+        a.sync_with(&b).await;
+        assert_eq!(thread_counts(&b, "old-thread").await, (1, 1), "the phone must still hold exactly one copy");
+        let (na, nb): (String, String) = (
+            sqlx::query_scalar("SELECT sync_id FROM conversation_messages WHERE session_id = 'old-thread'").fetch_one(&a.pool).await.unwrap(),
+            sqlx::query_scalar("SELECT sync_id FROM conversation_messages WHERE session_id = 'old-thread'").fetch_one(&b.pool).await.unwrap());
+        assert_eq!(na, nb, "the phone must adopt the desktop's name for the message");
+    });
+}
