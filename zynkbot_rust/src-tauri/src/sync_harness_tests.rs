@@ -440,7 +440,6 @@ impl Drop for EnvDir {
 //    pressed, so a device that pairs afterwards gets nothing.
 // ---------------------------------------------------------------------------
 #[test]
-#[ignore = "KI-055: keys saved before a device pairs never reach it — until the outbox rebuild"]
 fn b02_keys_saved_before_pairing_reach_the_device_that_pairs_later() {
     let _env = crate::chat_harness_tests::hold_env();
     let data = EnvDir::new();
@@ -728,5 +727,35 @@ fn b19_the_old_receive_path_does_not_echo_into_the_outbox() {
         assert_eq!(b.memory_contents().await, vec!["Echo test".to_string()]);
         let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_outbox").fetch_one(&b.pool).await.unwrap();
         assert_eq!(queued, 0, "the old receive path queued {} row(s) to echo back", queued);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 20. The same key on two devices with different values: the newest wins on both
+//     (Matt, 2026-10-01), whichever direction syncs first.
+// ---------------------------------------------------------------------------
+#[test]
+fn b20_the_newest_value_of_a_key_wins_on_both_devices() {
+    let _env = crate::chat_harness_tests::hold_env();
+    let data = EnvDir::new();
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let older = chrono::Utc::now() - chrono::Duration::hours(2);
+        let newer = chrono::Utc::now() - chrono::Duration::minutes(5);
+        sqlx::query("INSERT INTO sync_secrets (name, value, updated_at) VALUES ('XAI_API_KEY', 'xai-old-desktop', ?)")
+            .bind(older).execute(&a.pool).await.unwrap();
+        sqlx::query("INSERT INTO sync_secrets (name, value, updated_at) VALUES ('XAI_API_KEY', 'xai-new-phone', ?)")
+            .bind(newer).execute(&b.pool).await.unwrap();
+
+        // The desktop syncs first: its older value must not overwrite the phone's.
+        a.sync_with(&b).await;
+        for (p, who) in [(&a, "desktop"), (&b, "phone")] {
+            let v: String = sqlx::query_scalar("SELECT value FROM sync_secrets WHERE name = 'XAI_API_KEY'").fetch_one(&p.pool).await.unwrap();
+            assert_eq!(v, "xai-new-phone", "{} must end with the newest value", who);
+        }
+        assert!(data.env_file().contains("XAI_API_KEY=xai-new-phone"), ".env holds: {:?}", data.env_file());
+        std::env::remove_var("XAI_API_KEY");
     });
 }

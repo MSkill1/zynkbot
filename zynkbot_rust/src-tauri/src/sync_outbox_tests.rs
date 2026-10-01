@@ -318,3 +318,27 @@ async fn o14_rows_written_before_the_migration_get_a_sync_id() {
 
     assert!(outbox(&pool).await.is_empty(), "the backfill itself must not queue anything");
 }
+
+// ------------------------------------------------------------- keys (0014)
+
+#[tokio::test]
+async fn o15_a_key_queues_an_insert_an_update_and_a_delete_named_by_the_key() {
+    let pool = pool().await;
+    sqlx::query("INSERT INTO sync_secrets (name, value) VALUES ('OPENAI_API_KEY', 'sk-one')").execute(&pool).await.unwrap();
+    sqlx::query("UPDATE sync_secrets SET value = 'sk-two' WHERE name = 'OPENAI_API_KEY'").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM sync_secrets WHERE name = 'OPENAI_API_KEY'").execute(&pool).await.unwrap();
+    let rows = outbox(&pool).await;
+    let ops: Vec<&str> = rows.iter().map(|r| r.1.as_str()).collect();
+    assert_eq!(ops, vec!["insert", "update", "delete"], "got {:?}", rows);
+    for r in &rows { assert_eq!((r.0.as_str(), r.2.as_str()), ("sync_secrets", "OPENAI_API_KEY")); }
+}
+
+#[tokio::test]
+async fn o16_a_key_applied_under_suppression_queues_nothing() {
+    let pool = pool().await;
+    sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO sync_secrets (name, value) VALUES ('XAI_API_KEY', 'from-the-desktop')").execute(&pool).await.unwrap();
+    assert!(outbox(&pool).await.is_empty());
+    let sync_id: String = sqlx::query_scalar("SELECT sync_id FROM sync_secrets WHERE name = 'XAI_API_KEY'").fetch_one(&pool).await.unwrap();
+    assert_eq!(sync_id, "XAI_API_KEY", "a key is named by its own name");
+}

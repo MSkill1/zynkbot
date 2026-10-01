@@ -240,39 +240,12 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
 /// Set an API key in the .env file and current session
 #[tauri::command]
 pub async fn set_api_key(key: String, value: String) -> Result<(), String> {
-    let env_path = crate::db::get_app_data_dir().join(".env");
-
-    println!("[API Keys] Selected .env path: {:?}", env_path);
     println!("[API Keys] Saving {} (value length: {} chars)", key, value.len());
-
-    let content = std::fs::read_to_string(&env_path)
-        .unwrap_or_else(|e| {
-            eprintln!("[API Keys] Warning: could not read .env ({}), starting fresh", e);
-            String::new()
-        });
-
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let key_prefix = format!("{}=", key);
-
-    let mut found = false;
-    for line in &mut lines {
-        if line.starts_with(&key_prefix) {
-            *line = format!("{}={}", key, value);
-            found = true;
-            break;
-        }
+    apply_env_key(&key, &value)?;
+    if PROPAGATABLE_KEYS.contains(&key.as_str()) {
+        record_secret(&key, Some(&value)).await;
     }
-
-    if !found {
-        lines.push(format!("{}={}", key, value));
-    }
-
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
-
-    std::env::set_var(&key, &value);
-
-    println!("[API Keys] ✅ Successfully saved {} to .env at {:?}", key, env_path);
+    println!("[API Keys] ✅ Saved {}", key);
     Ok(())
 }
 
@@ -305,28 +278,11 @@ pub async fn set_preferred_backend(backend: String) -> Result<(), String> {
 /// Remove an API key from the .env file
 #[tauri::command]
 pub async fn remove_api_key(key: String) -> Result<(), String> {
-    let env_path = crate::db::get_app_data_dir().join(".env");
-
-    let content = std::fs::read_to_string(&env_path)
-        .unwrap_or_else(|e| {
-            eprintln!("[API Keys] Warning: could not read .env ({}), starting fresh", e);
-            String::new()
-        });
-
-    let key_prefix = format!("{}=", key);
-
-    let lines: Vec<String> = content
-        .lines()
-        .filter(|line| !line.starts_with(&key_prefix))
-        .map(|s| s.to_string())
-        .collect();
-
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
-
-    std::env::remove_var(&key);
-
-    println!("[API Keys] ✅ Removed {} from .env at {:?}", key, env_path);
+    remove_env_key(&key)?;
+    if PROPAGATABLE_KEYS.contains(&key.as_str()) {
+        record_secret(&key, None).await;
+    }
+    println!("[API Keys] ✅ Removed {}", key);
     Ok(())
 }
 
@@ -340,6 +296,58 @@ pub async fn propagate_api_key(key: String, value: String) -> Result<serde_json:
 ///
 /// Name under which the backup encryption key rides along with an API-key push.
 pub const BACKUP_KEY_PUSH_NAME: &str = "ZYNKBOT_BACKUP_KEY";
+
+/// The keys that travel between a user's devices. CUSTOM_* are deliberately absent: the
+/// custom endpoint is machine-local (a phone reaches Ollama through this desktop's proxy,
+/// which substitutes the desktop's model), so a pushed URL or model name would only mislead.
+pub const PROPAGATABLE_KEYS: &[&str] = &[
+    "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+    "OPENAI_API_KEY",    "OPENAI_MODEL",
+    "XAI_API_KEY",       "XAI_MODEL",
+    "MISTRAL_API_KEY",   "MISTRAL_MODEL",
+    "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+];
+
+/// Write one key into this device's .env and the process environment. Used by the
+/// Settings save, the old push route and the outbox receiver, so they cannot drift.
+pub fn apply_env_key(key: &str, value: &str) -> Result<(), String> {
+    let env_path = crate::db::get_app_data_dir().join(".env");
+    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let prefix = format!("{}=", key);
+    match lines.iter_mut().find(|l| l.starts_with(&prefix)) {
+        Some(existing) => *existing = format!("{}={}", key, value),
+        None => lines.push(format!("{}={}", key, value)),
+    }
+    std::fs::write(&env_path, lines.join("\n"))
+        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
+    std::env::set_var(key, value);
+    Ok(())
+}
+
+/// Remove one key from this device's .env and the process environment.
+pub fn remove_env_key(key: &str) -> Result<(), String> {
+    let env_path = crate::db::get_app_data_dir().join(".env");
+    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let prefix = format!("{}=", key);
+    let lines: Vec<&str> = content.lines().filter(|l| !l.starts_with(&prefix)).collect();
+    std::fs::write(&env_path, lines.join("\n"))
+        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
+    std::env::remove_var(key);
+    Ok(())
+}
+
+/// Record a key in sync_secrets so the outbox carries it to every device (0014). Best
+/// effort: the .env write has already happened, and the next drain re-seeds from the
+/// environment anyway, so a failure here only delays the sync by a cycle.
+pub async fn record_secret(name: &str, value: Option<&str>) {
+    let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await else { return };
+    let _ = match value {
+        Some(v) => crate::sync_outbox::record_secret(&pool, name, v).await,
+        None => crate::sync_outbox::forget_secret(&pool, name).await,
+    };
+    pool.close().await;
+}
 
 /// The UI used to call propagate_api_key once per key, and each call re-ran the
 /// whole peer loop. With the shared client's 30s timeout, a single unreachable
@@ -357,6 +365,12 @@ pub async fn propagate_api_keys(entries: Vec<(String, String)>) -> Result<serde_
         if !key_hex.trim().is_empty() && !entries.iter().any(|(k, _)| k == BACKUP_KEY_PUSH_NAME) {
             entries.push((BACKUP_KEY_PUSH_NAME.to_string(), key_hex));
         }
+    }
+    // Since step 3 of the outbox rebuild the queue carries keys too; recording them here
+    // gives each the newest date, so "Push to all devices" also means "this value wins".
+    // The direct push below stays until step 5 removes the old routes.
+    for (key, value) in &entries {
+        record_secret(key, Some(value)).await;
     }
     // Collect what we need and release the lock before doing any network I/O.
     // Holding ZYNKSYNC_SERVICE across the requests blocked the background sync

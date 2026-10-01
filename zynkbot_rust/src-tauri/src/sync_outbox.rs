@@ -30,6 +30,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use tauri::Emitter;
 use std::collections::HashMap;
 
 /// Most outbox rows read per drain batch. Matches the history push cap (KI-068): the
@@ -53,6 +54,15 @@ pub struct SyncTombstone {
     pub content_hash: Option<String>,
 }
 
+/// An API key or the backup key, as it travels (step 3, migration 0014). `updated_at` is
+/// when the sending device first saw or last changed it; the newest wins everywhere.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncSecret {
+    pub name: String,
+    pub value: String,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// One drained batch. `through` is the highest outbox id it covers on the sender; the
 /// receiver echoes it back as the acknowledgement and the sender records it as the cursor.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -66,15 +76,17 @@ pub struct OutboxBatch {
     pub messages: Vec<SyncConversationMessage>,
     #[serde(default)]
     pub deletes: Vec<SyncTombstone>,
+    #[serde(default)]
+    pub secrets: Vec<SyncSecret>,
 }
 
 impl OutboxBatch {
     pub fn is_empty(&self) -> bool {
         self.memories.is_empty() && self.sessions.is_empty()
-            && self.messages.is_empty() && self.deletes.is_empty()
+            && self.messages.is_empty() && self.deletes.is_empty() && self.secrets.is_empty()
     }
     pub fn len(&self) -> usize {
-        self.memories.len() + self.sessions.len() + self.messages.len() + self.deletes.len()
+        self.memories.len() + self.sessions.len() + self.messages.len() + self.deletes.len() + self.secrets.len()
     }
 }
 
@@ -200,6 +212,60 @@ async fn load_messages(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
     }).collect())
 }
 
+async fn load_secrets(pool: &SqlitePool, names: &[String]) -> Result<Vec<SyncSecret>, String> {
+    if names.is_empty() { return Ok(Vec::new()); }
+    let in_clause = names.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!("SELECT name, value, updated_at FROM sync_secrets WHERE name IN ({})", in_clause);
+    let mut q = sqlx::query(&sql);
+    for n in names { q = q.bind(n); }
+    let rows = q.fetch_all(pool).await.map_err(|e| format!("outbox: read secrets: {}", e))?;
+    Ok(rows.iter().map(|r| SyncSecret { name: r.get("name"), value: r.get("value"), updated_at: r.get("updated_at") }).collect())
+}
+
+/// This device changed (or first saw) a key: the row gets the current time, so it wins.
+pub async fn record_secret(pool: &SqlitePool, name: &str, value: &str) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO sync_secrets (name, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .bind(name).bind(value).bind(Utc::now())
+        .execute(pool).await.map_err(|e| format!("outbox: record secret: {}", e))?;
+    Ok(())
+}
+
+pub async fn forget_secret(pool: &SqlitePool, name: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM sync_secrets WHERE name = ?").bind(name)
+        .execute(pool).await.map_err(|e| format!("outbox: forget secret: {}", e))?;
+    Ok(())
+}
+
+/// Bring sync_secrets up to date with what this device actually holds: each propagatable
+/// key in the environment (.env is loaded into it at startup), and the backup key if one
+/// exists. A key the table lacks, or whose value differs (edited by hand, or set before
+/// this table existed), is recorded with the current time. Keys the receiver wrote arrive
+/// through apply_secret, which sets both the environment and the row, so they match and
+/// are left alone. Called at the start of every drain; cheap.
+pub async fn seed_secrets_from_env(pool: &SqlitePool) -> Result<usize, String> {
+    let mut held: Vec<(String, String)> = crate::commands::models::PROPAGATABLE_KEYS.iter()
+        .filter_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()).map(|v| (k.to_string(), v)))
+        .collect();
+    let key_file = crate::db::get_app_data_dir().join("backup.key");
+    if let Ok(hex) = std::fs::read_to_string(&key_file) {
+        if !hex.trim().is_empty() {
+            held.push((crate::commands::models::BACKUP_KEY_PUSH_NAME.to_string(), hex.trim().to_ascii_lowercase()));
+        }
+    }
+    let mut recorded = 0;
+    for (name, value) in held {
+        let current: Option<String> = sqlx::query_scalar("SELECT value FROM sync_secrets WHERE name = ?")
+            .bind(&name).fetch_optional(pool).await.map_err(|e| format!("outbox: read secret: {}", e))?;
+        if current.as_deref() != Some(value.as_str()) {
+            record_secret(pool, &name, &value).await?;
+            recorded += 1;
+        }
+    }
+    Ok(recorded)
+}
+
 /// Collapse the queued rows past `after` into one batch: one entry per (table, sync_id),
 /// a delete winning over anything queued before it for the same row. Returns None when
 /// nothing is queued. The batch's `through` is the highest outbox id read, so rows that
@@ -229,6 +295,7 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
     let mut want_memories = Vec::new();
     let mut want_sessions = Vec::new();
     let mut want_messages = Vec::new();
+    let mut want_secrets = Vec::new();
     let mut deletes = Vec::new();
     for ((table, sync_id), (is_delete, payload)) in latest {
         if is_delete {
@@ -239,6 +306,7 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
                 "memories" => want_memories.push(sync_id),
                 "conversation_sessions" => want_sessions.push(sync_id),
                 "conversation_messages" => want_messages.push(sync_id),
+                "sync_secrets" => want_secrets.push(sync_id),
                 other => eprintln!("[ZynkSync] outbox: unknown table {} queued, skipped", other),
             }
         }
@@ -251,6 +319,7 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
         sessions: load_sessions(pool, &want_sessions).await?,
         messages: load_messages(pool, &want_messages).await?,
         deletes,
+        secrets: load_secrets(pool, &want_secrets).await?,
     };
     Ok(Some(batch))
 }
@@ -276,12 +345,20 @@ pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64, o
     let all = session_ids.iter().map(|s| ("s", s)).chain(memory_ids.iter().map(|m| ("m", m))).chain(message_ids.iter().map(|x| ("x", x)));
     let slice: Vec<(&str, &String)> = all.skip(offset).take(limit).collect();
     let pick = |kind: &str| slice.iter().filter(|(k, _)| *k == kind).map(|(_, id)| (*id).clone()).collect::<Vec<_>>();
+    // Keys are few and small, and a device with no key cannot answer: all of them ride
+    // with the first slice (KI-055).
+    let secrets = if offset == 0 {
+        let names: Vec<String> = sqlx::query_scalar("SELECT name FROM sync_secrets ORDER BY name")
+            .fetch_all(pool).await.map_err(|e| e.to_string())?;
+        load_secrets(pool, &names).await?
+    } else { Vec::new() };
     let batch = OutboxBatch {
         through,
         sessions: load_sessions(pool, &pick("s")).await?,
         memories: load_memories(pool, &pick("m")).await?,
         messages: load_messages(pool, &pick("x")).await?,
         deletes: Vec::new(),
+        secrets,
     };
     Ok((batch, total))
 }
@@ -371,6 +448,10 @@ pub async fn apply_outbox_batch(pool: &SqlitePool, local_user_id: &str, batch: &
     for d in &batch.deletes {
         if apply_delete(&mut tx, d).await? { applied += 1; }
     }
+    let mut keys_changed = false;
+    for sec in &batch.secrets {
+        if apply_secret(&mut tx, sec).await? { applied += 1; keys_changed = true; }
+    }
     for sid in &touched_sessions {
         sqlx::query(
             "UPDATE conversation_sessions
@@ -384,6 +465,14 @@ pub async fn apply_outbox_batch(pool: &SqlitePool, local_user_id: &str, batch: &
         .execute(&mut *tx).await.map_err(|e| format!("outbox: unsuppress: {}", e))?;
     tx.commit().await.map_err(|e| format!("outbox: commit: {}", e))?;
 
+    if keys_changed {
+        if let Ok(guard) = crate::APP_HANDLE.lock() {
+            if let Some(app) = guard.as_ref() {
+                let _ = app.emit("api-keys-updated", serde_json::json!({}));
+                let _ = app.emit("backup-key-updated", serde_json::json!({}));
+            }
+        }
+    }
     // If the deletions emptied the device, drop the Einstein demo persona too, as Clear
     // All does; the old sync path did this and the model otherwise kept addressing the
     // user as "Albert" with no demo memories left (KI-048 follow-up, 2026-09-12).
@@ -574,6 +663,34 @@ async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, ms
     }
 }
 
+/// Newest wins (Matt, 2026-10-01): a key arriving with a later updated_at than this
+/// device's row replaces it, in the table and in the environment; an older one is ignored.
+/// A key this device has never held is taken. The backup key goes to its file, not .env.
+async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Result<bool, String> {
+    let is_backup_key = sec.name == crate::commands::models::BACKUP_KEY_PUSH_NAME;
+    if !is_backup_key && !crate::commands::models::PROPAGATABLE_KEYS.contains(&sec.name.as_str()) {
+        eprintln!("[ZynkSync] outbox: key '{}' is not propagatable, ignored", sec.name);
+        return Ok(false);
+    }
+    let ours: Option<(String, DateTime<Utc>)> = sqlx::query_as("SELECT value, updated_at FROM sync_secrets WHERE name = ?")
+        .bind(&sec.name).fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: read secret: {}", e))?;
+    if let Some((value, at)) = &ours {
+        if *at > sec.updated_at || (*at == sec.updated_at && value == &sec.value) { return Ok(false); }
+    }
+    sqlx::query(
+        "INSERT INTO sync_secrets (name, value, updated_at, sync_id) VALUES (?, ?, ?, ?)
+         ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .bind(&sec.name).bind(&sec.value).bind(sec.updated_at).bind(&sec.name)
+        .execute(&mut **tx).await.map_err(|e| format!("outbox: store secret: {}", e))?;
+    if is_backup_key {
+        crate::commands::backup::install_pushed_backup_key(&sec.value)?;
+    } else {
+        crate::commands::models::apply_env_key(&sec.name, &sec.value)?;
+    }
+    println!("[ZynkSync] ✓ Key {} received ({})", sec.name, if ours.is_some() { "newer than ours" } else { "new here" });
+    Ok(true)
+}
+
 /// Forget a row by sync_id. A memory's tombstone hash is recorded as well, so the old
 /// sync paths (until step 5) and a stale copy arriving later both respect the deletion.
 async fn apply_delete(tx: &mut Transaction<'_, Sqlite>, d: &SyncTombstone) -> Result<bool, String> {
@@ -593,6 +710,15 @@ async fn apply_delete(tx: &mut Transaction<'_, Sqlite>, d: &SyncTombstone) -> Re
         "conversation_messages" => sqlx::query("DELETE FROM conversation_messages WHERE sync_id = ?")
             .bind(&d.row_sync_id).execute(&mut **tx).await
             .map_err(|e| format!("outbox: delete message: {}", e))?.rows_affected(),
+        "sync_secrets" => {
+            let n = sqlx::query("DELETE FROM sync_secrets WHERE name = ?")
+                .bind(&d.row_sync_id).execute(&mut **tx).await
+                .map_err(|e| format!("outbox: delete secret: {}", e))?.rows_affected();
+            if n > 0 && d.row_sync_id != crate::commands::models::BACKUP_KEY_PUSH_NAME {
+                crate::commands::models::remove_env_key(&d.row_sync_id)?;
+            }
+            n
+        }
         other => { eprintln!("[ZynkSync] outbox: delete for unknown table {}", other); 0 }
     };
     Ok(affected > 0)
@@ -614,6 +740,9 @@ impl ZynkSyncService {
         let endpoint = format!("{}/api/zynksync/outbox", peer.url);
         let client = self.transport.http_client.read().await.clone();
         let mut outcome = DrainOutcome::default();
+        if let Err(e) = seed_secrets_from_env(&self.db_pool).await {
+            eprintln!("[ZynkSync] outbox: could not record this device's keys: {}", e);
+        }
 
         // Two cases get the live tables rather than the queue: a peer this device has
         // never drained to (first contact — the queue only holds changes made since the

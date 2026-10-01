@@ -3998,17 +3998,7 @@ async fn handle_push_api_key(
         return Err(format!("Untrusted sender IP {}, verified device: {}", sender_ip, verified.device_id));
     }
 
-    // Allowlist — never let a peer set arbitrary env vars
-    const ALLOWED: &[&str] = &[
-        "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
-        "OPENAI_API_KEY",    "OPENAI_MODEL",
-        "XAI_API_KEY",       "XAI_MODEL",
-        "MISTRAL_API_KEY",   "MISTRAL_MODEL",
-        // CUSTOM_* are deliberately absent: the custom endpoint is machine-local
-        // (a phone reaches Ollama through this desktop's proxy, which substitutes
-        // the desktop's model), so a pushed URL or model name would only mislead.
-        "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
-    ];
+    const ALLOWED: &[&str] = crate::commands::models::PROPAGATABLE_KEYS;
     // The backup encryption key is stored as a file, never in .env, and arriving
     // from a paired device counts as "the user has saved this key" — they set it
     // and acknowledged it on the sender.
@@ -4026,18 +4016,9 @@ async fn handle_push_api_key(
         return Err(format!("Key '{}' is not propagatable", key));
     }
 
-    let env_path = crate::db::get_app_data_dir().join(".env");
-    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let prefix = format!("{}=", key);
-    let mut found = false;
-    for line in &mut lines {
-        if line.starts_with(&prefix) { *line = format!("{}={}", key, value); found = true; break; }
-    }
-    if !found { lines.push(format!("{}={}", key, value)); }
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env: {}", e))?;
-    std::env::set_var(key, value);
+    crate::commands::models::apply_env_key(key, value)?;
+    // Recorded so the outbox carries it on to the devices this one is paired with.
+    crate::commands::models::record_secret(key, Some(value)).await;
 
     println!("[ZynkSync] ✓ Received API key push for {} from {} ({})", key, verified.device_name, sender_ip);
 
