@@ -41,6 +41,7 @@ mod knowledge_base;  // External reference document system
 mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod kb_prompt;  // Wording of the KB prompt block by search outcome (found / weak / nothing)
 mod conversation_history;  // Persistent conversation log with full-text search
+pub mod sync_outbox;  // the ZynkSync outbox: drain and receive (step 2)
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
 mod transport; // shared peer-to-peer layer: identity, server, pinned client, registry (SDK Core)

@@ -197,7 +197,6 @@ fn b04_memory_deleted_on_one_device_is_gone_on_the_other_and_stays_gone() {
 // 5. Edit on A: B ends with the new text only.   (KI-060: the old version returns)
 // ---------------------------------------------------------------------------
 #[test]
-#[ignore = "KI-060: an edited memory reverts after sync — until the outbox rebuild"]
 fn b05_memory_edited_on_one_device_does_not_come_back_old() {
     rt_test(async {
         let a = Peer::spawn("desktop").await;
@@ -247,7 +246,6 @@ fn b08_history_thread_arrives_once_with_all_its_messages() {
 }
 
 #[test]
-#[ignore = "KI-028: the receive side keys duplicates on (session, second, role), so two messages of the same role in the same second collapse into one — until the outbox rebuild keys on the message hash"]
 fn b08b_two_messages_in_the_same_second_both_arrive() {
     rt_test(async {
         let a = Peer::spawn("desktop").await;
@@ -280,10 +278,12 @@ fn b08c_history_marker_survives_a_restart() {
         assert_eq!(thread_counts(&b, "thread-4").await, (1, 4));
 
         let a2 = a.respawn().await;
-        // Only the boundary second may be offered again (timestamps are whole seconds and
-        // the peer deduplicates); without the persisted marker all 4 would be.
-        let (payload, _) = a2.svc.get_modified_conversations(&b.device_id(), &uid).await.unwrap();
-        assert!(payload.messages.len() <= 2, "after a restart only the last second's messages may be offered again, got {}", payload.messages.len());
+        // The per-peer cursor is persisted (sync_outbox_cursor, 0013), so a restart offers
+        // the phone nothing it already has. Before the outbox the marker lived in memory
+        // and every app start re-sent the whole history (KI-068).
+        let cursor = crate::sync_outbox::cursor_for(&a2.pool, &b.device_id()).await.unwrap();
+        let pending = crate::sync_outbox::build_batch(&a2.pool, cursor).await.unwrap();
+        assert!(pending.is_none(), "after a restart nothing already sent may be offered again, got {:?} entries", pending.map(|p| p.len()));
 
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
         crate::conversation_history::log_exchange(&a2.pool, "thread-4", &uid, "q2", "a2", "anthropic", "guardian", true, "typed").await.unwrap();
@@ -333,7 +333,6 @@ fn b08d_a_history_bigger_than_one_push_arrives_over_cycles() {
 }
 
 #[test]
-#[ignore = "KI-028 / #12: history deletions do not propagate — until the outbox rebuild"]
 fn b09_history_thread_deleted_on_one_device_is_gone_on_the_other() {
     rt_test(async {
         let a = Peer::spawn("desktop").await;
@@ -560,7 +559,6 @@ fn b11_a_phone_that_is_wiped_and_paired_again_is_listed_once() {
 //     request" mark (KI-030: today the sync payload has no room for them).
 // ---------------------------------------------------------------------------
 #[test]
-#[ignore = "KI-030: sync does not carry tags or the Remember mark — until the outbox rebuild"]
 fn b12_tags_and_the_remembered_on_request_mark_travel_with_a_memory() {
     rt_test(async {
         let a = Peer::spawn("desktop").await;
@@ -610,5 +608,46 @@ fn b13_a_device_that_was_offline_catches_up_when_it_returns() {
         a.sync_with(&b).await;
         assert_eq!(a.memory_contents().await, vec!["New phone number 555-0199".to_string()], "desktop: the deleted memory came back from the phone");
         assert_eq!(b.memory_contents().await, vec!["New phone number 555-0199".to_string()], "phone: did not catch up");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 16. Copies of one memory that predate the outbox hold different names on different
+//     devices (the 0013 backfill is random and runs on each device alone). Syncing must
+//     recognise them as one memory by their text and leave each device with one copy
+//     under one shared name — and that stays on for good: identical text is the same
+//     memory (Matt, 2026-10-01).
+// ---------------------------------------------------------------------------
+#[test]
+fn b16_pre_outbox_copies_of_one_memory_converge_instead_of_doubling() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        // The same memory already on both, named differently, as after the upgrade.
+        // Written under sync_suppress so neither device queues it: it is history, not a change.
+        for p in [&a, &b] {
+            sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&p.pool).await.unwrap();
+            p.add_memory("The attic key is on the hook by the door").await;
+            sqlx::query("DELETE FROM sync_suppress").execute(&p.pool).await.unwrap();
+        }
+        let name_on = |p: &Peer| {
+            let pool = p.pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>("SELECT sync_id FROM memories WHERE content = ?")
+                    .bind("The attic key is on the hook by the door").fetch_one(&pool).await.unwrap()
+            }
+        };
+        assert_ne!(name_on(&a).await, name_on(&b).await, "the setup needs two different names");
+
+        // The desktop edits it: that queues one update, which carries the desktop's name.
+        sqlx::query("UPDATE memories SET content = content, updated_at = datetime('now') WHERE content = ?")
+            .bind("The attic key is on the hook by the door").execute(&a.pool).await.unwrap();
+        a.sync_with(&b).await;
+        b.sync_with(&a).await;
+
+        assert_eq!(a.memory_contents().await, vec!["The attic key is on the hook by the door".to_string()], "desktop doubled it");
+        assert_eq!(b.memory_contents().await, vec!["The attic key is on the hook by the door".to_string()], "phone doubled it");
+        assert_eq!(name_on(&a).await, name_on(&b).await, "the phone must adopt the desktop's name");
     });
 }

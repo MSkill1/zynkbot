@@ -81,6 +81,12 @@ pub struct SyncMemory {
     pub provenance_json: Option<String>,
     #[serde(default)]
     pub relationships: Vec<MemoryRelationship>,  // Relationships from memory_links
+    /// JSON array text, as stored (0011). Travels since the outbox rebuild (KI-030).
+    #[serde(default)]
+    pub tags: Option<String>,
+    /// The row's name on every device (0013).
+    #[serde(default)]
+    pub sync_id: Option<String>,
 }
 
 fn default_memory_placement() -> String {
@@ -142,6 +148,9 @@ pub struct SyncConversationSession {
     pub message_count: i32,
     pub model_backend: Option<String>,
     pub containment_mode: Option<String>,
+    /// The row's name on every device (0013); equals session_id.
+    #[serde(default)]
+    pub sync_id: Option<String>,
 }
 
 /// Conversation message payload for cross-device sync
@@ -156,6 +165,9 @@ pub struct SyncConversationMessage {
     pub containment_mode: Option<String>,
     pub entry_hash: Option<String>,
     pub prev_hash: Option<String>,
+    /// The row's name on every device (0013).
+    #[serde(default)]
+    pub sync_id: Option<String>,
 }
 
 /// Combined payload sent over the wire for conversation sync
@@ -178,7 +190,7 @@ pub struct ZynkSyncService {
     device_id: String,
 
     /// SQLite connection pool
-    db_pool: SqlitePool,
+    pub(crate) db_pool: SqlitePool,
 
     /// Last sync timestamps per peer (to track incremental syncs)
     last_sync: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
@@ -1129,6 +1141,8 @@ impl ZynkSyncService {
                     temporal_status: row.get("temporal_status"),
                     provenance_json: row.get("provenance_json"),
                     relationships: Vec::new(),  // Will be populated below
+                    tags: None,
+                    sync_id: None,
                 }
             })
             .collect();
@@ -1223,6 +1237,8 @@ impl ZynkSyncService {
                         temporal_status: row.get("temporal_status"),
                         provenance_json: row.get("provenance_json"),
                         relationships: Vec::new(),  // Will be populated below
+                        tags: None,
+                        sync_id: None,
                     });
                 }
             }
@@ -1644,6 +1660,7 @@ impl ZynkSyncService {
             message_count: row.get("message_count"),
             model_backend: row.get("model_backend"),
             containment_mode: row.get("containment_mode"),
+            sync_id: None,
         }).collect::<Vec<_>>();
 
         let cap = CONVERSATION_PUSH_MAX_MESSAGES as i64;
@@ -1686,6 +1703,7 @@ impl ZynkSyncService {
             containment_mode: row.get("containment_mode"),
             entry_hash: row.get("entry_hash"),
             prev_hash: row.get("prev_hash"),
+            sync_id: None,
         }).collect::<Vec<_>>();
 
         // Marker to record on success. When the cap was hit, the newest message sent
@@ -1869,364 +1887,26 @@ impl ZynkSyncService {
             return Err(format!("Device {} is not paired", peer.device_name));
         }
 
-        // Verbose per-sync logging suppressed
+        // Since the outbox rebuild (step 2, 2026-10-01) a sync is a drain in each
+        // direction: what changed here goes to the peer, then the peer sends what
+        // changed there (sync_outbox.rs). Nothing is compared table against table any
+        // more. The inventory, fetch and delete-by-hash routes stay until step 5.
+        let pushed = self.drain_outbox_to(&peer.device_id, user_id).await?;
+        let pulled = self.pull_outbox_from(&peer.device_id).await?;
 
-        // Step 1: Get local inventory
-        let local_inventory = self.get_local_inventory(user_id).await?;
+        // Keeps is_first_sync() honest for the paths that still consult it.
+        self.update_sync_timestamp(&peer.device_id, true).await?;
 
-        // Step 2: Request remote inventory
-        let endpoint = format!("{}/api/zynksync/inventory", peer.url);
-        let request = InventoryRequest {
-            user_id: user_id.to_string(),
-        };
-
-        let client = self.transport.http_client.read().await.clone();
-        let response = client
-            .post(&endpoint)
-            .json(&request)
-            .timeout(Duration::from_secs(30))
-            .send()
-            .await
-            .map_err(|e| format!("Failed to get remote inventory: {}", e))?;
-
-        if !response.status().is_success() {
-            return Err(format!("Remote inventory request failed: {}", response.status()));
+        if pushed.entries_sent > 0 || pulled.entries_sent > 0 {
+            println!("[ZynkSync] ✓ Sync with {} - sent {} ({} batches), received {} ({} batches)",
+                peer.device_name, pushed.entries_sent, pushed.batches, pulled.entries_sent, pulled.batches);
         }
-
-        let remote_inventory: MemoryInventory = response.json().await
-            .map_err(|e| format!("Failed to parse remote inventory: {}", e))?;
-
-
-        // Step 3: Check if this is the first sync between these devices
-        let is_first_sync = self.is_first_sync(&peer.device_id).await?;
-
-        if is_first_sync {
-            println!("[ZynkSync] ⚠️  FIRST SYNC - Using additive merge (no deletions)");
-        }
-
-        // Step 4: Determine which device is "active" (source of truth)
-        // CRITICAL: On first sync, prioritize memory count over timestamp to ensure complete data transfer
-        let local_is_active = if is_first_sync {
-            // First sync: Device with MORE memories is always the source of truth
-            // This prevents incomplete transfers when a freshly-synced device has newer timestamp
-            // No memories on either side is not "nothing to sync": conversation history
-            // is pushed further down and used to be skipped here (harness, 2026-09-17).
-            // Device with more memories is active (pull from them); equal counts — local.
-            local_inventory.memory_count >= remote_inventory.memory_count
-        } else {
-            // Subsequent syncs: Use timestamp to determine which device has recent activity
-            match (&local_inventory.latest_activity, &remote_inventory.latest_activity) {
-                (Some(local_time), Some(remote_time)) => {
-                    if local_time > remote_time {
-                        true
-                    } else if local_time < remote_time {
-                        false
-                    } else {
-                        // Timestamps equal - use memory count as tie-breaker
-                        local_inventory.memory_count >= remote_inventory.memory_count
-                    }
-                },
-                (Some(_), None) => true,  // Local has memories, remote doesn't
-                (None, Some(_)) => false, // Remote has memories, local doesn't
-                (None, None) => true, // no memories anywhere; history may still need to move
-            }
-        };
-
-        // --- TOMBSTONE RECONCILIATION (before active/passive logic) ---
-        // Tombstones always win: explicit deletions can never be resurrected by sync.
-        let local_tombstones: std::collections::HashSet<String> =
-            local_inventory.deleted_hashes.iter().cloned().collect();
-        let remote_tombstones: std::collections::HashSet<String> =
-            remote_inventory.deleted_hashes.iter().cloned().collect();
-
-        {
-            let local_hashes_ts: std::collections::HashSet<String> =
-                local_inventory.content_hashes.iter().cloned().collect();
-            let local_hash_to_id_ts: std::collections::HashMap<String, i32> =
-                local_inventory.content_hashes.iter()
-                    .zip(local_inventory.memory_ids.iter())
-                    .map(|(h, id)| (h.clone(), *id))
-                    .collect();
-            let remote_hashes_ts: std::collections::HashSet<String> =
-                remote_inventory.content_hashes.iter().cloned().collect();
-
-            // 1. Apply remote tombstones to local memories.
-            // Skip any memory whose updated_at is newer than the tombstone's deleted_at —
-            // this protects memories that were explicitly restored after the deletion.
-            let mut to_tombstone_locally: Vec<i32> = Vec::new();
-            for h in remote_tombstones.iter().filter(|h| local_hashes_ts.contains(*h)) {
-                let id = match local_hash_to_id_ts.get(h.as_str()).copied() {
-                    Some(id) => id,
-                    None => continue,
-                };
-                let tombstone_deleted_at: Option<DateTime<Utc>> = remote_inventory
-                    .tombstone_timestamps.get(h.as_str())
-                    .and_then(|s| s.parse::<DateTime<Utc>>().ok());
-                if let Some(deleted_at) = tombstone_deleted_at {
-                    let memory_time: Option<DateTime<Utc>> = sqlx::query_scalar(
-                        "SELECT COALESCE(updated_at, created_at) FROM memories WHERE id = ?"
-                    )
-                    .bind(id)
-                    .fetch_optional(&self.db_pool)
-                    .await
-                    .ok()
-                    .flatten();
-                    if let Some(mt) = memory_time {
-                        if mt > deleted_at {
-                            println!("[ZynkSync] Skipping remote tombstone for restored memory (updated_at {} > tombstone {})", mt, deleted_at);
-                            continue;
-                        }
-                    }
-                }
-                to_tombstone_locally.push(id);
-            }
-            if !to_tombstone_locally.is_empty() {
-                println!("[ZynkSync] Applying {} remote tombstones locally", to_tombstone_locally.len());
-                self.delete_and_tombstone(&to_tombstone_locally).await?;
-                // If that emptied the device, drop the Einstein demo persona too. Clear All
-                // already does; this path did not, and the model kept addressing the user as
-                // "Albert" with no demo memories left (2026-09-12, KI-048 follow-up).
-                let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories")
-                    .fetch_one(&self.db_pool).await.unwrap_or(1);
-                if remaining == 0 {
-                    crate::db::remove_demo_persona_profile();
-                }
-            }
-
-            // 2. Absorb remote tombstones we don't have yet (protection for future syncs)
-            let new_remote_tombstones: Vec<String> = remote_tombstones.iter()
-                .filter(|h| !local_tombstones.contains(*h))
-                .cloned().collect();
-            if !new_remote_tombstones.is_empty() {
-                self.record_tombstones(&new_remote_tombstones).await?;
-            }
-
-            // 3. Propagate our tombstones to remote for memories remote still has.
-            // Skipped on first sync: a freshly-paired device should never have its
-            // memories deleted by tombstones from our past history with other devices.
-            if !is_first_sync {
-                let to_tombstone_remotely: Vec<String> = local_tombstones.iter()
-                    .filter(|h| remote_hashes_ts.contains(*h))
-                    .cloned().collect();
-                if !to_tombstone_remotely.is_empty() {
-                    println!("[ZynkSync] Propagating {} local tombstones to remote", to_tombstone_remotely.len());
-                    for hash in &to_tombstone_remotely {
-                        // Include the original deleted_at so the receiver can guard against
-                        // wiping memories that were recreated after the deletion event.
-                        let deleted_at: Option<String> = sqlx::query_scalar(
-                            "SELECT deleted_at FROM deleted_memory_hashes WHERE content_hash = ?"
-                        )
-                        .bind(hash)
-                        .fetch_optional(&self.db_pool)
-                        .await
-                        .unwrap_or(None);
-
-                        let endpoint = format!("{}/api/zynksync/delete-by-hash", peer.url);
-                        let payload = serde_json::json!({
-                            "content_hash": hash,
-                            "deleted_at": deleted_at
-                        });
-                        let client = self.transport.http_client.read().await.clone();
-                        let _ = client.post(&endpoint).json(&payload)
-                            .timeout(Duration::from_secs(10)).send().await;
-                    }
-                }
-            }
-        }
-
-        // Combined tombstones filter active/passive logic so tombstoned hashes are never synced
-        let all_tombstones: std::collections::HashSet<String> =
-            local_tombstones.union(&remote_tombstones).cloned().collect();
-
-        let mut memories_sent = 0;
-        let mut memories_received = 0;
-
-        if local_is_active {
-            // LOCAL IS ACTIVE: Push our state to remote
-
-            // FIXED: Compare by content hash instead of database ID (IDs are machine-specific!)
-            let local_hashes: std::collections::HashSet<String> = local_inventory.content_hashes.iter().cloned().collect();
-            let remote_hashes: std::collections::HashSet<String> = remote_inventory.content_hashes.iter().cloned().collect();
-
-            // Create hash->ID mapping for local memories
-            let hash_to_id: std::collections::HashMap<String, i32> = local_inventory.content_hashes.iter()
-                .zip(local_inventory.memory_ids.iter())
-                .map(|(h, id)| (h.clone(), *id))
-                .collect();
-
-            // Find memories we have that remote doesn't (by content hash), excluding tombstoned
-            let hashes_to_send: Vec<String> = local_hashes.difference(&remote_hashes)
-                .filter(|h| !all_tombstones.contains(*h))
-                .cloned().collect();
-            let to_send: Vec<i32> = hashes_to_send.iter().filter_map(|h| hash_to_id.get(h).copied()).collect();
-
-            if !to_send.is_empty() {
-                let memories_to_send = self.get_memories_by_ids(&to_send).await?;
-
-                let endpoint = format!("{}/api/zynksync/receive", peer.url);
-                let client = self.transport.http_client.read().await.clone();
-                let response = client
-                    .post(&endpoint)
-                    .json(&memories_to_send)
-                    .timeout(Duration::from_secs(30))
-                    .send()
-                    .await
-                    .map_err(|e| format!("Failed to send memories: {}", e))?;
-
-                if !response.status().is_success() {
-                    return Err(format!("Failed to send memories: {}", response.status()));
-                }
-
-                memories_sent = to_send.len();
-            }
-
-            // Handle deletions (only on subsequent syncs, not first sync)
-            // Only delete from remote if WE explicitly tombstoned the hash.
-            // "Remote has it, we don't" is NOT evidence of deletion — the memory may simply
-            // not have synced to us yet. Tombstone propagation (step 3 above) already handles
-            // all user-initiated deletions correctly.
-            if !is_first_sync {
-                let hashes_to_delete: Vec<String> = remote_hashes.difference(&local_hashes)
-                    .filter(|h| local_tombstones.contains(*h))
-                    .cloned().collect();
-
-                if !hashes_to_delete.is_empty() {
-                    println!("[ZynkSync] Remote has {} tombstoned memories we deleted - propagating deletion", hashes_to_delete.len());
-                    // Create hash->ID mapping for remote memories
-                    let remote_hash_to_id: std::collections::HashMap<String, i32> = remote_inventory.content_hashes.iter()
-                        .zip(remote_inventory.memory_ids.iter())
-                        .map(|(h, id)| (h.clone(), *id))
-                        .collect();
-
-                    // Map hashes to remote IDs
-                    let ids_to_delete: Vec<i32> = hashes_to_delete.iter()
-                        .filter_map(|h| remote_hash_to_id.get(h).copied())
-                        .collect();
-
-                    if !ids_to_delete.is_empty() {
-                        println!("[ZynkSync] Requesting remote to delete {} memories", ids_to_delete.len());
-                        let endpoint = format!("{}/api/zynksync/delete", peer.url);
-                        let client = self.transport.http_client.read().await.clone();
-                        let response = client
-                            .post(&endpoint)
-                            .json(&ids_to_delete)
-                            .timeout(Duration::from_secs(30))
-                            .send()
-                            .await
-                            .map_err(|e| format!("Failed to request deletions: {}", e))?;
-
-                        if !response.status().is_success() {
-                            eprintln!("[ZynkSync] Warning: Delete request failed: {}", response.status());
-                        }
-                    }
-                }
-            } else {
-                let unique_remote_memories = remote_hashes.difference(&local_hashes).count();
-                if unique_remote_memories > 0 {
-                    println!("[ZynkSync] Note: Remote has {} unique memories (keeping them - first sync)", unique_remote_memories);
-                }
-            }
-
-        } else {
-            // REMOTE IS ACTIVE: Pull their state to local
-
-            // FIXED: Compare by content hash instead of database ID
-            let local_hashes: std::collections::HashSet<String> = local_inventory.content_hashes.iter().cloned().collect();
-            let remote_hashes: std::collections::HashSet<String> = remote_inventory.content_hashes.iter().cloned().collect();
-
-            // Create hash->ID mapping for remote memories
-            let remote_hash_to_id: std::collections::HashMap<String, i32> = remote_inventory.content_hashes.iter()
-                .zip(remote_inventory.memory_ids.iter())
-                .map(|(h, id)| (h.clone(), *id))
-                .collect();
-
-            // Find memories remote has that we don't (by content hash), excluding tombstoned
-            let hashes_to_receive: Vec<String> = remote_hashes.difference(&local_hashes)
-                .filter(|h| !all_tombstones.contains(*h))
-                .cloned().collect();
-            let to_receive: Vec<i32> = hashes_to_receive.iter().filter_map(|h| remote_hash_to_id.get(h).copied()).collect();
-
-            if !to_receive.is_empty() {
-                println!("[ZynkSync] Requesting {} missing memories from remote", to_receive.len());
-                let endpoint = format!("{}/api/zynksync/fetch", peer.url);
-                let client = self.transport.http_client.read().await.clone();
-                let response = client
-                    .post(&endpoint)
-                    .json(&to_receive)
-                    .timeout(Duration::from_secs(30))
-                    .send()
-                    .await
-                    .map_err(|e| format!("Failed to fetch memories: {}", e))?;
-
-                if !response.status().is_success() {
-                    return Err(format!("Failed to fetch memories: {}", response.status()));
-                }
-
-                let memories: Vec<SyncMemory> = response.json().await
-                    .map_err(|e| format!("Failed to parse memories: {}", e))?;
-
-                memories_received = self.receive_from_peer(user_id, memories).await?;
-            }
-
-            // Handle deletions (only on subsequent syncs, not first sync)
-            // Only delete locally if the REMOTE explicitly tombstoned the hash.
-            // "We have it, remote doesn't" is NOT evidence of deletion — the memory may simply
-            // not have synced to remote yet. Tombstone reconciliation (step 1 above) already
-            // applies all remote tombstones to our local store.
-            if !is_first_sync {
-                let hashes_to_delete: Vec<String> = local_hashes.difference(&remote_hashes)
-                    .filter(|h| remote_tombstones.contains(*h))
-                    .cloned().collect();
-
-                if !hashes_to_delete.is_empty() {
-                    println!("[ZynkSync] We have {} remotely-tombstoned memories - deleting locally", hashes_to_delete.len());
-                    // Create hash->ID mapping for local memories
-                    let local_hash_to_id: std::collections::HashMap<String, i32> = local_inventory.content_hashes.iter()
-                        .zip(local_inventory.memory_ids.iter())
-                        .map(|(h, id)| (h.clone(), *id))
-                        .collect();
-
-                    // Map hashes to local IDs
-                    let ids_to_delete: Vec<i32> = hashes_to_delete.iter()
-                        .filter_map(|h| local_hash_to_id.get(h).copied())
-                        .collect();
-
-                    if !ids_to_delete.is_empty() {
-                        println!("[ZynkSync] Deleting {} obsolete memories locally", ids_to_delete.len());
-                        self.delete_memories_by_ids(&ids_to_delete).await?;
-                    }
-                }
-            } else {
-                let unique_local_memories = local_hashes.difference(&remote_hashes).count();
-                if unique_local_memories > 0 {
-                    println!("[ZynkSync] Note: We have {} unique memories (keeping them - first sync)", unique_local_memories);
-                }
-            }
-        }
-
-        // Sync conversation history — both devices always push their new conversations.
-        // Union merge (not active/passive): each device pushes what it has, peer deduplicates.
-        let conversations_sent = match self.push_conversations_to_peer(&peer, user_id).await {
-            Ok((_sessions, messages)) => messages,
-            Err(e) => {
-                eprintln!("[ZynkSync] Conversation sync failed (non-fatal): {}", e);
-                0
-            }
-        };
-
-        // Update sync timestamp so future syncs are not considered "first sync"
-        self.update_sync_timestamp(&peer.device_id, local_is_active).await?;
-
-        if memories_sent > 0 || memories_received > 0 {
-            println!("[ZynkSync] ✓ Sync complete - sent: {}, received: {}", memories_sent, memories_received);
-        }
-
         Ok(SyncResult {
             peer_device_id: peer.device_id,
             peer_device_name: peer.device_name,
-            memories_sent,
-            memories_received,
-            conversations_sent,
+            memories_sent: pushed.entries_sent,
+            memories_received: pulled.entries_sent,
+            conversations_sent: 0,
             conflicts_resolved: 0,
             success: true,
             error: None,
@@ -2294,6 +1974,8 @@ impl ZynkSyncService {
                     temporal_status: row.get("temporal_status"),
                     provenance_json: row.get("provenance_json"),
                     relationships: Vec::new(),  // Will be populated below
+                    tags: None,
+                    sync_id: None,
                 }
             })
             .collect();
@@ -3003,6 +2685,8 @@ impl ZynkSyncService {
             .route("/api/zynksync/introduce", post(handle_introduce))
             .route("/api/zynksync/notify-unsynced", post(handle_notify_unsynced))
             .route("/api/zynksync/conversations/receive", post(handle_receive_conversations))
+            .route("/api/zynksync/outbox", post(handle_receive_outbox))
+            .route("/api/zynksync/outbox/pull", post(handle_pull_outbox))
             .route("/api/presence/heartbeat", post(handle_heartbeat))
             .route("/api/presence/goodbye", post(handle_goodbye))
             .route("/api/zynksync/push-api-key", post(handle_push_api_key))
@@ -4212,6 +3896,53 @@ async fn handle_receive_conversations(
         "success": true,
         "sessions_stored": sessions_stored,
         "messages_stored": messages_stored
+    })))
+}
+
+/// A peer's outbox batch (sync_outbox.rs). Applied in one transaction under
+/// sync_suppress; the receipt's `through` is what the sender records as its cursor.
+async fn handle_receive_outbox(
+    State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
+    Json(batch): Json<crate::sync_outbox::OutboxBatch>,
+) -> Result<Json<crate::sync_outbox::OutboxReceipt>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?;
+    check_sync_authorized(&service.db_pool, device_id, &headers).await?;
+
+    let local_user_id = service.user_id().unwrap_or_default();
+    let applied = crate::sync_outbox::apply_outbox_batch(&service.db_pool, &local_user_id, &batch).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+    if applied > 0 {
+        if let Ok(guard) = crate::APP_HANDLE.lock() {
+            if let Some(app) = guard.as_ref() {
+                let _ = app.emit("zynksync-memories-updated", serde_json::json!({ "count": applied }));
+            }
+        }
+    }
+    Ok(Json(crate::sync_outbox::OutboxReceipt { through: batch.through, applied }))
+}
+
+/// A peer asking us to drain our queue to it. The drain runs here, so the sending code
+/// lives in one place whichever side started the sync.
+async fn handle_pull_outbox(
+    State(service): State<Arc<ZynkSyncService>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let device_id = headers.get("x-device-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?
+        .to_string();
+    check_sync_authorized(&service.db_pool, &device_id, &headers).await?;
+
+    let user_id = service.user_id().unwrap_or_default();
+    let outcome = service.drain_outbox_to(&device_id, &user_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
+    Ok(Json(serde_json::json!({
+        "batches": outcome.batches,
+        "entries_sent": outcome.entries_sent,
+        "applied": outcome.applied_by_peer
     })))
 }
 
