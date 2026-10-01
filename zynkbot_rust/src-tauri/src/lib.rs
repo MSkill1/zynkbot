@@ -19,6 +19,8 @@ pub mod app_log;            // In-memory log tail for bug reports
 mod sync_harness_tests; // two-peer ZynkSync harness (docs/TESTING.md)
 #[cfg(test)]
 mod chat_harness_tests; // the chat path end to end against a pretend model
+#[cfg(test)]
+mod sync_outbox_tests; // the outbox triggers (migration 0013)
 pub mod memory_extras;      // event date / namespace / tags / tone / entities from the decision call
 pub mod commands;           // Tauri command handlers (extracted from lib.rs)
 pub mod safety_classifier;  // TinyBERT toxicity classifier (Candle-based)
