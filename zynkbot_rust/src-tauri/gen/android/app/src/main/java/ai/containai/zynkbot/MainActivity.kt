@@ -953,6 +953,16 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    // Back used to finish the activity, and Tauri's Android runtime then exits the whole
+    // process — taking the sync server and the hands-free service's Rust side with it, so
+    // the phone neither served nor synced until the app was opened again (first outbox
+    // device pass, 2026-10-01). Send the app to the background instead, as Home does; the
+    // foreground service and the server keep running.
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!moveTaskToBack(true)) super.onBackPressed()
+    }
+
     override fun onResume() {
         super.onResume()
         isInForeground = true

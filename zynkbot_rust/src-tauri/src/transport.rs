@@ -324,9 +324,18 @@ impl Transport {
                 crate::tls::build_pinned_client_config(pinned_ders)
             }
         };
+        // Peers are on a LAN and come and go (a phone's app restarts, Wi-Fi sleeps). A
+        // pooled connection whose other end has silently vanished must not be reused for
+        // long: short idle life, TCP keepalive to notice a dead peer, a connect timeout so
+        // an unreachable one fails fast, and HTTP/1.1 so one broken multiplexed
+        // connection cannot take every request to that peer down with it (2026-10-01).
         let client = reqwest::ClientBuilder::new()
             .use_preconfigured_tls(tls_config)
             .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .pool_idle_timeout(std::time::Duration::from_secs(20))
+            .tcp_keepalive(std::time::Duration::from_secs(15))
+            .http1_only()
             .default_headers(default_headers)
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {}", e))?;

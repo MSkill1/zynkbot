@@ -2498,6 +2498,17 @@ impl ZynkSyncService {
                                 eprintln!("[ZynkSync] ✗ Auto-sync failed with {} (connection error — suppressing repeats for 30 s): {}",
                                     peer.device_name, e);
                                 self.transport.last_conn_error_logged.write().await.insert(peer.device_id.clone(), Utc::now());
+                                // A peer the heartbeat says is alive, yet connections to it
+                                // fail: the pooled connections are the likely culprit (its
+                                // app restarted; the desktop kept failing for 25 minutes on
+                                // 2026-10-01). Start a fresh client — the heartbeat has
+                                // already shown the peer itself answers.
+                                if peer.is_online {
+                                    match self.rebuild_http_client().await {
+                                        Ok(()) => println!("[ZynkSync] {} is online but unreachable — HTTP client rebuilt", peer.device_name),
+                                        Err(err) => eprintln!("[ZynkSync] HTTP client rebuild failed: {}", err),
+                                    }
+                                }
                             }
                         } else {
                             eprintln!("[ZynkSync] ✗ Auto-sync failed with {}: {}", peer.device_name, e);

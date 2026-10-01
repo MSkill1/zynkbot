@@ -37,8 +37,10 @@ use std::collections::HashMap;
 pub const OUTBOX_BATCH_ROWS: i64 = 300;
 
 /// Queued rows older than this are dropped; a peer that has been away longer than this
-/// gets a full re-send instead.
-pub const OUTBOX_RETENTION_DAYS: i64 = 30;
+/// gets a full re-send instead. A week, not the plan's thirty days (Matt, 2026-10-01): a
+/// deleted memory's text sits in the queue until pruned, and the only cost of a shorter
+/// window is a full re-send, a few megabytes on the LAN.
+pub const OUTBOX_RETENTION_DAYS: i64 = 7;
 
 /// A deletion, named by what the receiver needs to find and forget the row.
 /// `content_hash` is sha256(content) for a memory: the key of `deleted_memory_hashes`,
