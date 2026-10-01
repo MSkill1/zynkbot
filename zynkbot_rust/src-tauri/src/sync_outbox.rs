@@ -689,7 +689,7 @@ impl ZynkSyncService {
             .json(&serde_json::json!({}))
             .timeout(std::time::Duration::from_secs(120))
             .send().await
-            .map_err(|e| format!("outbox pull from {} failed: {}", peer.device_name, e))?;
+            .map_err(|e| format!("outbox pull from {} failed: {}", peer.device_name, describe(&e)))?;
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -704,12 +704,20 @@ impl ZynkSyncService {
     }
 }
 
+/// reqwest's Display hides the cause ("error sending request for url"); the chain has it.
+fn describe(e: &reqwest::Error) -> String {
+    let mut out = e.to_string();
+    let mut src = std::error::Error::source(e);
+    while let Some(s) = src { out.push_str(" <- "); out.push_str(&s.to_string()); src = s.source(); }
+    out
+}
+
 async fn post_batch(client: &reqwest::Client, endpoint: &str, batch: &OutboxBatch) -> Result<OutboxReceipt, String> {
     let response = client.post(endpoint)
         .json(batch)
         .timeout(std::time::Duration::from_secs(120))
         .send().await
-        .map_err(|e| format!("outbox send failed: {}", e))?;
+        .map_err(|e| format!("outbox send failed: {}", describe(&e)))?;
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();

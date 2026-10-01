@@ -300,6 +300,7 @@ Elder Mode was deprioritized in favor of Child Mode due to a larger addressable 
 - Repetition tolerance — same question asked multiple times handled gracefully.
 - Contradiction detection tone — gentle correction framing, distinct from the standard UI.
 - Family visibility with elder-as-principal — consent and control default to the elder user.
+- A light redaction layer, a basic form of HIPAA Mode (Matt, 2026-10-01): Social Security, card and account numbers stripped from anything that leaves the device for a cloud model, even though providers delete API traffic after a set period; addresses kept, because an elder user needs them.
 
 **Action:** Talk to Mike directly about what he's picturing before scoping. Decide whether this ships alongside or before Parenting Mode.
 
