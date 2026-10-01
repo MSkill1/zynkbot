@@ -1344,6 +1344,12 @@ impl ZynkSyncService {
     }
 
     pub async fn receive_from_peer(&self, local_user_id: &str, memories: Vec<SyncMemory>) -> Result<usize, String> {
+        // Until step 5 removes this path, what it writes must not be queued back to
+        // the sender (the OnePlus echoed 2,126 rows after pairing, 2026-10-01): one
+        // transaction, with the sync_suppress row the 0013 triggers look for.
+        let mut tx = self.db_pool.begin().await.map_err(|e| format!("begin: {}", e))?;
+        sqlx::query("INSERT OR IGNORE INTO sync_suppress (flag) VALUES (1)").execute(&mut *tx).await.map_err(|e| format!("suppress: {}", e))?;
+
         use std::collections::HashMap;
 
         let mut stored_count = 0;
@@ -1358,7 +1364,7 @@ impl ZynkSyncService {
                 "SELECT id, created_at FROM memories WHERE content = ?"
             )
             .bind(&memory.content)
-            .fetch_optional(&self.db_pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(|e| format!("Failed to check existing memory: {}", e))?;
 
@@ -1386,7 +1392,7 @@ impl ZynkSyncService {
                     .bind(&memory.temporal_status)
                     .bind(&memory.provenance_json)
                     .bind(existing_memory.0)
-                    .execute(&self.db_pool)
+                    .execute(&mut *tx)
                     .await
                     .map_err(|e| format!("Failed to update memory: {}", e))?;
 
@@ -1403,7 +1409,7 @@ impl ZynkSyncService {
                     "SELECT COUNT(*) FROM memories WHERE id = ?"
                 )
                 .bind(memory.id)
-                .fetch_one(&self.db_pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| format!("Failed to check ID conflict: {}", e))?;
 
@@ -1412,7 +1418,7 @@ impl ZynkSyncService {
                         "SELECT id, content, created_at FROM memories WHERE id = ?"
                     )
                     .bind(memory.id)
-                    .fetch_one(&self.db_pool)
+                    .fetch_one(&mut *tx)
                     .await
                     .map_err(|e| format!("Failed to fetch conflicting memory: {}", e))?;
 
@@ -1458,7 +1464,7 @@ impl ZynkSyncService {
                         .bind(memory.external_id.as_deref())
                         .bind(memory.temporal_status.as_deref())
                         .bind(memory.provenance_json.as_deref())
-                        .execute(&self.db_pool)
+                        .execute(&mut *tx)
                         .await
                         .map_err(|e| format!("Failed to insert ID-colliding memory: {}", e))?;
                         let new_id = result.last_insert_rowid() as i32;
@@ -1505,7 +1511,7 @@ impl ZynkSyncService {
                 .bind(memory.external_id.as_deref())
                 .bind(memory.temporal_status.as_deref())
                 .bind(memory.provenance_json.as_deref())
-                .execute(&self.db_pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| format!("Failed to insert memory: {}", e))?;
 
@@ -1522,7 +1528,7 @@ impl ZynkSyncService {
         if let Err(e) = sqlx::query(
             "SELECT 1" // SQLite uses AUTOINCREMENT — no sequence to reset
         )
-        .execute(&self.db_pool)
+        .execute(&mut *tx)
         .await
         {
             eprintln!("[ZynkSync] Warning: Failed to reset memories sequence: {}", e);
@@ -1544,7 +1550,7 @@ impl ZynkSyncService {
                     "SELECT COUNT(*) FROM memories WHERE id = ?"
                 )
                 .bind(rel.source_memory_id)
-                .fetch_one(&self.db_pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map(|count| count > 0)
                 .unwrap_or(false);
@@ -1553,7 +1559,7 @@ impl ZynkSyncService {
                     "SELECT COUNT(*) FROM memories WHERE id = ?"
                 )
                 .bind(rel.target_memory_id)
-                .fetch_one(&self.db_pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map(|count| count > 0)
                 .unwrap_or(false);
@@ -1583,7 +1589,7 @@ impl ZynkSyncService {
                 .bind(rel.confidence as f64)
                 .bind(&rel.notes)
                 .bind(&rel.created_by)
-                .execute(&self.db_pool)
+                .execute(&mut *tx)
                 .await;
 
                 match result {
@@ -1595,6 +1601,8 @@ impl ZynkSyncService {
 
         println!("[ZynkSync] ✓ Received and stored {} memories with {} relationships",
             stored_count, relationships_created);
+        sqlx::query("DELETE FROM sync_suppress").execute(&mut *tx).await.map_err(|e| format!("unsuppress: {}", e))?;
+        tx.commit().await.map_err(|e| format!("commit: {}", e))?;
         Ok(stored_count)
     }
 
@@ -1730,6 +1738,12 @@ impl ZynkSyncService {
         &self,
         payload: ConversationSyncPayload,
     ) -> Result<(usize, usize), String> {
+        // Until step 5 removes this path, what it writes must not be queued back to
+        // the sender (the OnePlus echoed 2,126 rows after pairing, 2026-10-01): one
+        // transaction, with the sync_suppress row the 0013 triggers look for.
+        let mut tx = self.db_pool.begin().await.map_err(|e| format!("begin: {}", e))?;
+        sqlx::query("INSERT OR IGNORE INTO sync_suppress (flag) VALUES (1)").execute(&mut *tx).await.map_err(|e| format!("suppress: {}", e))?;
+
         let mut sessions_stored = 0usize;
         let mut messages_stored = 0usize;
 
@@ -1756,7 +1770,7 @@ impl ZynkSyncService {
             .bind(session.message_count)
             .bind(&session.model_backend)
             .bind(&session.containment_mode)
-            .execute(&self.db_pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| format!("Failed to upsert session {}: {}", session.session_id, e))?;
 
@@ -1786,7 +1800,7 @@ impl ZynkSyncService {
             .bind(&msg.session_id)   // WHERE NOT EXISTS: session_id = ?
             .bind(msg.created_at)    // WHERE NOT EXISTS: created_at = ?
             .bind(&msg.role)         // WHERE NOT EXISTS: role = ?
-            .execute(&self.db_pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| format!("Failed to insert message: {}", e))?;
 
@@ -1805,7 +1819,7 @@ impl ZynkSyncService {
                  WHERE session_id = ?"
             )
             .bind(&session.session_id)
-            .execute(&self.db_pool)
+            .execute(&mut *tx)
             .await;
         }
 
@@ -1813,6 +1827,8 @@ impl ZynkSyncService {
             println!("[ZynkSync] ✓ Conversation sync: {} new message(s) across {} session(s)",
                 messages_stored, sessions_stored);
         }
+        sqlx::query("DELETE FROM sync_suppress").execute(&mut *tx).await.map_err(|e| format!("unsuppress: {}", e))?;
+        tx.commit().await.map_err(|e| format!("commit: {}", e))?;
         Ok((sessions_stored, messages_stored))
     }
 
@@ -1914,7 +1930,7 @@ impl ZynkSyncService {
     }
 
     /// Get specific memories by their IDs (including their relationships)
-    async fn get_memories_by_ids(&self, ids: &[i32]) -> Result<Vec<SyncMemory>, String> {
+    pub(crate) async fn get_memories_by_ids(&self, ids: &[i32]) -> Result<Vec<SyncMemory>, String> {
         let rows = if ids.is_empty() {
             vec![]
         } else {

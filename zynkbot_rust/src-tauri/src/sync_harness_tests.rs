@@ -684,3 +684,49 @@ fn b17_pre_outbox_copies_of_a_message_converge_instead_of_failing() {
         assert_eq!(na, nb, "the phone must adopt the desktop's name for the message");
     });
 }
+
+// ---------------------------------------------------------------------------
+// 18. Rows that predate the outbox are not in any queue, so a device this one has never
+//     drained to must get the live tables on first contact, or they never move (the
+//     desktop's 12 extra memories on the first device pass, 2026-10-01).
+// ---------------------------------------------------------------------------
+#[test]
+fn b18_first_contact_sends_what_predates_the_outbox() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        // Pre-outbox rows: written without queuing, after pairing so no pairing push carried them.
+        sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&a.pool).await.unwrap();
+        a.add_memory("The spare key is with the neighbour").await;
+        a.add_memory("Bins go out on Tuesday").await;
+        sqlx::query("DELETE FROM sync_suppress").execute(&a.pool).await.unwrap();
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sync_outbox").fetch_one(&a.pool).await.unwrap(), 0);
+
+        a.sync_with(&b).await;
+        assert_eq!(b.memory_contents().await, vec!["Bins go out on Tuesday".to_string(), "The spare key is with the neighbour".to_string()]);
+        // Second contact is a normal drain: nothing is sent again.
+        let r = a.sync_with(&b).await;
+        assert_eq!(r.memories_sent, 0, "a second sync must not re-send the live tables");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 19. What the old receive path writes (the pairing push still uses it until step 5)
+//     must not be queued back to the sender.
+// ---------------------------------------------------------------------------
+#[test]
+fn b19_the_old_receive_path_does_not_echo_into_the_outbox() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let id = a.add_memory("Echo test").await;
+        let rows = a.svc.get_memories_by_ids(&[id]).await.expect("load memory");
+        sqlx::query("DELETE FROM sync_outbox").execute(&b.pool).await.unwrap();
+        b.svc.receive_from_peer(&b.user_id(), rows).await.expect("old receive");
+        assert_eq!(b.memory_contents().await, vec!["Echo test".to_string()]);
+        let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_outbox").fetch_one(&b.pool).await.unwrap();
+        assert_eq!(queued, 0, "the old receive path queued {} row(s) to echo back", queued);
+    });
+}

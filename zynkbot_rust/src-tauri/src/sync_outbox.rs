@@ -253,35 +253,54 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
     Ok(Some(batch))
 }
 
-/// Every live row for `user_id`, for a peer that has been away longer than the queue
-/// remembers. The receiver's upsert-by-sync_id makes re-sending everything safe.
-pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64) -> Result<OutboxBatch, String> {
-    let memory_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT sync_id FROM memories WHERE user_id = ? AND sync_id IS NOT NULL")
-        .bind(user_id).fetch_all(pool).await.map_err(|e| e.to_string())?;
+/// One capped slice of the live tables for `user_id`: sessions first (messages point at
+/// them), then memories, then messages, in a fixed order so successive calls with a
+/// growing `offset` walk the whole set. Returns the batch and how many rows exist in
+/// all. For a peer that has never been drained to, or one that has been away longer
+/// than the queue remembers; the receiver's upsert-by-sync_id makes re-sending safe.
+pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64, offset: usize, limit: usize)
+    -> Result<(OutboxBatch, usize), String>
+{
     let session_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT sync_id FROM conversation_sessions WHERE user_id = ? AND sync_id IS NOT NULL")
+        "SELECT sync_id FROM conversation_sessions WHERE user_id = ? AND sync_id IS NOT NULL ORDER BY id")
+        .bind(user_id).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let memory_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT sync_id FROM memories WHERE user_id = ? AND sync_id IS NOT NULL ORDER BY id")
         .bind(user_id).fetch_all(pool).await.map_err(|e| e.to_string())?;
     let message_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT sync_id FROM conversation_messages WHERE user_id = ? AND sync_id IS NOT NULL")
+        "SELECT sync_id FROM conversation_messages WHERE user_id = ? AND sync_id IS NOT NULL ORDER BY id")
         .bind(user_id).fetch_all(pool).await.map_err(|e| e.to_string())?;
-    Ok(OutboxBatch {
+    let total = session_ids.len() + memory_ids.len() + message_ids.len();
+    let all = session_ids.iter().map(|s| ("s", s)).chain(memory_ids.iter().map(|m| ("m", m))).chain(message_ids.iter().map(|x| ("x", x)));
+    let slice: Vec<(&str, &String)> = all.skip(offset).take(limit).collect();
+    let pick = |kind: &str| slice.iter().filter(|(k, _)| *k == kind).map(|(_, id)| (*id).clone()).collect::<Vec<_>>();
+    let batch = OutboxBatch {
         through,
-        memories: load_memories(pool, &memory_ids).await?,
-        sessions: load_sessions(pool, &session_ids).await?,
-        messages: load_messages(pool, &message_ids).await?,
+        sessions: load_sessions(pool, &pick("s")).await?,
+        memories: load_memories(pool, &pick("m")).await?,
+        messages: load_messages(pool, &pick("x")).await?,
         deletes: Vec::new(),
-    })
+    };
+    Ok((batch, total))
 }
+
+/// How far a full send to each (this device, peer) has got, in rows. In memory only: an
+/// app restart starts the full send over, which the receiver's upsert makes harmless.
+static FULL_SEND_OFFSET: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, String), usize>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 // ============================================================================ cursor
 
-pub async fn cursor_for(pool: &SqlitePool, peer_device_id: &str) -> Result<i64, String> {
-    let c: Option<i64> = sqlx::query_scalar(
+/// None when this peer has never acknowledged a batch: first contact.
+pub async fn cursor_row(pool: &SqlitePool, peer_device_id: &str) -> Result<Option<i64>, String> {
+    sqlx::query_scalar(
         "SELECT last_outbox_id FROM sync_outbox_cursor WHERE peer_device_id = ?")
         .bind(peer_device_id).fetch_optional(pool).await
-        .map_err(|e| format!("outbox: read cursor: {}", e))?;
-    Ok(c.unwrap_or(0))
+        .map_err(|e| format!("outbox: read cursor: {}", e))
+}
+
+pub async fn cursor_for(pool: &SqlitePool, peer_device_id: &str) -> Result<i64, String> {
+    Ok(cursor_row(pool, peer_device_id).await?.unwrap_or(0))
 }
 
 pub async fn set_cursor(pool: &SqlitePool, peer_device_id: &str, through: i64) -> Result<(), String> {
@@ -594,20 +613,38 @@ impl ZynkSyncService {
         let client = self.transport.http_client.read().await.clone();
         let mut outcome = DrainOutcome::default();
 
-        // A peer whose cursor points before what the queue still holds has missed rows
-        // that were pruned: send the live tables instead, then carry on from the queue.
-        let cursor = cursor_for(&self.db_pool, peer_device_id).await?;
-        let oldest: Option<i64> = sqlx::query_scalar("SELECT MIN(id) FROM sync_outbox")
+        // Two cases get the live tables rather than the queue: a peer this device has
+        // never drained to (first contact — the queue only holds changes made since the
+        // outbox existed, and rows that predate it would otherwise never move; found on
+        // the first device pass, 2026-10-01), and a peer whose cursor points before what
+        // the queue still holds (it missed rows that were pruned). Either way the cursor
+        // then starts at the queue's current end, and the queue takes over from there.
+        let cursor = cursor_row(&self.db_pool, peer_device_id).await?;
+        let (oldest, newest): (Option<i64>, Option<i64>) = sqlx::query_as("SELECT MIN(id), MAX(id) FROM sync_outbox")
             .fetch_one(&self.db_pool).await.map_err(|e| e.to_string())?;
-        if let Some(oldest) = oldest {
-            if cursor + 1 < oldest && cursor > 0 {
-                println!("[ZynkSync] outbox: {} is behind the queue (cursor {}, oldest {}); full re-send", peer.device_name, cursor, oldest);
-                let batch = build_full_resend(&self.db_pool, user_id, oldest - 1).await?;
-                let receipt = post_batch(&client, &endpoint, &batch).await?;
-                set_cursor(&self.db_pool, peer_device_id, receipt.through).await?;
-                outcome.batches += 1;
-                outcome.entries_sent += batch.len();
-                outcome.applied_by_peer += receipt.applied;
+        let behind = match (cursor, oldest) { (Some(c), Some(o)) => c + 1 < o, _ => false };
+        if cursor.is_none() || behind {
+            // Capped like every other batch, one slice per sync cycle (KI-068); the
+            // cursor is written only after the last slice, so a restart starts over.
+            let key = (self.identity().device_id, peer_device_id.to_string());
+            let offset = FULL_SEND_OFFSET.lock().unwrap().get(&key).copied().unwrap_or(0);
+            let through = newest.unwrap_or(0);
+            let (batch, total) = build_full_resend(&self.db_pool, user_id, through, offset, OUTBOX_BATCH_ROWS as usize).await?;
+            println!("[ZynkSync] outbox: {} to {} — live tables rows {}..{} of {} (queue {:?}..{:?})",
+                if cursor.is_none() { "first contact" } else { "behind the queue" }, peer.device_name,
+                offset, offset + batch.len(), total, oldest, newest);
+            let receipt = if batch.is_empty() { OutboxReceipt { through, applied: 0 } } else { post_batch(&client, &endpoint, &batch).await? };
+            outcome.batches += 1;
+            outcome.entries_sent += batch.len();
+            outcome.applied_by_peer += receipt.applied;
+            let next = offset + batch.len();
+            if next >= total {
+                FULL_SEND_OFFSET.lock().unwrap().remove(&key);
+                set_cursor(&self.db_pool, peer_device_id, through).await?;
+            } else {
+                FULL_SEND_OFFSET.lock().unwrap().insert(key, next);
+                prune_outbox(&self.db_pool, &self.paired_peer_ids().await).await?;
+                return Ok(outcome); // the rest of the live tables goes next cycle
             }
         }
 
@@ -630,12 +667,13 @@ impl ZynkSyncService {
             outcome.applied_by_peer += receipt.applied;
         }
 
-        let paired: Vec<String> = {
-            let peers = self.transport.peers.read().await;
-            peers.values().filter(|p| p.paired).map(|p| p.device_id.clone()).collect()
-        };
-        prune_outbox(&self.db_pool, &paired).await?;
+        prune_outbox(&self.db_pool, &self.paired_peer_ids().await).await?;
         Ok(outcome)
+    }
+
+    async fn paired_peer_ids(&self) -> Vec<String> {
+        let peers = self.transport.peers.read().await;
+        peers.values().filter(|p| p.paired).map(|p| p.device_id.clone()).collect()
     }
 
     /// Ask a peer to drain its queue to this device. The peer runs `drain_outbox_to` for
