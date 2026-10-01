@@ -876,6 +876,12 @@ A local-first, LAN-synced credential vault built on Zynkbot's existing architect
 - Healthcare, education, legal, and finance sectors with compliance frameworks built on transparent architecture
 - Active ecosystem of third-party applications
 
+**ZOS — an operating system you talk to** *(idea noted 2026-10-01, Matt; far future, feasibility unknown)*
+- Take GrapheneOS as the base and build the first privacy-first operating system whose interface is a local AI you speak to — Zynkbot — rather than apps you tap. Dictate an email and it is sent; ask it to pay someone and the payment is made; all of it on the device, nothing leaving that you did not send.
+- Identity that belongs to the person: an encrypted, possibly blockchain-backed user identity that no government or corporation issues or can revoke. The seed is already in the code — a device is its certificate and its id, a user is a key, a backup phrase reclaims both — and the identity work in step 4 of the sync rebuild is the first brick.
+- Working name: **ZOS**, for Zynkbot Operating System or Zynk Operating System. (z/OS is IBM's mainframe system; "Zynk OS" avoids the collision.)
+- Not planned, not estimated, not before everything above. Recorded so the name and the direction are not lost. This is the one place the app-level-only rule (v0.9.5, "no GrapheneOS/AOSP fork") would be set aside, and only at this horizon.
+
 **Self-Sustaining Ecosystem**
 - Revenue from premium snap-ins, SDK licensing, and donations
 - Active developer community
