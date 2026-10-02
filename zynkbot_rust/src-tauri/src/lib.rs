@@ -2489,6 +2489,7 @@ pub fn run() {
             commands::backup::backup_memories_to_r2,
             commands::backup::restore_memories_from_r2,
             commands::backup::list_restorable_devices,
+            commands::backup::backup_restore_options,
             commands::backup::restore_device_identity,
             // Model and API key commands
             commands::models::get_models,

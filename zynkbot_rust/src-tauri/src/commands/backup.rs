@@ -410,6 +410,22 @@ pub async fn list_restorable_devices() -> Result<Vec<serde_json::Value>, String>
     Ok(out)
 }
 
+/// What the Restore button should offer: on a device with no peers (a fresh install), the
+/// account's device backups, so the user can say which device this is before anything is
+/// restored; on a device that already has peers, nothing but the data restore.
+#[tauri::command]
+pub async fn backup_restore_options() -> Result<serde_json::Value, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("DB connect failed: {}", e))?;
+    let paired: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM zynk_devices WHERE sync_paired = 1")
+        .fetch_one(&pool).await.map_err(|e| e.to_string())?;
+    pool.close().await;
+    if paired > 0 {
+        return Ok(serde_json::json!({ "fresh": false, "devices": [] }));
+    }
+    let devices = list_restorable_devices().await.unwrap_or_default();
+    Ok(serde_json::json!({ "fresh": true, "devices": devices }))
+}
+
 /// Make this fresh install be `device_id` again. Refused while this device already has
 /// paired peers: that is not a fresh install, and taking another device's identity would
 /// make two devices one. The app must restart afterwards; the UI says so.
