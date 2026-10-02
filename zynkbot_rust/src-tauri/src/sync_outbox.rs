@@ -1024,6 +1024,7 @@ impl ZynkSyncService {
             batches: v["batches"].as_u64().unwrap_or(0) as usize,
             entries_sent: v["entries_sent"].as_u64().unwrap_or(0) as usize,
             applied_by_peer: v["applied"].as_u64().unwrap_or(0) as usize,
+            skipped: false,
         })
     }
 }
