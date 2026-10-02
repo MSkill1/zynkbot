@@ -984,6 +984,15 @@ impl ZynkSyncService {
         // changed there (sync_outbox.rs). Nothing is compared table against table any
         // more. The inventory, fetch and delete-by-hash routes stay until step 5.
         let pushed = self.drain_outbox_to(&peer.device_id, user_id).await?;
+        if pushed.skipped {
+            // Quietly: the peer refused a connection moments ago and is silent. The next
+            // cycle tries again once two minutes have passed or a heartbeat arrives.
+            return Ok(SyncResult {
+                peer_device_id: peer.device_id, peer_device_name: peer.device_name,
+                memories_sent: 0, memories_received: 0, conversations_sent: 0, conflicts_resolved: 0,
+                success: false, error: Some("skipped: peer silent since it last refused a connection".into()),
+            });
+        }
         let pulled = self.pull_outbox_from(&peer.device_id).await?;
 
         // Keeps is_first_sync() honest for the paths that still consult it.

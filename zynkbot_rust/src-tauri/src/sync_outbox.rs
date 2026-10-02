@@ -130,6 +130,10 @@ pub struct DrainOutcome {
     pub batches: usize,
     pub entries_sent: usize,
     pub applied_by_peer: usize,
+    /// The peer was skipped this cycle (refused a connection within the last two minutes
+    /// and has sent no heartbeat). Not an error: reporting it as one re-stamped the
+    /// "recently refused" clock and the skip never expired (2026-10-02).
+    pub skipped: bool,
 }
 
 pub fn content_hash(content: &str) -> String {
@@ -912,7 +916,7 @@ impl ZynkSyncService {
             let recent = self.transport.last_conn_error_logged.read().await.get(peer_device_id)
                 .map(|t| Utc::now().signed_duration_since(*t).num_seconds() < 120).unwrap_or(false);
             if recent {
-                return Err(format!("outbox: {} is offline (connection refused within the last two minutes); skipped", peer.device_name));
+                return Ok(DrainOutcome { skipped: true, ..Default::default() });
             }
         }
         let endpoint = format!("{}/api/zynksync/outbox", peer.url);
