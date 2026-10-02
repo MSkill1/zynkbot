@@ -235,6 +235,28 @@ impl ZynkSyncService {
     pub fn user_id(&self) -> Result<String, String> { self.transport.user_id() }
     pub fn device_name(&self) -> String { self.transport.device_name() }
     pub fn set_user_id(&self, user_id: &str) { self.transport.set_user_id(user_id) }
+
+    /// This device joins another user's devices: everything it already holds moves under
+    /// the shared user id, so it stays visible here and travels to the peers. Before, the
+    /// rows stayed under the old id and vanished from view and from sync (KI-011, b07).
+    /// Plain UPDATEs, so the 0013 triggers queue each row for the drain.
+    pub async fn adopt_user_id(&self, new_user_id: &str) -> Result<usize, String> {
+        let old = self.user_id().unwrap_or_default();
+        if old == new_user_id { return Ok(0); }
+        let mut moved = 0usize;
+        for table in ["memories", "conversation_sessions", "conversation_messages"] {
+            let r = sqlx::query(&format!("UPDATE {} SET user_id = ? WHERE user_id = ?", table))
+                .bind(new_user_id).bind(&old)
+                .execute(&self.db_pool).await
+                .map_err(|e| format!("re-key {}: {}", table, e))?;
+            moved += r.rows_affected() as usize;
+        }
+        self.transport.set_user_id(new_user_id);
+        if moved > 0 {
+            println!("[ZynkSync] Adopted user id {}…: {} existing row(s) moved under it and queued for the peers", &new_user_id[..8.min(new_user_id.len())], moved);
+        }
+        Ok(moved)
+    }
     pub fn set_device_name(&self, name: &str) { self.transport.set_device_name(name) }
     pub fn port(&self) -> u16 { self.transport.port() }
     pub async fn peer_port_by_id(&self, device_id: &str) -> u16 { self.transport.peer_port_by_id(device_id).await }

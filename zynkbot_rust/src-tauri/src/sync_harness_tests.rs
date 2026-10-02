@@ -79,7 +79,7 @@ impl Peer {
         self.svc.rebuild_http_client().await.expect("rebuild client");
         assert_eq!(peer.device_id, host.device_id(), "{}: paired with the wrong device", self.name);
         if let Some(uid) = peer.user_id.as_deref() {
-            if uid != self.user_id() { self.svc.set_user_id(uid); }
+            if uid != self.user_id() { self.svc.adopt_user_id(uid).await.expect("adopt user id"); }
         }
         host.svc.load_devices().await.expect("host reloads devices");
     }
@@ -509,7 +509,6 @@ fn b06_a_contradiction_resolved_on_one_device_leaves_both_with_only_the_new_fact
 //    (KI-011). Today they stay under the phone's old user id and vanish from view.
 // ---------------------------------------------------------------------------
 #[test]
-#[ignore = "KI-011: a joining device's own memories stay under its old user id after pairing — until the outbox rebuild"]
 fn b07_memories_held_before_pairing_are_shared_after_it() {
     rt_test(async {
         let a = Peer::spawn("desktop").await;

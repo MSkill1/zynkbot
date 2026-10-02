@@ -7,10 +7,13 @@ pub async fn get_user_identity() -> Result<user_identity::UserIdentity, String> 
 
 #[tauri::command]
 pub async fn set_user_identity(user_id: String) -> Result<(), String> {
+    // Called by the UI once pairing has told it the host's user id. Everything this
+    // device already holds moves under that id too (KI-011): the running service does the
+    // re-keying so the outbox queues the rows for the peers.
+    if let Some(svc) = crate::ZYNKSYNC_SERVICE.lock().await.as_ref() {
+        svc.adopt_user_id(&user_id).await?;
+    }
     user_identity::set_user_id(&user_id)?;
-    // The running sync service owns a copy of the identity (see SyncIdentity); until
-    // 0bdcc35 the handlers re-read the files on every call, so this keeps that behaviour.
-    if let Some(svc) = crate::ZYNKSYNC_SERVICE.lock().await.as_ref() { svc.set_user_id(&user_id); }
     Ok(())
 }
 

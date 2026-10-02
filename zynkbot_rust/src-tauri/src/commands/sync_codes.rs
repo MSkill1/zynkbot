@@ -66,8 +66,9 @@ pub async fn sync_with_code(code: String, device_ip: String) -> Result<serde_jso
     println!("[SyncCode] Device B: Code verified! Remote user_id: {}...", &verify_data.user_id[..8]);
 
     // Step 2: Set Device B's user_id to match Device A
+    // Existing rows move under the adopted id and are queued for the peers (KI-011).
+    if let Some(svc) = crate::ZYNKSYNC_SERVICE.lock().await.as_ref() { svc.adopt_user_id(&verify_data.user_id).await?; }
     user_identity::set_user_id(&verify_data.user_id)?;
-    if let Some(svc) = crate::ZYNKSYNC_SERVICE.lock().await.as_ref() { svc.set_user_id(&verify_data.user_id); }
     let identity = user_identity::get_identity()?;
 
     println!("[SyncCode] Device B: Linked to user {}...", &identity.user_id[..8]);
