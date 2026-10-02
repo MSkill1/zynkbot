@@ -144,7 +144,7 @@ mod tests {
             "zchat_messages",
             "conversation_sessions", "conversation_messages", "message_feedback",
             "zynk_device_certificates",
-            "sync_outbox", "sync_outbox_cursor", "sync_suppress", "sync_secrets", "sync_inbox_cursor",
+            "sync_outbox", "sync_outbox_cursor", "sync_suppress", "sync_secrets", "sync_inbox_cursor", "memory_links",
         ];
         for table in &expected {
             let exists: (i64,) = sqlx::query_as(

@@ -2574,7 +2574,6 @@ pub fn run() {
             commands::zynksync::get_zynksync_status,
             commands::zynksync::get_zynksync_peers,
             commands::zynksync::sync_to_peer,
-            commands::zynksync::receive_sync_memories,
             commands::zynksync::request_device_pairing,
             commands::zynksync::verify_pairing_code,
             commands::zynksync::unpair_device,
@@ -2583,7 +2582,6 @@ pub fn run() {
             commands::zynksync::expel_zynksync_device,
             commands::zynksync::unsync_and_reset_identity,
             commands::zynksync::get_zynksync_pairing_code,
-            commands::zynksync::check_sync_status_with_peers,
             commands::zynksync::broadcast_sync_to_all_peers,
             commands::zynksync::get_local_ip,
             // Memory management

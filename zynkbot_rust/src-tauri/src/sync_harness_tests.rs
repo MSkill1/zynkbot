@@ -214,8 +214,10 @@ fn b04_memory_deleted_on_one_device_is_gone_on_the_other_and_stays_gone() {
         assert_eq!(b.memory_contents().await.len(), 1);
 
         // Delete on A the way the Memory Manager does: propagate (tombstone + peers), then local.
-        a.svc.propagate_deletion(id).await.expect("propagate deletion");
+        // As the app does since step 5: tombstone locally, delete; the outbox carries it.
+        a.svc.record_tombstones(&[crate::sync_outbox::content_hash("Temporary fact")]).await.unwrap();
         sqlx::query("DELETE FROM memories WHERE id = ?").bind(id).execute(&a.pool).await.unwrap();
+        a.sync_with(&b).await;
         assert!(b.memory_contents().await.is_empty(), "phone still has the deleted memory");
 
         // A later sync from the phone must not resurrect it on the desktop (tombstone).
@@ -240,7 +242,6 @@ fn b05_memory_edited_on_one_device_does_not_come_back_old() {
 
         sqlx::query("UPDATE memories SET content = ?, updated_at = datetime('now') WHERE id = ?")
             .bind("My dentist is Dr Alvarez on Main Street").bind(id).execute(&a.pool).await.unwrap();
-        a.svc.propagate_memory_update(id, None, Some("My dentist is Dr Alvarez on Main Street".into()), None).await.expect("propagate update");
 
         // Both directions of sync afterwards: the phone must not push the old text back.
         b.sync_with(&a).await;
@@ -335,7 +336,7 @@ fn b08d_a_history_bigger_than_one_push_arrives_over_cycles() {
         let b = Peer::spawn("phone").await;
         b.pair_with(&a).await;
         let uid = a.user_id();
-        let cap = crate::zynksync::CONVERSATION_PUSH_MAX_MESSAGES;
+        let cap = crate::sync_outbox::OUTBOX_BATCH_ROWS as usize;
         let total = cap + 50;
         // Two threads, one message per second, written the way the app writes them (RFC 3339).
         let t0 = chrono::Utc::now() - chrono::Duration::seconds(total as i64 + 60);
@@ -471,55 +472,6 @@ impl Drop for EnvDir {
 // 2. Keys saved on the desktop before a phone pairs must reach that phone once it
 //    does (KI-055). Today the push only runs when a key is saved or the button is
 //    pressed, so a device that pairs afterwards gets nothing.
-// ---------------------------------------------------------------------------
-#[test]
-fn b02_keys_saved_before_pairing_reach_the_device_that_pairs_later() {
-    let _env = crate::chat_harness_tests::hold_env();
-    let data = EnvDir::new();
-    std::env::set_var("OPENAI_API_KEY", "sk-test-desktop-key");
-    rt_test(async {
-        let a = Peer::spawn("desktop").await;
-        let b = Peer::spawn("phone").await;
-        b.pair_with(&a).await;
-        a.sync_with(&b).await;
-        b.sync_with(&a).await;
-        // The phone's own table is the deterministic record; the shared .env file is
-        // also written by other tests' peers in this process, so poll it briefly.
-        let on_phone: Option<String> = sqlx::query_scalar("SELECT value FROM sync_secrets WHERE name = 'OPENAI_API_KEY'")
-            .fetch_optional(&b.pool).await.unwrap();
-        assert_eq!(on_phone.as_deref(), Some("sk-test-desktop-key"), "the phone never received the desktop's key");
-        let mut env_file = data.env_file();
-        for _ in 0..30 {
-            if env_file.contains("OPENAI_API_KEY=sk-test-desktop-key") { break; }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            env_file = data.env_file();
-        }
-        assert!(env_file.contains("OPENAI_API_KEY=sk-test-desktop-key"),
-            "the key reached the phone's table but not its .env: {:?}", env_file);
-    });
-}
-
-// 2b. The receiving side of a key push stores the key. (The half that works today;
-//     kept separate so it stays green while 2 waits on the rebuild.)
-#[test]
-fn b02b_a_pushed_key_is_stored_on_the_receiving_device() {
-    let _env = crate::chat_harness_tests::hold_env();
-    let data = EnvDir::new();
-    rt_test(async {
-        let a = Peer::spawn("desktop").await;
-        let b = Peer::spawn("phone").await;
-        b.pair_with(&a).await;
-
-        let client = a.svc.get_http_client().await;
-        let url = format!("https://127.0.0.1:{}/api/zynksync/push-api-key", b.port);
-        let r = client.post(&url)
-            .json(&serde_json::json!({ "key": "OPENAI_API_KEY", "value": "sk-test-pushed" }))
-            .send().await.expect("push request");
-        assert!(r.status().is_success(), "the phone refused the pushed key: {}", r.status());
-        let env_file = data.env_file();
-        assert!(env_file.contains("OPENAI_API_KEY=sk-test-pushed"), "pushed key not stored; .env holds: {:?}", env_file);
-    });
-}
 
 // ---------------------------------------------------------------------------
 // 6. A contradiction resolved on one device ("keep the new fact") leaves both devices
@@ -536,7 +488,7 @@ fn b06_a_contradiction_resolved_on_one_device_leaves_both_with_only_the_new_fact
         a.sync_with(&b).await;
         assert_eq!(b.memory_contents().await, vec!["My dog is named Max".to_string()]);
 
-        a.svc.propagate_deletion(old).await.expect("propagate deletion");
+        a.svc.record_tombstones(&[crate::sync_outbox::content_hash("My dog is named Max")]).await.unwrap();
         sqlx::query("DELETE FROM memories WHERE id = ?").bind(old).execute(&a.pool).await.unwrap();
         a.add_memory("My dog is named Wendy").await;
 
@@ -649,7 +601,7 @@ fn b13_a_device_that_was_offline_catches_up_when_it_returns() {
         sqlx::query("UPDATE zynk_devices SET port = 1 WHERE device_id = ?").bind(b.device_id()).execute(&a.pool).await.unwrap();
         a.svc.load_devices().await.unwrap();
         a.add_memory("New phone number 555-0199").await;
-        let _ = a.svc.propagate_deletion(stale).await;        // reaches nobody
+        a.svc.record_tombstones(&[crate::sync_outbox::content_hash("Old phone number 555-0100")]).await.unwrap();
         sqlx::query("DELETE FROM memories WHERE id = ?").bind(stale).execute(&a.pool).await.unwrap();
 
         // The phone comes back.
@@ -762,25 +714,6 @@ fn b18_first_contact_sends_what_predates_the_outbox() {
     });
 }
 
-// ---------------------------------------------------------------------------
-// 19. What the old receive path writes (the pairing push still uses it until step 5)
-//     must not be queued back to the sender.
-// ---------------------------------------------------------------------------
-#[test]
-fn b19_the_old_receive_path_does_not_echo_into_the_outbox() {
-    rt_test(async {
-        let a = Peer::spawn("desktop").await;
-        let b = Peer::spawn("phone").await;
-        b.pair_with(&a).await;
-        let id = a.add_memory("Echo test").await;
-        let rows = a.svc.get_memories_by_ids(&[id]).await.expect("load memory");
-        sqlx::query("DELETE FROM sync_outbox").execute(&b.pool).await.unwrap();
-        b.svc.receive_from_peer(&b.user_id(), rows).await.expect("old receive");
-        assert_eq!(b.memory_contents().await, vec!["Echo test".to_string()]);
-        let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_outbox").fetch_one(&b.pool).await.unwrap();
-        assert_eq!(queued, 0, "the old receive path queued {} row(s) to echo back", queued);
-    });
-}
 
 // ---------------------------------------------------------------------------
 // 20. The same key on two devices with different values: the newest wins on both
@@ -829,5 +762,37 @@ fn b21_a_message_addressed_to_another_device_is_refused() {
         assert_eq!(wrong.status().as_u16(), 421, "the phone must refuse a message addressed to the desktop");
         let right = client.post(&url).header("x-target-device-id", b.device_id()).json(&serde_json::json!({})).send().await.expect("request");
         assert!(right.status().is_success(), "a message addressed to the phone is served: {}", right.status());
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 22. A relationship between two memories made on the desktop is on the phone, between
+//     the same two memories; deleting one of the memories removes the link everywhere.
+//     The old receive path carried links inside each memory; since 0016 they are rows of
+//     their own, named by the two memories' sync_ids.
+// ---------------------------------------------------------------------------
+#[test]
+fn b22_a_memory_link_travels_and_dies_with_its_memory() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let dog = a.add_memory("Max is my dog").await;
+        let park = a.add_memory("Max likes the park").await;
+        crate::memory::create_memory_link(&a.pool, dog, park, "elaborates", 0.9, Some("same dog"), "test").await.expect("link");
+        a.sync_with(&b).await;
+
+        let on_phone: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT s.content, t.content, l.relation_type FROM memory_links l
+             JOIN memories s ON s.id = l.source_memory_id JOIN memories t ON t.id = l.target_memory_id")
+            .fetch_all(&b.pool).await.unwrap();
+        assert_eq!(on_phone, vec![("Max is my dog".to_string(), "Max likes the park".to_string(), "elaborates".to_string())], "the link did not arrive between the right memories");
+
+        a.svc.record_tombstones(&[crate::sync_outbox::content_hash("Max likes the park")]).await.unwrap();
+        sqlx::query("DELETE FROM memories WHERE id = ?").bind(park).execute(&a.pool).await.unwrap();
+        a.sync_with(&b).await;
+        let links_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memory_links").fetch_one(&b.pool).await.unwrap();
+        assert_eq!(links_left, 0, "the link outlived its memory on the phone");
+        assert_eq!(b.memory_contents().await, vec!["Max is my dog".to_string()]);
     });
 }

@@ -342,3 +342,22 @@ async fn o16_a_key_applied_under_suppression_queues_nothing() {
     let sync_id: String = sqlx::query_scalar("SELECT sync_id FROM sync_secrets WHERE name = 'XAI_API_KEY'").fetch_one(&pool).await.unwrap();
     assert_eq!(sync_id, "XAI_API_KEY", "a key is named by its own name");
 }
+
+// ------------------------------------------------------------- links (0016)
+
+#[tokio::test]
+async fn o17_a_link_queues_an_insert_an_update_and_a_delete_named_by_its_own_sync_id() {
+    let pool = pool().await;
+    let a = add_memory(&pool, "Max is my dog").await;
+    let b = add_memory(&pool, "Max likes the park").await;
+    clear_outbox(&pool).await;
+    sqlx::query("INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence) VALUES (?, ?, 'elaborates', 0.9)")
+        .bind(a).bind(b).execute(&pool).await.unwrap();
+    let link_sync_id: String = sqlx::query_scalar("SELECT sync_id FROM memory_links").fetch_one(&pool).await.unwrap();
+    sqlx::query("UPDATE memory_links SET confidence = 0.5").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM memory_links").execute(&pool).await.unwrap();
+    let rows: Vec<_> = outbox(&pool).await.into_iter().filter(|r| r.0 == "memory_links").collect();
+    let ops: Vec<&str> = rows.iter().map(|r| r.1.as_str()).collect();
+    assert_eq!(ops, vec!["insert", "update", "delete"], "got {:?}", rows);
+    for r in &rows { assert_eq!(r.2, link_sync_id); }
+}

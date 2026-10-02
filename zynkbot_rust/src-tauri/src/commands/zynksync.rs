@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use crate::zynksync::{PeerDevice, SyncResult};
-use tauri::Emitter;
 
 /// Delete zynk_devices entries whose device_ip matches the local device's own IP.
 /// These are corrupt rows created by the handle_introduce bug (addr.ip() used instead
@@ -162,23 +161,15 @@ pub async fn get_zynksync_peers() -> Result<Vec<PeerDevice>, String> {
 pub async fn sync_to_peer(peer_id: String, user_id: Option<String>) -> Result<SyncResult, String> {
     let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
     match global_service.as_ref() {
-        Some(service) => service.sync_to_peer(&peer_id, user_id.as_deref()).await,
+        Some(service) => {
+            let uid = user_id.or_else(|| service.user_id().ok()).unwrap_or_default();
+            service.sync_bidirectional(&peer_id, &uid).await
+        }
         None => Err("ZynkSync not started".to_string()),
     }
 }
 
 /// Receive memories from a peer device
-#[tauri::command]
-pub async fn receive_sync_memories(memories: Vec<crate::zynksync::SyncMemory>) -> Result<usize, String> {
-    let local_user_id = crate::user_identity::get_user_id().unwrap_or_default();
-    let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.receive_from_peer(&local_user_id, memories).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Request pairing with a peer (generates 6-digit code)
 #[tauri::command]
 pub async fn request_device_pairing(peer_id: String) -> Result<String, String> {
     let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
@@ -289,76 +280,6 @@ pub async fn get_zynksync_pairing_code() -> Result<String, String> {
     match global_service.as_ref() {
         Some(service) => service.get_pairing_code().await,
         None => Err("ZynkSync not started".to_string()),
-    }
-}
-
-/// Check sync status with all peers and emit event if user action needed
-#[tauri::command]
-pub async fn check_sync_status_with_peers(app: tauri::AppHandle, user_id: String) -> Result<serde_json::Value, String> {
-    let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
-    let service = match global_service.as_ref() {
-        Some(svc) => svc,
-        None => return Err("ZynkSync not started".to_string()),
-    };
-
-    let peers = service.get_peers().await;
-    let paired_peers: Vec<_> = peers.iter().filter(|p| p.paired).collect();
-
-    if paired_peers.is_empty() {
-        return Ok(serde_json::json!({
-            "needs_prompt": false,
-            "reason": "no_peers"
-        }));
-    }
-
-    let local_inventory = service.get_local_inventory_public(&user_id).await?;
-
-    let mut local_is_more_recent = false;
-    let mut peers_with_different_counts = Vec::new();
-
-    for peer in paired_peers {
-        match service.get_remote_inventory_public(&peer.url, &user_id).await {
-            Ok(remote_inventory) => {
-                let is_more_recent = match (&local_inventory.latest_activity, &remote_inventory.latest_activity) {
-                    (Some(local_time), Some(remote_time)) => local_time > remote_time,
-                    (Some(_), None) => true,
-                    _ => false,
-                };
-
-                if is_more_recent && local_inventory.memory_count != remote_inventory.memory_count {
-                    local_is_more_recent = true;
-                    peers_with_different_counts.push(serde_json::json!({
-                        "device_id": peer.device_id,
-                        "device_name": peer.device_name,
-                        "local_count": local_inventory.memory_count,
-                        "remote_count": remote_inventory.memory_count,
-                        "local_time": local_inventory.latest_activity,
-                        "remote_time": remote_inventory.latest_activity,
-                    }));
-                }
-            }
-            Err(e) => {
-                println!("[ZynkSync] Warning: Could not get inventory from {}: {}", peer.device_name, e);
-            }
-        }
-    }
-
-    if local_is_more_recent && !peers_with_different_counts.is_empty() {
-        let _ = app.emit("sync_prompt_needed", serde_json::json!({
-            "local_memory_count": local_inventory.memory_count,
-            "peers": peers_with_different_counts,
-        }));
-
-        Ok(serde_json::json!({
-            "needs_prompt": true,
-            "local_memory_count": local_inventory.memory_count,
-            "peers": peers_with_different_counts,
-        }))
-    } else {
-        Ok(serde_json::json!({
-            "needs_prompt": false,
-            "reason": "no_difference"
-        }))
     }
 }
 
@@ -495,14 +416,9 @@ pub async fn clear_all_memories(user_id: String, propagate: Option<bool>) -> Res
         };
 
         if let Some(service) = service {
-            let mut propagated = 0;
-            for hash in content_hashes {
-                match service.propagate_deletion_by_hash(hash).await {
-                    Ok(count) => propagated += count,
-                    Err(e) => eprintln!("[Memory] Failed to propagate deletion: {}", e),
-                }
-            }
-            println!("[Memory] ✓ Propagated deletions to {} device(s)", propagated);
+            // The deletions reach the peers through the outbox; the tombstones stay local.
+            let _ = service.record_tombstones(&content_hashes).await;
+            println!("[Memory] ✓ {} tombstone(s) recorded; peers learn of the deletions on their next sync", content_hashes.len());
         } else {
             println!("[Memory] ⚠️ ZynkSync not initialized - deletions not propagated");
         }

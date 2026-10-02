@@ -815,8 +815,9 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
             guard.as_ref().map(std::sync::Arc::clone)
         };
         if let Some(service) = service_opt {
-            let cleared = service.clear_tombstones_on_peers(&restored_hashes).await;
-            println!("[Backup] Cleared tombstones on {} peer(s)", cleared);
+            // Restored rows carry a fresh updated_at, which outranks a peer's tombstone
+            // when they arrive through the outbox; nothing to clear on the peers.
+            let _ = &restored_hashes;
 
             let peers = service.get_peers().await;
             for peer in peers.iter().filter(|p| p.paired) {

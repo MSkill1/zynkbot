@@ -142,11 +142,12 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       // loop each time, so a single unreachable peer cost its timeout once per
       // key and the button appeared to hang for minutes.
       const res = await invoke('propagate_api_keys', { entries });
-      const offline = (res?.unreachable || []).length;
+      // Since the sync rebuild the keys are queued and delivered on each device's next
+      // sync — within a minute when it is on, and when it next comes on otherwise.
       setPushKeysMsg(
-        offline
-          ? `✓ Pushed to ${res.peers - offline} of ${res.peers} device(s) — ${offline} offline`
-          : `✓ Pushed ${entries.length} key${entries.length !== 1 ? 's' : ''} to ${res.peers} device(s)`
+        res.peers
+          ? `✓ ${entries.length} key${entries.length !== 1 ? 's' : ''} queued for ${res.peers} device(s) — delivered on their next sync`
+          : '✓ Saved — no paired devices to deliver to yet'
       );
       setTimeout(() => setPushKeysMsg(''), 4000);
     } catch (e) {
@@ -318,7 +319,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
           );
           if (confirmed) {
             const result = await invoke('propagate_api_key', { key: providerKey, value: savedValue });
-            console.log(`[API Key] Propagated: ${result.succeeded}/${result.total} devices`);
+            console.log(`[API Key] Queued for ${result.peers} device(s)`);
           }
         }
       } catch (e) {

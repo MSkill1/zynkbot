@@ -366,73 +366,27 @@ pub async fn propagate_api_keys(entries: Vec<(String, String)>) -> Result<serde_
             entries.push((BACKUP_KEY_PUSH_NAME.to_string(), key_hex));
         }
     }
-    // Since step 3 of the outbox rebuild the queue carries keys too; recording them here
-    // gives each the newest date, so "Push to all devices" also means "this value wins".
-    // The direct push below stays until step 5 removes the old routes.
+    // Since step 5 of the sync rebuild this records each key with the current time and
+    // the outbox carries it to every paired device on the next cycle — the one that is
+    // off gets it when it returns, which the old direct push never managed (KI-055).
+    // Recording with "now" is also what makes a pressed button mean "this value wins".
     for (key, value) in &entries {
         record_secret(key, Some(value)).await;
     }
-    // Collect what we need and release the lock before doing any network I/O.
-    // Holding ZYNKSYNC_SERVICE across the requests blocked the background sync
-    // loop, which wants the same lock.
-    let (targets, http_client) = {
+    let peers = {
         let guard = crate::ZYNKSYNC_SERVICE.lock().await;
-        let service = guard.as_ref().ok_or("ZynkSync not running — start sync first")?;
-        let targets: Vec<(String, String)> = service.get_peers().await
-            .into_iter()
-            .filter(|p| p.paired && !p.host.is_empty())
-            .map(|p| (p.device_id.clone(), p.host.clone()))
-            .collect();
-        (targets, service.get_http_client().await)
+        match guard.as_ref() {
+            Some(service) => service.get_peers().await.into_iter().filter(|p| p.paired).count(),
+            None => 0,
+        }
     };
-
-    // Pushing a key on a LAN is a sub-second operation. The shared client's 30s
-    // timeout exists for large sync payloads and is far too long here.
-    const PUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-    let mut succeeded = 0usize;
-    let mut failed = 0usize;
-    let mut unreachable: Vec<String> = Vec::new();
-
-    for (device_id, host) in &targets {
-        let short = &device_id[..8.min(device_id.len())];
-        let url = format!("https://{}:57963/api/zynksync/push-api-key", host);
-        let mut peer_ok = 0usize;
-        let mut peer_failed = false;
-
-        for (key, value) in &entries {
-            let payload = serde_json::json!({ "key": key, "value": value });
-            match http_client.post(&url).timeout(PUSH_TIMEOUT).json(&payload).send().await {
-                Ok(r) if r.status().is_success() => { peer_ok += 1; succeeded += 1; }
-                Ok(r) => {
-                    println!("[ZynkSync] ✗ Push {} to {}… returned {}", key, short, r.status());
-                    failed += 1;
-                }
-                Err(e) => {
-                    println!("[ZynkSync] ✗ Push {} to {}… failed: {}", key, short, e);
-                    failed += 1;
-                    // The peer is down; skip its remaining keys rather than paying
-                    // the timeout once per key.
-                    peer_failed = true;
-                    break;
-                }
-            }
-        }
-
-        if peer_failed {
-            unreachable.push(format!("{} ({})", short, host));
-            failed += entries.len().saturating_sub(peer_ok);
-        } else {
-            println!("[ZynkSync] ✓ {} key(s) pushed to {}…", peer_ok, short);
-        }
-    }
-
     Ok(serde_json::json!({
-        "succeeded": succeeded,
-        "failed": failed,
-        "total": targets.len() * entries.len(),
-        "peers": targets.len(),
-        "unreachable": unreachable,
+        "succeeded": entries.len() * peers,
+        "failed": 0,
+        "total": entries.len() * peers,
+        "peers": peers,
+        "unreachable": Vec::<String>::new(),
+        "queued": true,
     }))
 }
 

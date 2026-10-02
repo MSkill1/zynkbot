@@ -169,17 +169,9 @@ pub async fn update_memory(
         Ok(r) => {
             let updated = r.rows_affected() > 0;
             println!("[Rust] Updated {} row(s)", r.rows_affected());
-            if updated {
-                let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
-                if let Some(service) = zynksync_service.as_ref() {
-                    if service.is_auto_sync_enabled().await {
-                        match service.propagate_memory_update(memory_id, title, content, namespace).await {
-                            Ok(count) => println!("[Rust] ✓ Memory update synced to {} device(s)", count),
-                            Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to sync memory update: {}", e),
-                        }
-                    }
-                }
-            }
+            // The edit reaches the other devices through the outbox (the UPDATE above
+            // queued it); no push here since step 5 of the sync rebuild.
+            let _ = (updated, &title, &content, &namespace);
             Ok(updated)
         }
         Err(e) => Err(format!("Failed to update memory: {}", e)),
@@ -243,15 +235,9 @@ pub async fn delete_memory(memory_id: i32) -> Result<bool, String> {
             if let Some(service) = zynksync_service.as_ref() {
                 // Always record tombstone so future syncs can't resurrect this memory,
                 // regardless of whether auto-sync is currently enabled.
+                // The deletion itself reaches the other devices through the outbox; the
+                // local tombstone is what stops a stale copy coming back here.
                 let _ = service.record_tombstones(&[hash.clone()]).await;
-                if service.is_auto_sync_enabled().await {
-                    match service.propagate_deletion_by_hash(hash).await {
-                        Ok(count) => println!("[Rust] ✓ Deletion synced to {} device(s)", count),
-                        Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to sync deletion: {}", e),
-                    }
-                } else {
-                    println!("[Rust] Auto-sync disabled - tombstone recorded, deletion not propagated");
-                }
             } else {
                 println!("[Rust] ⚠ ZynkSync not running - deletion not propagated to other devices");
             }
@@ -926,10 +912,8 @@ pub async fn resolve_conflict(
                         g.as_ref().cloned()
                     };
                     if let Some(service) = service {
-                        match service.propagate_deletion_by_hash(content_hash).await {
-                            Ok(count) => println!("[Rust] ✅ Deletion propagated to {} peer(s)", count),
-                            Err(e) => eprintln!("[Rust] ⚠️ Failed to propagate deletion: {}", e),
-                        }
+                        // Peers learn of it from the outbox; the tombstone stays local.
+                        let _ = service.record_tombstones(&[content_hash]).await;
                     }
                 }
             }
@@ -1105,12 +1089,8 @@ pub async fn resolve_memory_conflict_v2(
                 tokio::spawn(async move {
                     let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
                     if let Some(service) = zynksync_service.as_ref() {
-                        if service.is_auto_sync_enabled().await {
-                            match service.propagate_deletion_by_hash(hash).await {
-                                Ok(count) => println!("[Rust] ✓ Deletion propagated to {} device(s)", count),
-                                Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to propagate deletion: {}", e),
-                            }
-                        }
+                        // Peers learn of it from the outbox; the tombstone stays local.
+                        let _ = service.record_tombstones(&[hash]).await;
                     }
                 });
             }

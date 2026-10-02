@@ -63,6 +63,19 @@ pub struct SyncSecret {
     pub updated_at: DateTime<Utc>,
 }
 
+/// A relationship between two memories (memory_links), naming them by sync_id (0016).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncLink {
+    pub sync_id: String,
+    pub source_sync_id: String,
+    pub target_sync_id: String,
+    pub relation_type: String,
+    pub confidence: f64,
+    pub notes: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+}
+
 /// One drained batch. `through` is the highest outbox id it covers on the sender; the
 /// receiver echoes it back as the acknowledgement and the sender records it as the cursor.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -78,15 +91,17 @@ pub struct OutboxBatch {
     pub deletes: Vec<SyncTombstone>,
     #[serde(default)]
     pub secrets: Vec<SyncSecret>,
+    #[serde(default)]
+    pub links: Vec<SyncLink>,
 }
 
 impl OutboxBatch {
     pub fn is_empty(&self) -> bool {
-        self.memories.is_empty() && self.sessions.is_empty()
-            && self.messages.is_empty() && self.deletes.is_empty() && self.secrets.is_empty()
+        self.memories.is_empty() && self.sessions.is_empty() && self.messages.is_empty()
+            && self.deletes.is_empty() && self.secrets.is_empty() && self.links.is_empty()
     }
     pub fn len(&self) -> usize {
-        self.memories.len() + self.sessions.len() + self.messages.len() + self.deletes.len() + self.secrets.len()
+        self.memories.len() + self.sessions.len() + self.messages.len() + self.deletes.len() + self.secrets.len() + self.links.len()
     }
 }
 
@@ -170,7 +185,6 @@ async fn load_memories(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
             external_id: row.get("external_id"),
             temporal_status: row.get("temporal_status"),
             provenance_json: row.get("provenance_json"),
-            relationships: Vec::new(),
             tags: row.get("tags"),
             sync_id: row.get("sync_id"),
         }
@@ -232,6 +246,26 @@ async fn load_secrets(pool: &SqlitePool, names: &[String]) -> Result<Vec<SyncSec
     for n in names { q = q.bind(n); }
     let rows = q.fetch_all(pool).await.map_err(|e| format!("outbox: read secrets: {}", e))?;
     Ok(rows.iter().map(|r| SyncSecret { name: r.get("name"), value: r.get("value"), updated_at: r.get("updated_at") }).collect())
+}
+
+async fn load_links(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<SyncLink>, String> {
+    if sync_ids.is_empty() { return Ok(Vec::new()); }
+    let in_clause = sync_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT l.sync_id, s.sync_id AS source_sync_id, t.sync_id AS target_sync_id, l.relation_type, l.confidence,
+                l.notes, l.created_by, l.created_at
+         FROM memory_links l
+         JOIN memories s ON s.id = l.source_memory_id
+         JOIN memories t ON t.id = l.target_memory_id
+         WHERE l.sync_id IN ({})", in_clause);
+    let mut q = sqlx::query(&sql);
+    for id in sync_ids { q = q.bind(id); }
+    let rows = q.fetch_all(pool).await.map_err(|e| format!("outbox: read links: {}", e))?;
+    Ok(rows.iter().map(|r| SyncLink {
+        sync_id: r.get("sync_id"), source_sync_id: r.get("source_sync_id"), target_sync_id: r.get("target_sync_id"),
+        relation_type: r.get("relation_type"), confidence: r.get("confidence"), notes: r.get("notes"),
+        created_by: r.get("created_by"), created_at: r.get("created_at"),
+    }).collect())
 }
 
 /// This device changed (or first saw) a key: the row gets the current time, so it wins.
@@ -308,6 +342,7 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
     let mut want_sessions = Vec::new();
     let mut want_messages = Vec::new();
     let mut want_secrets = Vec::new();
+    let mut want_links = Vec::new();
     let mut deletes = Vec::new();
     for ((table, sync_id), (is_delete, payload)) in latest {
         if is_delete {
@@ -319,6 +354,7 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
                 "conversation_sessions" => want_sessions.push(sync_id),
                 "conversation_messages" => want_messages.push(sync_id),
                 "sync_secrets" => want_secrets.push(sync_id),
+                "memory_links" => want_links.push(sync_id),
                 other => eprintln!("[ZynkSync] outbox: unknown table {} queued, skipped", other),
             }
         }
@@ -332,6 +368,7 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
         messages: load_messages(pool, &want_messages).await?,
         deletes,
         secrets: load_secrets(pool, &want_secrets).await?,
+        links: load_links(pool, &want_links).await?,
     };
     Ok(Some(batch))
 }
@@ -342,7 +379,7 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
 /// all. For a peer that has never been drained to, or one that has been away longer
 /// than the queue remembers; the receiver's upsert-by-sync_id makes re-sending safe.
 pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64, offset: usize, limit: usize)
-    -> Result<(OutboxBatch, usize), String>
+    -> Result<(OutboxBatch, usize, usize), String>
 {
     let session_ids: Vec<String> = sqlx::query_scalar(
         "SELECT sync_id FROM conversation_sessions WHERE user_id = ? AND sync_id IS NOT NULL ORDER BY id")
@@ -353,8 +390,14 @@ pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64, o
     let message_ids: Vec<String> = sqlx::query_scalar(
         "SELECT sync_id FROM conversation_messages WHERE user_id = ? AND sync_id IS NOT NULL ORDER BY id")
         .bind(user_id).fetch_all(pool).await.map_err(|e| e.to_string())?;
-    let total = session_ids.len() + memory_ids.len() + message_ids.len();
-    let all = session_ids.iter().map(|s| ("s", s)).chain(memory_ids.iter().map(|m| ("m", m))).chain(message_ids.iter().map(|x| ("x", x)));
+    // Links last: both their memories have gone before them.
+    let link_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT l.sync_id FROM memory_links l JOIN memories m ON m.id = l.source_memory_id
+         WHERE m.user_id = ? AND l.sync_id IS NOT NULL ORDER BY l.id")
+        .bind(user_id).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    let total = session_ids.len() + memory_ids.len() + message_ids.len() + link_ids.len();
+    let all = session_ids.iter().map(|s| ("s", s)).chain(memory_ids.iter().map(|m| ("m", m)))
+        .chain(message_ids.iter().map(|x| ("x", x))).chain(link_ids.iter().map(|l| ("l", l)));
     let slice: Vec<(&str, &String)> = all.skip(offset).take(limit).collect();
     let pick = |kind: &str| slice.iter().filter(|(k, _)| *k == kind).map(|(_, id)| (*id).clone()).collect::<Vec<_>>();
     // Keys are few and small, and a device with no key cannot answer: all of them ride
@@ -364,6 +407,10 @@ pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64, o
             .fetch_all(pool).await.map_err(|e| e.to_string())?;
         load_secrets(pool, &names).await?
     } else { Vec::new() };
+    // How many rows of the walk this slice covers — not the batch size, which also
+    // carries the keys on the first slice. Advancing by the batch size skipped one row
+    // per key and a message never arrived (b08d under load, 2026-10-02).
+    let covered = slice.len();
     let batch = OutboxBatch {
         through,
         sessions: load_sessions(pool, &pick("s")).await?,
@@ -371,8 +418,9 @@ pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64, o
         messages: load_messages(pool, &pick("x")).await?,
         deletes: Vec::new(),
         secrets,
+        links: load_links(pool, &pick("l")).await?,
     };
-    Ok((batch, total))
+    Ok((batch, total, covered))
 }
 
 /// How far a full send to each (this device, peer) has got, in rows. In memory only: an
@@ -497,6 +545,9 @@ pub async fn apply_outbox_batch_from(pool: &SqlitePool, local_user_id: &str, sen
     let mut keys_changed = false;
     for sec in &batch.secrets {
         if apply_secret(&mut tx, sec).await? { applied += 1; keys_changed = true; }
+    }
+    for link in &batch.links {
+        if apply_link(&mut tx, link).await? { applied += 1; }
     }
     for sid in &touched_sessions {
         sqlx::query(
@@ -758,6 +809,53 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
     Ok(true)
 }
 
+/// Upsert a link by sync_id, resolving its two memories by theirs. If either memory is
+/// not here yet (it may be in a later slice), the link waits for a later batch. An unknown
+/// sync_id is matched by (source, target, relation) and adopts the incoming name.
+async fn apply_link(tx: &mut Transaction<'_, Sqlite>, link: &SyncLink) -> Result<bool, String> {
+    let source: Option<i64> = sqlx::query_scalar("SELECT id FROM memories WHERE sync_id = ?")
+        .bind(&link.source_sync_id).fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: link source: {}", e))?;
+    let target: Option<i64> = sqlx::query_scalar("SELECT id FROM memories WHERE sync_id = ?")
+        .bind(&link.target_sync_id).fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: link target: {}", e))?;
+    let (Some(source), Some(target)) = (source, target) else {
+        eprintln!("[ZynkSync] outbox: link {} waits — one of its memories is not here yet", &link.sync_id[..8.min(link.sync_id.len())]);
+        return Ok(false);
+    };
+    if source == target { return Ok(false); }
+    let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM memory_links WHERE sync_id = ?")
+        .bind(&link.sync_id).fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: find link: {}", e))?;
+    let existing = match existing {
+        Some(id) => Some(id),
+        None => {
+            let by_key: Option<i64> = sqlx::query_scalar(
+                "SELECT id FROM memory_links WHERE source_memory_id = ? AND target_memory_id = ? AND relation_type = ? LIMIT 1")
+                .bind(source).bind(target).bind(&link.relation_type)
+                .fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: find link by key: {}", e))?;
+            if let Some(id) = by_key {
+                sqlx::query("UPDATE memory_links SET sync_id = ? WHERE id = ?").bind(&link.sync_id).bind(id)
+                    .execute(&mut **tx).await.map_err(|e| format!("outbox: adopt link sync_id: {}", e))?;
+            }
+            by_key
+        }
+    };
+    match existing {
+        Some(id) => {
+            sqlx::query("UPDATE memory_links SET confidence = ?, notes = ?, created_by = ? WHERE id = ?")
+                .bind(link.confidence).bind(&link.notes).bind(&link.created_by).bind(id)
+                .execute(&mut **tx).await.map_err(|e| format!("outbox: update link: {}", e))?;
+        }
+        None => {
+            sqlx::query(
+                "INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence, notes, created_by, created_at, sync_id)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                .bind(source).bind(target).bind(&link.relation_type).bind(link.confidence).bind(&link.notes)
+                .bind(&link.created_by).bind(&link.created_at).bind(&link.sync_id)
+                .execute(&mut **tx).await.map_err(|e| format!("outbox: insert link: {}", e))?;
+        }
+    }
+    Ok(true)
+}
+
 /// Forget a row by sync_id. A memory's tombstone hash is recorded as well, so the old
 /// sync paths (until step 5) and a stale copy arriving later both respect the deletion.
 async fn apply_delete(tx: &mut Transaction<'_, Sqlite>, d: &SyncTombstone) -> Result<bool, String> {
@@ -777,6 +875,9 @@ async fn apply_delete(tx: &mut Transaction<'_, Sqlite>, d: &SyncTombstone) -> Re
         "conversation_messages" => sqlx::query("DELETE FROM conversation_messages WHERE sync_id = ?")
             .bind(&d.row_sync_id).execute(&mut **tx).await
             .map_err(|e| format!("outbox: delete message: {}", e))?.rows_affected(),
+        "memory_links" => sqlx::query("DELETE FROM memory_links WHERE sync_id = ?")
+            .bind(&d.row_sync_id).execute(&mut **tx).await
+            .map_err(|e| format!("outbox: delete link: {}", e))?.rows_affected(),
         "sync_secrets" => {
             let n = sqlx::query("DELETE FROM sync_secrets WHERE name = ?")
                 .bind(&d.row_sync_id).execute(&mut **tx).await
@@ -804,6 +905,16 @@ impl ZynkSyncService {
         if !peer.paired {
             return Err(format!("Device {} is not paired", peer.device_name));
         }
+        // A peer that refused a connection in the last two minutes and has sent no
+        // heartbeat is off; building it a 300-row slice every cycle only to fail the
+        // connect again costs a phone CPU for nothing (the closed laptop, 2026-10-02).
+        if !peer.is_online {
+            let recent = self.transport.last_conn_error_logged.read().await.get(peer_device_id)
+                .map(|t| Utc::now().signed_duration_since(*t).num_seconds() < 120).unwrap_or(false);
+            if recent {
+                return Err(format!("outbox: {} is offline (connection refused within the last two minutes); skipped", peer.device_name));
+            }
+        }
         let endpoint = format!("{}/api/zynksync/outbox", peer.url);
         let client = self.transport.http_client.read().await.clone();
         let mut outcome = DrainOutcome::default();
@@ -827,15 +938,15 @@ impl ZynkSyncService {
             let key = (self.identity().device_id, peer_device_id.to_string());
             let offset = FULL_SEND_OFFSET.lock().unwrap().get(&key).copied().unwrap_or(0);
             let through = newest.unwrap_or(0);
-            let (batch, total) = build_full_resend(&self.db_pool, user_id, through, offset, OUTBOX_BATCH_ROWS as usize).await?;
-            println!("[ZynkSync] outbox: {} to {} — live tables rows {}..{} of {} (queue {:?}..{:?})",
+            let (batch, total, covered) = build_full_resend(&self.db_pool, user_id, through, offset, OUTBOX_BATCH_ROWS as usize).await?;
+            println!("[ZynkSync] outbox: {} to {} — live tables rows {}..{} of {}{} (queue {:?}..{:?})",
                 if cursor.is_none() { "first contact" } else { "behind the queue" }, peer.device_name,
-                offset, offset + batch.len(), total, oldest, newest);
+                offset, offset + covered, total, if batch.secrets.is_empty() { String::new() } else { format!(" + {} key(s)", batch.secrets.len()) }, oldest, newest);
             let receipt = if batch.is_empty() { OutboxReceipt { through, applied: 0, known_before: Some(through) } } else { post_batch(&client, &endpoint, peer_device_id, &batch).await? };
             outcome.batches += 1;
             outcome.entries_sent += batch.len();
             outcome.applied_by_peer += receipt.applied;
-            let next = offset + batch.len();
+            let next = offset + covered;
             if next >= total {
                 FULL_SEND_OFFSET.lock().unwrap().remove(&key);
                 set_cursor(&self.db_pool, peer_device_id, through).await?;
