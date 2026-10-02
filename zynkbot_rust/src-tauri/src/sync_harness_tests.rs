@@ -28,6 +28,14 @@ struct Peer {
 
 impl Peer {
     async fn spawn(name: &'static str) -> Peer {
+        // Peers write keys to get_app_data_dir()/.env (step 3). Never the developer's real
+        // one: point XDG_DATA_HOME at a harness directory for the whole test process
+        // unless a test (b02, b20) has already set its own.
+        if std::env::var_os("XDG_DATA_HOME").is_none() {
+            let shared = std::env::temp_dir().join(format!("zynkbot-harness-xdg-{}", std::process::id()));
+            std::fs::create_dir_all(shared.join("zynkbot")).unwrap();
+            std::env::set_var("XDG_DATA_HOME", &shared);
+        }
         let dir = std::env::temp_dir().join(format!("zynkbot-harness-{}-{}", name, uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let url = format!("sqlite://{}?mode=rwc", dir.join("zynkbot.db").display());
@@ -57,6 +65,31 @@ impl Peer {
     /// The same device after an app restart: same folder, database, certificate and
     /// identity; a fresh service with nothing in memory. Keep the original alive until
     /// the test ends — dropping it deletes the folder.
+    /// A fresh install that restored `bundle` (its identity, certificate and peers)
+    /// before first start — a wiped phone brought back.
+    async fn spawn_restored(name: &'static str, bundle: &serde_json::Value) -> Peer {
+        let dir = std::env::temp_dir().join(format!("zynkbot-harness-{}-restored-{}", name, uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = format!("sqlite://{}?mode=rwc", dir.join("zynkbot.db").display());
+        let pool = SqlitePoolOptions::new().max_connections(8)
+            .after_connect(|conn, _| Box::pin(async move {
+                sqlx::query("PRAGMA foreign_keys=ON").execute(&mut *conn).await?;
+                sqlx::query("PRAGMA busy_timeout=15000").execute(&mut *conn).await?;
+                Ok(())
+            }))
+            .connect(&url).await.expect("open restored db");
+        sqlx::migrate!("./migrations").run(&pool).await.expect("migrate restored db");
+        let (user_id, device_id, device_name) = crate::commands::backup::apply_device_bundle(&pool, &dir, bundle).await.expect("apply bundle");
+        let (cert_pem, key_pem, cert_der) = crate::tls::load_or_generate_cert(&dir).expect("restored cert");
+        let identity = SyncIdentity { user_id, device_id, device_name: if device_name.is_empty() { name.to_string() } else { device_name } };
+        let svc = Arc::new(ZynkSyncService::new(identity, Some(0), pool.clone(), Some(3600), cert_pem, key_pem, cert_der));
+        let port = svc.clone().start_http_server().await.expect("start server");
+        svc.load_devices().await.expect("load restored peers");
+        svc.rebuild_http_client().await.expect("client");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        Peer { name, svc, pool, dir, port }
+    }
+
     async fn respawn(&self) -> Peer {
         let (cert_pem, key_pem, cert_der) = crate::tls::load_or_generate_cert(&self.dir).expect("cert");
         let svc = Arc::new(ZynkSyncService::new(self.svc.identity(), Some(0), self.pool.clone(), Some(3600), cert_pem, key_pem, cert_der));
@@ -450,9 +483,19 @@ fn b02_keys_saved_before_pairing_reach_the_device_that_pairs_later() {
         b.pair_with(&a).await;
         a.sync_with(&b).await;
         b.sync_with(&a).await;
-        let env_file = data.env_file();
+        // The phone's own table is the deterministic record; the shared .env file is
+        // also written by other tests' peers in this process, so poll it briefly.
+        let on_phone: Option<String> = sqlx::query_scalar("SELECT value FROM sync_secrets WHERE name = 'OPENAI_API_KEY'")
+            .fetch_optional(&b.pool).await.unwrap();
+        assert_eq!(on_phone.as_deref(), Some("sk-test-desktop-key"), "the phone never received the desktop's key");
+        let mut env_file = data.env_file();
+        for _ in 0..30 {
+            if env_file.contains("OPENAI_API_KEY=sk-test-desktop-key") { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            env_file = data.env_file();
+        }
         assert!(env_file.contains("OPENAI_API_KEY=sk-test-desktop-key"),
-            "the phone never received the desktop's key; its .env holds: {:?}", env_file);
+            "the key reached the phone's table but not its .env: {:?}", env_file);
     });
 }
 
@@ -526,29 +569,39 @@ fn b07_memories_held_before_pairing_are_shared_after_it() {
 }
 
 // ---------------------------------------------------------------------------
-// 11. A phone that is wiped and paired again is listed once on the desktop, under its
-//     new identity, and syncs (KI-050: today the old entry stays beside the new one).
+// 11. A phone that is wiped and brought back from its backup is the same phone: the
+//     desktop lists it once, under the identity it always had, and syncs with it without
+//     pairing again (KI-050). The identity rides in the encrypted backup as its own
+//     object; the user says which device the fresh install replaces — nothing is guessed
+//     from a name or an address (decided 2026-09-12, confirmed 2026-10-01).
 // ---------------------------------------------------------------------------
 #[test]
-#[ignore = "KI-050: a reinstalled phone reappears beside its old entry on every peer — until device identity survives a reinstall"]
-fn b11_a_phone_that_is_wiped_and_paired_again_is_listed_once() {
+fn b11_a_phone_restored_from_its_backup_is_the_same_phone() {
     rt_test(async {
         let a = Peer::spawn("desktop").await;
         let b = Peer::spawn("phone").await;
         b.pair_with(&a).await;
         a.add_memory("Oil change every 5000 miles").await;
         a.sync_with(&b).await;
+        let old_id = b.device_id();
 
-        drop(b);                                              // the phone is wiped
-        let b2 = Peer::spawn("phone").await;                  // fresh install, new identity
-        b2.pair_with(&a).await;
+        // The phone backs up its identity object, then is wiped.
+        let bundle = crate::commands::backup::build_device_bundle(&b.pool, &b.user_id(), &b.device_id(), "phone", &b.dir).await.expect("bundle");
+        drop(b);
 
-        let phones: Vec<_> = a.device_rows().await.into_iter()
-            .filter(|(_, name, _, paired)| name == "phone" && *paired == 1).collect();
-        assert_eq!(phones.len(), 1, "desktop lists the phone {} times after a reinstall: {:?}", phones.len(), phones);
-        assert_eq!(phones[0].0, b2.device_id(), "the surviving entry is the old identity, not the new one");
+        // A fresh install restores it before it ever pairs.
+        let b2 = Peer::spawn_restored("phone", &bundle).await;
+        assert_eq!(b2.device_id(), old_id, "the restored phone must have its old identity");
+        assert_eq!(b2.user_id(), a.user_id(), "and the shared user id");
+
+        // It syncs with the desktop straight away: the desktop knows this certificate,
+        // and learns the new port from the request itself.
+        b2.sync_with(&a).await;
         a.sync_with(&b2).await;
-        assert_eq!(b2.memory_contents().await, vec!["Oil change every 5000 miles".to_string()]);
+        let phones: Vec<_> = a.device_rows().await.into_iter().filter(|(_, name, _, paired)| name == "phone" && *paired == 1).collect();
+        assert_eq!(phones.len(), 1, "desktop lists the phone {} times: {:?}", phones.len(), phones);
+        assert_eq!(phones[0].0, old_id);
+        assert_eq!(b2.memory_contents().await, vec!["Oil change every 5000 miles".to_string()], "the restored phone did not get the memories back");
     });
 }
 

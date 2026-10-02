@@ -2488,6 +2488,8 @@ pub fn run() {
             commands::backup::get_r2_config_status,
             commands::backup::backup_memories_to_r2,
             commands::backup::restore_memories_from_r2,
+            commands::backup::list_restorable_devices,
+            commands::backup::restore_device_identity,
             // Model and API key commands
             commands::models::get_models,
             commands::models::ollama_status,

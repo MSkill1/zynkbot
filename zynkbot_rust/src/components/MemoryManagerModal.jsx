@@ -137,6 +137,43 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 5000);
   };
 
+  // A fresh install can become one of this account's earlier devices again (KI-050):
+  // the identity rides in the encrypted backup as its own object per device. The user
+  // picks which device this one replaces; nothing is guessed from a name or an address.
+  const [replaceList, setReplaceList] = useState(null);
+  const handleReplaceDevice = async () => {
+    if (replaceList) { setReplaceList(null); return; }
+    setBackupStatus('busy'); setBackupMsg('Looking for device backups…');
+    try {
+      const list = await invoke('list_restorable_devices');
+      setBackupStatus(null); setBackupMsg('');
+      if (!list.length) { setBackupStatus('error'); setBackupMsg('No device backups on this account yet. Back up from the device first.'); }
+      else setReplaceList(list);
+    } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
+    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 6000);
+  };
+  const handleBecomeDevice = async (dev) => {
+    if (!await confirmDialog(`Make this device "${dev.device_name}" again? Only for a fresh install that replaces it. Zynkbot will need a restart afterwards.`)) return;
+    setBackupStatus('busy'); setBackupMsg('Restoring identity…');
+    try {
+      const res = await invoke('restore_device_identity', { deviceId: dev.device_id });
+      setReplaceList(null);
+      setBackupStatus('ok'); setBackupMsg(res.message);
+    } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
+    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 12000);
+  };
+  const replacePicker = replaceList ? (
+    <div style={{ marginTop: '6px', padding: '8px', background: '#282a36', border: '1px solid #44475a', borderRadius: '6px', fontSize: '0.78rem' }}>
+      <div style={{ color: '#f8f8f2', marginBottom: '6px' }}>This device replaces:</div>
+      {replaceList.map((dev) => (
+        <button key={dev.device_id} onClick={() => handleBecomeDevice(dev)}
+          style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: '4px', background: '#44475a', border: 'none', color: '#fff', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer' }}>
+          {dev.device_name || dev.device_id.slice(0, 8)} <span style={{ color: '#6272a4' }}>— backed up {dev.backed_up_at ? new Date(dev.backed_up_at).toLocaleString() : 'unknown'}</span>
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   const handleCopyKey = async () => {
     try {
       const status = await invoke('get_backup_key_status');
@@ -714,6 +751,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                   style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
                   Restore
                 </button>
+                <button onClick={handleReplaceDevice} disabled={backupStatus === 'busy'}
+                  style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer' }}
+                  title="A fresh install becomes one of your earlier devices again">
+                  Replace…
+                </button>
                 <button onClick={handleCopyKey}
                   style={{ background: '#ffb86c', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}
                   title="Copy encryption key — store it somewhere safe">
@@ -739,6 +781,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         {backupMsg && !selectedMemory && (
           <div style={{ padding: '6px 16px', borderBottom: '1px solid #44475a', background: '#1e1f2e', flexShrink: 0, fontSize: '0.8rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b', textAlign: 'center' }}>
             {backupMsg}
+          </div>
+        )}
+        {replaceList && !selectedMemory && (
+          <div style={{ padding: '6px 16px', borderBottom: '1px solid #44475a', background: '#1e1f2e', flexShrink: 0 }}>
+            {replacePicker}
           </div>
         )}
 
@@ -1058,6 +1105,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               style={{ background: '#44475a', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
               Restore
             </button>
+            <button onClick={handleReplaceDevice} disabled={backupStatus === 'busy'}
+              style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer' }}
+              title="A fresh install becomes one of your earlier devices again">
+              Replace…
+            </button>
             <button onClick={handleCopyKey}
               title="Copy your encryption key — store it somewhere safe. Without it, backups cannot be recovered."
               style={{ background: '#ffb86c', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
@@ -1076,6 +1128,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 {backupMsg}
               </span>
             )}
+            {replacePicker}
             <button onClick={onClose} className="close-button">✕</button>
           </div>
         </div>

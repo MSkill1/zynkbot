@@ -3961,7 +3961,7 @@ async fn handle_receive_outbox(
     check_sync_authorized(&service.db_pool, device_id, &headers).await?;
 
     let local_user_id = service.user_id().unwrap_or_default();
-    let applied = crate::sync_outbox::apply_outbox_batch(&service.db_pool, &local_user_id, &batch).await
+    let (applied, known_before) = crate::sync_outbox::apply_outbox_batch_from(&service.db_pool, &local_user_id, Some(device_id), &batch).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
     if applied > 0 {
         if let Ok(guard) = crate::APP_HANDLE.lock() {
@@ -3970,7 +3970,7 @@ async fn handle_receive_outbox(
             }
         }
     }
-    Ok(Json(crate::sync_outbox::OutboxReceipt { through: batch.through, applied }))
+    Ok(Json(crate::sync_outbox::OutboxReceipt { through: batch.through, applied, known_before }))
 }
 
 /// A peer asking us to drain our queue to it. The drain runs here, so the sending code
@@ -3978,12 +3978,18 @@ async fn handle_receive_outbox(
 async fn handle_pull_outbox(
     State(service): State<Arc<ZynkSyncService>>,
     headers: axum::http::HeaderMap,
+    body: Option<Json<crate::sync_outbox::PullRequest>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let device_id = headers.get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "Missing X-Device-ID header"}))))?
         .to_string();
     check_sync_authorized(&service.db_pool, &device_id, &headers).await?;
+
+    // A peer that holds less than our cursor for it says (a restored install) starts over.
+    let known = body.map(|Json(b)| b.known_through).unwrap_or(None);
+    crate::sync_outbox::reset_cursor_if_ahead(&service.db_pool, &device_id, known).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e}))))?;
 
     let user_id = service.user_id().unwrap_or_default();
     let outcome = service.drain_outbox_to(&device_id, &user_id).await

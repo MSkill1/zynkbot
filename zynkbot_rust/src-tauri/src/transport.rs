@@ -306,6 +306,11 @@ impl Transport {
         if let Ok(val) = reqwest::header::HeaderValue::from_str(&self.device_name()) {
             default_headers.insert("x-device-name", val);
         }
+        // The port this device serves on, so a peer that knows us by certificate can
+        // correct a stale row (a restored identity on a new install, KI-050).
+        if let Ok(val) = reqwest::header::HeaderValue::from_str(&self.port().to_string()) {
+            default_headers.insert("x-device-port", val);
+        }
 
         let mut pinned_ders: Vec<Vec<u8>> = Vec::new();
         for row in rows {
@@ -482,21 +487,27 @@ pub async fn inject_verified_device(
                 // went to a dead IP even while that peer was talking to us (Pixel
                 // .158 → .185, 2026-09-08). Every certificate-verified request carries
                 // the true address; record it when it differs.
+                let claimed_port: Option<u16> = req.headers().get("x-device-port").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
                 if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>().cloned() {
                     let ip = addr.ip().to_string();
-                    if !ip.is_empty() && !ip.starts_with("127.") {
-                        let changed = sqlx::query(
-                            "UPDATE zynk_devices SET device_ip = ? WHERE device_id = ? AND COALESCE(device_ip, '') != ?")
-                            .bind(&ip).bind(&device_id).bind(&ip)
-                            .execute(&transport.db_pool).await
-                            .map(|r| r.rows_affected() > 0).unwrap_or(false);
-                        if changed {
-                            println!("[ZynkSync] {} is now at {} — address updated", device_name, ip);
-                            let mut peers = transport.peers.write().await;
-                            if let Some(p) = peers.get_mut(&device_id) {
-                                p.host = ip.clone();
-                                p.url = format!("https://{}:{}", ip, p.port);
-                            }
+                    let known: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
+                        "SELECT device_ip, port FROM zynk_devices WHERE device_id = ?")
+                        .bind(&device_id).fetch_optional(&transport.db_pool).await.ok().flatten();
+                    let (known_ip, known_port) = known.unwrap_or((None, None));
+                    let new_ip = if !ip.is_empty() && !ip.starts_with("127.") && known_ip.as_deref() != Some(ip.as_str()) { Some(ip.clone()) } else { None };
+                    let new_port = claimed_port.filter(|p| *p != 0 && Some(*p as i64) != known_port);
+                    if new_ip.is_some() || new_port.is_some() {
+                        let ip_to_store = new_ip.clone().or(known_ip).unwrap_or_default();
+                        let port_to_store = new_port.map(|p| p as i64).or(known_port).unwrap_or(DEFAULT_SYNC_PORT as i64);
+                        let _ = sqlx::query("UPDATE zynk_devices SET device_ip = ?, port = ? WHERE device_id = ?")
+                            .bind(&ip_to_store).bind(port_to_store).bind(&device_id)
+                            .execute(&transport.db_pool).await;
+                        println!("[ZynkSync] {} is now at {}:{} — address updated", device_name, ip_to_store, port_to_store);
+                        let mut peers = transport.peers.write().await;
+                        if let Some(p) = peers.get_mut(&device_id) {
+                            if !ip_to_store.is_empty() { p.host = ip_to_store.clone(); }
+                            p.port = port_to_store as u16;
+                            p.url = format!("https://{}:{}", p.host, p.port);
                         }
                     }
                 }

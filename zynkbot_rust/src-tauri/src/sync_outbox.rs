@@ -90,11 +90,23 @@ impl OutboxBatch {
     }
 }
 
-/// What the receiver reports back.
+/// What the receiver reports back. `known_before` is the highest batch it had applied
+/// from this sender before this one (None: nothing — a fresh or restored install), so the
+/// sender can tell when its own cursor is ahead of what the peer actually holds.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OutboxReceipt {
     pub through: i64,
     pub applied: usize,
+    #[serde(default)]
+    pub known_before: Option<i64>,
+}
+
+/// What a device asking to be drained to says about itself.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PullRequest {
+    /// The highest batch this device has applied from the peer it is asking (None: nothing).
+    #[serde(default)]
+    pub known_through: Option<i64>,
 }
 
 /// What one drain to one peer did.
@@ -422,11 +434,45 @@ pub async fn prune_outbox(pool: &SqlitePool, paired_peer_ids: &[String]) -> Resu
     Ok(oldest)
 }
 
+pub async fn inbox_cursor(pool: &SqlitePool, peer_device_id: &str) -> Result<Option<i64>, String> {
+    sqlx::query_scalar("SELECT through FROM sync_inbox_cursor WHERE peer_device_id = ?")
+        .bind(peer_device_id).fetch_optional(pool).await.map_err(|e| format!("outbox: read inbox cursor: {}", e))
+}
+
+async fn set_inbox_cursor(tx: &mut Transaction<'_, Sqlite>, peer_device_id: &str, through: i64) -> Result<(), String> {
+    sqlx::query(
+        "INSERT INTO sync_inbox_cursor (peer_device_id, through, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT (peer_device_id) DO UPDATE SET through = MAX(sync_inbox_cursor.through, excluded.through), updated_at = excluded.updated_at")
+        .bind(peer_device_id).bind(through)
+        .execute(&mut **tx).await.map_err(|e| format!("outbox: write inbox cursor: {}", e))?;
+    Ok(())
+}
+
+/// The sender's cursor for `peer` is ahead of what the peer says it holds: forget it, so
+/// the next drain treats the peer as first contact and sends the live tables.
+pub async fn reset_cursor_if_ahead(pool: &SqlitePool, peer_device_id: &str, peer_knows: Option<i64>) -> Result<bool, String> {
+    let ours = cursor_row(pool, peer_device_id).await?;
+    let ahead = match (ours, peer_knows) { (Some(c), None) => c > 0, (Some(c), Some(k)) => c > k, (None, _) => false };
+    if ahead {
+        sqlx::query("DELETE FROM sync_outbox_cursor WHERE peer_device_id = ?").bind(peer_device_id)
+            .execute(pool).await.map_err(|e| format!("outbox: reset cursor: {}", e))?;
+        println!("[ZynkSync] outbox: {}… holds less than our cursor says (theirs {:?}, ours {:?}) — starting it over", &peer_device_id[..8.min(peer_device_id.len())], peer_knows, ours);
+    }
+    Ok(ahead)
+}
+
 // ============================================================================ receive
 
 /// Apply one batch from a peer. One transaction; the suppress row keeps the triggers from
 /// queuing any of it back. Returns the number of rows written or removed.
 pub async fn apply_outbox_batch(pool: &SqlitePool, local_user_id: &str, batch: &OutboxBatch) -> Result<usize, String> {
+    apply_outbox_batch_from(pool, local_user_id, None, batch).await.map(|(n, _)| n)
+}
+
+/// As above, from a known sender: records how far this device has now heard from it and
+/// returns (applied, what it knew before).
+pub async fn apply_outbox_batch_from(pool: &SqlitePool, local_user_id: &str, sender_device_id: Option<&str>, batch: &OutboxBatch) -> Result<(usize, Option<i64>), String> {
+    let known_before = match sender_device_id { Some(id) => inbox_cursor(pool, id).await?, None => None };
     let mut tx = pool.begin().await.map_err(|e| format!("outbox: begin: {}", e))?;
     sqlx::query("INSERT OR IGNORE INTO sync_suppress (flag) VALUES (1)")
         .execute(&mut *tx).await.map_err(|e| format!("outbox: suppress: {}", e))?;
@@ -461,6 +507,9 @@ pub async fn apply_outbox_batch(pool: &SqlitePool, local_user_id: &str, batch: &
             .execute(&mut *tx).await.map_err(|e| format!("outbox: recount: {}", e))?;
     }
 
+    if let Some(id) = sender_device_id {
+        set_inbox_cursor(&mut tx, id, batch.through).await?;
+    }
     sqlx::query("DELETE FROM sync_suppress")
         .execute(&mut *tx).await.map_err(|e| format!("outbox: unsuppress: {}", e))?;
     tx.commit().await.map_err(|e| format!("outbox: commit: {}", e))?;
@@ -483,7 +532,7 @@ pub async fn apply_outbox_batch(pool: &SqlitePool, local_user_id: &str, batch: &
             crate::db::remove_demo_persona_profile();
         }
     }
-    Ok(applied)
+    Ok((applied, known_before))
 }
 
 /// Upsert a memory by sync_id. Unknown sync_id: match by content and adopt the incoming
@@ -675,7 +724,25 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
     let ours: Option<(String, DateTime<Utc>)> = sqlx::query_as("SELECT value, updated_at FROM sync_secrets WHERE name = ?")
         .bind(&sec.name).fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: read secret: {}", e))?;
     if let Some((value, at)) = &ours {
-        if *at > sec.updated_at || (*at == sec.updated_at && value == &sec.value) { return Ok(false); }
+        if *at > sec.updated_at || (*at == sec.updated_at && value == &sec.value) {
+            // Ours stands. If it is the same value, make sure the environment agrees — a
+            // row recorded from a key file that was later edited by hand would otherwise
+            // leave the two apart. (Also what makes b02 deterministic: both harness peers
+            // share one process environment, so the phone "already holds" the key.)
+            if value == &sec.value && !is_backup_key {
+                let have = std::env::var(&sec.name).ok();
+                if have.as_deref() != Some(sec.value.as_str()) {
+                    crate::commands::models::apply_env_key(&sec.name, &sec.value)?;
+                } else {
+                    let env_path = crate::db::get_app_data_dir().join(".env");
+                    let on_disk = std::fs::read_to_string(&env_path).unwrap_or_default();
+                    if !on_disk.lines().any(|l| l == format!("{}={}", sec.name, sec.value)) {
+                        crate::commands::models::apply_env_key(&sec.name, &sec.value)?;
+                    }
+                }
+            }
+            return Ok(false);
+        }
     }
     sqlx::query(
         "INSERT INTO sync_secrets (name, value, updated_at, sync_id) VALUES (?, ?, ?, ?)
@@ -764,7 +831,7 @@ impl ZynkSyncService {
             println!("[ZynkSync] outbox: {} to {} — live tables rows {}..{} of {} (queue {:?}..{:?})",
                 if cursor.is_none() { "first contact" } else { "behind the queue" }, peer.device_name,
                 offset, offset + batch.len(), total, oldest, newest);
-            let receipt = if batch.is_empty() { OutboxReceipt { through, applied: 0 } } else { post_batch(&client, &endpoint, peer_device_id, &batch).await? };
+            let receipt = if batch.is_empty() { OutboxReceipt { through, applied: 0, known_before: Some(through) } } else { post_batch(&client, &endpoint, peer_device_id, &batch).await? };
             outcome.batches += 1;
             outcome.entries_sent += batch.len();
             outcome.applied_by_peer += receipt.applied;
@@ -788,11 +855,20 @@ impl ZynkSyncService {
             let through = batch.through;
             let sent = batch.len();
             let receipt = if batch.is_empty() {
-                OutboxReceipt { through, applied: 0 } // everything collapsed away; just advance
+                OutboxReceipt { through, applied: 0, known_before: Some(through) } // everything collapsed away; just advance
             } else {
                 post_batch(&client, &endpoint, peer_device_id, &batch).await?
             };
-            set_cursor(&self.db_pool, peer_device_id, receipt.through.max(through)).await?;
+            // The peer applied this batch, but if it knew less beforehand than our cursor
+            // claimed (a restored install), what we skipped must go again: start it over
+            // next cycle rather than record this batch as the new cursor.
+            if receipt.known_before.map_or(true, |k| k < cursor) && cursor > 0 {
+                println!("[ZynkSync] outbox: {} knew {:?} of our batches, our cursor said {} — starting it over", peer.device_name, receipt.known_before, cursor);
+                sqlx::query("DELETE FROM sync_outbox_cursor WHERE peer_device_id = ?").bind(peer_device_id)
+                    .execute(&self.db_pool).await.map_err(|e| e.to_string())?;
+            } else {
+                set_cursor(&self.db_pool, peer_device_id, receipt.through.max(through)).await?;
+            }
             outcome.batches += 1;
             outcome.entries_sent += sent;
             outcome.applied_by_peer += receipt.applied;
@@ -816,9 +892,10 @@ impl ZynkSyncService {
         };
         let endpoint = format!("{}/api/zynksync/outbox/pull", peer.url);
         let client = self.transport.http_client.read().await.clone();
+        let known_through = inbox_cursor(&self.db_pool, peer_device_id).await?;
         let response = client.post(&endpoint)
             .header("x-target-device-id", peer_device_id)
-            .json(&serde_json::json!({}))
+            .json(&PullRequest { known_through })
             .timeout(std::time::Duration::from_secs(120))
             .send().await
             .map_err(|e| format!("outbox pull from {} failed: {}", peer.device_name, describe(&e)))?;
