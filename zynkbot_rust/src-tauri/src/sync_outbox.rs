@@ -764,7 +764,7 @@ impl ZynkSyncService {
             println!("[ZynkSync] outbox: {} to {} — live tables rows {}..{} of {} (queue {:?}..{:?})",
                 if cursor.is_none() { "first contact" } else { "behind the queue" }, peer.device_name,
                 offset, offset + batch.len(), total, oldest, newest);
-            let receipt = if batch.is_empty() { OutboxReceipt { through, applied: 0 } } else { post_batch(&client, &endpoint, &batch).await? };
+            let receipt = if batch.is_empty() { OutboxReceipt { through, applied: 0 } } else { post_batch(&client, &endpoint, peer_device_id, &batch).await? };
             outcome.batches += 1;
             outcome.entries_sent += batch.len();
             outcome.applied_by_peer += receipt.applied;
@@ -790,7 +790,7 @@ impl ZynkSyncService {
             let receipt = if batch.is_empty() {
                 OutboxReceipt { through, applied: 0 } // everything collapsed away; just advance
             } else {
-                post_batch(&client, &endpoint, &batch).await?
+                post_batch(&client, &endpoint, peer_device_id, &batch).await?
             };
             set_cursor(&self.db_pool, peer_device_id, receipt.through.max(through)).await?;
             outcome.batches += 1;
@@ -817,6 +817,7 @@ impl ZynkSyncService {
         let endpoint = format!("{}/api/zynksync/outbox/pull", peer.url);
         let client = self.transport.http_client.read().await.clone();
         let response = client.post(&endpoint)
+            .header("x-target-device-id", peer_device_id)
             .json(&serde_json::json!({}))
             .timeout(std::time::Duration::from_secs(120))
             .send().await
@@ -843,8 +844,9 @@ fn describe(e: &reqwest::Error) -> String {
     out
 }
 
-async fn post_batch(client: &reqwest::Client, endpoint: &str, batch: &OutboxBatch) -> Result<OutboxReceipt, String> {
+async fn post_batch(client: &reqwest::Client, endpoint: &str, target_device_id: &str, batch: &OutboxBatch) -> Result<OutboxReceipt, String> {
     let response = client.post(endpoint)
+        .header("x-target-device-id", target_device_id)
         .json(batch)
         .timeout(std::time::Duration::from_secs(120))
         .send().await

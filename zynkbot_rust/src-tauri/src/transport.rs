@@ -510,6 +510,7 @@ pub async fn inject_verified_device(
 /// Middleware: rejects requests that lack a VerifiedDevice extension (i.e. the peer did not
 /// present a cert that matches a paired device). Used on sensitive routes like push-api-key.
 pub async fn require_verified_device(
+    State(transport): State<Arc<Transport>>,
     req: Request,
     next: Next,
 ) -> Response {
@@ -518,6 +519,20 @@ pub async fn require_verified_device(
             StatusCode::UNAUTHORIZED,
             axum::Json(serde_json::json!({ "error": "mTLS device verification required" })),
         ).into_response();
+    }
+    // A message names the device it is for, and a device that is not that device
+    // refuses it. An address is only where a device was last seen: on GrapheneOS it
+    // changes with every Wi-Fi connection, and a ghost entry's address can be a live
+    // phone's (KI-053, 2026-09-13). Senders that know their target set the header; the
+    // old routes that do not are unaffected until step 5 removes them.
+    if let Some(target) = req.headers().get("x-target-device-id").and_then(|v| v.to_str().ok()) {
+        let me = transport.device_id();
+        if target != me {
+            return (
+                StatusCode::MISDIRECTED_REQUEST,
+                axum::Json(serde_json::json!({ "error": "not this device", "addressed_to": target, "this_device": me })),
+            ).into_response();
+        }
     }
     next.run(req).await
 }

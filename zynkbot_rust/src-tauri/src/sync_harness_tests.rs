@@ -758,3 +758,23 @@ fn b20_the_newest_value_of_a_key_wins_on_both_devices() {
         std::env::remove_var("XAI_API_KEY");
     });
 }
+
+// ---------------------------------------------------------------------------
+// 21. A sync message is addressed to a device id, and a device that is not that device
+//     refuses it — however it was reached (KI-053: an address is where a device was
+//     last seen, not who it is).
+// ---------------------------------------------------------------------------
+#[test]
+fn b21_a_message_addressed_to_another_device_is_refused() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let client = a.svc.get_http_client().await;
+        let url = format!("https://127.0.0.1:{}/api/zynksync/outbox/pull", b.port);
+        let wrong = client.post(&url).header("x-target-device-id", a.device_id()).json(&serde_json::json!({})).send().await.expect("request");
+        assert_eq!(wrong.status().as_u16(), 421, "the phone must refuse a message addressed to the desktop");
+        let right = client.post(&url).header("x-target-device-id", b.device_id()).json(&serde_json::json!({})).send().await.expect("request");
+        assert!(right.status().is_success(), "a message addressed to the phone is served: {}", right.status());
+    });
+}
