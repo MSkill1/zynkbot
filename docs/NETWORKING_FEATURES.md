@@ -24,38 +24,29 @@ All features work over any shared local network (home WiFi, office LAN, or mobil
 
 ### What It Does
 
-- Automatically syncs conversation memories between paired devices
-- Background synchronization every 5 minutes (300s default; configurable)
-- Complete data sync including embeddings, entities, and relationships
+- Keeps memories, conversation history, memory links and API keys the same on every device you have paired
+- Works while devices come and go: a device that was off gets everything it missed when it comes back
+- Runs on your local network only; nothing goes through a server
 
-### Key Features
+### How It Works (since the outbox rebuild, October 2026)
 
-- ✅ **Automatic Sync**: Background sync at configurable intervals (default 300s / 5 minutes)
-- ✅ **Complete Data**: Syncs embeddings, entities, relationships, and metadata
-- ✅ **Local Network Only**: Data never leaves your network
+Every row that sync cares about — a memory, a conversation thread, a message, a memory link, a key — has a **name** (`sync_id`) that is the same on every device. Whenever one of those rows is added, changed or deleted, a database trigger adds one line to a **queue** (`sync_outbox`): which table, which name, what happened.
 
-### Conflict Resolution (Two-Tier System)
+Once a minute, each device **drains** its queue to every paired device: it reads the queued rows, loads each one fresh from the database with every column, and sends a batch of at most 300 rows. The receiving device applies the batch by name — add, update or delete — and answers with how far it got. Only then does the sender move that device's **cursor** forward. A device that is off simply has a longer queue waiting; a device that has been away longer than a week, or that has never synced with this one, is sent the live tables instead, in 300-row slices, and the queue takes over from there.
 
-Zynkbot uses two different conflict resolution strategies depending on the situation:
+The receiving device sets a flag (`sync_suppress`) while it applies a batch so the triggers do not queue the arriving rows back to the sender. A row that arrives under a name the receiver has never seen is first matched against what it already holds — a memory by its text, a message by its thread, speaker, second and text — and adopts the incoming name; this is how copies that existed on two devices before the rebuild became one, and it stays on: two memories with the same text are one memory.
 
-**1. Sync ID Conflicts (Automatic):**
-When the same memory ID exists on both devices during sync:
-- Backend automatically compares timestamps
-- Newer memory overwrites older memory
-- Prevents duplicate IDs in database
-- Location: `zynksync.rs`
+**Edits** keep their name, so the other devices update their copy; the newest `updated_at` wins. **Deletions** are queued like any change and delivered when the device is reachable; a memory's deletion also records a tombstone, so a stale copy never comes back. **Keys** (the API keys and the backup key) are rows too: a device gets all of them on first contact, and the newest value per key wins — saving a key in Settings or pressing *Push to all devices* stamps it with the current time.
 
-**2. Semantic/Content Conflicts (User Choice):**
-When AI detects contradicting information during conversation:
-- User presented with modal showing both memories
-- Five resolution options:
-  - Keep old memory (discard new)
-  - Keep new memory (discard old)
-  - Not a contradiction (dismiss without changes)
-  - Keep both marked as contradictory
-  - Keep both with explanation (creates a new explanation memory linked to both via `resolves` edges)
-- Prevents hallucinations from AI guessing which is correct
-- Location: `ConflictResolutionModal.jsx`
+### Identity and addresses
+
+A device *is* its TLS certificate and device id; its IP address is only where it was last seen. Every message names the device it is for, and a device that is not that device refuses it. A device whose address changed (GrapheneOS gives the Pixel a new one on every Wi-Fi connection) is corrected on its peers by its first request. Each backup also saves the device's identity, so a phone that is wiped and reinstalled can become itself again from **Memory Manager → Restore**: the peers see the device they already knew, and it is sent everything it is missing. Nothing is ever guessed from a name or an address.
+
+### Conflict Resolution
+
+**Rows (automatic):** the same row changed on two devices resolves by newest `updated_at`; a deletion wins over a stale copy through the tombstone.
+
+**Meaning (user choice):** when the assistant detects two memories that contradict each other, it asks you — keep old, keep new, not a contradiction, keep both as contradictory, or keep both with an explanation. The outcome is itself a change that syncs. Location: `ConflictResolutionModal.jsx`.
 
 ### Setup
 
@@ -63,31 +54,19 @@ When AI detects contradicting information during conversation:
 2. Note the IP address on Device 1 (port 57963)
 3. On Device 2, click **"Add Device"** and enter Device 1's IP
 4. Enter the 6-digit pairing code shown on Device 1
-5. Sync starts automatically in the background
-
-### Use Cases
-
-**Multi-Device Personal Use:**
-- Conversation history available on any device
-- Seamless continuity across laptop, desktop, phone
-- Offline-capable over WiFi/LAN
-- All memories sync automatically
+5. Within a minute the new device has everything; from then on changes arrive within a cycle
 
 ### Implementation
 
-- **Backend**: Pure Rust async implementation (`zynkbot_rust/src-tauri/src/zynksync.rs`)
-- **Protocol**: HTTPS/TLS-encrypted sync over port 57963
-- **Storage**: Local SQLite database
-- **Security**: 6-digit pairing codes, 10-minute timeout
-- **Database**: All memories with `is_syncable = true` are synced (enforced in every sync query); `namespace` is preserved per memory but not yet used to filter what syncs — per-namespace sync control is planned
-
-### Peer address changes
-
-A paired peer whose IP address changes (a new DHCP lease overnight, a different hotspot) is re-found from its own traffic: every request it makes that passes certificate verification carries its current address, and when that differs from the stored one the device record and the in-memory peer entry are updated on the spot. The asymmetry is that this only works while the peer is talking to you. A peer that has gone quiet at a new address is not re-found until it makes a request; until then outbound sync and ZChat delivery to it go to the old address. <!-- added by Claude 2026-09-09, review -->
+- **Backend**: `zynkbot_rust/src-tauri/src/sync_outbox.rs` (queue, drain, receiver, keys, identity restore) and `zynksync.rs` (service, pairing, routes)
+- **Routes**: `/api/zynksync/outbox` (a batch in) and `/api/zynksync/outbox/pull` (a request to be drained to), both behind mutual TLS with pinned certificates
+- **Tables**: `sync_outbox`, `sync_outbox_cursor` (how far each peer has been sent), `sync_inbox_cursor` (how far this device has heard from each peer), `sync_suppress`, `sync_secrets`; `sync_id` columns on memories, sessions, messages and memory links (migrations 0013–0016)
+- **Retention**: queued rows every peer has acknowledged are pruned; anything older than 7 days is dropped
+- **Tests**: `sync_harness_tests.rs` (two real services in one process), `sync_outbox_tests.rs` (the triggers); see `docs/TESTING.md`
 
 ### What sync does not yet carry
 
-A synced memory carries its content, title, namespace, embedding, event date, tone, the raw entity blob from the name finder, and its relationship links. It does not carry the memory's **tags** or the rows in the named-entity table (the people, places, organisations and things that About me lists), so those appear on the receiving device only for memories it stored itself. Cloud backup (below) carries less again: no tags, no event date, no tone and no named-entity rows. <!-- added by Claude 2026-09-09, review -->
+Memory entities (`memory_entities`, the per-memory named things) and the knowledge base. Each device builds its own.
 
 ---
 

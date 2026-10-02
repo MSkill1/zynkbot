@@ -1,15 +1,15 @@
-//! ZynkSync two-peer harness (2026-09-17).
+//! ZynkSync two-peer harness (2026-09-17; the rebuild's finish line reached 2026-10-02).
 //!
 //! Two (or more) real `ZynkSyncService` instances in one process, each with its own
 //! SQLite file in a temp dir, its own TLS certificate and identity, listening on a
 //! free loopback port. Peers talk over the real router and the real mTLS client —
 //! nothing is mocked — so these tests describe what two devices must end up with,
-//! not how the current code gets there. They are the acceptance tests for the sync
-//! rebuild (docs/TESTING.md, "Sync behaviours the harness must cover"); the ones
-//! that fail on the pre-rebuild code are `#[ignore]`d with their known-issue number.
+//! not how the code gets there. They were the acceptance tests for the outbox rebuild
+//! (docs/TESTING.md, "Sync behaviours the harness must cover"): seven of them failed on
+//! the old code and were `#[ignore]`d with their known-issue numbers; all pass now, and
+//! every bug the first device pass found got a test here first (b16–b22).
 //!
 //! Run: `LD_LIBRARY_PATH=$PWD/lib/vosk cargo test --lib sync_harness -- --nocapture`
-//! (add `--include-ignored` to see the current failures).
 
 use crate::zynksync::{SyncIdentity, ZynkSyncService};
 use sqlx::sqlite::SqlitePoolOptions;

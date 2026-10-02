@@ -26,10 +26,10 @@ All commands from `zynkbot_rust/`.
 
 Continuous integration (`.github/workflows/test.yml`) runs the first four on every push (documentation-only pushes are skipped) and the Kotlin compile when Kotlin changed. The release workflow is separate and runs only on a `v*` tag.
 
-## What is covered today (2026-10-01)
+## What is covered today (2026-10-02)
 
-- **ZynkSync, two real peers in one process** (`sync_harness_tests.rs`): pairing, memory add/delete/edit, history threads and the 300-message cap, marker survives a restart, device rename, unpinned client refused, chat between own devices; since the outbox (steps 1 and 2 of the rebuild, 2026-10-01): an edit does not come back, same-second messages both arrive, a deleted thread is gone on the peer, tags and the Remember mark travel, pre-outbox copies of a memory or a message converge instead of doubling, first contact sends what predates the outbox, and the old receive path does not echo. Nineteen behaviours; three `#[ignore]`d with their known-issue numbers (b02, b07, b11) for steps 3 and 4.
-- **The outbox triggers** (`sync_outbox_tests.rs`): every insert, update and delete on memories, sessions and messages queues exactly one row naming the row's `sync_id`; nothing is queued under `sync_suppress`; existing rows are named by the migration. Fourteen tests.
+- **ZynkSync, two real peers in one process** (`sync_harness_tests.rs`): pairing, memory add/delete/edit, history threads and the 300-row cap, the cursor survives a restart, device rename, unpinned client refused, chat between own devices, a contradiction resolved on one device, an offline device catching up without resurrecting a deletion, pre-outbox copies of a memory and of a message converging, first contact sending what predates the outbox, keys reaching a device that paired later and the newest key winning, a joining phone keeping and sharing its own memories, a message addressed to another device refused, a wiped phone restored from its backup being the same phone, a memory link travelling and dying with its memory. Twenty-three behaviours, none ignored: the sync rebuild's finish line (`cargo test --lib sync_harness -- --include-ignored` green) was reached on 2026-10-02.
+- **The outbox triggers** (`sync_outbox_tests.rs`): every insert, update and delete on memories, sessions, messages, keys and memory links queues exactly one row naming the row's `sync_id`; nothing is queued under `sync_suppress`; existing rows are named by the migration. Seventeen tests.
 - **The chat path end to end** (`chat_harness_tests.rs`): `generate_reply` runs exactly as the app runs it, against a pretend OpenAI-compatible model on a loopback port, in its own data directory. Five behaviours: a backend with no credentials falls back to one that can answer (the tester's phone bug of 2026-09-22), the reply streams token by token, a stored memory reaches the prompt, "Remember:" stores verbatim regardless of the model's decision, a marked fact becomes a memory and the marker is hidden. Uses the system models beside the source, as CI does.
 - **Conversation history** (`conversation_history.rs`): open / log / count / rename, count repair at startup.
 - **Memory extras** (`memory_extras.rs`): event-date validation, namespace resolution, tag cleaning.
@@ -45,7 +45,7 @@ Continuous integration (`.github/workflows/test.yml`) runs the first four on eve
 
 In order of evidence (where the known issues came from):
 
-1. **ZynkSync** — the six reserved behaviours were written on 2026-09-29; steps 1 and 2 of the outbox rebuild landed on 2026-10-01 (`sync-rebuild`, commits `5cc98c7` through `1401895`). Four of the seven that defined the finish line now pass — b05 (KI-060), b08b and b09 (KI-028), b12 (KI-030) — and three stay `#[ignore]`d for steps 3 and 4: keys saved before a phone pairs never reach it (b02, KI-055); a phone's own memories vanish when it pairs (b07, KI-011); a wiped-and-re-paired phone is listed twice (b11, KI-050). The finish line is unchanged: it is done when `cargo test --lib sync_harness -- --include-ignored` is green. The first device pass (desktop, Pixel, OnePlus, 2026-10-01) found four things the harness had not: a receiver 500 on messages that predate the outbox (b17), nothing old reaching a device synced for the first time (b18), the old receive path echoing every row back (b19), and two Android faults — Back killed the process and its sync server, and a restarted peer stayed unreachable until the caller restarted — fixed in `1401895` and verified on the devices.
+1. **ZynkSync** — covered. The outbox rebuild (`sync-rebuild`, 2026-09-29 to 2026-10-02, steps 1–5) replaced the immediate push and the whole-table compare with a queue drained to each peer; every behaviour below passes in the harness and was seen on the desktop, the Pixel and the OnePlus. What remains is the full manual pass (`~/Documents/Zynk_related/claude_notes/SYNC_REBUILD_changes_and_test_protocol_2026-10-02.md`, 46 checks across four devices) before `sync-rebuild` merges to `v1`. Still untested by machine: mDNS discovery (not built), and clock skew between devices deciding which key value wins (KI-081).
 2. **Chat pipeline end to end** — five behaviours covered by the chat harness (above). Still not covered: Child Mode's moderation step (it calls OpenAI's moderation endpoint directly, so it needs the real service), the hands-free path through `android_jni`, Ensemble, and the KB-grounding decision. Original plan: a fake model backend so `generate_reply` runs in-process.
 3. **Memory pipeline** — dedupe, contradiction, dates/tags. Mostly reached through (2).
 4. **Android Kotlin** — pure logic (command parsing, verifier scoring, speech cleanup) as JVM unit tests; everything else is manual (below).
@@ -60,15 +60,20 @@ Each is one test. Those marked *rebuild* are expected to fail on the pre-rebuild
 3. Memory added on A appears on B with every field (date, tags, entities, provenance). *(passes since step 2; was KI-030)*
 4. Memory deleted on A is gone on B; a stale peer cannot recreate it.
 5. Memory edited on A: B has the new text and the old one does not come back. *(passes since step 2; was KI-060)*
-6. Memories that existed on B before pairing are adopted, not orphaned. *rebuild — KI-011*
-7. API keys pushed to all devices reach every peer, including one that paired after the keys were saved. *rebuild — KI-055*
+6. Memories that existed on B before pairing are adopted, not orphaned. *(passes since step 4; was KI-011)*
+7. API keys reach every peer, including one that paired after the keys were saved; the newest value per key wins. *(passes since step 3; was KI-055)*
 8. A thread with N messages on A is on B with N messages, once; a second sync sends nothing. *(passes since step 2; was KI-028)*
 9. A thread deleted on A is gone on B. *(passes since step 2; was KI-028, #12)*
 10. Renaming a device shows on peers without re-pairing.
 11. Expelling a stale device entry affects only that device id, not a live device at the same address (KI-053 regression).
-12. Reinstall (new device id, same user id, restored backup): peers gain no ghost row. *rebuild — KI-050*
+12. Reinstall: a fresh install restored from its device backup is the same device; peers gain no ghost row. *(passes since step 4; was KI-050)*
 13. Contract: the memory and conversation payloads round-trip through serde with every field.
 14. Contract: the mTLS client refuses an unpinned certificate.
+15. Pre-outbox copies of a memory, and of a message, on two devices converge into one under one name (b16, b17).
+16. First contact sends what predates the outbox, in 300-row slices; a second sync sends nothing (b18).
+17. The newest value of a key wins on both devices whichever side syncs first (b20).
+18. A message addressed to another device id is refused (b21).
+19. A memory link travels between the same two memories and is gone when one of them is deleted (b22).
 
 ## Manual device checklist
 

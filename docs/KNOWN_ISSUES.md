@@ -129,8 +129,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-050 — Reinstalling the app on a phone leaves a stale second device in every peer's ZynkSync list
-**Status:** Open — post-beta. Cause known; fix deferred because it touches the pairing path. Workaround is a delete.
+### KI-050 — Reinstalling the app on a phone leaves a stale second device in every peer's ZynkSync list (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-02 (`12fb4d1`, `7e459dc`, b11): each backup writes the device's identity as `device-<id>.enc`; a fresh install's Restore asks which device it is and restores identity and data together. Verified on the OnePlus 2026-10-02. Was: post-beta. Cause known; fix deferred because it touches the pairing path. Workaround is a delete.
 **Affected:** Any device that is reinstalled (or has its app data wiped, including a release build installed over a debug build) and then pairs again. Seen 2026-09-12: the OnePlus paired as `12R` before the reinstall and as `Oneplus-453A` after, from the same address; the desktop, the Pixel and the Windows install each kept both entries until the old one was deleted by hand.
 **Description:** A device's identity is a UUID written to a file in the app's private data (`user_identity.rs`, `get_or_create_device_id`). Uninstalling removes the file; the next launch mints a new UUID and, on Android, a new default name from its last four characters. `zynk_devices` is keyed on `device_id` (UNIQUE), and the pairing handler upserts `ON CONFLICT (device_id)`, so a new id is a new row; nothing compares the incoming `device_ip` against existing rows. The old row stays "paired", its cert stays pinned, and every peer keeps trying to sync with it.
 **Workaround:** delete the old entry in ZynkSync (it is expelled from all peers); re-pair if needed.
@@ -216,8 +216,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-060 — An edited memory reverts after sync: the old version returns beside the new one (open)
-**Status:** Open — GitHub #28 (2026-09-16); GitHub #13 (2026-08-27) showed the same on an edit that reached Linux but not Android.  
+### KI-060 — An edited memory reverts after sync: the old version returns beside the new one (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b05): an edit keeps its `sync_id`, so the peer updates its copy. Was: open — GitHub #28 (2026-09-16); GitHub #13 (2026-08-27) showed the same on an edit that reached Linux but not Android.  
 **Affected:** Any two devices syncing memories.  
 **Description:** After editing a memory in the Memory Manager the edit is saved, and later the pre-edit version reappears so both are listed; the user has to delete the old one. Most likely a peer that still holds the old row pushes it back on its next sync, and the receive path does not compare `updated_at` (or the content hash changed, so the old row looks like a new memory).  
 **Fix:** part of the ZynkSync rebuild (KI-028): last-writer-wins on `updated_at`, and an edit carries the old hash as a tombstone.
@@ -256,8 +256,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-055 — A device that pairs after the keys were saved never receives them (open; workaround: Push to all devices)
-**Status:** Open, found on the four-device first-time-user run 2026-09-13. Not a beta blocker; the button works.
+### KI-055 — A device that pairs after the keys were saved never receives them (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-01 (`d789eec`, b02): keys are queue rows; a device gets them all on first contact; the newest value per key wins. Was: open, found on the four-device first-time-user run 2026-09-13. Not a beta blocker; the button works.
 **Affected:** Every new device in the natural order: keys entered on the desktop first, phone paired afterwards.
 **Description:** Keys leave a device in exactly two cases — `set_api_key` pushes the one key just saved to the peers that exist at that moment, and the "Push to all devices" button pushes everything. Pairing itself pushes nothing in either direction. On 2026-09-13 the desktop had its Anthropic key saved at about 13:45; both phones paired at 13:49 and 13:50 and showed no keys; the OnePlus log has no "Received API key push" after pairing. Matt pushed by hand.
 **Fix candidates:** after `handle_verify_pairing` accepts a client, the host pushes its allow-listed keys to that one device (the push code exists; it needs a single-peer variant); or the client asks for them once after adopting the host's identity. First-run guides should say "pair, then keys arrive" — today they arrive only if entered later or pushed by hand.
@@ -274,7 +274,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ### KI-053 — Deleting a stale device entry disconnected the live phone at the same address (fixed on `voice`, 2026-09-13; not yet in any installed build)
-**Status:** Fixed in `expel_device` / `handle_notify_unsynced`; the desktop `.deb` and the APKs installed on 2026-09-13 still carry the bug.
+**Status:** Fixed in `expel_device` / `handle_notify_unsynced` (2026-09-13); since `266f871` (2026-10-01, b21) every outbox message also names its target device id and any other device refuses it, closing the class.
 **Affected:** Any mesh with a ghost entry (KI-050) — i.e. any phone that has been reinstalled — when someone deletes the ghost from another device.
 **Description:** Expelling a device sends every other peer a cascade ("remove X") and, best-effort, tells the expelled device itself "I have unsynced from you" so its screen clears. That last notice is addressed by IP only. The ghost "Oneplus-453A" (yesterday's identity) had the same address as the live OnePlus, so the live phone received "the desktop unsynced from you", removed the desktop from its peer list and cleared its tombstones ("No peers remain"). The desktop still listed the phone, so from the desktop it merely looked as if the phone had gone quiet. Seen 2026-09-13 09:28:55.
 **Fix:** the notice carries the intended `target_device_id`; a receiver whose own id differs ignores it (logged as "Ignoring removal notice addressed to …"). Recovery on affected builds: re-pair the live phone (code generated on the desktop, entered on the phone).
@@ -303,8 +303,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-011 — Pre-existing memories are orphaned after first sync
-**Status:** Open  
+### KI-011 — Pre-existing memories are orphaned after first sync (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-01 (`7f8693f`, b07): on pairing, the joining device's rows move under the shared user id and are queued for the peers.
 **Affected:** Users who have existing memories on a device before performing their first ZynkSync with a new partner device  
 **Description:** When two devices sync for the first time, memories that already existed on the receiving device before the sync are not automatically merged or associated with the synced identity. They remain as orphaned records in the local database — accessible locally but not part of the synced memory set. New memories created after the first sync are handled correctly.  
 **Workaround:** No workaround currently. Orphaned memories remain visible and usable in local conversation but will not propagate to other devices.  
@@ -312,8 +312,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-028 — Conversation history sync duplicates messages and silently skips some threads
-**Status:** Open — deferred to the ZynkSync refactor; not a beta blocker (testers should treat all sync behaviour as untested until the refactor lands)
+### KI-028 — Conversation history sync duplicates messages and silently skips some threads (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b08b, b09): rows are named by `sync_id`, so same-second messages are two rows and a deleted thread is deleted everywhere. Was: deferred to the ZynkSync refactor; not a beta blocker (testers should treat all sync behaviour as untested until the refactor lands)
 **Affected:** Any two devices syncing conversation history over ZynkSync (observed OnePlus 12R ↔ Pixel 10 Pro XL, 2026-09-07). Covers GitHub #4 (duplicate and stale history entries) and #12 (clearing history or memories does not propagate).
 **Description:** Three separate defects in `zynksync.rs` combine to corrupt synced history:
 1. *Skipped threads.* `get_modified_conversations` sends only sessions whose `last_active` is later than the last sync time, comparing the values as text. Rows written through the voice path used SQLite's `datetime('now')` format (`2026-09-04 17:51:12`) while the cursor is RFC 3339 (`2026-09-04T…`); a space sorts before `T`, so those rows always looked older than the cursor and were never sent. 40 of 156 sessions on the OnePlus never reached the Pixel. Build29 (migration 0010) normalises every stored timestamp, but the cursor has already passed those rows, so they still will not sync on their own.
@@ -377,7 +377,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ---
 
 ### KI-074 — A stale device entry at a device's own address makes it pair with itself
-**Status:** Open. Part of the ZynkSync refactor, not separate work: the introduction path is being rewritten there. Recorded so it is not rediscovered. Workaround: delete the stale entry.
+**Status:** Mitigated 2026-10-01 (`266f871`): a message addressed to another device id is refused, so a self-row can no longer receive anything. The row itself is still purged at startup (`purge_self_referential_devices`). Was: part of the ZynkSync refactor, not separate work: the introduction path is being rewritten there. Recorded so it is not rediscovered. Workaround: delete the stale entry.
 **Affected:** Any device re-paired after a wipe or reinstall while other devices still list its old identity.
 **Description:** A reinstall mints a new device id (KI-050), so peers keep an entry for the old one at the same address. Mesh introduction then tells every known peer about the newcomer, skipping the newcomer by id; the stale entry has a different id, so the introduction is sent to the newcomer's own address. The receiving handler checks that the introducer is trusted and that the device is not already paired, but never that the introduced device is itself, so it adds itself as a peer. Writing a sync timestamp for that pair then fails the `zynk_device_pairings_order` check constraint (the two ids in a pair must differ), once per sync cycle. Seen on a Pixel 2026-09-22, logging the failure every minute.
 **Impact:** Wasted sync cycles and a recurring error in the log. Nothing is lost or duplicated; the pairing row is never written.
@@ -385,7 +385,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ---
 
 ### KI-075 — A freshly installed desktop does not receive the other devices by introduction
-**Status:** Open. Part of the ZynkSync refactor, not separate work. Workaround: pair the new device to each other device directly.
+**Status:** Open — the introduction path was not rewritten in the rebuild; a device that moved is corrected on its first verified request, but a device never introduced still has to be paired directly. Candidate for the mDNS item on the roadmap. Was: part of the ZynkSync refactor, not separate work. Workaround: pair the new device to each other device directly.
 **Affected:** A device reinstalled or set up fresh while its peers still hold its old identity.
 **Description:** Observed 2026-09-22 after installing the beta3 binaries on a fresh Linux desktop and pairing from the Pixel. The desktop did not learn about the other devices through mesh introduction and had to be paired to each by hand. Same underlying cause as KI-074: introductions are addressed against a peer list that still holds the old identity, so they reach the wrong entry.
 
@@ -440,6 +440,22 @@ Deletions are not propagated at all (no tombstones), which is #12.
 **Affected:** Both phones, desktop too.
 **Description:** Attaching a picture does not enable Send; some text has to be typed first. Asked for a screenshot, the user has to type "here it is" to send it.
 **Fix:** enable Send when there is an attachment and no text; send the attachment with an empty message.
+
+---
+
+### KI-080 — Every start of the sync service added another sync loop (fixed)
+**Status:** Fixed 2026-10-02 (`509f815`).
+**Affected:** Every device, every build before the fix.
+**Description:** `start_auto_sync` was called at startup, from the Sync panel's "Sync now", and when a peer sent a resume notice; each call spawned a new 60-second loop and none ended. On 2026-10-02 the desktop was running seven loops and the Pixel about fifteen — fifteen full sync cycles a minute, each one building a 300-row slice for the closed laptop and failing to connect. Found while looking at the Pixel's battery (Zynkbot: 27 mAh since the last charge, so not the cause of the charging problem, but wasted CPU all the same).
+**Fix:** one loop per service, guarded by a flag; a slow cycle no longer bursts catch-up ticks; a peer that refused a connection in the last two minutes and sends no heartbeat is skipped.
+
+---
+
+### KI-081 — Clock skew between devices can decide which key value wins
+**Status:** Open — minor.
+**Affected:** Any two devices whose clocks differ by more than the gap between two saves of the same key.
+**Description:** Keys travel with the time the device saved or first saw them, and the newest wins (step 3 of the outbox rebuild). On 2026-10-01 the phones' clocks ran about a minute ahead of the desktop's, so a value the phones recorded *after* starting up was treated as newer than the desktop's identical one. With identical values nothing changed; with different values the phone's would have won even if the desktop's was saved later by the wall clock.
+**Fix:** compare with a tolerance and prefer the local value inside it, or carry a per-key counter beside the time. Decide after the manual pass; see protocol check 46.
 
 ---
 
@@ -656,8 +672,8 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-030 — Sync and cloud backup do not carry the new memory fields
-**Status:** Open — after the beta, with the sync refactor  
+### KI-030 — Sync and cloud backup do not carry the new memory fields (sync fixed)
+**Status:** Sync fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b12): the sender reads every column at send time, so tags, provenance and new columns travel. The cloud backup still carries its own field list.
 **Affected:** Multi-device users; anyone restoring a backup  
 **Description:** Migration 0011 added `tags`, `sentiment`, `event_date` use, and the `memory_entities` table. ZynkSync's memory payload and the R2 backup export were written before them and do not include tags or entities, so a memory arriving on a second device or restored from backup loses them.  
 **Fix target:** extend `SyncMemory` and the backup export/import to carry the new columns and the entities rows; part of the outbox refactor.
