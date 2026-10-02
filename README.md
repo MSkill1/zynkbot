@@ -20,7 +20,7 @@ The memory system is the core. Every conversation is processed into structured m
 
 The kitchen is the plainest example of what that memory is for. Tell Zynkbot what you cooked and how it went, in whatever words you like. Ask it later what to make, and it remembers what you liked, what you refused, and how you are trying to eat. If you fall off a diet, tell it to forget those weeks and start again, because the memory is yours to edit. This is becoming the free Kitchen kit: a packaged, opt-in use of the memory system, in development for v1.0. Kits will run on your device, stay off unless you turn them on, and can be deleted as a group.
 
-Zynkbot also runs a networking layer entirely on your local network. ZynkSync keeps your memory database consistent across your own devices. ZynkLink enables direct file transfers between paired users. ZChat provides device-to-device messaging with no cloud relay. Download a colleague's project directly into your knowledge base and Zynkbot is instantly familiar with it — without any of it touching a third-party server.
+Zynkbot also runs a networking layer entirely on your local network. ZynkSync keeps your memories, conversation history and settings the same on every device you own — changes queue on the device that made them and reach the others when they're on, so a phone that was off all day catches up when it's back, and a reinstalled phone can become itself again from its backup. ZynkLink enables direct file transfers between paired users. ZChat provides device-to-device messaging with no cloud relay. Download a colleague's project directly into your knowledge base and Zynkbot is instantly familiar with it — without any of it touching a third-party server.
 
 And because the entire stack is offline-first — no cloud dependency, no subscription, no internet required — the same infrastructure that protects one person's memory also works where connectivity can't be assumed: field work, disaster response, resource-limited regions. A snap-in architecture customizes the platform for specific domains — healthcare, legal, research, enterprise — on the same local-first foundation. **[→ Digital resilience documentation](docs/DIGITAL_RESILIENCE.md)**
 
@@ -104,7 +104,7 @@ Pre-built binaries are available for Android, Linux, and Windows — no compilat
 
 **Android:** Download the APK and tap to install. Android will prompt you to allow installation from unknown sources — this is a one-time prompt per device.
 
-Once Zynkbot is on both your phone and desktop, open Settings → ZynkSync on each device and pair them. After that, your memory stays in sync automatically whenever both devices are on the same network.
+Once Zynkbot is on both your phone and desktop, open Settings → ZynkSync on each device and pair them. The new device has everything within a minute; after that, a change on any device reaches the others within a minute whenever they're on the same network, and waits for any that aren't.
 
 > ⚠️ **Local models are CPU-only in pre-built desktop binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected. Android uses API models only in Phase 1.
 
@@ -323,7 +323,7 @@ Every installation runs in exactly one containment mode at a time. The default i
 
 ## Networking Features
 
-**ZynkSync** - Sync memories across YOUR devices (carry conversations across phone/PC/laptop)
+**ZynkSync** - Your memories, conversations and keys, identical on every device you own — including the ones that were switched off
 
 **ZynkLink** - Share files between PAIRED Zynkbots (different users)
 
