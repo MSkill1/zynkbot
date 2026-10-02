@@ -361,3 +361,24 @@ async fn o17_a_link_queues_an_insert_an_update_and_a_delete_named_by_its_own_syn
     assert_eq!(ops, vec!["insert", "update", "delete"], "got {:?}", rows);
     for r in &rows { assert_eq!(r.2, link_sync_id); }
 }
+
+#[tokio::test]
+async fn o18_links_that_predate_the_link_migration_are_queued_once_by_0017() {
+    // Rows written before 0016: named by its backfill, never queued. 0017 queues them.
+    let pool = pool_with_migrations_below(16).await;
+    let a = add_memory(&pool, "Max is my dog").await;
+    let b = add_memory(&pool, "Max likes the park").await;
+    sqlx::query("INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence) VALUES (?, ?, 'elaborates', 0.9)")
+        .bind(a).bind(b).execute(&pool).await.unwrap();
+    clear_outbox(&pool).await;
+    for m in sqlx::migrate!("./migrations").iter() {
+        if m.version == 16 || m.version == 17 {
+            sqlx::raw_sql(&m.sql).execute(&pool).await.unwrap_or_else(|e| panic!("migration {} failed: {}", m.version, e));
+        }
+    }
+    let rows: Vec<_> = outbox(&pool).await.into_iter().filter(|r| r.0 == "memory_links").collect();
+    assert_eq!(rows.len(), 1, "exactly one queued row for the pre-existing link: {:?}", rows);
+    assert_eq!(rows[0].1, "insert");
+    let named: String = sqlx::query_scalar("SELECT sync_id FROM memory_links").fetch_one(&pool).await.unwrap();
+    assert_eq!(rows[0].2, named);
+}
