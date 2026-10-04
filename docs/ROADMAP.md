@@ -1,7 +1,7 @@
 # Zynkbot Development Roadmap
 
-**Last Updated:** August 2026
-**Current Version:** v0.9.5-beta1 (Android + Desktop open beta)
+**Last Updated:** October 2026
+**Current Version:** v0.9.6-beta3 (Android + Desktop open beta)
 
 This roadmap outlines planned features and enhancements. Timelines are estimates and subject to change based on community feedback and development priorities.
 
@@ -232,9 +232,35 @@ This needs to be resolved before Play Store launch. The core tension:
 
 ---
 
-## v1.1 — Parenting Mode + Proton Orchestration (Q4 2026)
+## v1.1 — Elder Mode + Parenting Mode + Proton Orchestration (Q4 2026)
 
-**Focus:** First domain-specific feature expansion. Zynkbot as a family companion — safe AI interactions for children, family file sharing, and a parental review layer.
+**Focus:** The first two modes taken to a production standard. Elder Mode first — cognitive support built on the memory graph that already ships — then Parenting Mode: safe AI interactions for children, family file sharing, and a parental review layer. Proton app orchestration rides along.
+
+### Elder Mode — the first mode to a production standard
+
+**Priority: the first mode built after v1.0.** Elder Mode was originally ordered behind Child Mode on addressable-user-base reasoning. That ordering was wrong, and it is promoted ahead of Parenting Mode for three reasons:
+
+1. **It is cooperative, not adversarial.** Nothing in Elder Mode has to survive an intelligent, motivated user trying to defeat it; Child Mode does. That makes this a UX and prompt-design project on a memory system that already works, rather than a security-enforcement project — a materially smaller and more predictable build.
+2. **The hard part is already built.** Persistent recall, contradiction detection, and an editable record the user owns are exactly what cognitive support needs, and they ship today.
+3. **The project's own testers surfaced it.** Raised directly by the lead beta tester, a retired IT director, around cognitive-support use cases.
+
+**Current state in code:** `ContainmentMode::Elder` is a stub. The enum variant and match arms exist, with one gentle-redirect path gated at 0.85 confidence. It is not exposed in the UI, and there is no prompt layer, no settings surface, and no family-visibility surface. Everything below is unbuilt.
+
+**Scope:**
+
+- **Repetition without friction** — the same question asked five times gets the same patient answer. No "as I mentioned", no narrowing of tone on repeat. Needs a prompt layer that suppresses the companion-voice guidance discouraging repetition.
+- **Memory as external cognition** — recall framed as a record the user owns and can check, not as the assistant knowing better. Answers cite the stored memory and its date, so the user can verify rather than defer.
+- **Gentle contradiction** — contradiction detection already fires; in Elder Mode it asks rather than corrects, and never implies the user was wrong.
+- **Family visibility, elder as principal** — an optional window for a family member over ZynkSync. Consent and revocation belong to the elder, never to the adult child; summary-level by default, and never silent.
+- **Usable with no settings screen** — depends on the Basic/Advanced split and guided key onboarding already listed under v1.0.
+
+**Reliability prerequisites.** These block Elder Mode, not v1.0. Cognitive support raises the cost of three known issues well above their current severity, and each must close before Elder Mode ships to anyone:
+
+- **KI-061** — a timer set hands-free while the phone is asleep is confirmed aloud but never fires. A silent failure after a spoken confirmation is the worst failure this product can hand someone who is relying on it to remember.
+- **KI-057** — a false wake trigger produced a memory out of hallucinated speech. A fabricated entry in the record of someone with memory loss is not cosmetic; nothing from a low-confidence wake path may reach the extractor.
+- **KI-060** — an edited memory reverts after sync. If a correction does not stick, the record cannot be trusted as external memory. Covered by the ZynkSync outbox work.
+
+**Open scoping question — decide before building:** whether Elder Mode addresses medication at all. Recall of what a doctor said, and when a dose was taken, is the most-requested capability and the one closest to regulated territory. The current HIPAA containment mode blocks dosing language outright, which would also block an elder's own recall questions. Whatever the answer, `DISCLAIMER.md`, the README, and the mode's own copy have to agree on it.
 
 **Scope of Child Mode:** Content filtering at the Zynkbot layer — controlling what the AI will discuss, not device-level lockdown. Device-level MDM (factory reset protection, app blocking) is a separate product track requiring Android Enterprise Device Owner provisioning and is out of scope for this release. What Parenting Mode delivers is a private, safe AI companion that a child can trust to grow with them, while giving parents visibility into AI interactions and control over content boundaries.
 
@@ -262,23 +288,9 @@ Zynkbot orchestrates Proton's own official apps via OS-level hand-off (Android i
 - Not Proton-exclusive: same approach works with any calendar/drive app that handles standard intents.
 - Password manager (Proton Pass) integration explicitly out of scope.
 
-### Elder Mode — Reconsider Priority Alongside Parenting Mode
-
-Elder Mode was deprioritized in favor of Child Mode due to a larger addressable user base. Resurfaced via tester feedback (Mike — elderly, retired Linux admin) around Alzheimer's/cognitive-support use cases.
-
-**Why this may deserve higher priority than assumed:** Unlike Child Mode, Elder Mode is cooperative, not adversarial — no requirement to survive an intelligent, motivated user trying to defeat safeguards. Closer to a UX/prompt-design project than a security-enforcement project.
-
-**Design directions to explore with Mike before scoping:**
-- Memory graph as external cognitive support — patient, repeatable answers.
-- Repetition tolerance — same question asked multiple times handled gracefully.
-- Contradiction detection tone — gentle correction framing, distinct from the standard UI.
-- Family visibility with elder-as-principal — consent and control default to the elder user.
-
-**Action:** Talk to Mike directly about what he's picturing before scoping. Decide whether this ships alongside or before Parenting Mode.
-
 ### Notes on Scope
 
-The existing containment modes (HIPAA, Guardian, Sovereign, Child) are proofs of concept demonstrating the safety-filter architecture. They are not production-grade for their respective domains. Parenting Mode is the first mode that will be developed to a production standard, as the first paid offering. The others will follow in subsequent releases as their respective use cases are validated.
+The existing containment modes (HIPAA, Guardian, Sovereign, Child) are proofs of concept demonstrating the safety-filter architecture. They are not production-grade for their respective domains. Elder Mode is the first mode that will be developed to a production standard, with Parenting Mode following; both are paid offerings. The others follow in subsequent releases as their use cases are validated.
 
 ---
 
