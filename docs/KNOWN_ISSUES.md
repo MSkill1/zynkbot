@@ -451,8 +451,8 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
-### KI-081 — Clock skew between devices can decide which key value wins
-**Status:** Open — minor.
+### KI-081 — Clock skew between devices can decide which key value wins (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-03 (migration 0018, b23): every key carries a revision that goes up by one on each local change, starting above the highest this device has seen, so a later save outranks what it followed whatever the clocks say; time and then the value break ties between changes made apart.
 **Affected:** Any two devices whose clocks differ by more than the gap between two saves of the same key.
 **Description:** Keys travel with the time the device saved or first saw them, and the newest wins (step 3 of the outbox rebuild). On 2026-10-01 the phones' clocks ran about a minute ahead of the desktop's, so a value the phones recorded *after* starting up was treated as newer than the desktop's identical one. With identical values nothing changed; with different values the phone's would have won even if the desktop's was saved later by the wall clock.
 **Fix:** compare with a tolerance and prefer the local value inside it, or carry a per-key counter beside the time. Decide after the manual pass; see protocol check 46.

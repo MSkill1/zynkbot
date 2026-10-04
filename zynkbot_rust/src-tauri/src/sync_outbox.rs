@@ -61,6 +61,10 @@ pub struct SyncSecret {
     pub name: String,
     pub value: String,
     pub updated_at: DateTime<Utc>,
+    /// Goes up by one on every local change (0018, KI-081); the higher revision wins,
+    /// time and then the value break ties. Absent from older senders: treated as 0.
+    #[serde(default)]
+    pub revision: i64,
 }
 
 /// A relationship between two memories (memory_links), naming them by sync_id (0016).
@@ -245,11 +249,11 @@ async fn load_messages(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
 async fn load_secrets(pool: &SqlitePool, names: &[String]) -> Result<Vec<SyncSecret>, String> {
     if names.is_empty() { return Ok(Vec::new()); }
     let in_clause = names.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-    let sql = format!("SELECT name, value, updated_at FROM sync_secrets WHERE name IN ({})", in_clause);
+    let sql = format!("SELECT name, value, updated_at, revision FROM sync_secrets WHERE name IN ({})", in_clause);
     let mut q = sqlx::query(&sql);
     for n in names { q = q.bind(n); }
     let rows = q.fetch_all(pool).await.map_err(|e| format!("outbox: read secrets: {}", e))?;
-    Ok(rows.iter().map(|r| SyncSecret { name: r.get("name"), value: r.get("value"), updated_at: r.get("updated_at") }).collect())
+    Ok(rows.iter().map(|r| SyncSecret { name: r.get("name"), value: r.get("value"), updated_at: r.get("updated_at"), revision: r.get("revision") }).collect())
 }
 
 async fn load_links(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<SyncLink>, String> {
@@ -272,11 +276,14 @@ async fn load_links(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<SyncLi
     }).collect())
 }
 
-/// This device changed (or first saw) a key: the row gets the current time, so it wins.
+/// This device changed (or first saw) a key: the row gets the current time and a revision
+/// one above whatever this device last held for it, so it outranks what it followed on
+/// every device, whatever their clocks say (KI-081).
 pub async fn record_secret(pool: &SqlitePool, name: &str, value: &str) -> Result<(), String> {
     sqlx::query(
-        "INSERT INTO sync_secrets (name, value, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        "INSERT INTO sync_secrets (name, value, updated_at, revision) VALUES (?, ?, ?, 1)
+         ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at,
+             revision = sync_secrets.revision + 1")
         .bind(name).bind(value).bind(Utc::now())
         .execute(pool).await.map_err(|e| format!("outbox: record secret: {}", e))?;
     Ok(())
@@ -776,10 +783,13 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
         eprintln!("[ZynkSync] outbox: key '{}' is not propagatable, ignored", sec.name);
         return Ok(false);
     }
-    let ours: Option<(String, DateTime<Utc>)> = sqlx::query_as("SELECT value, updated_at FROM sync_secrets WHERE name = ?")
+    let ours: Option<(String, DateTime<Utc>, i64)> = sqlx::query_as("SELECT value, updated_at, revision FROM sync_secrets WHERE name = ?")
         .bind(&sec.name).fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: read secret: {}", e))?;
-    if let Some((value, at)) = &ours {
-        if *at > sec.updated_at || (*at == sec.updated_at && value == &sec.value) {
+    if let Some((value, at, rev)) = &ours {
+        // Ours stands when it is the higher revision; at equal revisions the later time;
+        // at equal time the greater value, so two devices never flip-flop (KI-081).
+        let theirs_wins = (sec.revision, sec.updated_at, &sec.value) > (*rev, *at, value);
+        if !theirs_wins {
             // Ours stands. If it is the same value, make sure the environment agrees — a
             // row recorded from a key file that was later edited by hand would otherwise
             // leave the two apart. (Also what makes b02 deterministic: both harness peers
@@ -800,9 +810,9 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
         }
     }
     sqlx::query(
-        "INSERT INTO sync_secrets (name, value, updated_at, sync_id) VALUES (?, ?, ?, ?)
-         ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
-        .bind(&sec.name).bind(&sec.value).bind(sec.updated_at).bind(&sec.name)
+        "INSERT INTO sync_secrets (name, value, updated_at, sync_id, revision) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, revision = excluded.revision")
+        .bind(&sec.name).bind(&sec.value).bind(sec.updated_at).bind(&sec.name).bind(sec.revision)
         .execute(&mut **tx).await.map_err(|e| format!("outbox: store secret: {}", e))?;
     if is_backup_key {
         crate::commands::backup::install_pushed_backup_key(&sec.value)?;

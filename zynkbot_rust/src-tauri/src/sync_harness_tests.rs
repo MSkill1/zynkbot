@@ -10,6 +10,10 @@
 //! every bug the first device pass found got a test here first (b16–b22).
 //!
 //! Run: `LD_LIBRARY_PATH=$PWD/lib/vosk cargo test --lib sync_harness -- --nocapture`
+//!
+//! Keys: every peer here shares one process environment, so a key one test applies can be
+//! re-seeded by another test's peer later. Each key test therefore owns one key name
+//! (b02 OPENAI_API_KEY, b20 XAI_API_KEY, b23 MISTRAL_API_KEY) and holds `hold_env()`.
 
 use crate::zynksync::{SyncIdentity, ZynkSyncService};
 use sqlx::sqlite::SqlitePoolOptions;
@@ -794,5 +798,42 @@ fn b22_a_memory_link_travels_and_dies_with_its_memory() {
         let links_left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memory_links").fetch_one(&b.pool).await.unwrap();
         assert_eq!(links_left, 0, "the link outlived its memory on the phone");
         assert_eq!(b.memory_contents().await, vec!["Max is my dog".to_string()]);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 23. A phone whose clock runs ahead recorded a key; the desktop then saves a new value
+//     while its own clock still reads earlier. The desktop's save must win everywhere:
+//     it followed the phone's, whatever the clocks say (KI-081).
+// ---------------------------------------------------------------------------
+#[test]
+fn b23_a_later_save_wins_even_when_the_other_clock_runs_ahead() {
+    let _env = crate::chat_harness_tests::hold_env();
+    let data = EnvDir::new();
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        // The phone's clock is ten minutes ahead: its record carries a future time.
+        let ahead = chrono::Utc::now() + chrono::Duration::minutes(10);
+        sqlx::query("INSERT INTO sync_secrets (name, value, updated_at, revision) VALUES ('MISTRAL_API_KEY', 'mistral-from-phone', ?, 1)")
+            .bind(ahead).execute(&b.pool).await.unwrap();
+        b.sync_with(&a).await;
+        let on_desktop: String = sqlx::query_scalar("SELECT value FROM sync_secrets WHERE name = 'MISTRAL_API_KEY'").fetch_one(&a.pool).await.unwrap();
+        assert_eq!(on_desktop, "mistral-from-phone");
+
+        // The desktop saves a new value "now" — earlier than the phone's time by the wall
+        // clock. As Settings does: the environment first, then the record (the drain
+        // re-records any key whose environment value differs from its row).
+        crate::commands::models::apply_env_key("MISTRAL_API_KEY", "mistral-saved-on-desktop").unwrap();
+        crate::sync_outbox::record_secret(&a.pool, "MISTRAL_API_KEY", "mistral-saved-on-desktop").await.unwrap();
+        a.sync_with(&b).await;
+        b.sync_with(&a).await;
+        for (p, who) in [(&a, "desktop"), (&b, "phone")] {
+            let v: String = sqlx::query_scalar("SELECT value FROM sync_secrets WHERE name = 'MISTRAL_API_KEY'").fetch_one(&p.pool).await.unwrap();
+            assert_eq!(v, "mistral-saved-on-desktop", "{}: the later save lost to a clock that runs ahead", who);
+        }
+        std::env::remove_var("MISTRAL_API_KEY");
+        let _ = data;
     });
 }
