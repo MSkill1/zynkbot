@@ -104,7 +104,7 @@ Pre-built binaries are available for Android, Linux, and Windows — no compilat
 
 **Android:** Download the APK and tap to install. Android will prompt you to allow installation from unknown sources — this is a one-time prompt per device.
 
-Once Zynkbot is on both your phone and desktop, open Settings → ZynkSync on each device and pair them. The new device has everything within a minute; after that, a change on any device reaches the others within a minute whenever they're on the same network, and waits for any that aren't.
+Once Zynkbot is on both your phone and desktop, open Settings → ZynkSync on each device and pair them. The new device has everything within a minute; after that, a change on any device reaches the others within seconds whenever they're on the same network, and waits for any that aren't.
 
 > ⚠️ **Local models are CPU-only in pre-built desktop binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected. Android uses API models only in Phase 1.
 

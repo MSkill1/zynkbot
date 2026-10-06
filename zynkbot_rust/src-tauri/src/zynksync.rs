@@ -32,6 +32,11 @@ use crate::tls::VerifiedDevice;
 use std::net::SocketAddr;
 use tauri::Emitter;
 pub use crate::transport::{DEFAULT_SYNC_PORT, PeerDevice, SyncIdentity, split_host_port};
+
+/// How often the auto-sync loop looks for a local change between timer ticks.
+pub const OUTBOX_POLL_SECS: u64 = 2;
+/// Longest a burst of edits can hold a kicked cycle back.
+pub const OUTBOX_SETTLE_MAX_SECS: u64 = 6;
 use crate::transport::Transport;
 
 
@@ -1150,6 +1155,38 @@ impl ZynkSyncService {
     /// Send goodbye signal to all paired peers (called on clean shutdown)
 
     /// Start automatic synchronization loop
+    /// The outbox's AUTOINCREMENT sequence: rises with every queued change, never
+    /// falls (pruning deletes rows, not the sequence).
+    async fn outbox_sequence(&self) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'sync_outbox'), 0)")
+            .fetch_one(&self.db_pool).await.unwrap_or(0)
+    }
+
+    /// Resolves once the outbox has grown past `since` (polled every `OUTBOX_POLL_SECS`).
+    async fn outbox_changed(&self, since: i64) {
+        loop {
+            tokio::time::sleep(Duration::from_secs(OUTBOX_POLL_SECS)).await;
+            if self.outbox_sequence().await > since {
+                return;
+            }
+        }
+    }
+
+    /// Wait until the outbox has been quiet for one poll, or `OUTBOX_SETTLE_MAX_SECS`
+    /// have passed — so a burst of edits goes in one cycle, not one each.
+    async fn outbox_settle(&self) {
+        let started = std::time::Instant::now();
+        let mut seq = self.outbox_sequence().await;
+        while started.elapsed() < Duration::from_secs(OUTBOX_SETTLE_MAX_SECS) {
+            tokio::time::sleep(Duration::from_secs(OUTBOX_POLL_SECS)).await;
+            let now = self.outbox_sequence().await;
+            if now == seq {
+                return;
+            }
+            seq = now;
+        }
+    }
+
     pub async fn start_auto_sync(self: Arc<Self>) {
         use std::sync::atomic::Ordering;
         {
@@ -1166,9 +1203,26 @@ impl ZynkSyncService {
         // A cycle that outlasts the interval (a long first-contact slice) must not be
         // followed by a burst of catch-up ticks.
         interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_outbox_seq = self.outbox_sequence().await;
 
         loop {
-            interval_timer.tick().await;
+            // Wake on the timer, or within seconds of a local change. A change is a
+            // new outbox row (the triggers write one for every memory, message,
+            // thread, link or key change), seen as a higher AUTOINCREMENT sequence —
+            // pruning cannot move that backwards. Before 2026-10-06 changes waited
+            // for the next tick, so a memory took one to two minutes to reach the
+            // other devices; the old push path felt instant, and users noticed.
+            let kicked = tokio::select! {
+                _ = interval_timer.tick() => false,
+                _ = self.outbox_changed(last_outbox_seq) => true,
+            };
+            if kicked {
+                // Let a burst of edits settle (a few seconds at most), then push the
+                // timer out so the safety cycle does not follow straight after.
+                self.outbox_settle().await;
+                interval_timer.reset();
+            }
+            last_outbox_seq = self.outbox_sequence().await;
 
             // Check if still enabled
             {

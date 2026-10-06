@@ -837,3 +837,30 @@ fn b23_a_later_save_wins_even_when_the_other_clock_runs_ahead() {
         let _ = data;
     });
 }
+
+#[test]
+fn b24_a_change_reaches_the_peer_within_seconds_not_on_the_next_tick() {
+    rt_test(async {
+        // The harness interval is an hour: anything that arrives here arrives
+        // because the loop woke on the change, not on the timer.
+        let a = Peer::spawn("a-kick").await;
+        let b = Peer::spawn("b-kick").await;
+        b.pair_with(&a).await;
+        let a_loop = tokio::spawn(a.svc.clone().start_auto_sync());
+        let b_loop = tokio::spawn(b.svc.clone().start_auto_sync());
+        // The first tick is immediate; let it pass before making the change.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        a.add_memory("the kicked memory").await;
+        let started = std::time::Instant::now();
+        let mut arrived = false;
+        while started.elapsed() < std::time::Duration::from_secs(15) {
+            if b.memory_contents().await.iter().any(|c| c == "the kicked memory") { arrived = true; break; }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        a.svc.stop_auto_sync().await;
+        b.svc.stop_auto_sync().await;
+        a_loop.abort(); b_loop.abort();
+        assert!(arrived, "memory did not reach b within 15 s (timer is 3600 s)");
+        assert!(started.elapsed() < std::time::Duration::from_secs(12), "took {:?}", started.elapsed());
+    });
+}

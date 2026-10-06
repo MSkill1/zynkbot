@@ -54,7 +54,7 @@ A device *is* its TLS certificate and device id; its IP address is only where it
 2. Note the IP address on Device 1 (port 57963)
 3. On Device 2, click **"Add Device"** and enter Device 1's IP
 4. Enter the 6-digit pairing code shown on Device 1
-5. Within a minute the new device has everything; from then on changes arrive within a cycle
+5. Within a minute the new device has everything; from then on a change is sent within seconds of being made (the loop wakes when the outbox grows), with a 60-second cycle as the safety net for devices that were unreachable
 
 ### Implementation
 
@@ -437,7 +437,7 @@ sudo firewall-cmd --reload
 
 ### ZynkSync
 
-- **Sync interval**: 300 seconds / 5 minutes (configurable)
+- **Sync timing**: a change is sent a few seconds after it is made (2-second poll of the outbox, up to 6 seconds to let a burst of edits settle); a 60-second cycle catches anything a device missed
 - **Typical sync time**: Fast on a local network; varies by batch size and hardware
 - **Network bandwidth**: ~10-50KB per memory (includes embeddings)
 
