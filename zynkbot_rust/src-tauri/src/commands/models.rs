@@ -260,16 +260,8 @@ pub async fn set_preferred_backend(backend: String) -> Result<(), String> {
         return Err("backend must not be empty".to_string());
     }
     let env_path = crate::db::get_app_data_dir().join(".env");
-    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let prefix = "ZYNK_MODEL_BACKEND=";
-    let line = format!("{}{}", prefix, backend);
-    match lines.iter_mut().find(|l| l.starts_with(prefix)) {
-        Some(existing) => *existing = line,
-        None => lines.push(line),
-    }
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
+    // Quoted when needed: a bare Windows path made the whole file unreadable (KI-083).
+    crate::env_file::upsert(&env_path, "ZYNK_MODEL_BACKEND", &backend)?;
     std::env::set_var("ZYNK_MODEL_BACKEND", &backend);
     println!("[Backend] Preferred backend set to '{}'", backend);
     Ok(())
@@ -312,15 +304,7 @@ pub const PROPAGATABLE_KEYS: &[&str] = &[
 /// Settings save, the old push route and the outbox receiver, so they cannot drift.
 pub fn apply_env_key(key: &str, value: &str) -> Result<(), String> {
     let env_path = crate::db::get_app_data_dir().join(".env");
-    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let prefix = format!("{}=", key);
-    match lines.iter_mut().find(|l| l.starts_with(&prefix)) {
-        Some(existing) => *existing = format!("{}={}", key, value),
-        None => lines.push(format!("{}={}", key, value)),
-    }
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
+    crate::env_file::upsert(&env_path, key, value)?;
     std::env::set_var(key, value);
     Ok(())
 }
@@ -328,11 +312,7 @@ pub fn apply_env_key(key: &str, value: &str) -> Result<(), String> {
 /// Remove one key from this device's .env and the process environment.
 pub fn remove_env_key(key: &str) -> Result<(), String> {
     let env_path = crate::db::get_app_data_dir().join(".env");
-    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
-    let prefix = format!("{}=", key);
-    let lines: Vec<&str> = content.lines().filter(|l| !l.starts_with(&prefix)).collect();
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
+    crate::env_file::remove(&env_path, key)?;
     std::env::remove_var(key);
     Ok(())
 }

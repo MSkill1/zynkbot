@@ -801,7 +801,7 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
                 } else {
                     let env_path = crate::db::get_app_data_dir().join(".env");
                     let on_disk = std::fs::read_to_string(&env_path).unwrap_or_default();
-                    if !on_disk.lines().any(|l| l == format!("{}={}", sec.name, sec.value)) {
+                    if !on_disk.lines().any(|l| l == crate::env_file::format_line(&sec.name, &sec.value)) {
                         crate::commands::models::apply_env_key(&sec.name, &sec.value)?;
                     }
                 }

@@ -73,6 +73,12 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ## Local Models
 
+### KI-083 — Windows: the settings file was ignored at startup once a local model was selected (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06 (`env_file.rs`). Values that need it are written in quotes, and the file is read line by line so one unreadable line no longer discards the rest. The startup log says how many settings loaded and names any line it could not read.
+**Affected:** Windows builds up to `649f597`. Linux and Android were never hit: their model paths contain no backslashes.
+**Description:** Choosing a local model stores its path as `ZYNK_MODEL_BACKEND=C:\Users\...\model.gguf`, the first line of `.env`. The `dotenv` crate reads a backslash as an escape, fails on `\U`, and stops at the first bad line, so every API key below it was never loaded into the process. The model menu showed only the local model, Settings → API Keys still showed the keys as set (it reads the file), and a key that arrived from another device worked until the next restart because it is also applied to the running process directly. Found 2026-10-06 on the laptop during the sync test pass, after the keys had demonstrably synced.
+**Workaround on an old build:** quote the path in `%LOCALAPPDATA%\zynkbot\.env` with single quotes and restart the app.
+
 ### KI-007 — Uncensored and fine-tuned models may produce lower-quality memory extraction
 **Status:** Open / by design  
 **Affected:** Uncensored fine-tunes (confirmed: Llama 3.1 8B Lexi Uncensored V2)  

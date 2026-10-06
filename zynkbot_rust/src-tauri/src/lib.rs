@@ -14,7 +14,8 @@ macro_rules! eprintln {
 }
 
 // Module declarations
-pub mod app_log;            // In-memory log tail for bug reports
+pub mod app_log;            // In-memory log tail for bug reports, and the on-disk log
+pub mod env_file;           // The .env settings file: quoting, tolerant loading (KI-083)
 #[cfg(test)]
 mod sync_harness_tests; // two-peer ZynkSync harness (docs/TESTING.md)
 #[cfg(test)]
@@ -2359,7 +2360,7 @@ pub fn run() {
             let data_dir_env = crate::db::get_app_data_dir().join(".env");
             if data_dir_env.exists() {
                 println!("[Dotenv] Loading .env from: {}", data_dir_env.display());
-                dotenv::from_path(&data_dir_env).ok();
+                load_env_file(&data_dir_env);
             } else {
                 // Dev mode fallbacks
                 let env_paths = [
@@ -2371,7 +2372,7 @@ pub fn run() {
                 for path in &env_paths {
                     if std::path::Path::new(path).exists() {
                         println!("[Dotenv] Loading .env from: {}", path);
-                        dotenv::from_path(path).ok();
+                        load_env_file(std::path::Path::new(path));
                         break;
                     }
                 }
@@ -2381,7 +2382,7 @@ pub fn run() {
                     let env_file = current_dir.join(".env");
                     if env_file.exists() {
                         println!("[Dotenv] Found .env at: {:?}", env_file);
-                        dotenv::from_path(env_file).ok();
+                        load_env_file(&env_file);
                         break;
                     }
                     if !current_dir.pop() { break; }
@@ -2719,4 +2720,15 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Read a settings file into the process environment, line by line. One line the
+/// loader cannot read is reported and skipped; the rest still load (KI-083: the
+/// `dotenv` crate stopped at the first bad line, which on Windows was line one).
+fn load_env_file(path: &std::path::Path) {
+    match crate::env_file::load(path) {
+        Ok((n, skipped)) if skipped.is_empty() => println!("[Dotenv] {} setting(s) loaded", n),
+        Ok((n, skipped)) => println!("[Dotenv] {} setting(s) loaded; could not read line(s) {:?} of {}", n, skipped, path.display()),
+        Err(e) => println!("[Dotenv] Could not read {}: {}", path.display(), e),
+    }
 }

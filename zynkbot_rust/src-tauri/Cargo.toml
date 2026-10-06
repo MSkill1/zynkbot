@@ -44,7 +44,6 @@ reqwest = { version = "0.12", features = ["json", "blocking", "stream", "rustls-
 futures = "0.3"  # Stream processing for SSE token streaming
 
 # Environment variable loading
-dotenv = "0.15"
 
 # Async runtime (needed for reqwest)
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
