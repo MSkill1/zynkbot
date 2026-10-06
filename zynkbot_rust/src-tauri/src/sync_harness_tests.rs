@@ -899,3 +899,69 @@ fn b25_a_thread_started_during_a_first_contact_still_arrives() {
         assert_eq!(contents.iter().filter(|c| c.starts_with("old memory")).count(), cap + 20);
     });
 }
+
+// ---------------------------------------------------------------------------
+// 26. A thread deleted on one device while another still has it open stays deleted:
+//     a reply saved into it is refused, the thread is not recreated, and a stale copy
+//     from a peer is ignored (Matt, D13, 2026-10-06).
+// ---------------------------------------------------------------------------
+#[test]
+fn b26_a_deleted_thread_cannot_be_revived_by_a_late_reply_or_a_stale_copy() {
+    rt_test(async {
+        let a = Peer::spawn("laptop").await;
+        let b = Peer::spawn("pixel").await;
+        b.pair_with(&a).await;
+        let uid = a.user_id();
+        crate::conversation_history::log_exchange(&a.pool, "thread-26", &uid, "plan a trip", "sure", "anthropic", "guardian", true, "typed").await.unwrap();
+        a.sync_with(&b).await;
+        assert_eq!(thread_counts(&b, "thread-26").await, (1, 2));
+
+        // b deletes the thread; a learns of it on the next sync.
+        assert!(crate::conversation_history::delete_session(&b.pool, "thread-26", &b.user_id()).await.unwrap());
+        assert_eq!(thread_counts(&b, "thread-26").await, (0, 0), "messages go with the thread");
+        b.sync_with(&a).await;
+        assert_eq!(thread_counts(&a, "thread-26").await, (0, 0), "the deletion reached a");
+
+        // a still had it on screen and saves a reply into it: refused, nothing recreated.
+        let late = crate::conversation_history::log_exchange(&a.pool, "thread-26", &uid, "one more thing", "noted", "anthropic", "guardian", true, "typed").await;
+        assert!(late.is_err(), "saving into a deleted thread must be refused");
+        assert_eq!(thread_counts(&a, "thread-26").await, (0, 0));
+        a.sync_with(&b).await;
+        assert_eq!(thread_counts(&b, "thread-26").await, (0, 0), "nothing came back to b");
+
+        // A stale copy arriving from a peer that never heard of the deletion is ignored.
+        let c = Peer::spawn("oneplus").await;
+        c.pair_with(&a).await;
+        crate::conversation_history::log_exchange(&c.pool, "thread-26", &c.user_id(), "plan a trip", "sure", "anthropic", "guardian", true, "typed").await.unwrap();
+        c.sync_with(&a).await;
+        assert_eq!(thread_counts(&a, "thread-26").await, (0, 0), "a stale copy must not revive a deleted thread");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 27. A first contact runs slice after slice within one cycle, not one slice per
+//     tick (3,700 rows took 26 minutes on 2026-10-06). The harness timer is an hour.
+// ---------------------------------------------------------------------------
+#[test]
+fn b27_a_first_contact_finishes_within_one_cycle() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let cap = crate::sync_outbox::OUTBOX_BATCH_ROWS as usize;
+        sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&a.pool).await.unwrap();
+        for i in 0..(2 * cap + 10) { a.add_memory(&format!("old memory {}", i)).await; }
+        sqlx::query("DELETE FROM sync_suppress").execute(&a.pool).await.unwrap();
+
+        let a_loop = tokio::spawn(a.svc.clone().start_auto_sync());
+        let started = std::time::Instant::now();
+        let mut done = false;
+        while started.elapsed() < std::time::Duration::from_secs(20) {
+            if b.memory_contents().await.iter().filter(|c| c.starts_with("old memory")).count() == 2 * cap + 10 { done = true; break; }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        a.svc.stop_auto_sync().await;
+        a_loop.abort();
+        assert!(done, "three slices did not all arrive within 20 s; b has {}", b.memory_contents().await.len());
+    });
+}

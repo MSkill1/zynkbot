@@ -444,6 +444,27 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A thread deleted on another device closes here if it is the one on screen, so
+  // nothing is typed into a ghost (the backend also refuses to save into it). The
+  // sidebar list refreshes on the same event (ConversationHistoryPanel).
+  useEffect(() => {
+    let unlisten = null;
+    (async () => {
+      unlisten = await listen('zynksync-threads-changed', (event) => {
+        const deleted = event?.payload?.deleted || [];
+        if (deleted.includes(sessionIdRef.current)) {
+          const fresh = uuidv4();
+          setSessionId(fresh);
+          try { sessionStorage.setItem('zynkbot_session_id', fresh); } catch (_) {}
+          setMessages([]);
+          notify('This conversation was deleted on another device, so it was closed here.', 6000);
+        }
+      });
+    })();
+    return () => { if (unlisten) unlisten(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Re-fetch when API keys arrive from a paired device (the backend applies them
   // and emits this per key). The model list is derived from which providers have
   // keys, so without this the dropdown stayed empty until an app restart even

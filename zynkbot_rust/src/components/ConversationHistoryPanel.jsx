@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { confirmDialog } from '../utils/confirmDialog';
 
 // Groups sessions by relative date for display
@@ -218,7 +219,9 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     }
   };
 
-  // Rename: the title turns into a text box in place; Enter saves, Escape cancels.
+  // Rename: the title turns into a text box in place; Enter, or the pencil again, saves;
+  // Escape cancels. (Tapping the pencil a second time used to restart the edit with the
+  // old title — Matt, OnePlus, 2026-10-06.)
   const startRename = (e, session) => {
     e.stopPropagation();
     setRenaming({ id: session.session_id, value: session.title || "" });
@@ -233,6 +236,14 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
       console.error("[History] rename failed:", err);
     }
   };
+
+  // Threads changed by a sync (a deletion on another device, a renamed or new thread)
+  // show up without reopening the panel.
+  useEffect(() => {
+    let unlisten = null;
+    (async () => { unlisten = await listen("zynksync-threads-changed", () => { loadSessions(); }); })();
+    return () => { if (unlisten) unlisten(); };
+  }, [loadSessions]);
 
   const groups = groupSessions(sessions, currentSessionId);
 
@@ -411,8 +422,9 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                       </div>
                     </div>
                     <button
-                      onClick={(e) => startRename(e, session)}
-                      title="Rename"
+                      onPointerDown={(e) => { if (renaming?.id === session.session_id) e.preventDefault(); }}
+                      onClick={(e) => { e.stopPropagation(); if (renaming?.id === session.session_id) { commitRename(); } else { startRename(e, session); } }}
+                      title={renaming?.id === session.session_id ? "Save name" : "Rename"}
                       style={{ background: "none", border: "none", color: "#f8f8f2", cursor: "pointer", fontSize: "1.05rem", padding: "0 0 0 8px", flexShrink: 0 }}
                     >
                       ✏️

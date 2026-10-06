@@ -37,6 +37,9 @@ pub use crate::transport::{DEFAULT_SYNC_PORT, PeerDevice, SyncIdentity, split_ho
 pub const OUTBOX_POLL_SECS: u64 = 2;
 /// Longest a burst of edits can hold a kicked cycle back.
 pub const OUTBOX_SETTLE_MAX_SECS: u64 = 6;
+/// Pause between the slices of a first contact, and the most slices one cycle runs.
+pub const FULL_SEND_SLICE_PAUSE_SECS: u64 = 1;
+pub const FULL_SEND_MAX_ROUNDS: usize = 200;
 use crate::transport::Transport;
 
 
@@ -105,6 +108,9 @@ pub struct SyncResult {
     pub conflicts_resolved: usize,
     pub success: bool,
     pub error: Option<String>,
+    /// A first contact (or catch-up) in either direction has more slices to send.
+    #[serde(default)]
+    pub more_to_send: bool,
 }
 
 /// Conversation session payload for cross-device sync
@@ -996,6 +1002,7 @@ impl ZynkSyncService {
                 peer_device_id: peer.device_id, peer_device_name: peer.device_name,
                 memories_sent: 0, memories_received: 0, conversations_sent: 0, conflicts_resolved: 0,
                 success: false, error: Some("skipped: peer silent since it last refused a connection".into()),
+                more_to_send: false,
             });
         }
         let pulled = self.pull_outbox_from(&peer.device_id).await?;
@@ -1008,6 +1015,7 @@ impl ZynkSyncService {
                 peer.device_name, pushed.entries_sent, pushed.batches, pulled.entries_sent, pulled.batches);
         }
         Ok(SyncResult {
+            more_to_send: pushed.more || pulled.more,
             peer_device_id: peer.device_id,
             peer_device_name: peer.device_name,
             memories_sent: pushed.entries_sent,
@@ -1257,7 +1265,23 @@ impl ZynkSyncService {
 
             // Bidirectional sync with each peer (active device wins)
             for peer in peers {
-                match self.sync_bidirectional(&peer.device_id, &user_id).await {
+                // A first contact goes slice after slice, a second apart, instead of one
+                // slice per tick (KI-068 keeps each request at 300 rows; the pacing was
+                // never the point). Capped so a peer that always says "more" cannot pin
+                // the loop on itself.
+                let mut rounds = 0usize;
+                let result = loop {
+                    let r = self.sync_bidirectional(&peer.device_id, &user_id).await;
+                    match &r {
+                        Ok(res) if res.more_to_send && rounds < FULL_SEND_MAX_ROUNDS => {
+                            rounds += 1;
+                            tokio::time::sleep(Duration::from_secs(FULL_SEND_SLICE_PAUSE_SECS)).await;
+                            continue;
+                        }
+                        _ => break r,
+                    }
+                };
+                match result {
                     Ok(result) => {
                         if result.memories_sent > 0 || result.memories_received > 0 {
                             println!("[ZynkSync] ✓ Auto-synced with {} - sent: {}, received: {}",
@@ -2433,7 +2457,8 @@ async fn handle_pull_outbox(
     Ok(Json(serde_json::json!({
         "batches": outcome.batches,
         "entries_sent": outcome.entries_sent,
-        "applied": outcome.applied_by_peer
+        "applied": outcome.applied_by_peer,
+        "more": outcome.more
     })))
 }
 

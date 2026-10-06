@@ -314,6 +314,7 @@ pub async fn broadcast_sync_to_all_peers(user_id: String) -> Result<Vec<SyncResu
             Err(e) => {
                 println!("[ZynkSync] ✗ Failed to sync with {}: {}", peer.device_name, e);
                 results.push(SyncResult {
+                    more_to_send: false,
                     peer_device_id: peer.device_id,
                     peer_device_name: peer.device_name,
                     memories_sent: 0,

@@ -464,6 +464,15 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-085 — A thread deleted on one device came back if another device still had it open (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06 (migration 0019, b26). Threads now have tombstones like memories: the local delete and an incoming delete both record the thread in `deleted_sessions`; an incoming thread or message for a tombstoned thread is ignored; saving a reply into one is refused. The screen is told which threads a sync deleted (`zynksync-threads-changed`): an open thread closes with the notice "This conversation was deleted on another device, so it was closed here", and the History list refreshes by itself.
+**Affected:** Every build up to `1ea4453`.
+**Description:** Raised by Matt during test D13: a thread deleted on the Pixel while open on the laptop. The deletion did reach the laptop's database, but the screen was never told, and saving the next reply recreated the thread row (the exchange logger creates the thread if it is missing), which synced back out with only the new messages on every device.
+
+### KI-086 — History: tapping the rename pencil a second time restarted the edit instead of saving (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06. While a title is being edited, the pencil saves (its hint reads "Save name"); Enter still saves and Escape cancels.
+**Description:** On a phone, tapping the pencil again blurred the text box (which saved) and then reopened the edit with the stale old title, so the name looked like it had reverted until a third tap and Enter. Reported by Matt on the OnePlus during test D14.
+
 ### KI-084 — Rows written during a first-contact full send could be skipped for good (fixed)
 **Status:** Fixed on `sync-rebuild` 2026-10-06 (b25). The full send now remembers where the queue stood when it began and sets the peer's cursor there, so the queue carries everything written during the send.
 **Affected:** Builds `509f815` through `16e16b9`, any device pair during their first contact (or a peer so far behind that it gets the live tables), which on real data takes many minutes.

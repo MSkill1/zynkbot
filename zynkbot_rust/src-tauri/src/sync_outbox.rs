@@ -138,6 +138,10 @@ pub struct DrainOutcome {
     /// and has sent no heartbeat). Not an error: reporting it as one re-stamped the
     /// "recently refused" clock and the skip never expired (2026-10-02).
     pub skipped: bool,
+    /// A full send (first contact, or a peer behind the queue) has more slices to go.
+    /// The auto-sync loop calls again after a short pause instead of waiting for the
+    /// next tick: 3,700 rows took 13 cycles, 26 minutes, on 2026-10-06.
+    pub more: bool,
 }
 
 pub fn content_hash(content: &str) -> String {
@@ -593,6 +597,18 @@ pub async fn apply_outbox_batch_from(pool: &SqlitePool, local_user_id: &str, sen
             }
         }
     }
+    // Tell the screen which threads changed and which were deleted, so an open thread
+    // that was deleted on another device closes instead of being written into (D13).
+    let deleted_threads: Vec<&str> = batch.deletes.iter()
+        .filter(|d| d.table_name == "conversation_sessions").map(|d| d.row_sync_id.as_str()).collect();
+    if !deleted_threads.is_empty() || !touched_sessions.is_empty() {
+        if let Ok(guard) = crate::APP_HANDLE.lock() {
+            if let Some(app) = guard.as_ref() {
+                let _ = app.emit("zynksync-threads-changed",
+                    serde_json::json!({ "deleted": deleted_threads, "touched": touched_sessions }));
+            }
+        }
+    }
     // If the deletions emptied the device, drop the Einstein demo persona too, as Clear
     // All does; the old sync path did this and the model otherwise kept addressing the
     // user as "Albert" with no demo memories left (KI-048 follow-up, 2026-09-12).
@@ -703,6 +719,9 @@ async fn apply_memory(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, m: 
 /// A session's sync_id is its session_id, so the upsert key is the same either way.
 async fn apply_session(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, s: &SyncConversationSession) -> Result<bool, String> {
     let sync_id = s.sync_id.clone().unwrap_or_else(|| s.session_id.clone());
+    if session_is_deleted(tx, &s.session_id).await? {
+        return Ok(false); // deleted here (or told of the deletion); a stale copy must not revive it
+    }
     sqlx::query(
         "INSERT INTO conversation_sessions
              (session_id, user_id, title, started_at, last_active, message_count,
@@ -732,6 +751,9 @@ async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, ms
     let Some(sync_id) = msg.sync_id.as_deref() else {
         return Err("outbox: message without a sync_id".into());
     };
+    if session_is_deleted(tx, &msg.session_id).await? {
+        return Ok(false); // its thread was deleted; the message must not recreate anything
+    }
     let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM conversation_messages WHERE sync_id = ?")
         .bind(sync_id).fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: find message: {}", e))?;
     let existing = match existing {
@@ -881,6 +903,13 @@ async fn apply_link(tx: &mut Transaction<'_, Sqlite>, link: &SyncLink) -> Result
 
 /// Forget a row by sync_id. A memory's tombstone hash is recorded as well, so the old
 /// sync paths (until step 5) and a stale copy arriving later both respect the deletion.
+/// Has this thread been deleted here, or has a deletion of it been applied here?
+async fn session_is_deleted(tx: &mut Transaction<'_, Sqlite>, session_id: &str) -> Result<bool, String> {
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deleted_sessions WHERE session_id = ?")
+        .bind(session_id).fetch_one(&mut **tx).await.map_err(|e| format!("outbox: tombstone check: {}", e))?;
+    Ok(n > 0)
+}
+
 async fn apply_delete(tx: &mut Transaction<'_, Sqlite>, d: &SyncTombstone) -> Result<bool, String> {
     let affected = match d.table_name.as_str() {
         "memories" => {
@@ -892,9 +921,17 @@ async fn apply_delete(tx: &mut Transaction<'_, Sqlite>, d: &SyncTombstone) -> Re
                 .bind(&d.row_sync_id).execute(&mut **tx).await
                 .map_err(|e| format!("outbox: delete memory: {}", e))?.rows_affected()
         }
-        "conversation_sessions" => sqlx::query("DELETE FROM conversation_sessions WHERE sync_id = ?")
-            .bind(&d.row_sync_id).execute(&mut **tx).await
-            .map_err(|e| format!("outbox: delete session: {}", e))?.rows_affected(),
+        "conversation_sessions" => {
+            // A thread's sync_id is its session_id (0013). Tombstone first, so a reply
+            // saved into it on this device, or a stale copy from a peer, cannot bring it back.
+            sqlx::query("INSERT OR IGNORE INTO deleted_sessions (session_id) VALUES (?)")
+                .bind(&d.row_sync_id).execute(&mut **tx).await.map_err(|e| format!("outbox: record session tombstone: {}", e))?;
+            sqlx::query("DELETE FROM conversation_messages WHERE session_id = ?")
+                .bind(&d.row_sync_id).execute(&mut **tx).await.map_err(|e| format!("outbox: delete thread messages: {}", e))?;
+            sqlx::query("DELETE FROM conversation_sessions WHERE sync_id = ?")
+                .bind(&d.row_sync_id).execute(&mut **tx).await
+                .map_err(|e| format!("outbox: delete session: {}", e))?.rows_affected()
+        }
         "conversation_messages" => sqlx::query("DELETE FROM conversation_messages WHERE sync_id = ?")
             .bind(&d.row_sync_id).execute(&mut **tx).await
             .map_err(|e| format!("outbox: delete message: {}", e))?.rows_affected(),
@@ -976,7 +1013,8 @@ impl ZynkSyncService {
             } else {
                 FULL_SEND_OFFSET.lock().unwrap().insert(key, (next, through));
                 prune_outbox(&self.db_pool, &self.paired_peer_ids().await).await?;
-                return Ok(outcome); // the rest of the live tables goes next cycle
+                outcome.more = true;
+                return Ok(outcome); // the rest of the live tables goes on the next call, a second later
             }
         }
 
@@ -1044,6 +1082,7 @@ impl ZynkSyncService {
             entries_sent: v["entries_sent"].as_u64().unwrap_or(0) as usize,
             applied_by_peer: v["applied"].as_u64().unwrap_or(0) as usize,
             skipped: false,
+            more: v["more"].as_bool().unwrap_or(false),
         })
     }
 }

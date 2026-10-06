@@ -165,6 +165,15 @@ pub async fn log_exchange(
     name_thread: bool,
     input_mode: &str,
 ) -> Result<(), sqlx::Error> {
+    // A thread deleted on this or another device stays deleted: saving into it would
+    // recreate the row and sync the ghost back out (D13, 2026-10-06). The screen is
+    // told to close such a thread; this covers the reply already in flight.
+    let deleted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deleted_sessions WHERE session_id = ?")
+        .bind(session_id).fetch_one(pool).await?;
+    if deleted > 0 {
+        return Err(sqlx::Error::Protocol(format!(
+            "conversation {} was deleted (here or on another device); the exchange was not saved — start a new conversation", session_id)));
+    }
     // Auto-title: first 60 chars of the first message that is allowed to name the
     // thread (callers pass name_thread = false for turns that must not — fragments
     // and NO_QUERY turns never reach here; since 2026-09-08 real hands-free
@@ -365,6 +374,14 @@ pub async fn delete_session(
     .bind(user_id)
     .execute(pool)
     .await?;
+    if result.rows_affected() > 0 {
+        // Tombstone (0019): a reply saved into this thread later, here or on a device
+        // that still had it open, must not recreate it (D13, 2026-10-06).
+        sqlx::query("INSERT OR IGNORE INTO deleted_sessions (session_id) VALUES (?)")
+            .bind(session_id).execute(pool).await?;
+        sqlx::query("DELETE FROM conversation_messages WHERE session_id = ?")
+            .bind(session_id).execute(pool).await?;
+    }
 
     Ok(result.rows_affected() > 0)
 }
