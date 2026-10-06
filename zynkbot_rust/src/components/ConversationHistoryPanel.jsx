@@ -79,6 +79,15 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     }
   }, [userId, isHipaaMode]);
 
+  // Threads changed by a sync (a deletion on another device, a renamed or new thread)
+  // show up without reopening the panel.
+  useEffect(() => {
+    let unlisten = null;
+    (async () => { unlisten = await listen("zynksync-threads-changed", () => { loadSessions(); }); })();
+    return () => { if (unlisten) unlisten(); };
+  }, [loadSessions]);
+
+
   const runSearch = useCallback(async (query, from, to) => {
     if (!userId) return;
     if (!query.trim() && !from && !to) {
@@ -236,14 +245,6 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
       console.error("[History] rename failed:", err);
     }
   };
-
-  // Threads changed by a sync (a deletion on another device, a renamed or new thread)
-  // show up without reopening the panel.
-  useEffect(() => {
-    let unlisten = null;
-    (async () => { unlisten = await listen("zynksync-threads-changed", () => { loadSessions(); }); })();
-    return () => { if (unlisten) unlisten(); };
-  }, [loadSessions]);
 
   const groups = groupSessions(sessions, currentSessionId);
 
