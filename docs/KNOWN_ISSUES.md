@@ -464,6 +464,12 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-084 — Rows written during a first-contact full send could be skipped for good (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06 (b25). The full send now remembers where the queue stood when it began and sets the peer's cursor there, so the queue carries everything written during the send.
+**Affected:** Builds `509f815` through `16e16b9`, any device pair during their first contact (or a peer so far behind that it gets the live tables), which on real data takes many minutes.
+**Description:** A first contact sends the live tables in 300-row slices, one per cycle, walking sessions, memories, messages and links in turn. A row written while the send is running lands behind the offset if its section has already been passed, so the slices never reach it; and the cursor set at the end pointed to the queue's end *at that moment*, so the queue path skipped its row too. Found in test D11 on 2026-10-06: two messages written on the laptop at 14:26, during a 26-minute first contact with the OnePlus, were missing on the OnePlus while the six written after the send had arrived.
+**Fix:** `FULL_SEND_OFFSET` keeps `(offset, through)`; `through` is taken at the first slice and reused for the cursor. Harness b25 writes a thread between the first and second slice and checks it arrives; it fails on the previous code.
+
 ### KI-081 — Clock skew between devices can decide which key value wins (fixed)
 **Status:** Fixed on `sync-rebuild` 2026-10-03 (migration 0018, b23): every key carries a revision that goes up by one on each local change, starting above the highest this device has seen, so a later save outranks what it followed whatever the clocks say; time and then the value break ties between changes made apart.
 **Affected:** Any two devices whose clocks differ by more than the gap between two saves of the same key.

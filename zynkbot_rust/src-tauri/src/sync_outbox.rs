@@ -434,9 +434,18 @@ pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64, o
     Ok((batch, total, covered))
 }
 
-/// How far a full send to each (this device, peer) has got, in rows. In memory only: an
-/// app restart starts the full send over, which the receiver's upsert makes harmless.
-static FULL_SEND_OFFSET: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, String), usize>>> =
+/// How far a full send to each (this device, peer) has got, in rows, and where the
+/// queue stood when it began. In memory only: an app restart starts the full send
+/// over, which the receiver's upsert makes harmless.
+///
+/// The queue position is fixed at the first slice on purpose. The slices walk the
+/// live tables section by section (sessions, memories, messages, links, each by id),
+/// so a row written while the send is running lands behind the offset if its section
+/// has already been passed, and the slices never reach it. The cursor set at the end
+/// must therefore point to the queue's end *at the start*, so the queue path delivers
+/// everything written during the send. Taking the end position instead skipped two
+/// messages the laptop wrote during a 26-minute first contact (2026-10-06, D11).
+static FULL_SEND_OFFSET: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, String), (usize, i64)>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 // ============================================================================ cursor
@@ -950,8 +959,8 @@ impl ZynkSyncService {
             // Capped like every other batch, one slice per sync cycle (KI-068); the
             // cursor is written only after the last slice, so a restart starts over.
             let key = (self.identity().device_id, peer_device_id.to_string());
-            let offset = FULL_SEND_OFFSET.lock().unwrap().get(&key).copied().unwrap_or(0);
-            let through = newest.unwrap_or(0);
+            let (offset, through) = FULL_SEND_OFFSET.lock().unwrap().get(&key).copied()
+                .unwrap_or((0, newest.unwrap_or(0)));
             let (batch, total, covered) = build_full_resend(&self.db_pool, user_id, through, offset, OUTBOX_BATCH_ROWS as usize).await?;
             println!("[ZynkSync] outbox: {} to {} — live tables rows {}..{} of {}{} (queue {:?}..{:?})",
                 if cursor.is_none() { "first contact" } else { "behind the queue" }, peer.device_name,
@@ -965,7 +974,7 @@ impl ZynkSyncService {
                 FULL_SEND_OFFSET.lock().unwrap().remove(&key);
                 set_cursor(&self.db_pool, peer_device_id, through).await?;
             } else {
-                FULL_SEND_OFFSET.lock().unwrap().insert(key, next);
+                FULL_SEND_OFFSET.lock().unwrap().insert(key, (next, through));
                 prune_outbox(&self.db_pool, &self.paired_peer_ids().await).await?;
                 return Ok(outcome); // the rest of the live tables goes next cycle
             }

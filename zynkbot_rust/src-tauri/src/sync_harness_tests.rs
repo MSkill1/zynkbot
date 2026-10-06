@@ -864,3 +864,38 @@ fn b24_a_change_reaches_the_peer_within_seconds_not_on_the_next_tick() {
         assert!(started.elapsed() < std::time::Duration::from_secs(12), "took {:?}", started.elapsed());
     });
 }
+
+// ---------------------------------------------------------------------------
+// 25. A row written while a first contact is still slicing the live tables must
+//     still arrive. The slices walk sessions first, so a thread started after the
+//     first slice is behind the offset and only the queue can carry it — and the
+//     queue only does if the cursor set at the end points to where the queue stood
+//     when the send began. Two laptop messages fell in this hole on 2026-10-06.
+// ---------------------------------------------------------------------------
+#[test]
+fn b25_a_thread_started_during_a_first_contact_still_arrives() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let cap = crate::sync_outbox::OUTBOX_BATCH_ROWS as usize;
+        // Pre-outbox memories: more than one slice, so the first contact spans two syncs.
+        sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&a.pool).await.unwrap();
+        for i in 0..(cap + 20) { a.add_memory(&format!("old memory {}", i)).await; }
+        sqlx::query("DELETE FROM sync_suppress").execute(&a.pool).await.unwrap();
+
+        a.sync_with(&b).await; // slice 1: all sessions (none) + the first `cap` memories
+        // Written during the send: a thread (sessions were already passed) and a memory.
+        let uid = a.user_id();
+        crate::conversation_history::log_exchange(&a.pool, "thread-25", &uid, "written mid-send", "noted", "anthropic", "guardian", true, "typed").await.unwrap();
+        a.add_memory("memory written mid-send").await;
+        a.sync_with(&b).await; // slice 2: the rest of the live tables; the full send ends here
+        a.sync_with(&b).await; // the queue takes over: must carry what was written during the send
+
+        let (sessions, messages) = thread_counts(&b, "thread-25").await;
+        assert_eq!((sessions, messages), (1, 2), "the thread started during the first contact never arrived");
+        let contents = b.memory_contents().await;
+        assert!(contents.iter().any(|c| c == "memory written mid-send"), "the memory written during the first contact never arrived");
+        assert_eq!(contents.iter().filter(|c| c.starts_with("old memory")).count(), cap + 20);
+    });
+}
