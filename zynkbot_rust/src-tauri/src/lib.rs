@@ -2349,6 +2349,7 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            crate::app_log::announce();
             // Ensure model directories exist in user data dir (for installed binary)
             let models_dir = crate::db::get_app_data_dir();
             std::fs::create_dir_all(models_dir.join("models/system")).ok();

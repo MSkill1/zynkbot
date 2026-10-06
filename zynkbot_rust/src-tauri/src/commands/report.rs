@@ -19,9 +19,15 @@ pub async fn build_problem_report(
     let version = app.package_info().version.to_string();
     let git = option_env!("ZYNKBOT_GIT_HASH").unwrap_or("unknown");
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
-    let n = log_lines.unwrap_or(300).min(800);
+    let n = log_lines.unwrap_or(300).min(2000);
     let include_conversation = thread.as_ref().map(|t| !t.trim().is_empty()).unwrap_or(false);
-    let logs: Vec<String> = crate::app_log::recent(n)
+    // The on-disk log (KI-082) reaches back days; the ring buffer only holds the
+    // last 800 lines and is the fallback when the file could not be opened.
+    let (lines, source) = match crate::app_log::recent_from_disk(n) {
+        Some(l) if !l.is_empty() => (l, "from the on-disk log"),
+        _ => (crate::app_log::recent(n), "from memory; the on-disk log was not readable"),
+    };
+    let logs: Vec<String> = lines
         .into_iter()
         .map(|l| crate::app_log::redact(&l))
         // Without the conversation box ticked, the log tail must not carry the
@@ -39,7 +45,8 @@ pub async fn build_problem_report(
     if !backend.trim().is_empty() {
         out.push_str(&format!("- Model backend: {}\n", backend.trim()));
     }
-    out.push_str(&format!("- Reported: {now}\n\n"));
+    out.push_str(&format!("- Reported: {now}\n"));
+    out.push_str(&format!("- Full log on the device: {}\n\n", crate::app_log::file_path().display()));
     out.push_str("### What happened\n\n");
     out.push_str(if description.trim().is_empty() { "(not described)" } else { description.trim() });
     out.push_str("\n\n");
@@ -48,7 +55,7 @@ pub async fn build_problem_report(
         out.push_str(&crate::app_log::redact(t.trim()));
         out.push_str("\n```\n\n");
     }
-    out.push_str(&format!("### Last {} log lines ({})\n\n```\n", logs.len(), if include_conversation { "credentials masked" } else { "credentials masked; message text and memory titles omitted" }));
+    out.push_str(&format!("### Last {} log lines ({}, {})\n\n```\n", logs.len(), source, if include_conversation { "credentials masked" } else { "credentials masked; message text and memory titles omitted" }));
     out.push_str(&logs.join("\n"));
     out.push_str("\n```\n");
     Ok(out)

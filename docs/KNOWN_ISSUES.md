@@ -393,6 +393,13 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Debug Logging
 
+### KI-082 — Nothing was logged to disk; a failure left no trace once the report buffer cycled (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06. Every line the app prints is also appended to `<app data dir>/logs/zynkbot.log` on every platform, rotating at 5 MB with three generations kept (`zynkbot.log`, `.1`, `.2`). The app names the file at startup (`[Log] On-disk log: …`) and every problem report names it too.
+**Where the file is:** Linux `~/.local/share/zynkbot/logs/zynkbot.log`; Windows `%LOCALAPPDATA%\zynkbot\logs\zynkbot.log`; Android `/data/data/ai.containai.zynkbot/files/zynkbot/logs/zynkbot.log` (readable with `run-as` on a debug build; on a release build only "Report a problem" reaches it).
+**Affected:** Every build up to `fb3fc15`, all platforms.
+**Description:** On 2026-10-05 a `Remember:` typed on the Windows laptop with the local model stored nothing and left no extraction status. By the time anyone looked, the only record, the 800-line in-memory buffer behind "Report a problem" (`app_log.rs`), had been cycled through by sync messages, and the `Zynkbot.log` under `%LOCALAPPDATA%\ai.containai.zynkbot\logs` had been empty since 2026-09-22: that file belongs to `tauri-plugin-log`, which is only enabled in debug builds and only receives `log::` records, which the app never emits (everything is `println!`). The failure could not be investigated and did not reproduce.
+**Privacy:** the file holds the same lines the terminal or logcat would, which includes what the user typed. Redaction and the user-text scrub apply to reports, which leave the device; the file does not leave it. Elder Mode's redaction work (roadmap) should decide whether the on-disk log needs the same scrub.
+
 ### KI-006 — Verbose debug output in development builds
 **Status:** Fixed  
 **Description:** Several `println!` statements in `lib.rs` and `zynksync.rs` dumped full LLM responses and raw HTTP payloads to the terminal. Gated behind `#[cfg(debug_assertions)]` — silent in release builds, visible in `cargo tauri dev`.
