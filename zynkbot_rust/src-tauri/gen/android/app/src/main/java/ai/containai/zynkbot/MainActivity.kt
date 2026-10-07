@@ -63,6 +63,9 @@ class MainActivity : TauriActivity() {
         // The Voice-settings dictation engine, mirrored out of localStorage by
         // ZynkbotPathsBridge.setVoiceInputSource so the native assistant session —
         // which never runs the WebView — can honour it too (2026-09-08).
+        private const val POWER_PREFS = "zynkbot_power"
+        private const val POWER_PREFS_STARTS = "starts"
+        private const val POWER_PREFS_ASKED = "battery_exemption_asked"
         private const val VOICE_PREFS = "zynkbot_voice"
         private const val VOICE_PREFS_INPUT_SOURCE = "input_source"
         private val VOICE_INPUT_SOURCES = setOf("vosk", "openai")
@@ -963,10 +966,46 @@ class MainActivity : TauriActivity() {
         if (!moveTaskToBack(true)) super.onBackPressed()
     }
 
+    /**
+     * Ask once, from the second start onward, to leave Zynkbot out of battery
+     * optimisation. Without it Android (OnePlus/ColorOS most of all) freezes or kills
+     * the app a few hours after it leaves the screen, and sync stops until it is
+     * opened again: on 2026-10-07 the OnePlus logged nothing from 07:55 to 10:21 UTC
+     * and no other device could reach it (KI-087). "Unrestricted" only lets the app
+     * keep doing what it does on screen — three small sync requests a minute — it
+     * does not make it do more. The second start, not the first, so onboarding's own
+     * permission dialogs are not crowded. The system dialog does the explaining;
+     * declining is remembered and never asked again (Settings → Battery can change it).
+     * Google Play restricts REQUEST_IGNORE_BATTERY_OPTIMIZATIONS to apps whose core
+     * function needs it; sync between the user's own devices is that case, and it goes
+     * on the Play declaration list with the foreground-service types (roadmap).
+     */
+    private fun maybeAskBatteryExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val prefs = getSharedPreferences(POWER_PREFS, Context.MODE_PRIVATE)
+        val starts = prefs.getInt(POWER_PREFS_STARTS, 0) + 1
+        prefs.edit().putInt(POWER_PREFS_STARTS, starts).apply()
+        if (prefs.getBoolean(POWER_PREFS_ASKED, false) || starts < 2) return
+        val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        prefs.edit().putBoolean(POWER_PREFS_ASKED, true).apply()
+        try {
+            @Suppress("BatteryLife")
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+            Log.i(TAG_LIFECYCLE, "battery exemption: asked (start #$starts)")
+        } catch (e: Exception) {
+            Log.w(TAG_LIFECYCLE, "battery exemption: could not open the system dialog: $e")
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         isInForeground = true
         Log.i(TAG_LIFECYCLE, "onResume — isInForeground=true")
+        maybeAskBatteryExemption()
         // A file arrived through the Files app or the Share button while we were away.
         if (ZynkShareProvider.takeChanged(this)) {
             webViewRef?.get()?.let { wv ->
