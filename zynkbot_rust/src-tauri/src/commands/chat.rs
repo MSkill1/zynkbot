@@ -2391,9 +2391,15 @@ pub fn explicit_remember(query: &str) -> Option<String> {
         return Some(trimmed[rest_start..].trim().to_string());
     }
 
-    // Spoken form: "remember" + one of the colon spellings + separator.
+    // Spoken form: "remember" + one of the colon spellings + separator. Dictation
+    // often puts a comma after "remember" ("remember, colon the ferry runs hourly"),
+    // and that comma made the whole command invisible: the request went to the model
+    // as chat and the extractor stored its own paraphrase instead of the words said
+    // (Matt, 2026-10-07, "User noted that the ferry runs hourly in summer").
     let after_remember = match lower.strip_prefix("remember") {
-        Some(r) if r.starts_with(char::is_whitespace) => r.trim_start(),
+        Some(r) if r.starts_with(char::is_whitespace) || r.starts_with([',', '.', ';']) => {
+            r.trim_start_matches(|c: char| c.is_whitespace() || c == ',' || c == '.' || c == ';')
+        }
         _ => return None,
     };
     for variant in SPOKEN_COLON {
@@ -2421,6 +2427,14 @@ pub fn explicit_remember(query: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::explicit_remember;
+
+    #[test]
+    fn a_dictated_comma_after_remember_still_makes_it_a_command() {
+        assert_eq!(explicit_remember("remember, colon the ferry runs hourly in summer").as_deref(), Some("the ferry runs hourly in summer"));
+        assert_eq!(explicit_remember("Remember. colon, the spare key is with Priya").as_deref(), Some("the spare key is with Priya"));
+        assert_eq!(explicit_remember("remember colon the library card expires in march").as_deref(), Some("the library card expires in march"));
+        assert!(explicit_remember("remember, we talked about colons in grammar").is_none());
+    }
 
     #[test]
     fn remember_keyword_is_case_insensitive() {

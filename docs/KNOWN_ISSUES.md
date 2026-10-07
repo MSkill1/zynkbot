@@ -489,6 +489,16 @@ Deletions are not propagated at all (no tombstones), which is #12.
 **Affected:** Android, worst on OnePlus/ColorOS; the Pixel showed the same whenever its screen was off for long.
 **Description:** 2026-10-07: the OnePlus app logged nothing from 07:55 to 10:21 UTC, its sync port was closed and neither the desktop nor the laptop could reach it, although the phone itself was awake. Bringing Zynkbot to the front started the app afresh (`[Startup]` lines), so the OS had killed it. Nothing is lost — the queue delivers everything when the app returns — but a phone that is "on" is not necessarily syncing. The test protocol says to open Zynkbot on the OnePlus before a test where it should receive.
 
+### KI-089 — A device whose address keeps changing received nothing for hours, although it called in every minute (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-07 (b28): any verified request from a peer clears our "silent peer" mark for it, so the pull it is making is served (and its address is corrected from the same request, as before).
+**Affected:** Every build from `509f815` to `119a0ca`; any device whose address changes often. The Pixel on GrapheneOS changed address seven times in two days, on nearly every Wi-Fi reconnect.
+**Description:** After a connection to a peer fails, the sender skips that peer for two minutes unless a heartbeat arrives (the closed-laptop fix, 2026-10-02), and every further failure re-stamps the two minutes. When the Pixel moved, our pushes to its old address failed every cycle, so the mark never expired; and the same skip applied inside the pull the Pixel itself was making, so the pull returned nothing. The Pixel's requests still reached us (its last-seen time stayed fresh), which hid the fault. Found in test G27: a memory made on the OnePlus at 16:45 UTC never reached the Pixel, whose pull cursors on the OnePlus and the desktop had not moved since 16:19 and 15:21.
+**Design note:** a pull is still served by pushing back to the caller's recorded address. Returning the batch in the pull response itself would make a device that can call out but cannot be called (changing address, firewall, hotspot) a full participant; proposed to Matt 2026-10-07.
+
+### KI-090 — A dictated comma after "remember" hid the Remember command (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-07 with a unit test: "remember, colon …" and "remember. colon …" are the command.
+**Description:** The spoken form required whitespace right after "remember". Dictation often writes "remember, colon the ferry runs hourly in summer", which therefore went to the model as chat; the extractor stored its paraphrase ("User noted that the ferry runs hourly in summer") instead of the words said. Found by Matt during the sync pass, comparing memories made by voice with ones typed.
+
 ### KI-081 — Clock skew between devices can decide which key value wins (fixed)
 **Status:** Fixed on `sync-rebuild` 2026-10-03 (migration 0018, b23): every key carries a revision that goes up by one on each local change, starting above the highest this device has seen, so a later save outranks what it followed whatever the clocks say; time and then the value break ties between changes made apart.
 **Affected:** Any two devices whose clocks differ by more than the gap between two saves of the same key.

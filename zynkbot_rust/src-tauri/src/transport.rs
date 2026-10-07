@@ -511,6 +511,13 @@ pub async fn inject_verified_device(
                         }
                     }
                 }
+                // A peer that has just reached us is not silent, whatever our last attempt
+                // to reach *it* said. The Pixel's address changed with nearly every Wi-Fi
+                // reconnect (2026-10-07): our pushes to its old address failed, the failure
+                // stamp made drain_outbox_to skip it for two minutes, the next failure
+                // re-stamped it, and the skip also applied inside the pull it was serving —
+                // so a device that called us every minute received nothing for hours.
+                transport.last_conn_error_logged.write().await.remove(&device_id);
                 req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
             }
         }

@@ -965,3 +965,42 @@ fn b27_a_first_contact_finishes_within_one_cycle() {
         assert!(done, "three slices did not all arrive within 20 s; b has {}", b.memory_contents().await.len());
     });
 }
+
+// ---------------------------------------------------------------------------
+// 28. A peer whose address we have wrong (it moved) and whom we therefore failed to
+//     reach must still get everything when *it* calls *us*: the pull it makes clears
+//     our "silent peer" mark and corrects its address. Without this the Pixel, whose
+//     address changed on nearly every Wi-Fi reconnect, called in every minute and
+//     received nothing for hours (2026-10-07, G27).
+// ---------------------------------------------------------------------------
+#[test]
+fn b28_a_peer_we_cannot_reach_still_receives_when_it_pulls_from_us() {
+    rt_test(async {
+        let a = Peer::spawn("oneplus").await;
+        let b = Peer::spawn("pixel").await;
+        b.pair_with(&a).await;
+        a.sync_with(&b).await; // first contact done, both quiet
+
+        a.add_memory("the ferry runs hourly in summer").await;
+        // b "moved": a's record of b points at a dead port, and a just failed to reach it.
+        {
+            let mut peers = a.svc.transport.peers.write().await;
+            let p = peers.get_mut(&b.device_id()).expect("a knows b");
+            p.port = 1; p.url = format!("https://127.0.0.1:{}", 1);
+        }
+        // The stale address is on disk too, as it would be on a phone; b's own request
+        // carries its real port in x-device-port and corrects both.
+        sqlx::query("UPDATE zynk_devices SET port = 1 WHERE device_id = ?").bind(b.device_id()).execute(&a.pool).await.unwrap();
+        a.svc.transport.last_conn_error_logged.write().await.insert(b.device_id(), chrono::Utc::now());
+        let pushed = a.svc.drain_outbox_to(&b.device_id(), &a.user_id()).await.expect("drain returns");
+        assert!(pushed.skipped, "a treats b as silent after the failed connect");
+
+        // b calls a: its push is empty, its pull must carry the ferry memory back.
+        b.sync_with(&a).await;
+        assert!(b.memory_contents().await.iter().any(|c| c == "the ferry runs hourly in summer"),
+            "b pulled from a and still did not get the memory");
+        let port_now = a.svc.transport.peers.read().await.get(&b.device_id()).map(|p| p.port).unwrap_or(0);
+        assert_eq!(port_now, b.port, "a learned b's real address from b's own request");
+        assert!(a.svc.transport.last_conn_error_logged.read().await.get(&b.device_id()).is_none(), "the silent mark is gone");
+    });
+}
