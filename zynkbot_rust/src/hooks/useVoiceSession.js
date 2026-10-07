@@ -77,8 +77,22 @@ export function cleanForSpeech(raw) {
   return t.replace(/[ \t]{2,}/g, ' ').trim();
 }
 
+// Spoken fractions and articles that the number words miss: "two and a half
+// minutes", "a minute and a half", "half an hour", "a minute". Without this the
+// timer regex saw "2 and a half minutes", matched nothing, the request went to the
+// model as chat, and the model answered "timer set" with no timer (Matt, Pixel,
+// 2026-10-07; the same shape as KI-027).
+export function normalizeFractions(t) {
+  return t
+    .replace(/(\d+)\s+and\s+a\s+half\b/g, (m, n) => `${n}.5`)
+    .replace(/(\d+)\s+and\s+a\s+quarter\b/g, (m, n) => `${n}.25`)
+    .replace(/\bhalf\s+an?\s+(hour|minute|second)/g, '0.5 $1')
+    .replace(/\ban?\s+(hour|minute|second)\s+and\s+a\s+half\b/g, '1.5 $1')
+    .replace(/\ban?\s+(hour|minute|second)\b/g, '1 $1');
+}
+
 export function parseVoiceCommand(text) {
-  const t = normalizeNumbers(text.toLowerCase().trim());
+  const t = normalizeFractions(normalizeNumbers(text.toLowerCase().trim()));
 
   const timerRes = [
     /(?:set\s+(?:a\s+)?)?time(?:r)?\s+(?:for\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)/, // "time" too: dictation drops the r (tester, #29)

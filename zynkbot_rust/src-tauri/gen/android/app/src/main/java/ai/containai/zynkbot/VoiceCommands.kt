@@ -43,6 +43,20 @@ object VoiceCommands {
             ((NUMBER_WORDS[m.groupValues[1].lowercase()] ?: 0) + (NUMBER_WORDS[m.groupValues[2].lowercase()] ?: 0)).toString()
         }
         t = SINGLE.replace(t) { m -> NUMBER_WORDS[m.value.lowercase()]?.toString() ?: m.value }
+        return normalizeFractions(t)
+    }
+
+    /** "two and a half minutes", "a minute and a half", "half an hour", "a minute":
+     *  the number words alone left "2 and a half minutes", which no timer pattern
+     *  matched, so the request went to the model as chat and the model said "timer
+     *  set" with no timer (Matt, Pixel, 2026-10-07; same shape as KI-027). Mirrors
+     *  normalizeFractions() in useVoiceSession.js. */
+    fun normalizeFractions(text: String): String {
+        var t = Regex("(\\d+)\\s+and\\s+a\\s+half\\b", RegexOption.IGNORE_CASE).replace(text) { m -> m.groupValues[1] + ".5" }
+        t = Regex("(\\d+)\\s+and\\s+a\\s+quarter\\b", RegexOption.IGNORE_CASE).replace(t) { m -> m.groupValues[1] + ".25" }
+        t = Regex("\\bhalf\\s+an?\\s+(hour|minute|second)", RegexOption.IGNORE_CASE).replace(t) { m -> "0.5 " + m.groupValues[1] }
+        t = Regex("\\ban?\\s+(hour|minute|second)\\s+and\\s+a\\s+half\\b", RegexOption.IGNORE_CASE).replace(t) { m -> "1.5 " + m.groupValues[1] }
+        t = Regex("\\ban?\\s+(hour|minute|second)\\b", RegexOption.IGNORE_CASE).replace(t) { m -> "1 " + m.groupValues[1] }
         return t
     }
 

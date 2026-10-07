@@ -6,7 +6,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ## Memory Pipeline
 
-### KI-012 — Original text not preserved when memory is stored via contradiction resolution
+### KI-012 — Original text not preserved when memory is stored via contradiction resolution (fixed)
 **Status:** Fixed in this release  
 **Affected:** All users — any memory stored after resolving a contradiction modal  
 **Description:** The `original_text` field (the verbatim user input) is correctly stored for memories created through the normal path. However, when a contradiction is detected and the user resolves it via the modal, the memory was stored through `store_pending_memory`, which passed `pending.content` (the LLM-extracted fact) as `original_text` instead of the raw user message. Both the Content and Original fields in Memory Manager showed the same extracted text. Fixed by adding `original_text` to `PendingMemory` and threading `bg_message` through the contradiction event payload.  
@@ -14,7 +14,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-013 — Original text not preserved when memory arrives via ZynkSync
+### KI-013 — Original text not preserved when memory arrives via ZynkSync (fixed)
 **Status:** Fixed in this release  
 **Affected:** All users — any memory received from a paired device via ZynkSync  
 **Description:** The `original_text` field (the verbatim user input) was not included in the ZynkSync payload. Memories created on one device and synced to another had no `original_text` on the receiving device. Fixed by adding `original_text` to the `SyncMemory` struct, all memory SELECT queries, and the receive INSERT/UPDATE paths in `zynksync.rs`.  
@@ -34,7 +34,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 **Description:** Statements expressing a future intention ("I'm thinking about leaving my job") may occasionally be flagged as contradicting a stored current state ("I work at X"). The classifier prompt includes an example to discourage this, but LLM classification is not deterministic.  
 **Workaround:** Select "Not a contradiction" in the modal. No data is lost.
 
-### KI-003 — System memories appearing in user hybrid search
+### KI-003 — System memories appearing in user hybrid search (fixed)
 **Status:** Fixed in this release  
 **Description:** System memories (user_id = 'system', IDs 1–12) were appearing in user hybrid search results — for example, "Model Support" appeared at ~50% similarity for queries containing common nouns. Fixed by scoping `hybrid_search`, `list_memories`, and the Memory Manager query to exclude `user_id = 'system'` entries.  
 **Impact:** None — resolved.
@@ -158,7 +158,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 **Ruled out as a fix:** any cooldown or backoff after a miss, including a plain time-based one that doesn't touch confidence. Matt, 2026-09-21: a real first attempt fails to wake the phone roughly a quarter of the time, so any lockout after a miss would block a genuine retry the same way strict mode's confidence bar did, just through a different mechanism.
 **Fix candidates, not started:** (1) an ambient-noise-adaptive threshold — raise the bar only while the recent noise floor is elevated, relax it when the room is quiet, rather than a fixed lockout regardless of the current moment (Matt's idea, 2026-09-21); (2) the verifier-gated response plan already on the roadmap (answer only when the trained verifier matches, whatever triggered the wake) — a different mechanism, addresses this as a side effect once it exists. Both are after-beta3, alongside the verifier retraining work.
 
-### KI-068 — Desktop conversation history never reaches the phones: push rejected as too large (open)
+### KI-068 — Desktop conversation history never reaches the phones: push rejected as too large (fixed)
 **Status:** Fixed on `v1` (2026-09-19): the marker is persisted per peer (`zynk_conversation_push_state`), advanced only after the peer accepts a push, and a push carries at most 300 messages; the receiving cap is raised to 32 MB in rebuilt peers. Harness tests b08c (marker survives a restart) and b08d (a backlog arrives over cycles, nothing duplicated). Found 2026-09-19 on e1273a1. Desktop log: `Conversation sync failed (non-fatal): Conversation push rejected by peer: 413 Payload Too Large`, once per phone.  
 **Affected:** Any device with a large conversation history syncing to a peer.  
 **Description:** The "what changed since the last push" marker for conversations is kept in memory only, so the first sync after the app starts has no marker and sends everything (up to 500 sessions and 5,000 messages) in one request. The receiving side caps a request at 2 MB (the web server default); the desktop's 1,886 messages exceed it. The memory sync in the same cycle succeeds and advances the marker, so the next cycle is incremental again and the backlog is silently never sent.  
@@ -166,7 +166,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-067 — A file downloaded into ZynkbotShare does not appear in the phone's Files app
+### KI-067 — A file downloaded into ZynkbotShare does not appear in the phone's Files app (fixed)
 **Status:** Fixed on `v1` (2026-09-19), verified on the Pixel 2026-09-20: downloads land in the Zynkbot storage location, which the Files app lists directly from the app (see KI-015), so the media index is no longer involved. An earlier same-day fix asked Android to index the file.  
 **Affected:** Android.  
 **Description:** Downloads are written to a `.part` file and renamed. Android's media index, which the Files and Gallery apps list from, failed to record the rename (`MediaProvider: Database update failed while renaming …jpg.part`), so the file was on disk but not shown anywhere but Zynkbot's own share list.  
@@ -174,7 +174,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-066 — About me timeline shows a date in the future for a memory that has none (open)
+### KI-066 — About me timeline shows a date in the future for a memory that has none (fixed)
 **Status:** Fixed on `v1` (2026-09-18): an event date after the day the memory was said is dropped; About me states how many memories have no date.  
 **Affected:** All platforms; any memory whose date the model inferred wrongly.  
 **Description:** `memory_extras::validate_event_date` accepts any date up to two years after the day the memory was said, so a hallucinated or mis-inferred future date passes and the timeline sorts it to the top. The prompt asks for "the date the thing HAPPENED".  
@@ -206,13 +206,18 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-062 — Hands-free web search never runs when "auto-execute in voice sessions" is off (open)
+### KI-062 — Hands-free web search never runs when "auto-execute in voice sessions" is off (fixed)
 **Status:** Fixed on `v1` (2026-09-17): the setting is mirrored to the Rust core (`voice_prefs.json`) and the hands-free path runs the search and answers from it. With the setting off it still asks, by design.  
 **Affected:** Android hands-free path.  
 **Description:** With auto-execute disabled the model answers "let me look that up for you" (it emitted `WEB_SEARCH_NEEDED`), but in the voice path there is no button to confirm, so the search is flagged and never run; asking again gets "not yet — I flagged it".  
 **Fix:** in hands-free turns either run the search when the setting allows it, or have the reply say plainly that searches are off in voice mode; never promise one.
 
 ---
+
+### KI-088 — "Set a timer for two and a half minutes" set no timer; the model said it had (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-07 in both parsers (`useVoiceSession.js` and `VoiceCommands.kt`): spoken fractions and articles are normalised before the timer patterns run — "two and a half minutes" → 2.5, "a minute and a half" → 1.5, "half an hour" → 0.5 hour, "a minute" → 1 minute, "and a quarter" → .25. Jest covers the phrases.
+**Affected:** Every build before this one, typed and spoken, Android and desktop.
+**Description:** The number words were converted ("two" → 2) but "2 and a half minutes" matched no timer pattern, so the request went to the model as ordinary chat. The model replied as if it had set the timer, and the memory extractor then stored "Timer set for two and a half minutes" as a memory. Found by Matt on the Pixel during the sync pass (he was timing test G25). The stored "timer" memories are noise and should be cleaned up in the memory relationship audit.
 
 ### KI-061 — A timer set hands-free while the phone is asleep is confirmed but never fires (open)
 **Status:** Open — GitHub #29 (2026-09-17) with three problem reports; app open and awake works, screen-off does not.  
@@ -230,7 +235,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-059 — "Remembered on request" filter in the Memory Manager never shows anything (open)
+### KI-059 — "Remembered on request" filter in the Memory Manager never shows anything (fixed)
 **Status:** Fixed on `v1` (2026-09-18): the Memory Manager window now asks for the requested ids and tags the list, as the sidebar did.  
 **Affected:** All platforms since the filter shipped (0.9.6-beta1, 736ef02).  
 **Description:** The sidebar list (`MemoryManager.jsx`) asks the backend which memories carry the "requested" mark and tags them; the full Memory Manager window (`MemoryManagerModal.jsx`), where the checkbox filter lives, fetches its own list and never asks, so `mem.requested` is always missing and the filter matches nothing. About me shows the same memories because it queries the mark directly.  
@@ -295,14 +300,14 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-009 — Unsyncing a device also removes the ZynkLink pairing
+### KI-009 — Unsyncing a device also removes the ZynkLink pairing (fixed)
 **Status:** Fixed in this release  
 **Affected:** Users who have both ZynkSync and ZynkLink active between the same two devices  
 **Description:** ZynkSync and ZynkLink now maintain independent trust relationships via the `sync_paired` column. Unsyncing only clears the ZynkSync pairing; the ZynkLink pairing remains active. Unlinking only clears the ZynkLink pairing; the ZynkSync pairing remains active. Each can be revoked independently without affecting the other.
 
 ---
 
-### KI-010 — ZynkLink pairing appeared in the ZynkSync device list
+### KI-010 — ZynkLink pairing appeared in the ZynkSync device list (fixed)
 **Status:** Fixed in this release  
 **Affected:** Users who established a ZynkLink pairing without a ZynkSync pairing  
 **Description:** Establishing a ZynkLink pairing would register the remote device in `zynk_devices` with `is_paired = 1`, causing it to appear in the ZynkSync panel as a paired sync device even though no sync pairing had been established. The `sync_paired` column now tracks sync pairings separately — ZynkLink-only devices no longer appear in the ZynkSync panel.
@@ -348,7 +353,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
-### KI-015 — Android scoped storage blocks scan of files created by other apps
+### KI-015 — Android scoped storage blocks scan of files created by other apps (fixed)
 **Status:** Fixed on `v1` (2026-09-19), verified on the Pixel and the OnePlus 2026-09-20: the share folder is Zynkbot's own storage location, published to the Files app and every app's Share menu (`ZynkShareProvider`, `ShareReceiverActivity`); every file that enters is written by Zynkbot, so nothing is invisible. Tested: Share to Zynkbot from the Files app (8 files, sizes intact), listing from the linked phone, → KB with a working query, Save… landing in the folder, a 17 MB PDF each way. The picker-only design below is what shipped before.  
 **Affected:** Android 11+ devices using ZynkLink file sharing or the Knowledge Base  
 **Description:** Files placed into `Downloads/ZynkbotShare/` by apps other than Zynkbot are invisible to Zynkbot's directory scan under scoped storage. Until 2026-09-07 the app declared and requested `MANAGE_EXTERNAL_STORAGE` ("All files access") to see them; Google Play only grants that permission to file managers and similar, so it was removed.  
@@ -393,7 +398,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ### KI-075 — A freshly installed desktop does not receive the other devices by introduction
 **Status:** Open — the introduction path was not rewritten in the rebuild; a device that moved is corrected on its first verified request, but a device never introduced still has to be paired directly. Candidate for the mDNS item on the roadmap. Was: part of the ZynkSync refactor, not separate work. Workaround: pair the new device to each other device directly.
 **Affected:** A device reinstalled or set up fresh while its peers still hold its old identity.
-**Description:** Observed 2026-09-22 after installing the beta3 binaries on a fresh Linux desktop and pairing from the Pixel. The desktop did not learn about the other devices through mesh introduction and had to be paired to each by hand. Same underlying cause as KI-074: introductions are addressed against a peer list that still holds the old identity, so they reach the wrong entry.
+**Description:** Observed 2026-09-22 after installing the beta3 binaries on a fresh Linux desktop and pairing from the Pixel. The desktop did not learn about the other devices through mesh introduction and had to be paired to each by hand. Same underlying cause as KI-074: introductions are addressed against a peer list that still holds the old identity, so they reach the wrong entry. Seen again 2026-10-06 the other way round: the laptop was asleep when the wiped OnePlus was introduced on 10-02 and never learned its new identity; the two could not sync until the laptop was removed and re-paired (I33/I34). A retry of missed introductions is designed (host re-sends on its next successful contact) and on hold until after the manual pass.
 
 ---
 
@@ -406,7 +411,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 **Description:** On 2026-10-05 a `Remember:` typed on the Windows laptop with the local model stored nothing and left no extraction status. By the time anyone looked, the only record, the 800-line in-memory buffer behind "Report a problem" (`app_log.rs`), had been cycled through by sync messages, and the `Zynkbot.log` under `%LOCALAPPDATA%\ai.containai.zynkbot\logs` had been empty since 2026-09-22: that file belongs to `tauri-plugin-log`, which is only enabled in debug builds and only receives `log::` records, which the app never emits (everything is `println!`). The failure could not be investigated and did not reproduce.
 **Privacy:** the file holds the same lines the terminal or logcat would, which includes what the user typed. Redaction and the user-text scrub apply to reports, which leave the device; the file does not leave it. Elder Mode's redaction work (roadmap) should decide whether the on-disk log needs the same scrub.
 
-### KI-006 — Verbose debug output in development builds
+### KI-006 — Verbose debug output in development builds (fixed)
 **Status:** Fixed  
 **Description:** Several `println!` statements in `lib.rs` and `zynksync.rs` dumped full LLM responses and raw HTTP payloads to the terminal. Gated behind `#[cfg(debug_assertions)]` — silent in release builds, visible in `cargo tauri dev`.
 
@@ -503,7 +508,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Installation
 
-### KI-022 — Linux install fails to build: ALSA development headers not installed
+### KI-022 — Linux install fails to build: ALSA development headers not installed (fixed)
 **Status:** Fixed (installer)
 **Affected:** Every fresh Linux install (all distributions) from the point desktop Vosk dictation landed
 **Description:** `install.sh` never installed ALSA development headers. `cpal` (`Cargo.toml:120`, used for desktop Vosk dictation) depends on `alsa` -> `alsa-sys`, whose build script resolves the `alsa` pkg-config package. Without `libasound2-dev` present, `cargo build` fails during the dependency build and the install aborts.
@@ -556,7 +561,7 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 ---
 
-### KI-023 — Wake-word command is captured but not dispatched until the app is foregrounded
+### KI-023 — Wake-word command is captured but not dispatched until the app is foregrounded (fixed)
 **Status:** Fixed on `voice` (build19–29) — hands-free turns are answered natively by `ZynkAssistantSession` / `NativeVoiceAnswerer` and joined to the current thread; the app no longer needs to be foregrounded
 **Affected:** Android, "Hey Zynk" while the app is backgrounded (observed on Pixel 10 Pro XL, 2026-09-01)
 **Description:** Saying "Hey Zynk" while the app is not in the foreground works up to a point — the wake word triggers, dictation runs, and the spoken text is captured correctly. But the message is never sent and no answer is produced. Opening the app causes the queued message to send immediately and Zynkbot to respond, which shows the transcript survived and only the dispatch was deferred.
@@ -566,7 +571,7 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 ---
 
-### KI-024 — Wake word from the Android home screen only shows a popup of the transcript, nothing is sent
+### KI-024 — Wake word from the Android home screen only shows a popup of the transcript, nothing is sent (fixed)
 **Status:** Fixed on `voice` — same fix as KI-023, verified on the OnePlus 12R home screen
 **Affected:** Android, wake word triggered from the launcher/home screen (observed on OnePlus 12R, 2026-09-01)
 **Description:** Triggering "Hey Zynk" from the home screen produces a popup containing the dictated text and nothing further. No message is sent, and no response is generated or spoken.
@@ -679,7 +684,7 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-026 — No way to stop speech or output once it starts; Clear should become Stop
+### KI-026 — No way to stop speech or output once it starts; Clear should become Stop (fixed)
 **Status:** Fixed on `voice` (build21) — Stop halts native speech, OpenAI TTS and text output; tapping the Z overlay cancels a hands-free turn
 **Affected:** All platforms; most acute on Android with TTS enabled
 **Description:** Once Zynkbot begins speaking a response there is no control to stop it. The existing TTS-stop work is not reachable from the UI in normal use.
@@ -688,7 +693,7 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-027 — Hands-free "set a timer" is confirmed aloud but no timer is set
+### KI-027 — Hands-free "set a timer" is confirmed aloud but no timer is set (fixed)
 **Status:** Fixed on `voice` (build26) — `VoiceCommands.kt` parses timer/alarm/stopwatch before the model and fires the `AlarmClock` intent; confirmation is spoken only after the clock app accepted it
 **Affected:** Android, hands-free ("Hey Zynk") path only
 **Description:** Asked hands-free to set a timer, Zynkbot replies with a spoken confirmation including the correct end time, but no timer exists and nothing happens when the time arrives. The in-app dictation path recognises timer, alarm and stopwatch requests (`parseVoiceCommand` in `useVoiceSession.js`) and hands them to the clock app through `VoiceCommandBridge`; the hands-free path (`ZynkAssistantSession` / `WakeWordService` → `NativeVoiceAnswerer`) sends the transcript straight to the language model, which has no clock and invents the confirmation.
@@ -705,7 +710,7 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-030 — Sync and cloud backup do not carry the new memory fields (sync fixed)
+### KI-030 — Sync and cloud backup do not carry the new memory fields (sync fixed) (fixed)
 **Status:** Sync fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b12): the sender reads every column at send time, so tags, provenance and new columns travel. The cloud backup still carries its own field list.
 **Affected:** Multi-device users; anyone restoring a backup  
 **Description:** Migration 0011 added `tags`, `sentiment`, `event_date` use, and the `memory_entities` table. ZynkSync's memory payload and the R2 backup export were written before them and do not include tags or entities, so a memory arriving on a second device or restored from backup loses them.  

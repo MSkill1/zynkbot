@@ -27,6 +27,22 @@ describe('parseVoiceCommand timers — what dictation actually produces', () => 
   });
 });
 
+describe('parseVoiceCommand timers — spoken fractions (Matt, Pixel, 2026-10-07)', () => {
+  test('"two and a half minutes" is 150 seconds, not a chat message', () => {
+    expect(parseVoiceCommand('set a timer for two and a half minutes')).toEqual({ type: 'timer', seconds: 150 });
+  });
+  test('"a minute and a half", "half an hour", "a minute"', () => {
+    expect(parseVoiceCommand('set a timer for a minute and a half')).toEqual({ type: 'timer', seconds: 90 });
+    expect(parseVoiceCommand('timer for half an hour')).toEqual({ type: 'timer', seconds: 1800 });
+    expect(parseVoiceCommand('set a timer for a minute')).toEqual({ type: 'timer', seconds: 60 });
+    expect(parseVoiceCommand('set a timer for 2.5 minutes')).toEqual({ type: 'timer', seconds: 150 });
+  });
+  test('plain numbers still work and ordinary sentences are left alone', () => {
+    expect(parseVoiceCommand('set a timer for ten minutes')).toEqual({ type: 'timer', seconds: 600 });
+    expect(parseVoiceCommand('a minute ago I saw a hawk')).toBeNull();
+  });
+});
+
 describe('shouldSpeakReply — answer in the channel you used', () => {
   test('hands-free request is always spoken, even with the in-app toggle off', () => {
     expect(shouldSpeakReply({ handsFree: true, speakInApp: false })).toBe(true);
