@@ -125,11 +125,15 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
     }
   }, [loading, syncStatus, fetchPeers, userId, onMemoriesSynced]);
 
-  // Refresh peer list (no sync)
+  // Refresh peer list (no sync). The fetch is faster than a frame, so without a
+  // held-on state the button never visibly reacted and felt dead (Matt, 2026-10-07).
+  const [refreshing, setRefreshing] = useState(false);
   const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
     setMessage('Refreshing...');
     await fetchPeers();
     setMessage('✓ Refreshed');
+    setTimeout(() => setRefreshing(false), 600);
     setTimeout(() => setMessage(''), 2000);
   }, [fetchPeers]);
 
@@ -432,22 +436,24 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
         {/* Refresh */}
         <button
           onClick={handleRefresh}
-          disabled={loading}
+          disabled={loading || refreshing}
           style={{
             flex: isAndroid ? '1 1 calc(50% - 4px)' : 1,
             padding: '8px 10px',
-            background: '#6272a4',
-            color: '#f8f8f2',
+            background: refreshing ? '#8be9fd' : '#6272a4',
+            color: refreshing ? '#282a36' : '#f8f8f2',
             border: 'none',
             borderRadius: '4px',
             cursor: loading ? 'wait' : 'pointer',
             fontSize: '0.82rem',
             fontWeight: 'bold',
-            opacity: loading ? 0.5 : 1
+            opacity: loading ? 0.5 : 1,
+            transform: refreshing ? 'scale(0.97)' : 'none',
+            transition: 'background 120ms, transform 120ms'
           }}
           title="Refresh peer list"
         >
-          🔄 Refresh
+          {refreshing ? '🔄 Refreshing…' : '🔄 Refresh'}
         </button>
 
         {/* Unsync */}
@@ -788,23 +794,25 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                   <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
                     {peer.is_online ? 'Online' : 'Offline'}
                   </div>
+                  {/* A labelled button, not a faint ✕: Matt could not find the ✕ when
+                      removing a stale entry during the sync pass (2026-10-07). */}
                   <button
                     onClick={() => handleExpelDevice(peer.device_id, peer.device_name)}
                     title={`Remove ${peer.device_name} from the network`}
                     style={{
                       background: 'transparent',
-                      border: 'none',
-                      color: '#6272a4',
+                      border: '1px solid #6272a4',
+                      color: '#f8f8f2',
                       cursor: 'pointer',
-                      fontSize: '0.85rem',
-                      padding: '2px 5px',
+                      fontSize: '0.75rem',
+                      padding: '3px 8px',
                       borderRadius: '3px',
-                      lineHeight: 1,
+                      lineHeight: 1.2,
                       flexShrink: 0
                     }}
-                    onMouseOver={e => e.currentTarget.style.color = '#ff5555'}
-                    onMouseOut={e => e.currentTarget.style.color = '#6272a4'}
-                  >✕</button>
+                    onMouseOver={e => { e.currentTarget.style.borderColor = '#ff5555'; e.currentTarget.style.color = '#ff5555'; }}
+                    onMouseOut={e => { e.currentTarget.style.borderColor = '#6272a4'; e.currentTarget.style.color = '#f8f8f2'; }}
+                  >Remove</button>
                 </div>
                 {/* Chat with your own device: a note to the phone, a link to the PC. Any
                     paired device can be messaged; no link pairing needed (2026-09-17). */}
