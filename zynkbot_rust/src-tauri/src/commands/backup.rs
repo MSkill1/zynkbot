@@ -286,34 +286,6 @@ async fn r2_get(cfg: &R2Config, object_key: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Failed to read R2 response: {}", e))
 }
 
-/// Object keys under `prefix` (ListObjectsV2). Minimal XML scan: the keys we write have
-/// no characters that need unescaping.
-async fn r2_list(cfg: &R2Config, prefix: &str) -> Result<Vec<String>, String> {
-    let endpoint = cfg.endpoint.trim_end_matches('/');
-    let host = endpoint.trim_start_matches("https://").trim_start_matches("http://");
-    let path = format!("/{}/", cfg.bucket);
-    let query = format!("list-type=2&prefix={}", prefix);
-    let url = format!("{}{}?{}", endpoint, path, query);
-    let headers = sig_v4_headers_q("GET", host, &path, &query, &[], &cfg.access_key, &cfg.secret_key);
-    let mut req = reqwest::Client::new().get(&url);
-    for (k, v) in &headers { req = req.header(k, v); }
-    let resp = req.send().await.map_err(|e| format!("R2 LIST request failed: {}", e))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("R2 LIST error {}: {}", status, body));
-    }
-    let body = resp.text().await.map_err(|e| format!("Failed to read R2 listing: {}", e))?;
-    let mut keys = Vec::new();
-    let mut rest = body.as_str();
-    while let Some(i) = rest.find("<Key>") {
-        let after = &rest[i + 5..];
-        let Some(j) = after.find("</Key>") else { break };
-        keys.push(after[..j].to_string());
-        rest = &after[j + 6..];
-    }
-    Ok(keys)
-}
 
 // --- Device identity in the backup (KI-050, step 4 of the outbox rebuild) ---
 //
@@ -324,131 +296,6 @@ async fn r2_list(cfg: &R2Config, prefix: &str) -> Result<Vec<String>, String> {
 // old device: the peers' rows for it simply keep working. The user says which device
 // this one replaces; nothing is guessed from a name or an address (decided 2026-09-12,
 // confirmed 2026-10-01).
-
-/// Everything a fresh install needs to be this device again.
-pub async fn build_device_bundle(pool: &sqlx::SqlitePool, user_id: &str, device_id: &str, device_name: &str, data_dir: &std::path::Path)
-    -> Result<serde_json::Value, String>
-{
-    use sqlx::Row;
-    let (cert_pem, key_pem, cert_der) = crate::tls::load_or_generate_cert(data_dir)?;
-    let rows = sqlx::query(
-        "SELECT device_id, device_name, device_ip, port, tls_cert_der, owner_user_id FROM zynk_devices WHERE sync_paired = 1 AND device_id != ?")
-        .bind(device_id).fetch_all(pool).await.map_err(|e| format!("read peers: {}", e))?;
-    let peers: Vec<serde_json::Value> = rows.iter().map(|r| serde_json::json!({
-        "device_id": r.get::<String, _>("device_id"),
-        "device_name": r.get::<String, _>("device_name"),
-        "device_ip": r.try_get::<Option<String>, _>("device_ip").ok().flatten(),
-        "port": r.try_get::<Option<i64>, _>("port").ok().flatten().unwrap_or(57963),
-        "tls_cert_der_b64": r.try_get::<Option<Vec<u8>>, _>("tls_cert_der").ok().flatten().map(|d| BASE64.encode(d)),
-        "owner_user_id": r.try_get::<Option<String>, _>("owner_user_id").ok().flatten(),
-    })).collect();
-    Ok(serde_json::json!({
-        "version": 1,
-        "backed_up_at": Utc::now().to_rfc3339(),
-        "identity": { "user_id": user_id, "device_id": device_id, "device_name": device_name },
-        "tls": { "cert_pem": cert_pem, "key_pem": key_pem, "cert_der_b64": BASE64.encode(cert_der) },
-        "peers": peers,
-    }))
-}
-
-/// Write a device bundle into `data_dir` and `pool`: identity files, certificate files,
-/// peer rows. The running service still holds the old identity; the caller restarts (or,
-/// in the harness, starts a service from the directory). Returns (user_id, device_id, name).
-pub async fn apply_device_bundle(pool: &sqlx::SqlitePool, data_dir: &std::path::Path, bundle: &serde_json::Value)
-    -> Result<(String, String, String), String>
-{
-    let ident = bundle.get("identity").ok_or("bundle has no identity")?;
-    let user_id = ident["user_id"].as_str().ok_or("bundle: no user_id")?.to_string();
-    let device_id = ident["device_id"].as_str().ok_or("bundle: no device_id")?.to_string();
-    let device_name = ident["device_name"].as_str().unwrap_or("").to_string();
-    let tls = bundle.get("tls").ok_or("bundle has no tls")?;
-    let cert_pem = tls["cert_pem"].as_str().ok_or("bundle: no cert")?;
-    let key_pem = tls["key_pem"].as_str().ok_or("bundle: no key")?;
-    let cert_der = BASE64.decode(tls["cert_der_b64"].as_str().ok_or("bundle: no cert der")?)
-        .map_err(|_| "bundle: cert der is not base64".to_string())?;
-    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
-    std::fs::write(data_dir.join(".zynk_user_id"), &user_id).map_err(|e| format!("write user id: {}", e))?;
-    std::fs::write(data_dir.join(".zynk_device_id"), &device_id).map_err(|e| format!("write device id: {}", e))?;
-    if !device_name.is_empty() {
-        std::fs::write(data_dir.join(".zynk_device_name"), &device_name).map_err(|e| format!("write device name: {}", e))?;
-    }
-    crate::tls::save_cert(data_dir, cert_pem, key_pem, &cert_der)?;
-    let mut peers = 0usize;
-    for p in bundle.get("peers").and_then(|v| v.as_array()).cloned().unwrap_or_default() {
-        let der = p["tls_cert_der_b64"].as_str().and_then(|b| BASE64.decode(b).ok());
-        sqlx::query(
-            "INSERT INTO zynk_devices (device_id, device_name, device_ip, port, is_paired, sync_paired, owner_user_id, tls_cert_der, last_seen_at, created_at)
-             VALUES (?, ?, ?, ?, 1, 1, ?, ?, datetime('now'), datetime('now'))
-             ON CONFLICT (device_id) DO UPDATE SET device_name = excluded.device_name, device_ip = excluded.device_ip,
-                 port = excluded.port, is_paired = 1, sync_paired = 1, owner_user_id = excluded.owner_user_id, tls_cert_der = excluded.tls_cert_der")
-            .bind(p["device_id"].as_str().unwrap_or("")).bind(p["device_name"].as_str().unwrap_or(""))
-            .bind(p["device_ip"].as_str()).bind(p["port"].as_i64().unwrap_or(57963))
-            .bind(p["owner_user_id"].as_str()).bind(der)
-            .execute(pool).await.map_err(|e| format!("restore peer row: {}", e))?;
-        peers += 1;
-    }
-    println!("[Backup] Device identity restored: {} ({}…), {} peer(s)", device_name, &device_id[..8.min(device_id.len())], peers);
-    Ok((user_id, device_id, device_name))
-}
-
-/// The device backups on this account, for the "this device replaces…" choice.
-#[tauri::command]
-pub async fn list_restorable_devices() -> Result<Vec<serde_json::Value>, String> {
-    let key = load_or_create_key()?;
-    let cfg = load_r2_config()?;
-    let mut out = Vec::new();
-    for object in r2_list(&cfg, "device-").await? {
-        let Ok(encrypted) = r2_get(&cfg, &object).await else { continue };
-        let Ok(plain) = decrypt_bytes(&key, &encrypted) else { continue };
-        let Ok(bundle) = serde_json::from_slice::<serde_json::Value>(&plain) else { continue };
-        out.push(serde_json::json!({
-            "device_id": bundle["identity"]["device_id"],
-            "device_name": bundle["identity"]["device_name"],
-            "backed_up_at": bundle["backed_up_at"],
-        }));
-    }
-    Ok(out)
-}
-
-/// What the Restore button should offer: on a device with no peers (a fresh install), the
-/// account's device backups, so the user can say which device this is before anything is
-/// restored; on a device that already has peers, nothing but the data restore.
-#[tauri::command]
-pub async fn backup_restore_options() -> Result<serde_json::Value, String> {
-    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("DB connect failed: {}", e))?;
-    let paired: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM zynk_devices WHERE sync_paired = 1")
-        .fetch_one(&pool).await.map_err(|e| e.to_string())?;
-    pool.close().await;
-    if paired > 0 {
-        return Ok(serde_json::json!({ "fresh": false, "devices": [] }));
-    }
-    let devices = list_restorable_devices().await.unwrap_or_default();
-    Ok(serde_json::json!({ "fresh": true, "devices": devices }))
-}
-
-/// Make this fresh install be `device_id` again. Refused while this device already has
-/// paired peers: that is not a fresh install, and taking another device's identity would
-/// make two devices one. The app must restart afterwards; the UI says so.
-#[tauri::command]
-pub async fn restore_device_identity(device_id: String) -> Result<serde_json::Value, String> {
-    let key = load_or_create_key()?;
-    let cfg = load_r2_config()?;
-    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("DB connect failed: {}", e))?;
-    let paired: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM zynk_devices WHERE sync_paired = 1")
-        .fetch_one(&pool).await.map_err(|e| e.to_string())?;
-    if paired > 0 {
-        return Err("This device is already paired with others. Restoring another device's identity is only for a fresh install.".to_string());
-    }
-    let encrypted = r2_get(&cfg, &format!("device-{}.enc", device_id)).await?;
-    let plain = decrypt_bytes(&key, &encrypted)?;
-    let bundle: serde_json::Value = serde_json::from_slice(&plain).map_err(|e| format!("bad device backup: {}", e))?;
-    let (_, id, name) = apply_device_bundle(&pool, &crate::db::get_app_data_dir(), &bundle).await?;
-    pool.close().await;
-    Ok(serde_json::json!({ "device_id": id, "device_name": name, "restart_required": true,
-        "message": format!("This device is now {} again. Restart Zynkbot to finish.", name) }))
-}
-
-// --- Tauri commands ---
 
 #[tauri::command]
 pub async fn get_r2_config_status() -> Result<serde_json::Value, String> {
@@ -574,18 +421,6 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     let encrypted = encrypt_bytes(&key, &payload)?;
 
     r2_put(&cfg, "backup.enc", encrypted).await?;
-    // This device's identity, as its own small object (KI-050).
-    match crate::user_identity::get_identity() {
-        Ok(ident) => {
-            let pool2 = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("DB connect failed: {}", e))?;
-            let bundle = build_device_bundle(&pool2, &ident.user_id, &ident.device_id, &crate::user_identity::get_device_name(), &crate::db::get_app_data_dir()).await?;
-            pool2.close().await;
-            let bytes = serde_json::to_vec(&bundle).map_err(|e| e.to_string())?;
-            r2_put(&cfg, &format!("device-{}.enc", ident.device_id), encrypt_bytes(&key, &bytes)?).await?;
-        }
-        Err(e) => eprintln!("[Backup] Device identity not backed up: {}", e),
-    }
-
     println!("[Backup] Backed up {} memories, {} sessions, {} messages for user {}",
         count, session_count, message_count, user_id);
     Ok(serde_json::json!({

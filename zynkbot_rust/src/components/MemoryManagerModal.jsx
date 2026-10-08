@@ -126,69 +126,32 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     doBackup();
   };
 
-  // Restore on a fresh install (no peers) first asks which of the account's devices this
-  // one is (KI-050): the identity rides in the backup as its own object per device. Pick
-  // one and it restores the identity and the data together, then asks for a restart.
-  // "A new device" restores the data only. On a device that already has peers, Restore
-  // is the data restore it always was. Nothing is guessed from a name or an address.
-  const [restoreChoices, setRestoreChoices] = useState(null);
+  // Restore means one thing: bring back the memories and history from the most recent
+  // cloud backup. It has nothing to do with adding a device — a fresh install, reinstall
+  // or new phone, pairs with a code and receives everything from its peers (Matt,
+  // 2026-10-07, KI-092). The "Which device is this?" picker that briefly lived here is gone.
   const doRestoreData = async () => {
     const res = await invoke('restore_memories_from_r2', { userId });
     fetchMemories();
     return res;
   };
   const handleRestore = async () => {
-    if (restoreChoices) { setRestoreChoices(null); return; }
     setBackupStatus('busy'); setBackupMsg('Checking the backup…');
     try {
-      const opts = await invoke('backup_restore_options');
-      if (opts.fresh && opts.devices.length) {
-        setBackupStatus(null); setBackupMsg('');
-        setRestoreChoices(opts.devices);
+      const r2 = await invoke('get_r2_config_status');
+      if (!r2?.configured) {
+        setBackupStatus('error');
+        setBackupMsg('Cloud backup is not set up on this device. Add the Cloudflare R2 details in Settings → API Keys, or pair this device with one that has your memories.');
+        setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 8000);
         return;
       }
-      if (!await confirmDialog('Restore memories from cloud backup? Memories already on this device will be skipped.')) { setBackupStatus(null); setBackupMsg(''); return; }
+      if (!await confirmDialog('Restore memories from your most recent cloud backup? Memories already on this device will be skipped.')) { setBackupStatus(null); setBackupMsg(''); return; }
       setBackupMsg('Restoring…');
       const res = await doRestoreData();
       setBackupStatus('ok'); setBackupMsg(res.message);
     } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
     setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 5000);
   };
-  const handleRestoreAs = async (dev) => {
-    const asDevice = dev !== null;
-    const question = asDevice
-      ? `This phone becomes "${dev.device_name}" again — same identity, same place on your other devices — and gets its memories and history back. Zynkbot will need a restart afterwards. Continue?`
-      : 'Restore memories and history to this device as a new device? It will need to be paired afterwards.';
-    if (!await confirmDialog(question)) return;
-    setRestoreChoices(null);
-    setBackupStatus('busy'); setBackupMsg(asDevice ? 'Restoring identity…' : 'Restoring…');
-    try {
-      let msg = '';
-      if (asDevice) {
-        const r = await invoke('restore_device_identity', { deviceId: dev.device_id });
-        msg = r.message + ' ';
-      }
-      setBackupMsg('Restoring memories…');
-      const res = await doRestoreData();
-      setBackupStatus('ok'); setBackupMsg(msg + res.message);
-    } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
-    setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 15000);
-  };
-  const restorePicker = restoreChoices ? (
-    <div style={{ marginTop: '6px', padding: '8px', background: '#282a36', border: '1px solid #44475a', borderRadius: '6px', fontSize: '0.78rem' }}>
-      <div style={{ color: '#f8f8f2', marginBottom: '6px' }}>Which device is this?</div>
-      {restoreChoices.map((dev) => (
-        <button key={dev.device_id} onClick={() => handleRestoreAs(dev)}
-          style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: '4px', background: '#44475a', border: 'none', color: '#fff', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer' }}>
-          {dev.device_name || dev.device_id.slice(0, 8)} <span style={{ color: '#6272a4' }}>— backed up {dev.backed_up_at ? new Date(dev.backed_up_at).toLocaleString() : 'unknown'}</span>
-        </button>
-      ))}
-      <button onClick={() => handleRestoreAs(null)}
-        style={{ display: 'block', width: '100%', textAlign: 'left', background: '#282a36', border: '1px solid #6272a4', color: '#f8f8f2', padding: '6px 8px', borderRadius: '4px', cursor: 'pointer' }}>
-        A new device — restore the data only
-      </button>
-    </div>
-  ) : null;
 
   const handleCopyKey = async () => {
     try {
@@ -794,11 +757,6 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             {backupMsg}
           </div>
         )}
-        {restoreChoices && !selectedMemory && (
-          <div style={{ padding: '6px 16px', borderBottom: '1px solid #44475a', background: '#1e1f2e', flexShrink: 0 }}>
-            {restorePicker}
-          </div>
-        )}
 
         {/* Floating close button - bottom right, like settings panel */}
         <button
@@ -1134,7 +1092,6 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 {backupMsg}
               </span>
             )}
-            {restorePicker}
             <button onClick={onClose} className="close-button">✕</button>
           </div>
         </div>

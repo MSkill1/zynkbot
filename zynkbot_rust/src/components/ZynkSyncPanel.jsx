@@ -5,6 +5,16 @@ import { confirmDialog } from '../utils/confirmDialog';
 
 export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, onIdentityAdopted, onMemoriesSynced }) {
   const [peers, setPeers] = useState([]);
+  // Two entries with the same name — a reinstalled phone next to its old entry — are
+  // told apart by age: the one heard from most recently keeps the name, the others are
+  // shown as "name (old)". Display only; nothing is renamed (Matt, 2026-10-07, J37).
+  const displayName = (peer) => {
+    const key = (peer.device_name || '').trim().toLowerCase(); // "OnePlus" and "Oneplus" are the same phone to a person
+    const same = peers.filter(p => (p.device_name || '').trim().toLowerCase() === key);
+    if (same.length < 2) return peer.device_name;
+    const newest = same.reduce((a, b) => (new Date(a.last_seen) >= new Date(b.last_seen) ? a : b));
+    return peer.device_id === newest.device_id ? peer.device_name : `${peer.device_name} (old)`;
+  };
   const [syncStatus, setSyncStatus] = useState('stopped');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -789,7 +799,7 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                     background: peer.is_online ? '#50fa7b' : '#6272a4'
                   }} />
                   <div style={{ color: '#f8f8f2', fontWeight: 'bold', flex: 1 }}>
-                    {peer.device_name}
+                    {displayName(peer)}
                   </div>
                   <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
                     {peer.is_online ? 'Online' : 'Offline'}

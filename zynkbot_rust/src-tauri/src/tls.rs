@@ -47,15 +47,6 @@ pub fn load_or_generate_cert(data_dir: &Path) -> Result<(String, String, Vec<u8>
     generate_and_save(data_dir)
 }
 
-/// Write a certificate and key as this device's own (a restored identity, KI-050).
-pub fn save_cert(data_dir: &Path, cert_pem: &str, key_pem: &str, cert_der: &[u8]) -> Result<(), String> {
-    fs::create_dir_all(data_dir).map_err(|e| format!("Failed to create data dir: {}", e))?;
-    fs::write(data_dir.join(CERT_PEM_FILE), cert_pem).map_err(|e| format!("Failed to write cert PEM: {}", e))?;
-    fs::write(data_dir.join(KEY_PEM_FILE), key_pem).map_err(|e| format!("Failed to write key PEM: {}", e))?;
-    fs::write(data_dir.join(CERT_DER_FILE), cert_der).map_err(|e| format!("Failed to write cert DER: {}", e))?;
-    Ok(())
-}
-
 fn generate_and_save(data_dir: &Path) -> Result<(String, String, Vec<u8>), String> {
     use rcgen::{generate_simple_self_signed, CertifiedKey};
 
