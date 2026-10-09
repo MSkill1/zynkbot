@@ -1,0 +1,35 @@
+# Tier A - frontier open-weight models, measured 2026-10-09.
+# The set that preserves current state-of-the-art capability across all
+# jurisdictions that publish weights. ~16 TB as published.
+#
+# China
+moonshotai/Kimi-K3
+moonshotai/Kimi-K2.6
+deepseek-ai/DeepSeek-V4-Pro
+deepseek-ai/DeepSeek-V4.1-Flash
+deepseek-ai/DeepSeek-V3.2
+deepseek-ai/DeepSeek-R1
+zai-org/GLM-5.3
+zai-org/GLM-5.3-Flash
+zai-org/GLM-5.2
+Qwen/Qwen3-235B-A22B
+Qwen/Qwen3.8-27B
+Qwen/Qwen3.5-9B
+MiniMaxAI/MiniMax-H3
+MiniMaxAI/MiniMax-M2.7
+XiaomiMiMo/MiMo-V2.6-Pro-RL
+tencent/Hy3
+stepfun-ai/Step-3.5-Flash
+baidu/ERNIE-4.5-21B-A3B-Thinking
+ByteDance-Seed/Seed-OSS-36B-Instruct
+# United States
+openai/gpt-oss-120b
+openai/gpt-oss-20b
+google/gemma-4-31B-it
+google/gemma-4-26B-A4B-it
+meta-llama/Llama-3.1-405B-Instruct
+meta-llama/Llama-4-Maverick-17B-128E-Instruct
+allenai/Olmo-3-7B-Instruct
+ibm-granite/granite-4.1-3b
+# Europe
+mistralai/Mistral-Large-3-675B-Instruct-2512

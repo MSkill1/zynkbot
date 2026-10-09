@@ -1,0 +1,14 @@
+# Tier A-run - the subset that is actually usable on hardware a person can own.
+# Everything here runs at 4-bit on a single 24 GB GPU or a 128 GB workstation.
+# ~1.5 TB as published, and the tier that survives contact with reality.
+openai/gpt-oss-120b
+openai/gpt-oss-20b
+google/gemma-4-31B-it
+google/gemma-4-26B-A4B-it
+Qwen/Qwen3.8-27B
+Qwen/Qwen3.5-9B
+baidu/ERNIE-4.5-21B-A3B-Thinking
+ByteDance-Seed/Seed-OSS-36B-Instruct
+MiniMaxAI/MiniMax-H3
+allenai/Olmo-3-7B-Instruct
+ibm-granite/granite-4.1-3b
