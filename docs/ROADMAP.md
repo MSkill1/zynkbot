@@ -46,6 +46,8 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 7. Zynkbot confirms in chat when the timer is set ("Timer set for 10 minutes").
 
+8a. **"Hey Zynk, check timer"** (Matt, 2026-10-14, from using Siri's equivalent): answer aloud with the time left. Not possible against the clock app, which has no query API; it needs the in-app timer of KI-061, after which "check timer", "how long is left" and "cancel the timer" are one parser line each.
+
 8. Test background-execution edge cases: wake word fires while backgrounded → timer set → phone locked → timer still fires correctly.
 
 ### Part 3 — Voice memory query

@@ -27,6 +27,22 @@ describe('parseVoiceCommand timers — what dictation actually produces', () => 
   });
 });
 
+describe('parseVoiceCommand timers — one misheard word after "timer" (Matt, Pixel, 2026-10-12, KI-093)', () => {
+  test('"set time or fifteen minutes" is a 15-minute timer, not a chat message', () => {
+    expect(parseVoiceCommand('set time or fifteen minutes')).toEqual({ type: 'timer', seconds: 900 });
+  });
+  test('"four", "of", "fer" in place of "for"', () => {
+    expect(parseVoiceCommand('set timer four fifteen minutes')).toEqual({ type: 'timer', seconds: 900 });
+    expect(parseVoiceCommand('set a time of ten minutes')).toEqual({ type: 'timer', seconds: 600 });
+    expect(parseVoiceCommand('timer fer thirty seconds')).toEqual({ type: 'timer', seconds: 30 });
+    expect(parseVoiceCommand('set timer 4 minutes')).toEqual({ type: 'timer', seconds: 240 });
+  });
+  test('an ordinary sentence with "time" and a duration is still not a timer', () => {
+    expect(parseVoiceCommand('what time is 5 minutes from now')).toBeNull();
+    expect(parseVoiceCommand('the time was 10 minutes ago')).toBeNull();
+  });
+});
+
 describe('parseVoiceCommand timers — spoken fractions (Matt, Pixel, 2026-10-07)', () => {
   test('"two and a half minutes" is 150 seconds, not a chat message', () => {
     expect(parseVoiceCommand('set a timer for two and a half minutes')).toEqual({ type: 'timer', seconds: 150 });

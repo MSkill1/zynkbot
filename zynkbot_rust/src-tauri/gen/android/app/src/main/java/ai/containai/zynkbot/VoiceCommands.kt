@@ -62,7 +62,10 @@ object VoiceCommands {
 
     private const val UNIT = "(hours?|hrs?|minutes?|mins?|seconds?|secs?)"
     private val TIMER_RES = listOf(
-        Regex("(?:set\\s+(?:a\\s+)?)?time(?:r)?\\s+(?:for\\s+)?(\\d+(?:\\.\\d+)?)\\s*$UNIT"),  // "time" too: dictation drops the r (tester, #29)
+        // "time" too: dictation drops the r (tester, #29). One misheard word may sit
+        // between "timer" and the number: Vosk heard "set timer for fifteen minutes"
+        // as "set time or fifteen minutes" (Matt, Pixel, 2026-10-12, KI-093).
+        Regex("(?:set\\s+(?:a\\s+)?)?time(?:r)?\\s+(?:(?:for|four|4|or|of|fer)\\s+)?(\\d+(?:\\.\\d+)?)\\s*$UNIT"),
         Regex("(\\d+(?:\\.\\d+)?)\\s*$UNIT\\s+timer"),
     )
     private val ALARM_RE = Regex(
