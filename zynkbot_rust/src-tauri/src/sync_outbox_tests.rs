@@ -383,11 +383,12 @@ async fn o18_links_that_predate_the_link_migration_are_queued_once_by_0017() {
     assert_eq!(rows[0].2, named);
 }
 
-/// 0020 queues every deletion this device already holds, once, through the same
-/// migrator the app runs (not raw SQL): on 2026-10-14 the desktop and the OnePlus both
-/// recorded the migration as applied with no row queued.
+/// 0020 queues every deletion this device already holds, once, and 0021 makes it hear
+/// everything from every peer once more — through the same migrator the app runs, not
+/// raw SQL. (The OnePlus had no tombstones when 0020 ran on 2026-10-14: a reinstall's
+/// first contact never sent them, which is what 0020 and the first-contact change fix.)
 #[tokio::test]
-async fn migration_0020_queues_the_existing_tombstones() {
+async fn migrations_0020_and_0021_queue_the_deletions_and_forget_the_inbox() {
     let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
     let all = sqlx::migrate!("./migrations");
     let mut before = sqlx::migrate!("./migrations");
@@ -395,7 +396,12 @@ async fn migration_0020_queues_the_existing_tombstones() {
     before.run(&pool).await.expect("migrations below 0020");
     sqlx::query("INSERT INTO deleted_memory_hashes (content_hash, deleted_at) VALUES ('aa', '2026-10-05T10:00:00.000Z'), ('bb', '2026-10-07T10:00:00.000Z')")
         .execute(&pool).await.unwrap();
-    all.run(&pool).await.expect("0020");
+    sqlx::query("INSERT INTO sync_inbox_cursor (peer_device_id, through, updated_at) VALUES ('peer-1', 500, '2026-10-01T00:00:00Z')")
+        .execute(&pool).await.unwrap();
+    all.run(&pool).await.expect("0020 and 0021");
+    // 0021: it has forgotten how far it heard from every peer, so each starts it over.
+    let heard: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_inbox_cursor").fetch_one(&pool).await.unwrap();
+    assert_eq!(heard, 0, "0021 must clear the inbox cursors");
     let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT row_sync_id, op, deleted_at FROM sync_outbox ORDER BY id").fetch_all(&pool).await.unwrap();
     assert_eq!(rows, vec![

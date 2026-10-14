@@ -638,15 +638,22 @@ pub async fn restore_memories_into(pool: &sqlx::SqlitePool, user_id: &str, memor
         .unwrap_or(false);
         if exists { out.skipped += 1; continue; }
 
+        // Deleted here after it was made: stays deleted. A memory made again after the
+        // deletion (same text, later created_at) is not the one that was deleted.
         let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
-        let deleted_here: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM deleted_memory_hashes WHERE content_hash = ?"
+        let deleted_at: Option<String> = sqlx::query_scalar(
+            "SELECT deleted_at FROM deleted_memory_hashes WHERE content_hash = ?"
         )
         .bind(&hash)
-        .fetch_one(pool)
+        .fetch_optional(pool)
         .await
-        .unwrap_or(false);
-        if deleted_here { out.deleted_since += 1; continue; }
+        .unwrap_or(None);
+        if let Some(deleted_at) = deleted_at {
+            let made = mem["created_at"].as_str().and_then(|t| t.parse::<chrono::DateTime<Utc>>().ok());
+            let deleted = deleted_at.parse::<chrono::DateTime<Utc>>().ok();
+            let made_after = matches!((made, deleted), (Some(m), Some(d)) if m > d);
+            if !made_after { out.deleted_since += 1; continue; }
+        }
 
         // Resolve embedding: use the backup's embedding_b64 if present; otherwise
         // regenerate locally from content so semantic recall works after restore.
@@ -736,5 +743,11 @@ mod restore_tests {
         // The tombstone is untouched: a second restore skips it again.
         let again = restore_memories_into(&pool, "u1", &backup).await;
         assert_eq!(again, RestoredMemories { inserted: 0, skipped: 2, deleted_since: 1 });
+
+        // The same text made again after the deletion is a new memory and comes back.
+        let mut remade = backed_up(deleted);
+        remade["created_at"] = serde_json::json!("2099-01-01T00:00:00+00:00");
+        let r = restore_memories_into(&pool, "u1", &[remade]).await;
+        assert_eq!(r, RestoredMemories { inserted: 1, skipped: 0, deleted_since: 0 });
     }
 }

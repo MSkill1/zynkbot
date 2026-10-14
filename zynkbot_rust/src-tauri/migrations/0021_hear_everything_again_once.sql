@@ -1,0 +1,11 @@
+-- 0021: on its first start after 0020, a device asks every peer for everything once (2026-10-14)
+-- 0020 re-sends the deletions a device holds, so stray copies elsewhere are removed by
+-- hash. That only works if the receiver already runs the new code: the desktop sent its
+-- 132 deletions at 17:29 UTC on the day of the change, while the laptop and the Pixel
+-- were still on the old build, which recorded the hashes and swept nothing. A sender
+-- cannot know when a receiver updates, so the receiver asks: forgetting how far it has
+-- heard from each peer makes every peer start it over (reset_cursor_if_ahead), and a
+-- first contact now carries the deletions with its first slice. Everything else in the
+-- re-send is an upsert the receiver already holds. A full send is 300 rows a second:
+-- about fifteen seconds per peer for the desktop's 3,700 rows.
+DELETE FROM sync_inbox_cursor;

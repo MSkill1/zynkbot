@@ -973,10 +973,14 @@ async fn apply_delete(
         "memories" => {
             let deleted_at = d.deleted_at.unwrap_or_else(Utc::now);
             if let Some(h) = &d.content_hash {
-                // Keep the later of the two times when both sides deleted it.
+                // Keep the earlier of the two times when both sides know of it. Devices
+                // on the old code stamped a received deletion with the moment it was
+                // applied, not the moment it was made (the laptop holds eleven stamped
+                // 17:29 on 2026-10-14 for deletions made days before); taking the later
+                // time would let such a stamp outrank a copy re-added in between.
                 sqlx::query(
                     "INSERT INTO deleted_memory_hashes (content_hash, deleted_at) VALUES (?, ?)
-                     ON CONFLICT (content_hash) DO UPDATE SET deleted_at = MAX(deleted_at, excluded.deleted_at)")
+                     ON CONFLICT (content_hash) DO UPDATE SET deleted_at = MIN(deleted_at, excluded.deleted_at)")
                     .bind(h).bind(deleted_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
                     .execute(&mut **tx).await.map_err(|e| format!("outbox: record tombstone: {}", e))?;
             }
