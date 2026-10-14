@@ -145,7 +145,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 8000);
         return;
       }
-      if (!await confirmDialog('Restore memories from your most recent cloud backup? Memories already on this device will be skipped.')) { setBackupStatus(null); setBackupMsg(''); return; }
+      if (!await confirmDialog('Restore memories from your most recent cloud backup? Memories already on this device are skipped, and anything deleted since the backup stays deleted.')) { setBackupStatus(null); setBackupMsg(''); return; }
       setBackupMsg('Restoring…');
       const res = await doRestoreData();
       setBackupStatus('ok'); setBackupMsg(res.message);

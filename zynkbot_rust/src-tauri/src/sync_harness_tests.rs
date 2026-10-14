@@ -942,3 +942,113 @@ fn b28_a_peer_we_cannot_reach_still_receives_when_it_pulls_from_us() {
         assert!(a.svc.transport.last_conn_error_logged.read().await.get(&b.device_id()).is_none(), "the silent mark is gone");
     });
 }
+
+// ---------------------------------------------------------------------------
+// 29. A deletion also removes a copy of the same text that carries another name.
+//     (J39, 2026-10-08: copies that predate 0013 were named independently on each
+//     device, and the desktop's delete missed the OnePlus's copy of "orange".)
+// ---------------------------------------------------------------------------
+#[test]
+fn b29_a_deletion_removes_a_copy_named_differently_on_the_other_device() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        a.sync_with(&b).await; // first contact over, cursors in place
+        // The same memory on both, named differently, written as history (no queue).
+        for p in [&a, &b] {
+            sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&p.pool).await.unwrap();
+            p.add_memory("My favourite colour is orange").await;
+            sqlx::query("DELETE FROM sync_suppress").execute(&p.pool).await.unwrap();
+        }
+        let names: Vec<String> = {
+            let mut v = Vec::new();
+            for p in [&a, &b] {
+                v.push(sqlx::query_scalar::<_, String>("SELECT sync_id FROM memories WHERE content = ?")
+                    .bind("My favourite colour is orange").fetch_one(&p.pool).await.unwrap());
+            }
+            v
+        };
+        assert_ne!(names[0], names[1], "the setup needs two different names");
+
+        // Deleted on the desktop as the app does: tombstone, then delete (the trigger queues it).
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await; // the deletion is later than the phone's copy
+        a.svc.record_tombstones(&[crate::sync_outbox::content_hash("My favourite colour is orange")]).await.unwrap();
+        sqlx::query("DELETE FROM memories WHERE content = ?").bind("My favourite colour is orange").execute(&a.pool).await.unwrap();
+        a.sync_with(&b).await;
+        assert!(b.memory_contents().await.is_empty(), "the phone's differently-named copy survived the deletion");
+        b.sync_with(&a).await;
+        assert!(a.memory_contents().await.is_empty(), "the deleted memory came back to the desktop");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 30. A first contact carries the deletions too, so a device that already holds an
+//     old copy of a deleted memory loses it instead of pushing it back. A copy
+//     changed after the deletion is kept. (J39: a re-paired laptop had 121 tombstones
+//     to the desktop's 131 and revived two memories.)
+// ---------------------------------------------------------------------------
+#[test]
+fn b30_first_contact_sends_the_deletions_and_an_old_copy_goes() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("laptop").await;
+        // The laptop holds two memories from before, as history (no queue).
+        sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&b.pool).await.unwrap();
+        b.add_memory("Elite Clash of Clans player").await;
+        b.add_memory("The spare key is with the neighbour").await;
+        sqlx::query("DELETE FROM sync_suppress").execute(&b.pool).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        // The desktop deleted both some time ago (it never held the rows now).
+        a.svc.record_tombstones(&[
+            crate::sync_outbox::content_hash("Elite Clash of Clans player"),
+            crate::sync_outbox::content_hash("The spare key is with the neighbour"),
+        ]).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        // The laptop edits the second one after that: an edit after the deletion survives it.
+        sqlx::query("UPDATE memories SET content = content, updated_at = datetime('now') WHERE content = ?")
+            .bind("The spare key is with the neighbour").execute(&b.pool).await.unwrap();
+
+        b.pair_with(&a).await;
+        a.sync_with(&b).await; // first contact: live rows and tombstones
+        assert_eq!(b.memory_contents().await, vec!["The spare key is with the neighbour".to_string()],
+            "the old copy of a deleted memory must go, the edited one must stay");
+        b.sync_with(&a).await;
+        assert_eq!(a.memory_contents().await, vec!["The spare key is with the neighbour".to_string()],
+            "the laptop must not revive the deleted memory on the desktop");
+        // And the laptop now knows of the deletion itself.
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deleted_memory_hashes WHERE content_hash = ?")
+            .bind(crate::sync_outbox::content_hash("Elite Clash of Clans player")).fetch_one(&b.pool).await.unwrap();
+        assert_eq!(n, 1, "the tombstone did not arrive with the first contact");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 31. The deletions a device already held before 0020 go out once more, by hash alone
+//     (the row is gone, so there is no text to send), and remove the stray copies.
+// ---------------------------------------------------------------------------
+#[test]
+fn b31_existing_deletions_are_resent_by_hash_and_remove_stray_copies() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        a.sync_with(&b).await;
+        sqlx::query("INSERT INTO sync_suppress (flag) VALUES (1)").execute(&b.pool).await.unwrap();
+        b.add_memory("I'm going to Bald now").await;
+        sqlx::query("DELETE FROM sync_suppress").execute(&b.pool).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        // What migration 0020 does on the desktop for a tombstone it already holds.
+        let hash = crate::sync_outbox::content_hash("I'm going to Bald now");
+        sqlx::query("INSERT INTO deleted_memory_hashes (content_hash) VALUES (?)").bind(&hash).execute(&a.pool).await.unwrap();
+        sqlx::query("INSERT INTO sync_outbox (table_name, row_sync_id, op, payload, deleted_at)
+                     SELECT 'memories', 'hash:' || content_hash, 'delete', NULL, deleted_at FROM deleted_memory_hashes")
+            .execute(&a.pool).await.unwrap();
+
+        a.sync_with(&b).await;
+        assert!(b.memory_contents().await.is_empty(), "the stray copy survived the re-sent deletion");
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deleted_memory_hashes WHERE content_hash = ?")
+            .bind(&hash).fetch_one(&b.pool).await.unwrap();
+        assert_eq!(n, 1);
+    });
+}

@@ -45,13 +45,19 @@ pub const OUTBOX_RETENTION_DAYS: i64 = 7;
 
 /// A deletion, named by what the receiver needs to find and forget the row.
 /// `content_hash` is sha256(content) for a memory: the key of `deleted_memory_hashes`,
-/// which the old sync paths still honour until step 5 removes them.
+/// and since 0020 also how the receiver finds a copy of the same text that carries a
+/// different `sync_id` (copies that predate 0013 were named independently on each
+/// device, and the desktop's deletion missed the OnePlus's copy — J39, 2026-10-08).
+/// `row_sync_id` is empty for a tombstone re-sent by hash alone. `deleted_at` is when
+/// the deletion happened: a copy changed after that moment survives it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncTombstone {
     pub table_name: String,
     pub row_sync_id: String,
     #[serde(default)]
     pub content_hash: Option<String>,
+    #[serde(default)]
+    pub deleted_at: Option<DateTime<Utc>>,
 }
 
 /// An API key or the backup key, as it travels (step 3, migration 0014). `updated_at` is
@@ -333,23 +339,28 @@ pub async fn seed_secrets_from_env(pool: &SqlitePool) -> Result<usize, String> {
 /// collapsed to nothing (inserted then deleted) still move the cursor.
 pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxBatch>, String> {
     let rows = sqlx::query(
-        "SELECT id, table_name, row_sync_id, op, payload FROM sync_outbox
+        "SELECT id, table_name, row_sync_id, op, payload, created_at, deleted_at FROM sync_outbox
          WHERE id > ? ORDER BY id ASC LIMIT ?")
         .bind(after).bind(OUTBOX_BATCH_ROWS)
         .fetch_all(pool).await.map_err(|e| format!("outbox: read queue: {}", e))?;
     if rows.is_empty() { return Ok(None); }
 
     let through: i64 = rows.last().map(|r| r.get("id")).unwrap_or(after);
-    // (table, sync_id) -> (is_delete, delete payload)
-    let mut latest: HashMap<(String, String), (bool, Option<String>)> = HashMap::new();
+    // (table, sync_id) -> (is_delete, delete payload, when deleted)
+    let mut latest: HashMap<(String, String), (bool, Option<String>, Option<DateTime<Utc>>)> = HashMap::new();
     for r in &rows {
         let key = (r.get::<String, _>("table_name"), r.get::<String, _>("row_sync_id"));
         let op: String = r.get("op");
         let payload: Option<String> = r.get("payload");
         if op == "delete" {
-            latest.insert(key, (true, payload));
+            // The queue row was written by the delete itself, so its time is the
+            // deletion's; a tombstone re-queued by 0020 carries its own.
+            let when = r.get::<Option<String>, _>("deleted_at")
+                .or_else(|| r.get::<Option<String>, _>("created_at"))
+                .and_then(|t| t.parse::<DateTime<Utc>>().ok());
+            latest.insert(key, (true, payload, when));
         } else {
-            latest.entry(key).or_insert((false, None));
+            latest.entry(key).or_insert((false, None, None));
         }
     }
 
@@ -359,10 +370,15 @@ pub async fn build_batch(pool: &SqlitePool, after: i64) -> Result<Option<OutboxB
     let mut want_secrets = Vec::new();
     let mut want_links = Vec::new();
     let mut deletes = Vec::new();
-    for ((table, sync_id), (is_delete, payload)) in latest {
+    for ((table, sync_id), (is_delete, payload, deleted_at)) in latest {
         if is_delete {
-            let content_hash = if table == "memories" { payload.as_deref().map(content_hash) } else { None };
-            deletes.push(SyncTombstone { table_name: table, row_sync_id: sync_id, content_hash });
+            let (row_sync_id, content_hash) = if table == "memories" {
+                match sync_id.strip_prefix("hash:") {
+                    Some(h) => (String::new(), Some(h.to_string())),       // re-sent by 0020
+                    None => (sync_id, payload.as_deref().map(content_hash)),
+                }
+            } else { (sync_id, None) };
+            deletes.push(SyncTombstone { table_name: table, row_sync_id, content_hash, deleted_at });
         } else {
             match table.as_str() {
                 "memories" => want_memories.push(sync_id),
@@ -426,16 +442,41 @@ pub async fn build_full_resend(pool: &SqlitePool, user_id: &str, through: i64, o
     // carries the keys on the first slice. Advancing by the batch size skipped one row
     // per key and a message never arrived (b08d under load, 2026-10-02).
     let covered = slice.len();
+    // So do the deletions this device knows of. A device that joined by first contact
+    // used to receive live rows only, and a re-paired laptop with 121 tombstones to the
+    // desktop's 131 had nothing to refuse two resurrected memories with (J39, 2026-10-08).
+    let deletes = if offset == 0 { load_tombstones(pool).await? } else { Vec::new() };
     let batch = OutboxBatch {
         through,
         sessions: load_sessions(pool, &pick("s")).await?,
         memories: load_memories(pool, &pick("m")).await?,
         messages: load_messages(pool, &pick("x")).await?,
-        deletes: Vec::new(),
+        deletes,
         secrets,
         links: load_links(pool, &pick("l")).await?,
     };
     Ok((batch, total, covered))
+}
+
+/// Every deletion this device holds, as tombstones: memories by hash (no row is left to
+/// name them by sync_id), threads by session_id.
+pub async fn load_tombstones(pool: &SqlitePool) -> Result<Vec<SyncTombstone>, String> {
+    let mut out = Vec::new();
+    let memories: Vec<(String, String)> = sqlx::query_as(
+        "SELECT content_hash, deleted_at FROM deleted_memory_hashes ORDER BY deleted_at")
+        .fetch_all(pool).await.map_err(|e| format!("outbox: read tombstones: {}", e))?;
+    for (hash, at) in memories {
+        out.push(SyncTombstone { table_name: "memories".into(), row_sync_id: String::new(),
+            content_hash: Some(hash), deleted_at: at.parse::<DateTime<Utc>>().ok() });
+    }
+    let sessions: Vec<(String, String)> = sqlx::query_as(
+        "SELECT session_id, deleted_at FROM deleted_sessions ORDER BY deleted_at")
+        .fetch_all(pool).await.map_err(|e| format!("outbox: read thread tombstones: {}", e))?;
+    for (sid, at) in sessions {
+        out.push(SyncTombstone { table_name: "conversation_sessions".into(), row_sync_id: sid,
+            content_hash: None, deleted_at: at.parse::<DateTime<Utc>>().ok() });
+    }
+    Ok(out)
 }
 
 /// How far a full send to each (this device, peer) has got, in rows, and where the
@@ -563,8 +604,11 @@ pub async fn apply_outbox_batch_from(pool: &SqlitePool, local_user_id: &str, sen
         if apply_message(&mut tx, local_user_id, msg).await? { applied += 1; }
         if !touched_sessions.contains(&msg.session_id) { touched_sessions.push(msg.session_id.clone()); }
     }
+    // Every memory's hash, built once per batch and only if a memory deletion is in it:
+    // a tombstone also removes a copy of the same text under another name.
+    let mut hash_index: Option<HashMap<String, Vec<(i32, Option<DateTime<Utc>>)>>> = None;
     for d in &batch.deletes {
-        if apply_delete(&mut tx, d).await? { applied += 1; }
+        if apply_delete(&mut tx, d, &mut hash_index).await? { applied += 1; }
     }
     let mut keys_changed = false;
     for sec in &batch.secrets {
@@ -910,16 +954,51 @@ async fn session_is_deleted(tx: &mut Transaction<'_, Sqlite>, session_id: &str) 
     Ok(n > 0)
 }
 
-async fn apply_delete(tx: &mut Transaction<'_, Sqlite>, d: &SyncTombstone) -> Result<bool, String> {
+/// sha256 of every memory's content -> (id, updated_at), for deleting by text.
+async fn memory_hash_index(tx: &mut Transaction<'_, Sqlite>) -> Result<HashMap<String, Vec<(i32, Option<DateTime<Utc>>)>>, String> {
+    let rows: Vec<(i32, String, Option<DateTime<Utc>>)> = sqlx::query_as("SELECT id, content, updated_at FROM memories")
+        .fetch_all(&mut **tx).await.map_err(|e| format!("outbox: hash index: {}", e))?;
+    let mut index: HashMap<String, Vec<(i32, Option<DateTime<Utc>>)>> = HashMap::new();
+    for (id, content, updated) in rows {
+        index.entry(content_hash(&content)).or_default().push((id, updated));
+    }
+    Ok(index)
+}
+
+async fn apply_delete(
+    tx: &mut Transaction<'_, Sqlite>, d: &SyncTombstone,
+    hash_index: &mut Option<HashMap<String, Vec<(i32, Option<DateTime<Utc>>)>>>,
+) -> Result<bool, String> {
     let affected = match d.table_name.as_str() {
         "memories" => {
+            let deleted_at = d.deleted_at.unwrap_or_else(Utc::now);
             if let Some(h) = &d.content_hash {
-                sqlx::query("INSERT OR IGNORE INTO deleted_memory_hashes (content_hash) VALUES (?)")
-                    .bind(h).execute(&mut **tx).await.map_err(|e| format!("outbox: record tombstone: {}", e))?;
+                // Keep the later of the two times when both sides deleted it.
+                sqlx::query(
+                    "INSERT INTO deleted_memory_hashes (content_hash, deleted_at) VALUES (?, ?)
+                     ON CONFLICT (content_hash) DO UPDATE SET deleted_at = MAX(deleted_at, excluded.deleted_at)")
+                    .bind(h).bind(deleted_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+                    .execute(&mut **tx).await.map_err(|e| format!("outbox: record tombstone: {}", e))?;
             }
-            sqlx::query("DELETE FROM memories WHERE sync_id = ?")
-                .bind(&d.row_sync_id).execute(&mut **tx).await
-                .map_err(|e| format!("outbox: delete memory: {}", e))?.rows_affected()
+            let mut n = 0u64;
+            if !d.row_sync_id.is_empty() {
+                n += sqlx::query("DELETE FROM memories WHERE sync_id = ?")
+                    .bind(&d.row_sync_id).execute(&mut **tx).await
+                    .map_err(|e| format!("outbox: delete memory: {}", e))?.rows_affected();
+            }
+            // The same text under another name, unless it was changed after the deletion.
+            if let Some(h) = &d.content_hash {
+                if hash_index.is_none() { *hash_index = Some(memory_hash_index(tx).await?); }
+                let copies = hash_index.as_ref().and_then(|i| i.get(h)).cloned().unwrap_or_default();
+                for (id, updated) in copies {
+                    if updated.map_or(true, |u| u <= deleted_at) {
+                        n += sqlx::query("DELETE FROM memories WHERE id = ?")
+                            .bind(id).execute(&mut **tx).await
+                            .map_err(|e| format!("outbox: delete memory copy: {}", e))?.rows_affected();
+                    }
+                }
+            }
+            n
         }
         "conversation_sessions" => {
             // A thread's sync_id is its session_id (0013). Tombstone first, so a reply

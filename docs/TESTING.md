@@ -75,6 +75,9 @@ Each is one test. Those marked *rebuild* are expected to fail on the pre-rebuild
 18. A message addressed to another device id is refused (b21).
 19. A memory link travels between the same two memories and is gone when one of them is deleted (b22).
 20. A later save of a key wins on both devices even when the other device's clock runs ahead (b23, KI-081).
+21. A deletion also removes a copy of the same text that carries another name (b29, KI-094).
+22. A first contact sends the deletions: an old copy of a deleted memory goes, a copy edited after the deletion stays (b30, KI-094).
+23. The deletions a device already held are re-sent by hash alone and remove stray copies (b31, migration 0020, KI-094).
 
 ## Manual device checklist
 

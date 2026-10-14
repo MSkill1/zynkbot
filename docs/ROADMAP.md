@@ -626,6 +626,7 @@ Device-level parental controls — factory reset protection, app-level restricti
 ### Extended Cloud Services
 
 - **Encrypted memory backup tiers** — extended retention, cross-device restore history, priority restore bandwidth.
+- **Several backups to choose from, and undo-delete** *(added 2026-10-14)* — today Restore reads the single most recent backup, and deletions win over it (KI-094). Keeping the last few backups and letting the user pick one covers "I want last week's"; a trash that holds deleted memories for a while covers "I deleted that by mistake", which Restore is no longer the tool for.
 - **Scheduled automatic backup** *(added 2026-09-22, Matt)* — an hourly or daily backup the user can switch on once they have their cloud account; today every backup is started by hand.
 - **Family sync service** — cloud relay for family-paired devices that aren't on the same LAN.
 

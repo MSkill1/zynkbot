@@ -30,6 +30,22 @@ pub struct Memory {
 pub struct ConversationEngine {
 }
 
+/// What the model is shown for one memory: the stored fact, then "(you said: …)" when
+/// the user's own words differ from it. Capped so a long dictation does not crowd out
+/// the other memories.
+pub fn memory_line(content: &str, original_text: Option<&str>) -> String {
+    let normalise = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    match original_text {
+        Some(said) if !said.trim().is_empty() && normalise(said) != normalise(content) => {
+            let said = said.trim();
+            let short: String = said.chars().take(200).collect();
+            let ellipsis = if short.chars().count() < said.chars().count() { "…" } else { "" };
+            format!("{} (you said: \"{}{}\")", content, short, ellipsis)
+        }
+        _ => content.to_string(),
+    }
+}
+
 impl ConversationEngine {
     pub fn new() -> Self {
         Self {}
@@ -171,8 +187,12 @@ impl ConversationEngine {
 
         let mut context = String::from("USER'S STORED MEMORIES:\n");
         for (idx, mem) in limited_memories.iter().enumerate() {
-            // Use original_text if available (for tone preservation), otherwise use content
-            let text_for_llm = mem.original_text.as_ref().unwrap_or(&mem.content);
+            // The content is the fact as stored, from a photo, an attachment or an
+            // inference as much as from words; original_text is what the user said.
+            // Showing the words alone left the model unable to name the furniture oils
+            // the content held ("I saved a note but don't know what the item was",
+            // 2026-10-08): the fact goes first, the user's words after it when they differ.
+            let text_for_llm = memory_line(&mem.content, mem.original_text.as_deref());
             let date_str = mem.created_at.format("%B %-d, %Y").to_string();
             context.push_str(&format!("{}. ({}) {}\n", idx + 1, date_str, text_for_llm));
             // Character-based, not byte-based: a byte slice panics inside a multi-byte
@@ -394,6 +414,23 @@ mod tests {
         // Local model - should still include (only 2 messages)
         let context = engine.build_conversation_context(&history, false);
         assert!(context.contains("USER: Hello"));
+    }
+
+    /// The stored fact reaches the model; the user's words ride along only when they
+    /// add something (2026-10-08, the furniture-oil memory).
+    #[test]
+    fn memory_line_shows_the_fact_and_the_users_words_only_when_they_differ() {
+        assert_eq!(
+            memory_line("Howard Feed-N-Wax and Restor-A-Finish, the furniture oils to reorder",
+                        Some("Remember what this is - I need to order it again")),
+            "Howard Feed-N-Wax and Restor-A-Finish, the furniture oils to reorder (you said: \"Remember what this is - I need to order it again\")");
+        assert_eq!(memory_line("Bins go out on Tuesday", Some("  bins go  out on Tuesday ")), "Bins go out on Tuesday");
+        assert_eq!(memory_line("Bins go out on Tuesday", None), "Bins go out on Tuesday");
+        assert_eq!(memory_line("Bins go out on Tuesday", Some("   ")), "Bins go out on Tuesday");
+        let long = "x".repeat(300);
+        let line = memory_line("A fact", Some(&long));
+        assert!(line.ends_with("…\")"), "a long dictation is cut: {}", line);
+        assert!(line.chars().count() < 230);
     }
 
     #[test]
