@@ -411,7 +411,11 @@ impl ZynkSyncService {
             let error_body = response.text().await.unwrap_or_else(|_| "Could not read error body".to_string());
             #[cfg(debug_assertions)]
             println!("[ZynkSync] Error response body: {}", error_body);
-            return Err(format!("Pairing failed (status {}): {}", status, error_body));
+            // The host answers a refused pairing with {"error": "..."}; show that reason.
+            let reason = serde_json::from_str::<serde_json::Value>(&error_body).ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+                .unwrap_or_else(|| format!("status {}: {}", status, error_body));
+            return Err(format!("Pairing failed: {}", reason));
         }
 
         // Get the raw response text first for debugging
@@ -1576,7 +1580,21 @@ async fn handle_device_info(
 /// Axum handler for verifying device pairing codes
 /// This implements bidirectional pairing: when a client connects to a host with a pairing code,
 /// the host automatically adds the client to its peer list
+/// A refused pairing (wrong or expired code, missing field, too many attempts) answers
+/// 400 with `{"error": "..."}`. Until 2026-10-16 the error was returned as a plain string,
+/// which axum sends as 200 OK text, so the joining device reported "Invalid JSON response"
+/// instead of the reason.
 async fn handle_verify_pairing(
+    state: State<Arc<ZynkSyncService>>,
+    addr: ConnectInfo<SocketAddr>,
+    request: Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    verify_pairing_inner(state, addr, request).await.map_err(|e| {
+        (axum::http::StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e })))
+    })
+}
+
+async fn verify_pairing_inner(
     State(service): State<Arc<ZynkSyncService>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(request): Json<serde_json::Value>,
