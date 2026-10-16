@@ -297,7 +297,7 @@ pub async fn get_messages(
                 model_backend, containment_mode
          FROM conversation_messages
          WHERE session_id = ?
-         ORDER BY created_at ASC",
+         ORDER BY created_at ASC, id ASC",
     )
     .bind(session_id)
     .fetch_all(pool)

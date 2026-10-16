@@ -9,6 +9,9 @@ export default function OnboardingModal({ isOpen, onClose, userId }) {
   const [currentInput, setCurrentInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [summary, setSummary] = useState(null);
+  // The thread this run is saved under (History shows it as "Onboarding"), so its
+  // memories can open the conversation they came from.
+  const [threadId, setThreadId] = useState(null);
   const contentRef = useRef(null);
 
   // Reset all state each time the modal opens
@@ -18,6 +21,7 @@ export default function OnboardingModal({ isOpen, onClose, userId }) {
       setUserResponses({});
       setCurrentInput('');
       setSummary(null);
+      setThreadId(`onboarding-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
     }
   }, [isOpen]);
 
@@ -88,7 +92,8 @@ export default function OnboardingModal({ isOpen, onClose, userId }) {
           userId: userId,
           questionId: currentQuestion.id,
           question: currentQuestion.text,
-          answer: currentInput
+          answer: currentInput,
+          sessionId: threadId
         });
       }
 

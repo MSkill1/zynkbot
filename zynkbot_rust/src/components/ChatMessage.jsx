@@ -39,7 +39,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
 
   if (isUserMessage) {
     return (
-      <div className="chat-message">
+      <div className="chat-message" id={message?.id != null ? `message-${message.id}` : undefined}>
         <div className="message-user">
           <div className="message-header">
             <strong>You:</strong>
@@ -101,7 +101,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
 
   // Bot message
   return (
-    <div className="chat-message">
+    <div className="chat-message" id={message?.id != null ? `message-${message.id}` : undefined}>
       <div className="message-bot">
         <div className="message-header">
           <strong>Zynkbot:</strong>

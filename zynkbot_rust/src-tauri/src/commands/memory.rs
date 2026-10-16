@@ -1285,3 +1285,55 @@ pub async fn resolve_memory_conflict_v2(
         _ => Err(format!("Invalid decision: '{}'. Must be one of: keep_old, keep_new, not_a_contradiction, keep_both, both_with_explanation", decision))
     }
 }
+
+/// Where a memory came from: the conversation it was made in and, when it can be
+/// found, the user message that produced it (Matt, 2026-10-16: "I was looking at a
+/// memory and could not remember what the response was").
+#[derive(serde::Serialize)]
+pub struct MemorySource {
+    pub session_id: Option<String>,
+    pub session_exists: bool,
+    pub session_title: Option<String>,
+    pub message_id: Option<i64>,
+}
+
+#[tauri::command]
+pub async fn find_memory_source(memory_id: i32) -> Result<MemorySource, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| e.to_string())?;
+    let row: Option<(Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT session_id, CAST(created_at AS TEXT), original_text FROM memories WHERE id = ?")
+        .bind(memory_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    let Some((session_id, created_at, original_text)) = row else { return Err("Memory not found".into()); };
+    let Some(session_id) = session_id.filter(|s| !s.is_empty()) else {
+        return Ok(MemorySource { session_id: None, session_exists: false, session_title: None, message_id: None });
+    };
+    let title: Option<(Option<String>,)> = sqlx::query_as("SELECT title FROM conversation_sessions WHERE session_id = ?")
+        .bind(&session_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    let Some((session_title,)) = title else {
+        return Ok(MemorySource { session_id: Some(session_id), session_exists: false, session_title: None, message_id: None });
+    };
+    // The message that produced the memory: the user's words it was extracted from
+    // when they were kept verbatim; otherwise the last user message before the memory
+    // was written (extraction runs after the reply, so that is the exchange); otherwise
+    // the start of the thread.
+    let mut message_id: Option<i64> = None;
+    if let Some(text) = original_text.as_deref().filter(|t| !t.trim().is_empty()) {
+        message_id = sqlx::query_scalar(
+            "SELECT id FROM conversation_messages WHERE session_id = ? AND role = 'user' AND content = ? ORDER BY created_at LIMIT 1")
+            .bind(&session_id).bind(text).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    }
+    if message_id.is_none() {
+        message_id = sqlx::query_scalar(
+            "SELECT id FROM conversation_messages WHERE session_id = ? AND role = 'user'
+               AND julianday(created_at) <= julianday(?) + 5.0 / 86400.0
+             ORDER BY created_at DESC LIMIT 1")
+            .bind(&session_id).bind(&created_at).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    }
+    if message_id.is_none() {
+        message_id = sqlx::query_scalar(
+            "SELECT id FROM conversation_messages WHERE session_id = ? ORDER BY created_at LIMIT 1")
+            .bind(&session_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    }
+    Ok(MemorySource { session_id: Some(session_id), session_exists: true, session_title, message_id })
+}

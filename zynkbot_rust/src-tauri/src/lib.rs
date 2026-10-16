@@ -2514,6 +2514,7 @@ pub fn run() {
             commands::chat::cancel_generation,
             commands::chat::run_ensemble,
             commands::memory::list_memories,
+            commands::memory::find_memory_source,
             commands::memory::update_memory,
             commands::memory::delete_memory,
             commands::memory::get_memory,

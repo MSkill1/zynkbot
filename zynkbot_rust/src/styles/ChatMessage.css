@@ -218,3 +218,14 @@
     padding: 0.75rem 0.25rem;
   }
 }
+
+/* The exchange a memory came from, when opened from the Memory Manager (2026-10-16). */
+.chat-message.message-highlight {
+  outline: 2px solid #8be9fd;
+  outline-offset: 4px;
+  border-radius: 8px;
+  transition: outline-color 1.5s ease;
+}
+.chat-message.message-highlight-fade {
+  outline-color: transparent;
+}

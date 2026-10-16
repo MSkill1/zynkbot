@@ -722,6 +722,32 @@ export default function App() {
     }, 100);
   };
 
+  // Open the conversation a memory came from, at the exchange that produced it
+  // (Memory Manager → "Open conversation", 2026-10-16).
+  const handleOpenMemoryConversation = async (memory) => {
+    try {
+      const src = await invoke('find_memory_source', { memoryId: memory.id });
+      if (!src.session_id) { notify('This memory was not made in a conversation'); return; }
+      if (!src.session_exists) { notify('That conversation has been deleted'); return; }
+      const pastMessages = await invoke('get_conversation_messages', { sessionId: src.session_id });
+      if (!pastMessages || pastMessages.length === 0) { notify('That conversation is empty'); return; }
+      memoryManagerRef.current?.close();
+      handleResumeSession({ sessionId: src.session_id, messages: pastMessages || [] });
+      if (src.message_id != null) {
+        setTimeout(() => {
+          const el = document.getElementById(`message-${src.message_id}`);
+          if (!el) return;
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.add('message-highlight');
+          setTimeout(() => el.classList.add('message-highlight-fade'), 2500);
+          setTimeout(() => el.classList.remove('message-highlight', 'message-highlight-fade'), 4500);
+        }, 300);
+      }
+    } catch (e) {
+      notify(`Could not open the conversation: ${e}`, 6000);
+    }
+  };
+
   // A short non-blocking notice at the bottom of the window (2026-09-20). alert()
   // blocks the page and needs a tap; this fades on its own.
   const [notice, setNotice] = useState('');
@@ -2552,6 +2578,7 @@ export default function App() {
               user_id={userId}
               apiBaseUrl={API_BASE_URL}
               containmentMode={containmentMode}
+              onOpenConversation={handleOpenMemoryConversation}
             />
           </div>
         </div>

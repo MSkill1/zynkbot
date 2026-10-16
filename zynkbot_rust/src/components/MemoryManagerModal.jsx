@@ -26,7 +26,7 @@ const CANONICAL_NAMESPACES = [
   'achievements', 'biography'
 ];
 
-export default function MemoryManagerModal({ isOpen, onClose, userId, onMemoriesChanged }) {
+export default function MemoryManagerModal({ isOpen, onClose, userId, onMemoriesChanged, onOpenConversation }) {
   const [memories, setMemories] = useState([]);
   const [selectedMemory, setSelectedMemory] = useState(null);
   const [relationships, setRelationships] = useState([]);
@@ -940,6 +940,17 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     <div className="detail-row">
                       <strong>Created:</strong> {new Date(selectedMemory.created_at).toLocaleString()}
                     </div>
+                    {selectedMemory.session_id && onOpenConversation && (
+                      <div className="detail-row">
+                        <button
+                          type="button"
+                          className="edit-button"
+                          style={{ height: '36px', padding: '0 14px' }}
+                          title="Open the conversation this memory came from, at the exchange that produced it"
+                          onClick={() => onOpenConversation(selectedMemory)}
+                        >💬 Open conversation</button>
+                      </div>
+                    )}
                     <div className="detail-section">
                       <strong>Content:</strong>
                       <div className="content-box">{selectedMemory.content}</div>
@@ -1359,10 +1370,15 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     <div className="detail-row">
                       <strong>Source:</strong> {selectedMemory.source_type || 'N/A'}
                     </div>
-                    {selectedMemory.session_id && (
+                    {selectedMemory.session_id && onOpenConversation && (
                       <div className="detail-row">
-                        <strong>Session:</strong>{' '}
-                        {selectedMemory.session_id.substring(0, 8)}...
+                        <button
+                          type="button"
+                          className="edit-button"
+                          style={{ height: '36px', padding: '0 14px' }}
+                          title="Open the conversation this memory came from, at the exchange that produced it"
+                          onClick={() => onOpenConversation(selectedMemory)}
+                        >💬 Open conversation</button>
                       </div>
                     )}
                     <div className="detail-section">

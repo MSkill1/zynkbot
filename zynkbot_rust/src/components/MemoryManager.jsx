@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import MemoryManagerModal from "./MemoryManagerModal";
 import "../styles/MemoryManager.css";
 
-const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref) => {
+const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode, onOpenConversation }, ref) => {
   const isHipaaMode = containmentMode === 'hipaa';
   const [showModal, setShowModal] = useState(false);
   const [memories, setMemories] = useState([]);
@@ -256,6 +256,7 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
         onClose={() => setShowModal(false)}
         userId={user_id}
         onMemoriesChanged={fetchMemories}
+        onOpenConversation={onOpenConversation}
       />
     </>
   );

@@ -7,8 +7,31 @@ pub async fn store_onboarding_response(
     question_id: String,
     question: String,
     answer: String,
+    session_id: Option<String>,
 ) -> Result<i32, String> {
     println!("[Rust] store_onboarding_response called - question_id: {}", question_id);
+
+    // The onboarding is also kept as a conversation named "Onboarding" (one per run,
+    // the dialog picks the id), question then answer, so each onboarding memory has a
+    // thread to open from the Memory Manager like any other (Matt, 2026-10-16).
+    if let Some(sid) = session_id.as_deref().filter(|s| !s.is_empty()) {
+        let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| e.to_string())?;
+        crate::conversation_history::open_session(&pool, sid, &user_id, "Onboarding", "none", "sovereign")
+            .await.map_err(|e| e.to_string())?;
+        for (role, text, mode) in [("assistant", question.as_str(), "system"), ("user", answer.as_str(), "typed")] {
+            sqlx::query(
+                "INSERT OR IGNORE INTO conversation_messages
+                     (session_id, user_id, role, content, model_backend, containment_mode, created_at, input_mode)
+                 VALUES (?, ?, ?, ?, 'none', 'sovereign', strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), ?)")
+                .bind(sid).bind(&user_id).bind(role).bind(text).bind(mode)
+                .execute(&pool).await.map_err(|e| e.to_string())?;
+        }
+        sqlx::query(
+            "UPDATE conversation_sessions SET last_active = strftime('%Y-%m-%dT%H:%M:%S+00:00','now'),
+                 message_count = (SELECT COUNT(*) FROM conversation_messages m WHERE m.session_id = conversation_sessions.session_id)
+             WHERE session_id = ?")
+            .bind(sid).execute(&pool).await.map_err(|e| e.to_string())?;
+    }
 
     let tags = match question_id.as_str() {
         "name_age" => vec!["onboarding".to_string(), "identity".to_string(), "personal".to_string()],
@@ -44,7 +67,7 @@ pub async fn store_onboarding_response(
         title,
         answer,
         Some("onboarding".to_string()),
-        None,
+        session_id.filter(|s| !s.is_empty()),
         Some(user_id),
         Some(tags),
         "onboarding".to_string(),
