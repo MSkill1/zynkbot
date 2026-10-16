@@ -1052,3 +1052,37 @@ fn b31_existing_deletions_are_resent_by_hash_and_remove_stray_copies() {
         assert_eq!(n, 1);
     });
 }
+
+// ---------------------------------------------------------------------------
+// 32. A third device joining through the host is listed by the device it has never
+//     met, and lists it, with no restart. On 2026-10-15 the laptop re-joined through
+//     the desktop; its own introduction reached the OnePlus before the desktop's
+//     notice did, the OnePlus answered 401, and the laptop dropped it until restarted
+//     while the OnePlus's pulls from the laptop failed with "peer not found".
+// ---------------------------------------------------------------------------
+#[test]
+fn b32_a_device_joining_a_mesh_and_the_third_device_list_each_other_at_once() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("oneplus").await;
+        b.pair_with(&a).await;
+
+        let c = Peer::spawn("laptop").await;
+        c.pair_with(&a).await;
+
+        // The host told b before it answered c, so b lists c already; c holds b from
+        // the host's answer whether or not its own introduction got through.
+        let b_peers: Vec<String> = b.svc.get_peers().await.into_iter().map(|p| p.device_id).collect();
+        assert!(b_peers.contains(&c.device_id()), "oneplus must list the laptop the moment the join is answered; has {:?}", b_peers);
+        let c_peers: Vec<String> = c.svc.get_peers().await.into_iter().map(|p| p.device_id).collect();
+        assert!(c_peers.contains(&b.device_id()), "laptop must list the oneplus it was introduced to; has {:?}", c_peers);
+
+        // And each can pull from the other right away.
+        b.add_memory("The OnePlus charger lives in the kitchen drawer").await;
+        c.sync_with(&b).await;
+        assert!(c.memory_contents().await.iter().any(|m| m.contains("kitchen drawer")), "laptop pulled from the oneplus");
+        c.add_memory("The laptop bag is in the hall closet").await;
+        b.sync_with(&c).await;
+        assert!(b.memory_contents().await.iter().any(|m| m.contains("hall closet")), "oneplus pulled from the laptop");
+    });
+}

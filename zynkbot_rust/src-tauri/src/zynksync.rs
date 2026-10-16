@@ -625,6 +625,28 @@ impl ZynkSyncService {
 
                     if peer_ip.is_empty() { continue; }
 
+                    // The host vouched for this peer and step 1 stored it as paired, so hold
+                    // it in memory as well: the panel lists it and our server answers its
+                    // requests. Until 2026-10-15 it was added only once the introduction
+                    // below had succeeded, so a peer that refused us once stayed off the
+                    // list until the next restart while its own pulls from us failed with
+                    // "peer not found".
+                    {
+                        let mut map = self.transport.peers.write().await;
+                        map.entry(peer_id.clone()).or_insert_with(|| PeerDevice {
+                            device_id: peer_id.clone(),
+                            device_name: peer_name.clone(),
+                            host: peer_ip.clone(),
+                            port: peer_port_num,
+                            url: format!("https://{}:{}", peer_ip, peer_port_num),
+                            last_seen: Utc::now(),
+                            paired: true,
+                            pairing_code: None,
+                            user_id: None,
+                            is_online: false,
+                        });
+                    }
+
                     let intro_url = format!("https://{}:{}/api/zynksync/introduce", peer_ip, peer_port_num);
                     let http_client = self.transport.http_client.read().await.clone();
                     let mut payload = serde_json::json!({
@@ -637,28 +659,34 @@ impl ZynkSyncService {
                         payload["new_device_user_id"] = serde_json::json!(uid);
                     }
 
+                    // Introduce ourselves so the peer can address us. The host now tells its
+                    // peers about us before it answers us, but a peer can still be slow or
+                    // asleep, so a refusal is retried twice in the background (1.5 s, then
+                    // 4 s) instead of being final.
                     match http_client.post(&intro_url).json(&payload).send().await {
-                        Ok(resp) if resp.status().is_success() => {
-                            println!("[ZynkSync] ✓ Introduced to peer: {}", peer_name);
-                            // Add confirmed peer to in-memory map
-                            let mut map = self.transport.peers.write().await;
-                            if !map.contains_key(&peer_id) {
-                                map.insert(peer_id.clone(), PeerDevice {
-                                    device_id: peer_id.clone(),
-                                    device_name: peer_name.clone(),
-                                    host: peer_ip.clone(),
-                                    port: peer_port_num,
-                                    url: format!("https://{}:{}", peer_ip, peer_port_num),
-                                    last_seen: Utc::now(),
-                                    paired: true,
-                                    pairing_code: None,
-                                    user_id: None,
-                                    is_online: false,
-                                });
-                            }
+                        Ok(resp) if resp.status().is_success() => println!("[ZynkSync] ✓ Introduced to peer: {}", peer_name),
+                        first => {
+                            let why = match first {
+                                Ok(r) => format!("returned {}", r.status()),
+                                Err(e) => format!("offline: {}", e),
+                            };
+                            println!("[ZynkSync] Peer {} introduction {} — retrying shortly", peer_name, why);
+                            let (client, url, payload, name) = (http_client.clone(), intro_url.clone(), payload.clone(), peer_name.clone());
+                            tokio::spawn(async move {
+                                for (attempt, wait_ms) in [(2u8, 1500u64), (3, 4000)] {
+                                    tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+                                    match client.post(&url).json(&payload).send().await {
+                                        Ok(resp) if resp.status().is_success() => {
+                                            println!("[ZynkSync] ✓ Introduced to peer: {} (attempt {})", name, attempt);
+                                            return;
+                                        }
+                                        Ok(r) => println!("[ZynkSync] Peer {} introduction returned {} (attempt {})", name, r.status(), attempt),
+                                        Err(e) => println!("[ZynkSync] Peer {} offline during introduction (attempt {}): {}", name, attempt, e),
+                                    }
+                                }
+                                println!("[ZynkSync] Peer {} not introduced; it learns of us from the host or on its next contact", name);
+                            });
                         }
-                        Ok(r)  => println!("[ZynkSync] Peer {} introduction returned {}", peer_name, r.status()),
-                        Err(e) => println!("[ZynkSync] Peer {} offline during introduction (will sync when online): {}", peer_name, e),
                     }
                 }
             }
@@ -1838,19 +1866,72 @@ async fn handle_verify_pairing(
                 println!("[ZynkSync] Sending {} peer(s) to new device for mesh pairing", mesh_peers.len());
             }
 
-            // Notify existing peers about the new device in the background (best-effort).
+            // What every existing peer is told about the new device.
+            let new_peer_notice: serde_json::Value = {
+                let mut payload = serde_json::json!({
+                    "new_device_id": client_device_id,
+                    "new_device_name": client_device_name,
+                    "new_device_cert_der": client_cert_der.as_ref().map(|d| BASE64.encode(d)).unwrap_or_default(),
+                    "introducer_device_id": service.device_id,
+                    "new_device_ip": client_ip,
+                });
+                if let Some(uid) = client_user_id {
+                    payload["new_device_user_id"] = serde_json::json!(uid);
+                }
+                payload
+            };
+            let client_peer_ids: std::collections::HashSet<String> = client_peers_vec.iter()
+                .filter_map(|p| p.get("device_id").and_then(|v| v.as_str()).map(String::from))
+                .collect();
+
+            // Tell our own peers about the new device BEFORE answering it. The new device
+            // introduces itself to them the moment it has our answer, and a peer that has
+            // not heard from us yet refuses it (401 on 2026-10-15, laptop → OnePlus: the
+            // OnePlus then stayed off the laptop's list until a restart). Notices go out
+            // together and each is bounded, so an unreachable peer delays the answer by
+            // 3 s at most. Peers the new device already knows are told in the background
+            // below, after we have introduced ourselves to them.
+            {
+                let http_client = service.transport.http_client.read().await.clone();
+                let own_peers: Vec<PeerDevice> = {
+                    let map = service.transport.peers.read().await;
+                    map.values()
+                        .filter(|p| p.paired && p.device_id != client_device_id && !client_peer_ids.contains(&p.device_id))
+                        .cloned()
+                        .collect()
+                };
+                let new_name = client_device_name.to_string();
+                let notices: Vec<_> = own_peers.into_iter().map(|peer| {
+                    let client = http_client.clone();
+                    let payload = new_peer_notice.clone();
+                    let new_name = new_name.clone();
+                    tokio::spawn(async move {
+                        let url = format!("{}/api/zynksync/introduce", peer.url);
+                        match client.post(&url).json(&payload).timeout(std::time::Duration::from_secs(3)).send().await {
+                            Ok(r) if r.status().is_success() =>
+                                println!("[ZynkSync] ✓ Notified {} about new peer {}", peer.device_name, new_name),
+                            Ok(r) =>
+                                println!("[ZynkSync] Peer {} returned {} for introduction", peer.device_name, r.status()),
+                            Err(e) =>
+                                println!("[ZynkSync] Peer {} offline during introduction: {}", peer.device_name, e),
+                        }
+                    })
+                }).collect();
+                for notice in notices { let _ = notice.await; }
+            }
+
+            // The rest runs in the background (best-effort).
             // Phase 1: introduce host to client's pre-existing peers (bidirectional mesh).
-            // Phase 2: notify all known peers (including client's old peers) about the new client.
+            // Phase 2: notify the client's old peers about the new client.
             // Running phase 1 before phase 2 ensures that by the time we tell C about B,
             // C already trusts the host and can accept the introduction.
             {
                 let svc = Arc::clone(&service);
                 let new_id = client_device_id.to_string();
                 let new_name = client_device_name.to_string();
-                let new_ip = client_ip.clone();
-                let new_cert_b64 = client_cert_der.as_ref().map(|d| BASE64.encode(d)).unwrap_or_default();
-                let new_uid = client_user_id.map(|s| s.to_string());
                 let client_peers_for_spawn = client_peers_vec.clone();
+                let client_peer_ids_bg = client_peer_ids.clone();
+                let new_peer_notice_bg = new_peer_notice.clone();
                 tokio::spawn(async move {
                     // Phase 1: introduce host to each of the client's pre-existing peers.
                     // The client (new device) is the vouching introducer — it knows both parties.
@@ -1885,30 +1966,18 @@ async fn handle_verify_pairing(
                         }
                     }
 
-                    // Phase 2: notify all known peers (now including client's old peers) about the new client.
+                    // Phase 2: notify the client's old peers (now trusting the host) about the new client.
                     let http_client = svc.transport.http_client.read().await.clone();
                     let peers: Vec<PeerDevice> = {
                         let map = svc.transport.peers.read().await;
                         map.values()
-                            .filter(|p| p.paired && p.device_id != new_id)
+                            .filter(|p| p.paired && p.device_id != new_id && client_peer_ids_bg.contains(&p.device_id))
                             .cloned()
                             .collect()
                     };
                     for peer in peers {
                         let url = format!("{}/api/zynksync/introduce", peer.url);
-                        let mut payload = serde_json::json!({
-                            "new_device_id": new_id,
-                            "new_device_name": new_name,
-                            "new_device_cert_der": new_cert_b64,
-                            "introducer_device_id": svc.device_id,
-                        });
-                        if let Some(ref ip) = Some(new_ip.clone()) {
-                            payload["new_device_ip"] = serde_json::json!(ip);
-                        }
-                        if let Some(ref uid) = new_uid {
-                            payload["new_device_user_id"] = serde_json::json!(uid);
-                        }
-                        match http_client.post(&url).json(&payload).send().await {
+                        match http_client.post(&url).json(&new_peer_notice_bg).send().await {
                             Ok(r) if r.status().is_success() =>
                                 println!("[ZynkSync] ✓ Notified {} about new peer {}", peer.device_name, new_name),
                             Ok(r) =>
