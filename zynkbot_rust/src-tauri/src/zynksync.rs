@@ -732,6 +732,20 @@ impl ZynkSyncService {
             .bind(device_id).execute(&mut *tx).await
             .map_err(|e| format!("Failed to delete user sync codes: {}", e))?;
 
+        // Outbox position markers for this peer. Kept, a device that re-joined after
+        // the queue had been pruned to empty looked "already caught up" (its row said 0,
+        // the queue had no rows, so neither first contact nor behind) and got no full
+        // re-send; the laptop's row sat at 0 from its 2026-10-15 re-join through the one
+        // on 10-16. Forgotten, the next contact is a first contact both ways: our drain
+        // to it sends the live tables, and its first batch to us finds we know nothing
+        // of its queue, so it starts over too.
+        sqlx::query("DELETE FROM sync_outbox_cursor WHERE peer_device_id = ?")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete outbox cursor: {}", e))?;
+        sqlx::query("DELETE FROM sync_inbox_cursor WHERE peer_device_id = ?")
+            .bind(device_id).execute(&mut *tx).await
+            .map_err(|e| format!("Failed to delete inbox cursor: {}", e))?;
+
         // Check if ZynkLink is still active for this device by querying zynklink_pairings
         // directly — do not read is_paired, which is a ZynkSync-managed column and would
         // couple the two independent trust systems.
@@ -759,6 +773,7 @@ impl ZynkSyncService {
 
         tx.commit().await
             .map_err(|e| format!("Failed to commit sync data removal: {}", e))?;
+        crate::sync_outbox::forget_full_send(device_id);
 
         // Remove from in-memory peers map and online-status map
         {

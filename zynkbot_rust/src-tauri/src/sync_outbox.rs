@@ -496,6 +496,11 @@ static FULL_SEND_OFFSET: std::sync::LazyLock<std::sync::Mutex<HashMap<(String, S
 // ============================================================================ cursor
 
 /// None when this peer has never acknowledged a batch: first contact.
+/// A peer was removed: drop any half-done full send to it, so a re-join starts clean.
+pub fn forget_full_send(peer_device_id: &str) {
+    FULL_SEND_OFFSET.lock().unwrap().retain(|(_, peer), _| peer != peer_device_id);
+}
+
 pub async fn cursor_row(pool: &SqlitePool, peer_device_id: &str) -> Result<Option<i64>, String> {
     sqlx::query_scalar(
         "SELECT last_outbox_id FROM sync_outbox_cursor WHERE peer_device_id = ?")

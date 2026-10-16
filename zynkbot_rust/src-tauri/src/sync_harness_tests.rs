@@ -1086,3 +1086,47 @@ fn b32_a_device_joining_a_mesh_and_the_third_device_list_each_other_at_once() {
         assert!(b.memory_contents().await.iter().any(|m| m.contains("hall closet")), "oneplus pulled from the laptop");
     });
 }
+
+// ---------------------------------------------------------------------------
+// 33. A device that left the network and re-joins after the host's queue was pruned
+//     must still receive what was written while it was away. Found on the devices
+//     2026-10-16: the laptop's position marker on the desktop survived its removal at 0;
+//     when it re-joined, the queue was empty, so the desktop saw neither a first
+//     contact nor a peer behind the queue and sent nothing.
+// ---------------------------------------------------------------------------
+#[test]
+fn b33_a_device_that_left_and_rejoins_after_the_queue_was_pruned_still_catches_up() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("laptop").await;
+        b.pair_with(&a).await;
+        let c = Peer::spawn("pixel").await;
+        c.pair_with(&a).await;
+        a.add_memory("The spare house key is with the neighbour").await;
+        a.sync_with(&b).await;
+        a.sync_with(&c).await;
+        assert_eq!(b.memory_contents().await.len(), 1);
+
+        // The laptop leaves the network; the desktop learns of it from the notice.
+        b.svc.unpair_device(&a.device_id()).await.expect("laptop leaves");
+        let mut gone = false;
+        for _ in 0..60 {
+            if !a.svc.get_peers().await.iter().any(|p| p.device_id == b.device_id()) { gone = true; break; }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(gone, "desktop still lists the laptop after its removal notice");
+
+        // Written while the laptop is away; the pixel acknowledges it, so the queue is pruned.
+        a.add_memory("The neighbour is away until Sunday").await;
+        a.sync_with(&c).await;
+        let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_outbox").fetch_one(&a.pool).await.unwrap();
+        assert_eq!(queued, 0, "the desktop's queue should be empty once its only peer has acknowledged");
+
+        // The laptop re-joins and must get what it missed.
+        b.pair_with(&a).await;
+        a.sync_with(&b).await;
+        let got = b.memory_contents().await;
+        assert!(got.iter().any(|m| m.contains("away until Sunday")), "laptop re-joined but did not receive what was written while it was away; has {:?}", got);
+        assert_eq!(got.len(), 2, "laptop: doubled or lost a memory on re-join; has {:?}", got);
+    });
+}
