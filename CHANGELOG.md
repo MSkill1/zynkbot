@@ -6,6 +6,33 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
+## [0.9.6-beta4] — 2026-10-17 <!-- branch sync-rebuild, merged into v1 2026-10-16; text reviewed by Matt 2026-10-16 -->
+
+### ZynkSync, rebuilt (memory sync between your own devices)
+- Every change (a memory added, edited or deleted; a message; a thread renamed or deleted; an API key) goes into a queue on the device that made it, and each paired device takes the queue from where it left off. There is one way for a change to travel; the old push-and-compare paths are gone.
+- A change reaches the other devices within seconds. The 60-second cycle stays as the safety net.
+- A device joining the network receives everything in slices, and what is written during the catch-up still arrives.
+- A device that was away catches up when it returns, even one away longer than the queue keeps (7 days): it gets a full re-send, and nothing doubles.
+- Deletions win: a memory deleted on one device stays deleted everywhere, a restore from a cloud backup leaves deleted memories deleted, and a thread deleted on one device closes on the others where it was open.
+- Copies of one memory that existed on two devices before the rebuild merge into one instead of doubling.
+- API keys and the backup key travel the same queue. The newest save wins even when one device's clock is wrong (KI-081).
+- A joining device and the host's other devices see each other at once, no restart needed (KI-075). A removed device that re-joins gets a full catch-up (KI-095).
+- A message meant for one device is refused by any other (KI-053). A wrong pairing code says so: "Invalid or expired pairing code".
+- A reinstall restored from backup is the same device as before. Restore is one button, and a fresh install asks which device it is.
+- ZynkSync panel: Refresh shows it was pressed, and the per-device ✕ is a labelled Remove button.
+
+### Android
+- Back backgrounds the app instead of killing the sync server (KI-077). Peers reconnect after a restart.
+- The app asks once for the battery-optimisation exemption, from its second start (KI-087).
+
+### Voice
+- Timers understand spoken fractions ("two and a half minutes", "half an hour"). A misheard word between "timer" and the number no longer loses the timer (KI-093).
+
+### Logs and settings
+- Every printed line also goes to logs/zynkbot.log on disk, rotating at 5 MB. Problem reports include it (KI-082).
+- Windows: a saved local model path no longer hides the cloud models after a restart (KI-083).
+- History panel: a crash in the production build when sync updated the list (fixed).
+
 ## [0.9.6-beta3] — 2026-09-22 <!-- branch v1, started 2026-09-15; Link and Windows lines drafted by Claude 2026-09-21, review wording -->
 
 ### Desktop and phone
