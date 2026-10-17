@@ -4,6 +4,14 @@
 **Purpose:** Demonstrate architectural approach to distributed Mixture of Experts inference
 **Requirements:** 2+ devices with GPU support for testing (NVIDIA CUDA or AMD ROCm)
 
+> **Newer direction (17 Oct 2026):** [`ZYNKCLUSTER_RAM_FIRST_PLAN.md`](ZYNKCLUSTER_RAM_FIRST_PLAN.md)
+> supersedes the VRAM-based hardware sizing in this document for the big-model path. The
+> expert-parallel architecture described below is unchanged and is still the destination;
+> what changes is the hardware under it — used office towers full of cheap DDR4, because
+> memory *capacity* rather than compute is the binding constraint for the models worth
+> running. Read that document first for which model to run, what to buy, and why the first
+> milestone needs no custom code at all.
+
 ---
 
 ## Overview
@@ -82,7 +90,7 @@ Total latency: max(Device A, Device B) + 1× network hop
 - **Gigabit network** between devices
 - Combined requirements: 24GB+ VRAM total for Mixtral 8x7B; 56GB+ for Mixtral 8x22B
 
-CPU-only nodes are technically supported but impractical — expert inference on CPU takes 30-60 seconds vs ~50ms on GPU.
+CPU-only nodes were originally judged impractical on that 30-60 seconds per-expert figure, against ~50ms on GPU. That verdict stands for the small dense-expert models this section sizes. It does **not** hold for the large sparse models in [`ZYNKCLUSTER_RAM_FIRST_PLAN.md`](ZYNKCLUSTER_RAM_FIRST_PLAN.md): a CPU node reading 4-bit weights out of DDR4 is bound by memory bandwidth, not arithmetic, and lands at roughly 1-4 words/s. That is the basis of the current plan, and the arithmetic is set out in that document.
 
 ### Current Status
 
@@ -294,6 +302,7 @@ Projected: Can run 3x larger model — pending hardware validation
 ### Documentation
 
 4. **`README.md`** (this file) - Overview, architecture, challenges, roadmap
+5. **`ZYNKCLUSTER_RAM_FIRST_PLAN.md`** - Current hardware direction: frontier-class models in system RAM on used office PCs, candidate models with confirmed active-parameter counts, cost, and the measurement plan
 
 ---
 
