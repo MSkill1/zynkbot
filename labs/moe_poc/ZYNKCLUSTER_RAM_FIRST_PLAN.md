@@ -287,10 +287,12 @@ a content-compliance commitment, not a right under the community licence.
 
 Two consequences of that removal, both measured from the repository:
 
-- H3 is **498.5 GB of the runnable tier's 983 GB** and 280 of its 470 files. Removing it
-  halves the tier to ~0.48 TB and 190 files, so `tiers/runnable.manifest`,
+- H3 is **498.5 GB of the runnable tier's 983 GB** and 280 of its 471 files. Removing it
+  halves the tier to 485 GB and 191 files, so `tiers/runnable.manifest`,
   `docs/MODEL_ARCHIVE.md` and the size figures in that repository's `README.md` need
-  regenerating alongside.
+  updating alongside. Measured as published rather than format-filtered, the tier goes
+  from 1.06 TB to 0.56 TB — which also corrects the "~1.5 TB as published" header comment
+  in `runnable.txt`, already high before this removal.
 - `tiers/frontier.txt` is a judgement call rather than a clear removal. That tier exists to
   preserve state-of-the-art capability across jurisdictions for the archive, and H3 is
   genuinely frontier for video. Keeping it there with a licence annotation is defensible;
