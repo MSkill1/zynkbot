@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import "../styles/ConflictResolutionModal.css";
+import VoiceButton from "./VoiceButton";
 
 export default function ConflictResolutionModal({ isOpen, conflict, onResolve, onClose }) {
   const [selectedOption, setSelectedOption] = useState(null);
@@ -188,13 +189,22 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                       to both, so I understand the full picture in the future.
                     </p>
                   </div>
-                  <textarea
-                    className="explanation-input"
-                    placeholder="Example: I have two dogs — Max is my golden retriever and Wendy is my new puppy"
-                    value={explanation}
-                    onChange={(e) => setExplanation(e.target.value)}
-                    rows={4}
-                  />
+                  {/* Dictation: the same 🎤 button as the chat box; spoken text is added
+                      after whatever is already typed (Matt 2026-10-17, beta 5). */}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                    <textarea
+                      className="explanation-input"
+                      placeholder="Example: I have two dogs — Max is my golden retriever and Wendy is my new puppy"
+                      value={explanation}
+                      onChange={(e) => setExplanation(e.target.value)}
+                      rows={4}
+                      style={{ flex: 1 }}
+                    />
+                    <VoiceButton
+                      onTranscript={(text) => setExplanation((prev) => (prev && !prev.endsWith(' ') ? prev + ' ' : prev) + text)}
+                      style={{ minWidth: '45px', minHeight: '45px', height: '45px' }}
+                    />
+                  </div>
                   <div className="explanation-note">
                     💡 Be specific about the context that makes both memories true
                   </div>

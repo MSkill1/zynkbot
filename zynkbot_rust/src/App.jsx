@@ -16,6 +16,8 @@ import APIKeyModal from "./components/APIKeyModal";
 import ZynkSyncPanel from "./components/ZynkSyncPanel";
 import ZynkLinkPanel from "./components/ZynkLinkPanel";
 import CollapsibleSidebar from "./components/CollapsibleSidebar";
+import ControlsPage from "./components/ControlsPage";
+import ControlsMenuButton from "./components/ControlsMenuButton";
 import UserIdentityModal from "./components/UserIdentityModal";
 import EnsembleModal from "./components/EnsembleModal";
 import ConflictResolutionModal from "./components/ConflictResolutionModal";
@@ -111,6 +113,9 @@ function AccessGate() {
   );
 }
 
+
+// Shown under "Containment Mode" in the System Controls list (same names as the selector).
+const CONTAINMENT_LABELS = { witness: 'Witness', sovereign: 'Sovereign', guardian: 'Guardian', child: 'Child', hipaa: 'HIPAA' };
 export default function App() {
   // Persistent user ID from backend (shared across all YOUR devices)
   const [userId, setUserId] = useState(null);
@@ -261,12 +266,26 @@ export default function App() {
   const [kbLocked, setKbLocked] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState([]); // [{ name, content, size, isImage, ... }]
   // Collapsible section states - all start collapsed
-  const [showGettingStarted, setShowGettingStarted] = useState(false);
-  const [showZynkSyncSection, setShowZynkSyncSection] = useState(false);
-  const [showZynkLinkSection, setShowZynkLinkSection] = useState(false);
-  const [showKnowledgeBaseSection, setShowKnowledgeBaseSection] = useState(false);
-  const [showZynkClusterSection, setShowZynkClusterSection] = useState(false);
-  const [showSnapInsSection, setShowSnapInsSection] = useState(false);
+  // System Controls: which section's page is open (null = the list). One at a time.
+  const [controlsPage, setControlsPage] = useState(null);
+  // Getting Started leads the System Controls list until onboarding has been completed
+  // on this device (or the user unticks it on the Getting Started page); then it sits last.
+  const [gettingStartedOnTop, setGettingStartedOnTopState] = useState(
+    () => localStorage.getItem('zynkbot_getting_started_on_top') !== '0'
+  );
+  const setGettingStartedOnTop = (onTop) => {
+    localStorage.setItem('zynkbot_getting_started_on_top', onTop ? '1' : '0');
+    setGettingStartedOnTopState(onTop);
+  };
+  const gettingStartedButton = (
+    <ControlsMenuButton
+      icon="🚀"
+      title="Getting Started"
+      subtitle="Kitchen tip, Einstein demo, guided setup"
+      accent="#8be9fd"
+      onClick={() => setControlsPage('start')}
+    />
+  );
   const [showSnapInModal, setShowSnapInModal] = useState(false);
   const [isLoadingEinstein, setIsLoadingEinstein] = useState(false);
   const [copyAllDone, setCopyAllDone] = useState(false);
@@ -1470,14 +1489,14 @@ export default function App() {
         icon="⚙️"
         title="System Controls"
         onInfoClick={() => setShowUserIdentity(true)}
-        onVoiceClick={() => voice.setShowVoiceModal(true)}
         onReportClick={() => openReport('')}
         // Hide the sidebar's floating ⚙️/✕ whenever ANY overlay is open, so only one
         // close button exists at that corner. Otherwise the two overlap and the first
         // tap toggles the sidebar instead of closing the modal (reported on API Keys,
         // then on the User Identity modal opened from the sidebar's info button).
         hideToggle={showConversationHistory || showAPIKeys || showKBManager || showEnsemble || voice.showVoiceModal
-          || showUserIdentity || showAbout || showDemoGuide || showWhyZynkbot || showConflictResolution || showZynkCluster || showReport}
+          || showUserIdentity || showAbout || showDemoGuide || showWhyZynkbot || showConflictResolution || showZynkCluster || showReport
+          || controlsPage !== null}
         onOpen={() => {
           setShowAbout(false);
           setShowDemoGuide(false);
@@ -1490,17 +1509,89 @@ export default function App() {
           setShowKBManager(false);
           setShowOnboarding(false);
           setShowSnapInModal(false);
+          setControlsPage(null);
           memoryManagerRef.current?.close();
         }}
       >
+        {/* One button per section; each opens a page of its own (ControlsPage below).
+            Getting Started leads the list until onboarding has been completed on this
+            device or the user unticks "keep at top" on its page; then it sits last. */}
+        {gettingStartedOnTop && gettingStartedButton}
+        <ControlsMenuButton
+          icon="🛡"
+          title="Containment Mode"
+          subtitle={CONTAINMENT_LABELS[containmentMode] || containmentMode}
+          onClick={() => setControlsPage('contain')}
+        />
+        <ControlsMenuButton
+          icon="🤖"
+          title="Current Model"
+          subtitle={availableModels.find(m => m.id === modelType)?.name || 'Loading models…'}
+          onClick={() => setControlsPage('model')}
+        />
+        <ControlsMenuButton
+          icon="🎙"
+          title="Voice"
+          subtitle="Dictation, wake word, spoken replies"
+          onClick={() => voice.setShowVoiceModal(true)}
+        />
+        <ControlsMenuButton
+          icon="🔄"
+          title="ZynkSync"
+          subtitle="Your own devices: shared memory, notes between them"
+          accent="#50fa7b"
+          onClick={() => setControlsPage('sync')}
+        />
+        <ControlsMenuButton
+          icon="🔗"
+          title="ZynkLink"
+          subtitle="Other people's Zynkbots: files and chat"
+          accent="#f1fa8c"
+          onClick={() => setControlsPage('link')}
+        />
+        <ControlsMenuButton
+          icon="📚"
+          title="Knowledge Base"
+          subtitle="Your documents, searched when you ask"
+          accent="#ffb86c"
+          onClick={() => setControlsPage('kb')}
+        />
+        <ControlsMenuButton
+          icon="🧩"
+          title="Snap-ins"
+          subtitle="Experimental"
+          accent="#ff79c6"
+          dim
+          onClick={() => setControlsPage('snap')}
+        />
+        {!isMobile && <ControlsMenuButton
+          icon="🔬"
+          title="ZynkCluster"
+          subtitle="Upcoming"
+          accent="#bd93f9"
+          dim
+          onClick={() => setControlsPage('cluster')}
+        />}
+        {!gettingStartedOnTop && gettingStartedButton}
+        <div style={{ height: '60px' }} />
+
+      </CollapsibleSidebar>
+
+      {/* System Controls pages: one at a time, on top of the sidebar. */}
+      {controlsPage === 'contain' && (
+        <ControlsPage icon="🛡" title="Containment Mode" subtitle="Limits what Zynkbot will discuss and what leaves the device" onClose={() => setControlsPage(null)}>
         <ContainmentModeSelector
           currentMode={containmentMode}
           onModeChange={setContainmentMode}
         />
+        </ControlsPage>
+      )}
 
+      {controlsPage === 'model' && (
+        <ControlsPage icon="🤖" title="Current Model" subtitle="Which model answers you" onClose={() => setControlsPage(null)}>
         <div className="model-selector">
-          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px'}}>
-            <h3 style={{color: '#f8f8f2', fontSize: '1.1rem', margin: 0}}>Current Model ↓</h3>
+          {/* The page header already names the section, so only the two buttons remain here. */}
+          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '10px'}}>
             <div style={{display: 'flex', gap: '8px'}}>
               {!isMobile && (
               <button
@@ -1589,27 +1680,20 @@ export default function App() {
             )}
           </p>
         </div>
+        </ControlsPage>
+      )}
 
-        {/* Getting Started */}
-        <div style={{marginTop: '20px', padding: '15px', background: '#1e1f29', borderRadius: '8px', border: '1px solid #44475a'}}>
-          <div
-            onClick={() => setShowGettingStarted(!showGettingStarted)}
-            style={{
-              color: '#8be9fd',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              marginBottom: showGettingStarted ? '10px' : '0',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}
-          >
-            <span>🚀 Getting Started</span>
-            <span style={{ fontSize: '0.8rem' }}>{showGettingStarted ? '▼' : '▶'}</span>
-          </div>
-          {showGettingStarted && (
-          <div>
+      {controlsPage === 'start' && (
+        <ControlsPage icon="🚀" title="Getting Started" subtitle="Kitchen tip, Einstein demo, guided setup" accent="#8be9fd" onClose={() => setControlsPage(null)}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '14px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={gettingStartedOnTop}
+              onChange={(e) => setGettingStartedOnTop(e.target.checked)}
+              style={{ width: 'auto', margin: 0 }}
+            />
+            Keep Getting Started at the top of System Controls
+          </label>
           <p style={{fontSize: '0.9rem', color: '#8be9fd', lineHeight: '1.6', marginBottom: '10px'}}>
             <strong>Try it in the kitchen.</strong> Tell Zynkbot what you cooked tonight and how it went.
             Tomorrow ask "what can I make tonight?" It remembers what you liked, what you refused, and how
@@ -1741,28 +1825,11 @@ export default function App() {
             ⚠️ <strong>Before you start:</strong> If you've been exploring with the Albert Einstein demo user, open the Memory Manager and click "Clear All Memories" first — otherwise his memories will conflict with yours during onboarding.
           </p>
           </div>
-          </div>
-          )}
-        </div>
+        </ControlsPage>
+      )}
 
-        <div style={{marginTop: '20px', padding: '15px', background: '#282a36', borderRadius: '8px', border: '1px solid #44475a'}}>
-          <div
-            onClick={() => setShowZynkSyncSection(!showZynkSyncSection)}
-            style={{
-              color: '#50fa7b',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              marginBottom: showZynkSyncSection ? '10px' : '0',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}
-          >
-            <span>🔄 ZynkSync - Memory Sync</span>
-            <span style={{ fontSize: '0.8rem' }}>{showZynkSyncSection ? '▼' : '▶'}</span>
-          </div>
-          {showZynkSyncSection && (
+      {controlsPage === 'sync' && (
+        <ControlsPage icon="🔄" title="ZynkSync" subtitle="Your own devices: shared memory, notes between them" accent="#50fa7b" onClose={() => setControlsPage(null)}>
         <ZynkSyncPanel
           apiBaseUrl={API_BASE_URL}
           userId={userId}
@@ -1774,83 +1841,30 @@ export default function App() {
           onIdentityAdopted={(newUserId) => setUserId(newUserId)}
           onMemoriesSynced={() => memoryManagerRef.current?.refresh()}
         />
-          )}
-        </div>
+        </ControlsPage>
+      )}
 
-        <div style={{marginTop: '20px', padding: '15px', background: '#282a36', borderRadius: '8px', border: '1px solid #44475a'}}>
-          <div
-            onClick={() => setShowZynkLinkSection(!showZynkLinkSection)}
-            style={{
-              color: '#f1fa8c',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              marginBottom: showZynkLinkSection ? '10px' : '0',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}
-          >
-            <span>🔗 ZynkLink - File Sharing & Chat</span>
-            <span style={{ fontSize: '0.8rem' }}>{showZynkLinkSection ? '▼' : '▶'}</span>
-          </div>
-          {showZynkLinkSection && (
+      {controlsPage === 'link' && (
+        <ControlsPage icon="🔗" title="ZynkLink" subtitle="Other people's Zynkbots: files and chat" accent="#f1fa8c" onClose={() => setControlsPage(null)}>
         <ZynkLinkPanel
           apiBaseUrl={API_BASE_URL}
           onOpenUserIdentity={() => setShowUserIdentity(true)}
           userId={userId}
         />
-          )}
-        </div>
+        </ControlsPage>
+      )}
 
-        {/* Knowledge Base Panel - External Reference Documents */}
-        <div style={{marginTop: '20px', padding: '15px', background: '#282a36', borderRadius: '8px', border: '1px solid #44475a'}}>
-          <div
-            onClick={() => setShowKnowledgeBaseSection(!showKnowledgeBaseSection)}
-            style={{
-              color: '#ffb86c',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              marginBottom: showKnowledgeBaseSection ? '10px' : '0',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}
-          >
-            <span>📚 Knowledge Base RAG</span>
-            <span style={{ fontSize: '0.8rem' }}>{showKnowledgeBaseSection ? '▼' : '▶'}</span>
-          </div>
-          {showKnowledgeBaseSection && (
+      {controlsPage === 'kb' && (
+        <ControlsPage icon="📚" title="Knowledge Base" subtitle="Your documents, searched when you ask" accent="#ffb86c" onClose={() => setControlsPage(null)}>
         <KnowledgeBasePanel
           userId={userId}
           onManageDocuments={() => setShowKBManager(true)}
         />
-          )}
-        </div>
+        </ControlsPage>
+      )}
 
-        {/* === EXPERIMENTAL FEATURES === */}
-
-        {/* Snap-ins - Professional & Personal AI Workspaces (Experimental) */}
-        <div style={{marginTop: '40px', marginBottom: '15px', padding: '15px', background: '#282a36', borderRadius: '8px', border: '1px solid #ff79c6'}}>
-          <div
-            onClick={() => setShowSnapInsSection(!showSnapInsSection)}
-            style={{
-              color: '#ff79c6',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              marginBottom: showSnapInsSection ? '10px' : '0',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}
-          >
-            <span>🧩 Snap-ins (Experimental)</span>
-            <span style={{ fontSize: '0.8rem' }}>{showSnapInsSection ? '▼' : '▶'}</span>
-          </div>
-          {showSnapInsSection && (
-          <div>
+      {controlsPage === 'snap' && (
+        <ControlsPage icon="🧩" title="Snap-ins" subtitle="Experimental" accent="#ff79c6" onClose={() => setControlsPage(null)}>
           <p style={{fontSize: '0.9rem', color: '#ff79c6', lineHeight: '1.6', marginBottom: '15px'}}>
             <strong>Snap-ins</strong> are domain-specific workspaces for professional and personal use.
             They integrate with Zynkbot's memory system while maintaining strict privacy boundaries.
@@ -1879,30 +1893,11 @@ export default function App() {
             <strong>Concept demo:</strong> See how a professional workspace could organize notes, maintain privacy, and integrate with RAG search.
             <br /><em style={{fontSize: '0.8rem', color: '#9aa5c4'}}>Proof-of-concept | Architecture foundation for professional snap-ins</em>
           </p>
-          </div>
-          )}
-        </div>
+        </ControlsPage>
+      )}
 
-        {/* ZynkCluster - hidden on mobile (desktop-only feature) */}
-        {!isMobile && <div style={{marginTop: '15px', marginBottom: '150px', padding: '15px', background: '#282a36', borderRadius: '8px', border: '1px solid #bd93f9'}}>
-          <div
-            onClick={() => setShowZynkClusterSection(!showZynkClusterSection)}
-            style={{
-              color: '#bd93f9',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              marginBottom: showZynkClusterSection ? '10px' : '0',
-              cursor: 'pointer',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
-            }}
-          >
-            <span>🔬 ZynkCluster (Upcoming)</span>
-            <span style={{ fontSize: '0.8rem' }}>{showZynkClusterSection ? '▼' : '▶'}</span>
-          </div>
-          {showZynkClusterSection && (
-          <div>
+      {controlsPage === 'cluster' && (
+        <ControlsPage icon="🔬" title="ZynkCluster" subtitle="Upcoming" accent="#bd93f9" onClose={() => setControlsPage(null)}>
           <button
             onClick={() => setShowZynkCluster(true)}
             style={{
@@ -1927,11 +1922,8 @@ export default function App() {
             Research on <strong>distributed MoE inference</strong> - a novel approach to running large models across local networks.
             <br /><em style={{fontSize: '0.8rem', color: '#9aa5c4'}}>Design phase | Architecture docs & code examples available</em>
           </p>
-          </div>
-          )}
-        </div>}
-
-      </CollapsibleSidebar>
+        </ControlsPage>
+      )}
 
       {/* Main Content - Chat + Insights (2 columns) */}
       <div className={isMobile ? 'mobile-main-content' : undefined} style={{
@@ -2682,6 +2674,7 @@ export default function App() {
       <OnboardingModal
         isOpen={showOnboarding}
         onClose={() => setShowOnboarding(false)}
+        onCompleted={() => setGettingStartedOnTop(false)}
         userId={userId}
       />
       <SnapInModal

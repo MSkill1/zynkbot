@@ -1,0 +1,98 @@
+/* System Controls: list buttons in the sidebar, and the page each one opens. */
+
+.controls-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 13px 14px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  border: 2px solid #44475a;
+  background: #2d2f3f;
+  color: #f8f8f2;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: filter 0.15s;
+}
+.controls-menu-btn:hover { filter: brightness(1.12); }
+.controls-menu-btn.dim { opacity: 0.7; }
+.controls-menu-icon { font-size: 1.6rem; width: 36px; text-align: center; flex-shrink: 0; }
+.controls-menu-text { flex: 1; min-width: 0; }
+.controls-menu-text b { display: block; font-size: 1rem; }
+.controls-menu-text small {
+  display: block;
+  color: #9aa5c4;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.controls-menu-chevron { color: #9aa5c4; font-size: 1.3rem; flex-shrink: 0; }
+
+/* Same layer as the sidebar (1000) and placed after it in the DOM, so it covers
+   the sidebar but stays under every modal that can open from a page (API Keys,
+   Knowledge Base manager, ZChat, Onboarding…), which are rendered later. */
+.controls-page-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  z-index: 1000;
+}
+.controls-page {
+  width: 100%;
+  max-width: 560px;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: #282a36;
+  border-radius: 14px;
+  border: 2px solid #44475a;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
+}
+.controls-page-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 2px solid #44475a;
+  position: sticky;
+  top: 0;
+  background: #282a36;
+  z-index: 1;
+}
+.controls-page-icon { font-size: 1.6rem; }
+.controls-page-title { flex: 1; min-width: 0; }
+.controls-page-title b { font-size: 1.1rem; }
+.controls-page-title small { display: block; color: #9aa5c4; font-size: 0.85rem; }
+.controls-page-close {
+  background: none;
+  border: 1px solid #44475a;
+  color: #f8f8f2;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font-size: 1.2rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.controls-page-close:hover { background: #44475a; }
+.controls-page-body { padding: 14px 16px 18px; }
+.controls-page-body > * { max-width: 100%; box-sizing: border-box; }
+
+@media (max-width: 520px) {
+  .controls-page-overlay { padding: 0; }
+  .controls-page {
+    max-width: 100%;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border-width: 0 0 0 0;
+  }
+  .controls-page-head { padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+}

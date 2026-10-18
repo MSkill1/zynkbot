@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import '../styles/OnboardingModal.css';
 import { confirmDialog } from '../utils/confirmDialog';
 
-export default function OnboardingModal({ isOpen, onClose, userId }) {
+export default function OnboardingModal({ isOpen, onClose, onCompleted, userId }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [userResponses, setUserResponses] = useState({});
   const [currentInput, setCurrentInput] = useState('');
@@ -106,6 +106,8 @@ export default function OnboardingModal({ isOpen, onClose, userId }) {
           responses: updatedResponses
         });
         setSummary(summaryText);
+        // Tells the sidebar onboarding is done, so Getting Started drops to the bottom of the list.
+        if (onCompleted) onCompleted();
       }
     } catch (error) {
       console.error('Error storing onboarding response:', error);
