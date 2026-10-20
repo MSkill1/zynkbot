@@ -471,10 +471,22 @@ class MainActivity : TauriActivity() {
         private val accumulated = StringBuilder()
 
         private val listener = object : org.vosk.android.RecognitionListener {
+            // Live text for the composer (2026-10-20): everything finished so far plus the
+            // utterance in progress, on every change. `__voskPartial` keeps carrying the bare
+            // partial for anything still listening to it.
+            private fun fireLive(partial: String) {
+                val live = synchronized(accumulated) {
+                    if (accumulated.isEmpty()) partial else if (partial.isEmpty()) accumulated.toString() else "$accumulated $partial"
+                }
+                fire("window.__voskLive&&window.__voskLive('${esc(live)}');")
+            }
             override fun onPartialResult(h: String?) {
                 if (h.isNullOrBlank()) return
                 val partial = try { org.json.JSONObject(h).optString("partial", "") } catch (_: Exception) { "" }
-                if (partial.isNotBlank()) fire("window.__voskPartial&&window.__voskPartial('${esc(partial)}');")
+                if (partial.isNotBlank()) {
+                    fire("window.__voskPartial&&window.__voskPartial('${esc(partial)}');")
+                    fireLive(partial)
+                }
             }
             override fun onResult(h: String?) {
                 val t = parseText(h)
@@ -482,6 +494,7 @@ class MainActivity : TauriActivity() {
                     if (accumulated.isNotEmpty()) accumulated.append(" ")
                     accumulated.append(t)
                 }
+                fireLive("")
             }
             override fun onFinalResult(h: String?) {
                 val last = parseText(h)

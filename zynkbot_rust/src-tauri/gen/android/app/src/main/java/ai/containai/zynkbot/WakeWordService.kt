@@ -361,6 +361,11 @@ class WakeWordService : Service() {
     private var threshold = 0.5f
     private var lastModelDir: String? = null     // stored so background detection can restart the loop
     private var loadedModelDir: String? = null   // dir the resident ONNX sessions were loaded from; null = none loaded
+    // Guards the model sessions against a stop() that lands while loadAndStart() is still
+    // loading them on its own thread (KI-097, 2026-10-20: the stop nulled the sessions the
+    // loader had just created, the loader's next use of them threw, and the service quit).
+    private val modelLock = Any()
+    private var loadGeneration = 0
     private var wakeLock: PowerManager.WakeLock? = null      // detection wake lock (25s, screen-off flow)
     private var audioWakeLock: PowerManager.WakeLock? = null // CPU wake lock for audio loop while screen off
 
@@ -539,26 +544,50 @@ class WakeWordService : Service() {
 
     private fun loadAndStart(modelDir: String) {
         try {
-            if (melSession == null || embSession == null || kwsSession == null || modelDir != loadedModelDir) {
-                // (Re)load only when the models aren't already resident, or the
-                // directory changed. The common restart path skips this entirely.
-                melSession?.close(); embSession?.close(); kwsSession?.close()
-                ortEnv = OrtEnvironment.getEnvironment()
-                val env = ortEnv!!
+            val needLoad: Boolean
+            val generation: Int
+            synchronized(modelLock) {
+                needLoad = melSession == null || embSession == null || kwsSession == null || modelDir != loadedModelDir
+                generation = loadGeneration
+            }
+            if (needLoad) {
+                // (Re)load only when the models aren't already resident, or the directory
+                // changed. The common restart path skips this entirely. Sessions are built
+                // into locals first and installed under the lock at the end, so a stop()
+                // that arrives meanwhile cannot pull them out from under this thread.
+                val env = OrtEnvironment.getEnvironment()
                 val dir = File(modelDir)
-                melSession = env.createSession(File(dir, "melspectrogram.onnx").absolutePath)
-                embSession = env.createSession(File(dir, "embedding_model.onnx").absolutePath)
-                kwsSession = env.createSession(File(dir, "hey_zynk.onnx").absolutePath)
-                vadSession?.close(); vadSession = null
+                val mel = env.createSession(File(dir, "melspectrogram.onnx").absolutePath)
+                val emb = env.createSession(File(dir, "embedding_model.onnx").absolutePath)
+                val kws = env.createSession(File(dir, "hey_zynk.onnx").absolutePath)
+                var vad: OrtSession? = null
                 val vadFile = File(dir, "silero_vad.onnx")
                 if (vadFile.isFile) {
                     try {
-                        vadSession = env.createSession(vadFile.absolutePath)
-                        Log.i(TAG, "Speech gate loaded (Silero VAD, inputs ${vadSession!!.inputNames})")
+                        val v = env.createSession(vadFile.absolutePath)
+                        vad = v
+                        Log.i(TAG, "Speech gate loaded (Silero VAD, inputs ${v.inputNames})")
                     } catch (e: Exception) { Log.w(TAG, "Speech gate unavailable, running without it: ${e.message}") }
                 } else Log.w(TAG, "Speech gate unavailable: silero_vad.onnx not in $modelDir")
-                loadedModelDir = modelDir
-                Log.i(TAG, "ONNX models loaded. mel inputs: ${melSession!!.inputNames}, emb inputs: ${embSession!!.inputNames}, kws inputs: ${kwsSession!!.inputNames}")
+                val installed = synchronized(modelLock) {
+                    if (generation != loadGeneration) {
+                        false
+                    } else {
+                        melSession?.close(); embSession?.close(); kwsSession?.close(); vadSession?.close()
+                        ortEnv = env
+                        melSession = mel; embSession = emb; kwsSession = kws; vadSession = vad
+                        loadedModelDir = modelDir
+                        true
+                    }
+                }
+                if (!installed) {
+                    // stop() ran while we were loading: the user turned Hey Zynk off, or a
+                    // restart superseded this one. Drop what was loaded and go quietly.
+                    mel.close(); emb.close(); kws.close(); vad?.close()
+                    Log.i(TAG, "Model load abandoned: the service was stopped while the models were loading")
+                    return
+                }
+                Log.i(TAG, "ONNX models loaded. mel inputs: ${mel.inputNames}, emb inputs: ${emb.inputNames}, kws inputs: ${kws.inputNames}")
             } else {
                 Log.i(TAG, "Reusing already-loaded ONNX models")
             }
@@ -566,7 +595,7 @@ class WakeWordService : Service() {
             startAudioLoop()
             trainVerifierInBackground()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load ONNX models: ${e.message}")
+            Log.e(TAG, "Failed to load ONNX models: ${e.javaClass.simpleName}: ${e.message}")
             stopSelf()
         }
     }
@@ -1295,11 +1324,15 @@ class WakeWordService : Service() {
         audioThread?.interrupt()
         audioThread?.join(300)
         audioThread = null
-        melSession?.close(); melSession = null
-        embSession?.close(); embSession = null
-        kwsSession?.close(); kwsSession = null
-        ortEnv?.close(); ortEnv = null
-        loadedModelDir = null   // full stop tears the models down; next start reloads
+        synchronized(modelLock) {
+            loadGeneration++   // any load still in flight will see this and discard its result
+            melSession?.close(); melSession = null
+            embSession?.close(); embSession = null
+            kwsSession?.close(); kwsSession = null
+            vadSession?.close(); vadSession = null
+            ortEnv = null   // OrtEnvironment.getEnvironment() is a process-wide singleton; not closed here
+            loadedModelDir = null   // full stop tears the models down; next start reloads
+        }
         melBuffer.clear()
         embBuffer.clear()
         releaseWakeLock()

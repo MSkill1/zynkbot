@@ -1,7 +1,10 @@
 import React, { useState, useImperativeHandle, forwardRef } from 'react';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 
-const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, style }, ref) {
+// onLive (optional): called with the words recognised so far while recording, with ''
+// when recording starts, and with null when it is over (after onTranscript). Only the
+// main composer passes it; the other callers get the finished transcript alone.
+const VoiceButton = forwardRef(function VoiceButton({ onTranscript, onLive, disabled, style }, ref) {
   const isAndroid = !!window.VoskBridge;
   const modelReady = !isAndroid || window.VoskBridge.isModelReady();
   const [noModel, setNoModel] = useState(false);
@@ -21,7 +24,8 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, st
     triggerRecord: async () => {
       if (!isRecording) {
         announceDictation(true);
-        await startRecording();
+        if (onLive) onLive('');
+        await startRecording({ onLive });
       }
     },
   }));
@@ -40,11 +44,13 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, disabled, st
         const text = await stopRecording();
         if (text && onTranscript) onTranscript(text);
       } finally {
+        if (onLive) onLive(null);
         announceDictation(false);
       }
     } else {
       announceDictation(true);
-      await startRecording();
+      if (onLive) onLive('');
+      await startRecording({ onLive });
     }
   };
 

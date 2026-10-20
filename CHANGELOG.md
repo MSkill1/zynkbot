@@ -8,6 +8,17 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ## [0.9.6-beta5] — unreleased <!-- branch beta5 -->
 
+### Chat prompt
+- Zynkbot may now ask first: if one or two missing details would change the answer, it asks for them briefly instead of guessing; otherwise it answers and says what it assumed. In testing before 1.0.
+
+### Dictation
+- Live text: with Vosk (offline) dictation, the words appear in the message box as they are recognised, at the spot where the cursor was when you tapped the mic; the finished transcript takes their place. Android and desktop. Whisper (OpenAI) still shows its text only when you stop.
+- A Copy button appears in the message box whenever it has text, for using Zynkbot as the dictation tool and pasting the text elsewhere.
+- Desktop (Linux and Windows): Vosk closes an utterance at a pause of about a second, and the desktop code read back only the last one when you stopped, so the words before a pause could be lost. Every finished utterance is now kept and joined.
+
+### Web search
+- What the model wrote around its search request is kept, whichever side of the request it wrote it on. Until now everything after the request line was dropped, and GPT had started putting the request first and the answer after it, so the answer the user watched appear vanished when the search ran.
+
 ### System Controls
 - One section per page: the sidebar is a list of buttons (Getting Started, Containment, Current Model, Voice, ZynkSync, ZynkLink, Knowledge Base, Snap-ins, ZynkCluster) and each opens a single page that covers the sidebar. Getting Started stays at the top until onboarding is done, then drops to the bottom; a checkbox on its page pins it back.
 - The contradiction window's explanation box has a dictation button.

@@ -928,9 +928,7 @@ pub async fn generate_reply(
         // partial answer, a caveat). It stays as its own turn, on screen and in the
         // history, and the searched answer follows it (Matt, 2026-09-20). The page
         // does the same for a screen-on search.
-        let first_answer = reply_text.find("WEB_SEARCH_NEEDED:")
-            .map(|p| reply_text[..p].trim().to_string())
-            .unwrap_or_default();
+        let first_answer = strip_web_search_marker(&reply_text);
         let first_answer = if first_answer.is_empty() { None } else { Some(first_answer) };
         if let Some(first) = first_answer.clone() {
             if containment_mode.to_lowercase() != "hipaa" {
@@ -1114,17 +1112,12 @@ pub async fn generate_reply(
         })
         .collect();
 
-    // Strip WEB_SEARCH_NEEDED marker (and everything after it) from displayed text.
-    // The marker is for internal detection only - users should see clean prose up to that point.
-    let reply_text = if web_search_detected {
-        if let Some(pos) = reply_text.find("WEB_SEARCH_NEEDED:") {
-            reply_text[..pos].trim().to_string()
-        } else {
-            reply_text
-        }
-    } else {
-        reply_text
-    };
+    // Strip the WEB_SEARCH_NEEDED marker line from the displayed text; the marker is for
+    // internal detection only. Text on either side of it is kept: until 2026-10-20 everything
+    // after the marker was dropped, and GPT had started writing the marker first and the
+    // useful answer (a drafted email, a partial answer) after it, so the answer the user
+    // watched stream in vanished when the stream ended (Matt, 2026-10-20).
+    let reply_text = if web_search_detected { strip_web_search_marker(&reply_text) } else { reply_text };
 
     // Strip <think>...</think> blocks produced by reasoning models (DeepSeek R1, Qwen3).
     // Three cases:
@@ -2426,6 +2419,17 @@ pub fn explicit_remember(query: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn web_search_marker_keeps_text_on_both_sides() {
+        use super::strip_web_search_marker as strip;
+        assert_eq!(strip("WEB_SEARCH_NEEDED: weather in Rutland"), "");
+        assert_eq!(strip("WEB_SEARCH_NEEDED: weather\n"), "");
+        assert_eq!(strip("Here is what I know.\n\nWEB_SEARCH_NEEDED: q"), "Here is what I know.");
+        assert_eq!(strip("WEB_SEARCH_NEEDED: q\n\nMeanwhile, a draft:\nDear Senator"), "Meanwhile, a draft:\nDear Senator");
+        assert_eq!(strip("First part.\nWEB_SEARCH_NEEDED: q\nSecond part."), "First part.\n\nSecond part.");
+        assert_eq!(strip("No marker at all"), "No marker at all");
+    }
+
     use super::explicit_remember;
 
     #[test]
@@ -2485,6 +2489,22 @@ mod tests {
 /// Recognise a fact-extraction marker line tolerantly (KI-049). Returns the text after the
 /// marker; empty when the label stands alone and the fact follows on the next line.
 /// Accepts the canonical `MEMORY_EXTRACT:` and what small local models actually write:
+/// The reply without its `WEB_SEARCH_NEEDED: query` line. The marker and the rest of its
+/// line go; text before it and text after it are both kept, joined by a blank line.
+/// A reply that was only the marker becomes empty.
+fn strip_web_search_marker(text: &str) -> String {
+    let Some(pos) = text.find("WEB_SEARCH_NEEDED:") else { return text.trim().to_string() };
+    let before = text[..pos].trim();
+    let rest = &text[pos..];
+    let after = match rest.find('\n') { Some(i) => rest[i + 1..].trim(), None => "" };
+    match (before.is_empty(), after.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => before.to_string(),
+        (true, false) => after.to_string(),
+        (false, false) => format!("{}\n\n{}", before, after),
+    }
+}
+
 /// markdown wrappers (`**MEMORY_EXTRACT:**`, `- MEMORY_EXTRACT:`), a space for the
 /// underscore, the prompt's own headings echoed as labels ("FACT EXTRACTION:",
 /// "PERSONAL FACT EXTRACTION:", "PART 1 — FACT EXTRACTION:"), and a bare heading with no

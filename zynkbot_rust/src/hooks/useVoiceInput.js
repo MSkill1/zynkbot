@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export function useVoiceInput() {
   const [isRecording, setIsRecording] = useState(false);
@@ -8,6 +9,18 @@ export function useVoiceInput() {
   const processorRef = useRef(null);
   const streamRef = useRef(null);
   const audioBufferRef = useRef([]);
+  // Live text (2026-10-20): while Vosk is listening, the words recognised so far are
+  // handed to `onLive(text)` as they change — Android through window.__voskLive from
+  // the Kotlin bridge, desktop through the "dictation-live" Tauri event. Whisper has
+  // no live text: it hears the whole clip only when recording stops.
+  const onLiveRef = useRef(null);
+  const liveUnlistenRef = useRef(null);
+  const stopLive = () => {
+    window.__voskLive = null;
+    try { liveUnlistenRef.current?.(); } catch (_) {}
+    liveUnlistenRef.current = null;
+    onLiveRef.current = null;
+  };
 
   const isAndroid = () => !!window.VoskBridge;
   // 'vosk' (offline, no punctuation) or 'openai' (cloud Whisper). Persists in localStorage.
@@ -17,6 +30,7 @@ export function useVoiceInput() {
 
   const startRecordingVosk = () => {
     window.__voskPartial = null; // clear any stale wake-word callback before dictation
+    window.__voskLive = (text) => { onLiveRef.current?.(text || ''); };
     setIsRecording(true);
     window.__voskError = (msg) => {
       setIsRecording(false);
@@ -162,6 +176,9 @@ export function useVoiceInput() {
   const startRecordingDesktopRust = async (source) => {
     const cmd = source === 'openai' ? 'start_openai_recording' : 'start_vosk_recording';
     try {
+      if (source !== 'openai' && onLiveRef.current) {
+        liveUnlistenRef.current = await listen('dictation-live', (e) => { onLiveRef.current?.(e.payload || ''); });
+      }
       await invoke(cmd);
       setIsRecording(true);
     } catch (error) {
@@ -194,8 +211,9 @@ export function useVoiceInput() {
   // navigator.platform reports "Win32" on 64-bit Windows too.
   const isDesktopWindows = () => navigator.platform.toLowerCase().includes('win');
 
-  const startRecording = async () => {
+  const startRecording = async ({ onLive } = {}) => {
     const source = getSource();
+    onLiveRef.current = typeof onLive === 'function' ? onLive : null;
     if (isAndroid()) {
       // Android WebView is Chromium — getUserMedia works, so OpenAI uses the
       // same WebAudio path as pre-Vosk. Vosk still goes through the Kotlin bridge.
@@ -219,6 +237,7 @@ export function useVoiceInput() {
   const stopRecording = async () => {
     if (!isRecording) return '';
     const source = getSource();
+    stopLive();
     if (isAndroid()) {
       if (source === 'openai') return stopRecordingDesktop();
       return stopRecordingVosk();

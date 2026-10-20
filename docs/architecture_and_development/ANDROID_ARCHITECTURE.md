@@ -37,8 +37,8 @@ Hand-written and tracked in git (line counts from `wc -l` on 2026-09-09):
 
 | File | Lines | Role |
 |---|---|---|
-| `MainActivity.kt` | 1087 | Activity, permission queue, model unpacking, all six JavaScript bridges |
-| `WakeWordService.kt` | 1334 | Foreground service: ONNX wake-word loop, speech gate (Silero VAD), playback suppression, watchdog, clips, hand-off |
+| `MainActivity.kt` | 1432 | Activity, permission queue, model unpacking, all six JavaScript bridges |
+| `WakeWordService.kt` | 1372 | Foreground service: ONNX wake-word loop, speech gate (Silero VAD), playback suppression, watchdog, clips, hand-off |
 | `ZynkAssistantSession.kt` | 522 | One assistant invocation: Z overlay, dictation, answer |
 | `NativeVoiceAnswerer.kt` | 408 | JNI call into Rust, streaming text-to-speech, pending turns |
 | `OpenAiDictation.kt` | 241 | Native Whisper dictation with energy endpointing |

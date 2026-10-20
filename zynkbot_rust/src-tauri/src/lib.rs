@@ -1505,15 +1505,23 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
 /// Desktop dictation — cpal mic capture, Vosk engine (Linux only).
 /// libvosk.so is only available for Linux x86_64; Windows/macOS fall back to browser audio.
 #[tauri::command]
-async fn start_vosk_recording() -> Result<(), String> {
+async fn start_vosk_recording(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
-    { return Err("Android uses the VoskBridge Kotlin interface.".to_string()); }
+    { let _ = app; return Err("Android uses the VoskBridge Kotlin interface.".to_string()); }
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
-        return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::Vosk))
+        // The words recognised so far go to the page as "dictation-live" events, so
+        // the composer can show them while the user is still speaking (2026-10-20).
+        let live: vosk_desktop::LiveSink = Box::new(move |text: String| {
+            use tauri::Emitter;
+            let _ = app.emit("dictation-live", text);
+        });
+        return tokio::task::spawn_blocking(move || vosk_desktop::start(vosk_desktop::Engine::Vosk, Some(live)))
             .await
             .map_err(|e| format!("start task join failed: {e}"))?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+    { let _ = app; }
     #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
     Err("Offline dictation via Vosk is not available on this platform.".to_string())
 }
@@ -1540,7 +1548,7 @@ async fn start_openai_recording() -> Result<(), String> {
     { return Err("Android uses the WebAudio path for OpenAI Whisper.".to_string()); }
     #[cfg(target_os = "linux")]
     {
-        return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::OpenAI))
+        return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::OpenAI, None))
             .await
             .map_err(|e| format!("start task join failed: {e}"))?;
     }

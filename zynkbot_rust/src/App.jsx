@@ -219,6 +219,7 @@ export default function App() {
   });
 
   const [input, setInput] = useState("");
+  const [inputCopied, setInputCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const TIPS = [
     <>Tip: start with "<strong>Remember:</strong>" to save exactly what follows into your memories, typed or spoken. Any case works, and by voice just say "remember colon" before the fact.</>,
@@ -308,6 +309,70 @@ export default function App() {
 
   // Splice transcribed text into the input at the cursor position, padding with
   // spaces when adjacent to non-whitespace so words don't run together.
+  // Live dictation (2026-10-20): while the mic is on, the words recognised so far are
+  // shown in the box at the spot where the cursor was when recording started; the
+  // finished transcript then takes their place. `before`/`after` are the text around
+  // that spot, fixed for the whole recording.
+  const liveDictationRef = useRef(null);
+  const padJoin = (before, text, after) => {
+    const leadPad = before && text && !/\s$/.test(before) ? ' ' : '';
+    const trailPad = after && text && !/^\s/.test(after) ? ' ' : '';
+    const body = `${leadPad}${text}${trailPad}`;
+    return { value: `${before}${body}${after}`, cursor: before.length + body.length - trailPad.length };
+  };
+  const handleLiveDictation = (text) => {
+    if (text === null) {
+      // Recording over. If no final transcript replaced the live words, drop them.
+      const live = liveDictationRef.current;
+      liveDictationRef.current = null;
+      if (live && live.showing) setInput(`${live.before}${live.after}`);
+      return;
+    }
+    if (!liveDictationRef.current) {
+      const el = inputTextareaRef.current;
+      const current = input;
+      const start = el && typeof el.selectionStart === 'number' ? el.selectionStart : current.length;
+      const end = el && typeof el.selectionEnd === 'number' ? el.selectionEnd : current.length;
+      liveDictationRef.current = { before: current.slice(0, start), after: current.slice(end), showing: false };
+    }
+    const live = liveDictationRef.current;
+    if (!text) return;
+    live.showing = true;
+    const { value, cursor } = padJoin(live.before, text, live.after);
+    setInput(value);
+    requestAnimationFrame(() => {
+      const el = inputTextareaRef.current;
+      if (el) { el.setSelectionRange(cursor, cursor); el.scrollTop = el.scrollHeight; }
+    });
+  };
+  const handleDictationTranscript = (text) => {
+    if (!text) return;
+    const live = liveDictationRef.current;
+    if (!live) return insertTranscriptAtCursor(text);
+    liveDictationRef.current = null;
+    const { value, cursor } = padJoin(live.before, text, live.after);
+    setInput(value);
+    requestAnimationFrame(() => {
+      const el = inputTextareaRef.current;
+      if (el) { el.focus(); el.setSelectionRange(cursor, cursor); }
+    });
+  };
+
+  // Copy everything in the box (2026-10-20): Zynkbot is the dictation tool on Linux and
+  // on GrapheneOS, where the keyboard has none, and the text then goes somewhere else.
+  const copyInputText = async () => {
+    const text = input;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (_) {
+      const el = inputTextareaRef.current;
+      if (el) { el.focus(); el.select(); try { document.execCommand('copy'); } catch (__) {} }
+    }
+    setInputCopied(true);
+    setTimeout(() => setInputCopied(false), 1500);
+  };
+
   const insertTranscriptAtCursor = (text) => {
     if (!text) return;
     const el = inputTextareaRef.current;
@@ -2353,13 +2418,40 @@ export default function App() {
                       📷
                     </button>
                   )}
+
+                  {/* Copy button — only while there is text in the box */}
+                  {input.trim() && (
+                    <button
+                      onClick={copyInputText}
+                      title="Copy the text in the box"
+                      style={{
+                        height: '28px',
+                        padding: '0 10px',
+                        background: inputCopied ? '#50fa7b' : 'linear-gradient(135deg, #6272a4 0%, #44475a 100%)',
+                        color: inputCopied ? '#282a36' : '#f8f8f2',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontWeight: 'bold',
+                        fontSize: '0.7rem',
+                        transition: 'all 0.2s',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {inputCopied ? '✓ Copied' : '⧉ Copy'}
+                    </button>
+                  )}
                 </div>
 
                 {/* Mobile: circular mic button, bottom-right of textarea */}
                 {isMobile && (
                   <VoiceButton
                     ref={voiceButtonRef}
-                    onTranscript={(text) => { if (text) insertTranscriptAtCursor(text); }}
+                    onTranscript={handleDictationTranscript}
+                    onLive={handleLiveDictation}
                     disabled={isLoading}
                     style={{
                       position: 'absolute',
@@ -2391,7 +2483,8 @@ export default function App() {
                 {!isMobile && (
                   <VoiceButton
                     ref={voiceButtonRef}
-                    onTranscript={(text) => { if (text) insertTranscriptAtCursor(text); }}
+                    onTranscript={handleDictationTranscript}
+                    onLive={handleLiveDictation}
                     disabled={isLoading}
                     style={{
                       width: '85px',
