@@ -42,6 +42,14 @@ import kotlin.math.sqrt
  * training scores, clamped to [0.05, 0.5], so at least 95% of the clips it was
  * trained on pass.
  *
+ * Promotion (2026-10-20): a candidate replaces the profile in use only if it is at least
+ * as good, measured on clips it did not train on (five folds): its held-out pass rate on
+ * the owner's wakes and stop rate on negatives may each be at most one point below the
+ * current profile's, and their sum may not drop. Otherwise the current profile stays and
+ * the log says so. The training set itself only grows: the service keeps every labelled
+ * clip's features and label even after pruning its audio. So the profile gets better or
+ * stays the same; it cannot drift.
+ *
  * The written profile has an empty "owners" list, so WakeVerifier only *logs*
  * ("would reject") until enforcement is switched on deliberately after the field
  * numbers are in (ROADMAP: run log-only, enforce only if under 5% of answered wakes
@@ -80,6 +88,7 @@ object WakeVerifierTrainer {
         if (busy) return false
         busy = true
         try {
+            resetMislabelledSetOnce(context)
             val dir = clipDir(context)
             if (!dir.isDirectory) return false
             if (modelDir != null) backfillFeatures(dir, File(modelDir))
@@ -109,6 +118,25 @@ object WakeVerifierTrainer {
             val threshold = p5.coerceIn(0.05f, 0.5f)
             val stopped = negAll.count { model.score(it) < threshold }
             val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+
+            // Promote only on improvement: held-out numbers for the candidate against the
+            // held-out numbers recorded when the current profile was promoted.
+            val (keepNew, stopNew) = heldOut(pos, negAll)
+            val keepOld = state.optDouble("heldout_keep", -1.0).toFloat()
+            val stopOld = state.optDouble("heldout_stop", -1.0).toFloat()
+            val heldOutLine = "held out: keeps %.0f%% of own wakes, stops %.0f%% of negatives".format(Locale.US, keepNew * 100, stopNew * 100)
+            if (profileFile(context).isFile && keepOld >= 0f) {
+                val worse = keepNew < keepOld - PROMOTE_TOLERANCE || stopNew < stopOld - PROMOTE_TOLERANCE ||
+                    keepNew + stopNew < keepOld + stopOld
+                if (worse) {
+                    // Not promoted. Remember the clip count so the next attempt waits for
+                    // RETRAIN_EVERY_NEW_REAL more real clips instead of retrying every call.
+                    stateFile(context).writeText(state.put("real_clips", pos.size).put("last_rejected", stamp).toString())
+                    Log.i(TAG, "Candidate profile from ${pos.size} real clips not promoted ($heldOutLine; " +
+                        "profile in use had %.0f%% and %.0f%%) — keeping the profile in use".format(Locale.US, keepOld * 100, stopOld * 100))
+                    return false
+                }
+            }
             val json = JSONObject()
                 .put("version", 3)
                 .put("trained", "on this phone $stamp from ${pos.size} real clips vs ${neg.size} own false + ${generic.size} generic negatives")
@@ -121,15 +149,42 @@ object WakeVerifierTrainer {
                 .put("note", "Trained on the phone from the owner's labelled wake clips (WakeVerifierTrainer). A noise/TV filter, not a voice lock.")
             profileFile(context).parentFile?.mkdirs()
             profileFile(context).writeText(json.toString())
-            stateFile(context).writeText(JSONObject().put("real_clips", pos.size).put("false_clips", neg.size).put("trained", stamp).toString())
+            stateFile(context).writeText(JSONObject().put("real_clips", pos.size).put("false_clips", neg.size).put("trained", stamp)
+                .put("heldout_keep", keepNew.toDouble()).put("heldout_stop", stopNew.toDouble()).toString())
             Log.i(TAG, "Profile trained in ${System.currentTimeMillis() - t0} ms: ${pos.size} real vs ${negAll.size} negatives; " +
-                "threshold %.3f keeps %d/%d own clips, stops %d/%d negatives (training set, not held out)".format(
-                    Locale.US, threshold, ownScores.count { it >= threshold }, ownScores.size, stopped, negAll.size))
+                "threshold %.3f keeps %d/%d own clips, stops %d/%d negatives (training set); $heldOutLine".format(
+                    Locale.US, threshold, ownScores.count { it >= threshold }, ownScores.size, stopped, negAll.size) +
+                if (keepOld >= 0f) " — promoted over %.0f%% and %.0f%%".format(Locale.US, keepOld * 100, stopOld * 100) else " — first profile")
             return true
         } catch (e: Exception) {
             Log.w(TAG, "Training failed: ${e.message}")
             return false
         } finally { busy = false }
+    }
+
+    /** Clips labelled before 2026-10-20 cannot be trusted: a wake the model dismissed as
+     *  NO_QUERY was written up as real by the callers (see NativeVoiceAnswerer), so a
+     *  phone that sat by a television trained its profile on the television. There is
+     *  no way to tell those clips apart afterwards, so the whole set and the profile
+     *  built from it go, once, and collection starts again with the corrected labels.
+     *  The marker file keeps this from ever running twice. */
+    private fun resetMislabelledSetOnce(context: Context) {
+        val marker = File(context.filesDir, "zynkbot/wake-word-models/labels_v2")
+        if (marker.exists()) return
+        try {
+            val dir = clipDir(context)
+            var files = 0; var real = 0; var falseN = 0
+            dir.listFiles()?.forEach { f ->
+                when { f.name.endsWith(".real") -> real++; f.name.endsWith(".false") -> falseN++ }
+                if (f.delete()) files++
+            }
+            val profile = profileFile(context).delete()
+            stateFile(context).delete()
+            marker.parentFile?.mkdirs()
+            marker.writeText("labels corrected 2026-10-20\n")
+            Log.i(TAG, "Wake clip set reset (labels before 2026-10-20 were unreliable): $files files removed " +
+                "($real real, $falseN false)${if (profile) ", on-phone profile removed" else ""}; collecting again")
+        } catch (e: Exception) { Log.w(TAG, "Clip set reset failed: ${e.message}") }
     }
 
     // ── features ─────────────────────────────────────────────────────────────
@@ -212,6 +267,31 @@ object WakeVerifierTrainer {
         List(rows.length()) { r -> val a = rows.getJSONArray(r); FloatArray(a.length()) { a.getDouble(it).toFloat() } }
             .filter { it.size == FEATS }
     } catch (e: Exception) { Log.w(TAG, "No generic negatives: ${e.message}"); emptyList() }
+
+    // ── held-out evaluation ──────────────────────────────────────────────────
+
+    const val PROMOTE_TOLERANCE = 0.01f   // one point of sampling noise per rate
+    private const val FOLDS = 5
+
+    /** Five-fold estimate of (own-wake pass rate, negative stop rate) for a profile
+     *  trained the way [trainIfDue] trains it, each fold using its own 5th-percentile
+     *  threshold exactly as the real profile does. Deterministic fold assignment. */
+    fun heldOut(pos: List<FloatArray>, neg: List<FloatArray>): Pair<Float, Float> {
+        if (pos.size < FOLDS || neg.size < FOLDS) return 0f to 0f
+        var kept = 0; var stopped = 0
+        for (k in 0 until FOLDS) {
+            val trainPos = pos.filterIndexed { i, _ -> i % FOLDS != k }
+            val trainNeg = neg.filterIndexed { i, _ -> i % FOLDS != k }
+            val testPos = pos.filterIndexed { i, _ -> i % FOLDS == k }
+            val testNeg = neg.filterIndexed { i, _ -> i % FOLDS == k }
+            val m = fit(trainPos, trainNeg)
+            val own = trainPos.map { m.score(it) }.sorted()
+            val thr = own[((own.size - 1) * 0.05).toInt()].coerceIn(0.05f, 0.5f)
+            kept += testPos.count { m.score(it) >= thr }
+            stopped += testNeg.count { m.score(it) < thr }
+        }
+        return kept.toFloat() / pos.size to stopped.toFloat() / neg.size
+    }
 
     // ── logistic regression ──────────────────────────────────────────────────
 

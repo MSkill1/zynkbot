@@ -120,6 +120,15 @@ object NativeVoiceAnswerer {
      * will be spoken (android_jni::HANDS_FREE_NOTE); this is the safety net for
      * models that ignore that. The chat still receives the original markdown.
      */
+    /** Drops the containment guard's banner ("⚠️ WARNING: … Proceeding with caution.")
+     *  that Sovereign mode prepends to a flagged reply, up to its blank line. */
+    fun stripGuardWarning(reply: String): String {
+        val t = reply.trimStart()
+        if (!(t.startsWith("⚠️") || t.startsWith("WARNING:") || t.startsWith("[WARN_ALLOW]"))) return reply
+        val cut = t.indexOf("\n\n")
+        return if (cut < 0) "" else t.substring(cut + 2).trimStart()
+    }
+
     fun cleanForSpeech(raw: String): String {
         var t = raw
         t = t.replace(Regex("```[\\s\\S]*?```"), " ")
@@ -201,7 +210,9 @@ object NativeVoiceAnswerer {
                         val parsed = try { org.json.JSONObject(replyJson) } catch (e: Exception) {
                             Log.w(TAG, "Could not parse native reply: ${e.message}"); null
                         }
-                        val replyText = parsed?.optString("reply_text", "") ?: ""
+                        // The containment guard's warning banner is for the screen, never
+                        // for speech; the reply is what follows it.
+                        val replyText = stripGuardWarning(parsed?.optString("reply_text", "") ?: "")
                         // What the model said before an automatic web search; shown as its
                         // own message above the searched answer (2026-09-20).
                         val preAnswer = parsed?.optString("pre_search_reply", "") ?: ""
@@ -222,6 +233,13 @@ object NativeVoiceAnswerer {
                         // chose to answer ("Lindsey Clancy", 2026-09-08) would otherwise
                         // reset the back-off. Only clock commands do (ZynkAssistantSession.answerAndFinish).
                         speaker.finish(replyText)
+                        // The clip's label is decided here and nowhere else: a spoken answer
+                        // is a real wake; NO_QUERY stays false (labelled above). Until
+                        // 2026-10-20 the callers labelled the clip real whenever this
+                        // function returned "handled", which NO_QUERY also does, so every
+                        // TV line the model dismissed trained the verifier as the owner's
+                        // voice (26 of 74 wakes on the Pixel that day).
+                        if (!noQuery && speaker.spokeAnything()) WakeWordService.labelClip(true)
                     }
                     override fun onError(message: String) { failure = message }
                 },

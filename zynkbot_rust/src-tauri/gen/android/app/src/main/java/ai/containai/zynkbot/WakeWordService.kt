@@ -916,7 +916,14 @@ class WakeWordService : Service() {
                 val (real, rest) = allWavs.partition { File(dir, it.name.removeSuffix(".wav") + ".real").exists() }
                 rest.sortedByDescending { it.name }
                     .drop(keepCount)
-                    .forEach { val stem = it.name.removeSuffix(".wav"); it.delete(); for (ext in listOf(".scores.txt", ".real", ".false", ".feat")) File(dir, stem + ext).delete() }
+                    .forEach {
+                        // The audio and the score trace go; a labelled clip's features and
+                        // label (about 2 KB) stay, so the training set only ever grows and a
+                        // retrain never trades last week's negatives for today's (Matt,
+                        // 2026-10-20). An unlabelled clip is no training material: all of it goes.
+                        val stem = it.name.removeSuffix(".wav"); it.delete(); File(dir, "$stem.scores.txt").delete()
+                        if (!File(dir, "$stem.false").exists()) File(dir, "$stem.feat").delete()
+                    }
                 Log.i(TAG, "Trigger clip saved: ${file.name}")
             } catch (e: Exception) {
                 Log.w(TAG, "Trigger clip not saved: ${e.message}")
@@ -1044,9 +1051,8 @@ class WakeWordService : Service() {
 
         Thread {
             playTone(R.raw.wake_chime_close)
-            val spoke = NativeVoiceAnswerer.answer(this, transcript)
+            val spoke = NativeVoiceAnswerer.answer(this, transcript)   // labels the clip itself
             if (spoke) {
-                labelLastClip(true)
                 releaseWakeLock()
                 endTurn()
             } else {

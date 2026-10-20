@@ -1223,10 +1223,13 @@ pub async fn generate_reply(
 
     // Prepend Sovereign mode warning if present (with proper spacing)
     // Add medical disclaimer for HIPAA mode if health-related content detected
-    let mut final_reply_text = if let Some(warning) = warning_prefix {
-        format!("{}\n\n{}", warning, reply_text)
-    } else {
-        reply_text
+    // A NO_QUERY verdict (hands-free fragment the model judged not a request) gets
+    // no warning: there is nothing to warn about, and the prefix would hide the
+    // verdict from every `starts_with("NO_QUERY")` check — the Pixel read the warning
+    // aloud over a flagged TV line on 2026-10-20 16:18.
+    let mut final_reply_text = match warning_prefix {
+        Some(warning) if !reply_text.trim().starts_with("NO_QUERY") => format!("{}\n\n{}", warning, reply_text),
+        _ => reply_text,
     };
 
     // HIPAA Mode: Auto-add medical disclaimer if health-related terms detected
