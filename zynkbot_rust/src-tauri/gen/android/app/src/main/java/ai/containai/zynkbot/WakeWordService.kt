@@ -263,7 +263,7 @@ class WakeWordService : Service() {
     }
 
     private fun watchdogTick() {
-        if (kwsSession == null || lastModelDir == null) return     // never started: nothing to restore
+        if (lastModelDir == null) return     // never started: nothing to restore
         if (running || audioThread?.isAlive == true) return
         if (pausedForOtherRecording) {
             val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -572,6 +572,12 @@ class WakeWordService : Service() {
                 val installed = synchronized(modelLock) {
                     if (generation != loadGeneration) {
                         false
+                    } else if (melSession != null && embSession != null && kwsSession != null && loadedModelDir == modelDir) {
+                        // Another start() loaded the same models while this thread was busy and
+                        // the audio loop may already be using them. Replacing them here would
+                        // close sessions under that loop: on the first beta5 build that was a
+                        // native write-after-free and GrapheneOS killed the process (12:21:33).
+                        false
                     } else {
                         melSession?.close(); embSession?.close(); kwsSession?.close(); vadSession?.close()
                         ortEnv = env
@@ -581,13 +587,19 @@ class WakeWordService : Service() {
                     }
                 }
                 if (!installed) {
-                    // stop() ran while we were loading: the user turned Hey Zynk off, or a
-                    // restart superseded this one. Drop what was loaded and go quietly.
+                    // Either stop() ran while we were loading (the user turned Hey Zynk off, or
+                    // a restart superseded this one), or a parallel start() got there first.
+                    // Drop what was loaded; in the second case fall through to the start,
+                    // which the loop's own guard turns into "already running".
                     mel.close(); emb.close(); kws.close(); vad?.close()
-                    Log.i(TAG, "Model load abandoned: the service was stopped while the models were loading")
-                    return
+                    val stopped = synchronized(modelLock) { generation != loadGeneration }
+                    if (stopped) {
+                        Log.i(TAG, "Model load abandoned: the service was stopped while the models were loading")
+                        return
+                    }
+                    Log.i(TAG, "Model load discarded: another start had already loaded them")
                 }
-                Log.i(TAG, "ONNX models loaded. mel inputs: ${mel.inputNames}, emb inputs: ${emb.inputNames}, kws inputs: ${kws.inputNames}")
+                if (installed) Log.i(TAG, "ONNX models loaded. mel inputs: ${mel.inputNames}, emb inputs: ${emb.inputNames}, kws inputs: ${kws.inputNames}")
             } else {
                 Log.i(TAG, "Reusing already-loaded ONNX models")
             }
@@ -1021,12 +1033,22 @@ class WakeWordService : Service() {
         // Nothing said after the chime: close in 6 s, as Siri does, instead of holding the
         // microphone for the 30 s cap (Pixel 2026-10-19: every TV false wake cost 30 s of
         // deafness). The first partial transcript cancels this and the silence timer takes over.
-        val noSpeechStop = Runnable { Log.i(TAG, "No speech within ${NO_SPEECH_MS / 1000} s after the chime — closing"); speechService?.stop() }
+        // Diagnostics (2026-10-20): "it heard the request and did nothing" came back as an
+        // empty transcript after the 6 s close. Count what Vosk delivered, so the log can
+        // tell "no audio reached the recogniser" from "audio arrived but no words in it".
+        var partialCallbacks = 0
+        var partialsWithText = 0
+        val noSpeechStop = Runnable {
+            Log.i(TAG, "No speech within ${NO_SPEECH_MS / 1000} s after the chime — closing (Vosk callbacks: $partialCallbacks, with text: $partialsWithText)")
+            speechService?.stop()
+        }
 
         val listener = object : org.vosk.android.RecognitionListener {
             override fun onPartialResult(h: String?) {
+                partialCallbacks++
                 val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
                 if (partial.isNotBlank()) {
+                    partialsWithText++
                     silenceHandler.removeCallbacks(noSpeechStop)
                     silenceHandler.removeCallbacks(silenceStop)
                     silenceHandler.postDelayed(silenceStop, 1500)   // 1.5 s silence after last speech
@@ -1050,7 +1072,7 @@ class WakeWordService : Service() {
                 }
                 silenceHandler.removeCallbacksAndMessages(null)
                 speechService = null
-                Log.i(TAG, "Screen-off transcript: \"$transcript\"")
+                Log.i(TAG, "Screen-off transcript: \"$transcript\" (Vosk callbacks: $partialCallbacks, with text: $partialsWithText)")
                 answerNatively(transcript)
             }
             override fun onError(e: Exception?) {
@@ -1285,11 +1307,20 @@ class WakeWordService : Service() {
     @Synchronized
     fun resumeMicAfterSession() {
         if (running || audioThread?.isAlive == true) return
-        if (kwsSession == null || melSession == null || embSession == null) return
         if (NativeVoiceAnswerer.speaking) return   // NativeVoiceAnswerer re-arms when speech ends
         if (answering) return                       // endTurn() re-arms when the screen-off turn is over
         if (pausedForOtherRecording) return         // the recording watch re-arms when it ends
         if (ZynkAssistantService.sessionActive) return  // the session re-arms on hide
+        if (kwsSession == null || melSession == null || embSession == null) {
+            // A stop() ran while detection was paused for another recording (Pixel
+            // 2026-10-20 12:23: three deferred starts, then a stop), so the models are
+            // gone but the user still wants the listener. Reload instead of giving up
+            // silently, which left the phone deaf until the toggle was flipped again.
+            val dir = lastModelDir ?: return
+            Log.i(TAG, "Re-arming wake word: models not loaded — reloading")
+            Thread { loadAndStart(dir) }.start()
+            return
+        }
         Log.i(TAG, "Re-arming wake word after the assistant session")
         melBuffer.clear(); embBuffer.clear()
         consecutiveHighScores = 0

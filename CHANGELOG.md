@@ -24,6 +24,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - The contradiction window's explanation box has a dictation button.
 
 ### "Hey Zynk" on Android
+- Turning the toggle off and on no longer kills the listener: the models are loaded safely against a stop or a second start arriving mid-load (KI-097), and a resume after a pause reloads them if a stop took them away.
 - The listener no longer dies after a false wake (KI-096): two paths could restart it in the same instant, the second stream was taken for another app's recording, and both were stopped with nothing to restart them. Restarts are now one at a time, and a once-a-minute check restarts a listener that is off for no reason.
 - A wake followed by silence closes after 6 seconds instead of holding the microphone for 30.
 - A detection while the phone itself is playing sound (a notification tone, an app's "boing", a video), or in the second after, is ignored. An echo canceller is requested on the microphone stream; the log says whether the phone enabled it. Trade-off: "Hey Zynk" does not wake the phone while the phone is playing music.
