@@ -5,11 +5,11 @@
 `src-tauri/gen/android/` is committed to git and contains hand-edited files (full table in
 `docs/architecture_and_development/ANDROID_ARCHITECTURE.md`, section 2):
 
-- `app/src/main/java/ai/containai/zynkbot/*.kt` — 15 hand-written Kotlin files: `MainActivity.kt`
+- `app/src/main/java/ai/containai/zynkbot/*.kt` — 16 hand-written Kotlin files: `MainActivity.kt`
   (activity, permission queue, model unpacking, JavaScript bridges), `WakeWordService.kt`,
   `ZynkAssistantService.kt`, `ZynkAssistantSessionService.kt`, `ZynkAssistantSession.kt`,
   `ZynkRecognitionService.kt`, `NativeVoiceAnswerer.kt`, `OpenAiDictation.kt`, `VoiceCommands.kt`,
-  `WakeVerifier.kt`, `ZynkCore.kt`, `EnvFile.kt`, `SyncForegroundService.kt`
+  `WakeVerifier.kt`, `WakeVerifierTrainer.kt`, `ZynkCore.kt`, `EnvFile.kt`, `SyncForegroundService.kt`
   (the `generated/` subfolder is Tauri's and gitignored)
 - `app/src/main/AndroidManifest.xml` — permissions (legacy READ/WRITE_EXTERNAL_STORAGE with
   maxSdkVersion only; MANAGE_EXTERNAL_STORAGE, USE_FULL_SCREEN_INTENT and READ_MEDIA_IMAGES were

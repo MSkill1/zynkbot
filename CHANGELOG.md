@@ -6,6 +6,20 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
+## [0.9.6-beta5] — unreleased <!-- branch beta5 -->
+
+### System Controls
+- One section per page: the sidebar is a list of buttons (Getting Started, Containment, Current Model, Voice, ZynkSync, ZynkLink, Knowledge Base, Snap-ins, ZynkCluster) and each opens a single page that covers the sidebar. Getting Started stays at the top until onboarding is done, then drops to the bottom; a checkbox on its page pins it back.
+- The contradiction window's explanation box has a dictation button.
+
+### "Hey Zynk" on Android
+- The listener no longer dies after a false wake (KI-096): two paths could restart it in the same instant, the second stream was taken for another app's recording, and both were stopped with nothing to restart them. Restarts are now one at a time, and a once-a-minute check restarts a listener that is off for no reason.
+- A wake followed by silence closes after 6 seconds instead of holding the microphone for 30.
+- A detection while the phone itself is playing sound (a notification tone, an app's "boing", a video), or in the second after, is ignored. An echo canceller is requested on the microphone stream; the log says whether the phone enabled it. Trade-off: "Hey Zynk" does not wake the phone while the phone is playing music.
+- A detection with no human voice in the previous 2 seconds is ignored (Silero VAD, a 2.3 MB pre-trained speech-or-not model, MIT licence). With no voice for 2 seconds the wake-word models are not run at all, which also saves battery.
+- A quiet voice from across the room is no longer thrown away: the old "too quiet" rule (−46 dBFS) rejected two real wakes at 0.99 confidence on 2026-10-19. With the speech gate deciding whether a voice was present, the level only has to rule out true silence (−65 dBFS).
+- The personal verifier is trained on the phone from your own wake clips, the way Siri keeps learning your voice: every answered wake is a positive example, every fruitless one a negative, retrained as they accumulate. Nothing leaves the phone. It only logs for now ("verifier would reject") and blocks nothing until the field numbers are in. It is a noise and TV filter, not a voice lock.
+
 ## [0.9.6-beta4] — 2026-10-17 <!-- branch sync-rebuild, merged into v1 2026-10-16; text reviewed by Matt 2026-10-16 -->
 
 ### ZynkSync, rebuilt (memory sync between your own devices)

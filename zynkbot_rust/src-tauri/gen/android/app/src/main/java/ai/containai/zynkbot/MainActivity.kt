@@ -642,7 +642,10 @@ class MainActivity : TauriActivity() {
         // ONNX Runtime's createSession needs a real filesystem path, and assets live
         // inside the APK archive. Bundling means wake word works offline on first
         // launch instead of requiring a network fetch from a GitHub release.
-        private val modelFiles = listOf("melspectrogram.onnx", "embedding_model.onnx", "hey_zynk.onnx")
+        // silero_vad.onnx (speech-or-not gate, 2026-10-19) and generic_negatives.json (the
+        // on-phone verifier trainer's shipped negative set) ride along; an older install
+        // that lacks them is "not ready" and gets them extracted the same way.
+        private val modelFiles = listOf("melspectrogram.onnx", "embedding_model.onnx", "hey_zynk.onnx", "silero_vad.onnx", "generic_negatives.json")
 
         private fun modelsPresent(): Boolean =
             modelFiles.all { val f = File(modelDir, it); f.exists() && f.length() > 0L }

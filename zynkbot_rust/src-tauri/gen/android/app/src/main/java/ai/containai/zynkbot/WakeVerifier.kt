@@ -48,6 +48,20 @@ class WakeVerifier private constructor(
                 j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"), owners)
                 .also { Log.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
         } catch (e: Exception) { Log.w(TAG, "No verifier: ${e.message}"); null }
+
+        /** The shift-invariant part of the features: per-dimension mean and max over the
+         *  window (2 × dim numbers). This is what the on-phone trainer stores per clip
+         *  and what a v3 profile scores. */
+        fun pooledFeatures(flatEmb: FloatArray, window: Int, dim: Int): FloatArray {
+            val out = FloatArray(dim + dim)
+            for (d in 0 until dim) {
+                var sum = 0f; var mx = Float.NEGATIVE_INFINITY
+                for (w in 0 until window) { val v = flatEmb[w * dim + d]; sum += v; mx = max(mx, v) }
+                out[d] = sum / window
+                out[dim + d] = mx
+            }
+            return out
+        }
     }
 
     /** Probability that this embedding window is the owner saying the wake word.
