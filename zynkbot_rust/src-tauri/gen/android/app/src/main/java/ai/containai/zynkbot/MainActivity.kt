@@ -466,52 +466,23 @@ class MainActivity : TauriActivity() {
     }
 
     inner class VoskBridge {
-        @Volatile private var voskModel: org.vosk.Model? = null
-        @Volatile private var speechService: org.vosk.android.SpeechService? = null
-        private val accumulated = StringBuilder()
+        // The page's mic button (2026-10-20 rebuild): one Dictation fed from the
+        // wake-word service's stream when Hey Zynk is on, else from a stream of its
+        // own. Live text (everything finished so far plus the utterance in progress)
+        // on every change; the full text when the user taps stop.
+        @Volatile private var dictation: Dictation? = null
+        private var ownStream: MicStream? = null
 
-        private val listener = object : org.vosk.android.RecognitionListener {
-            // Live text for the composer (2026-10-20): everything finished so far plus the
-            // utterance in progress, on every change. `__voskPartial` keeps carrying the bare
-            // partial for anything still listening to it.
-            private fun fireLive(partial: String) {
-                val live = synchronized(accumulated) {
-                    if (accumulated.isEmpty()) partial else if (partial.isEmpty()) accumulated.toString() else "$accumulated $partial"
-                }
-                fire("window.__voskLive&&window.__voskLive('${esc(live)}');")
+        private val listener = object : Dictation.Listener {
+            override fun onPartial(text: String) {
+                fire("window.__voskLive&&window.__voskLive('${esc(text)}');")
+                fire("window.__voskPartial&&window.__voskPartial('${esc(text)}');")
             }
-            override fun onPartialResult(h: String?) {
-                if (h.isNullOrBlank()) return
-                val partial = try { org.json.JSONObject(h).optString("partial", "") } catch (_: Exception) { "" }
-                if (partial.isNotBlank()) {
-                    fire("window.__voskPartial&&window.__voskPartial('${esc(partial)}');")
-                    fireLive(partial)
-                }
-            }
-            override fun onResult(h: String?) {
-                val t = parseText(h)
-                if (t.isNotEmpty()) synchronized(accumulated) {
-                    if (accumulated.isNotEmpty()) accumulated.append(" ")
-                    accumulated.append(t)
-                }
-                fireLive("")
-            }
-            override fun onFinalResult(h: String?) {
-                val last = parseText(h)
-                val full = synchronized(accumulated) {
-                    buildString {
-                        append(accumulated)
-                        if (accumulated.isNotEmpty() && last.isNotEmpty()) append(" ")
-                        append(last)
-                    }.trim().also { accumulated.clear() }
-                }
-                fire("window.__voskResult&&window.__voskResult('${esc(full)}');")
-            }
-            override fun onError(e: Exception?) {
-                fire("window.__voskError&&window.__voskError('${esc(e?.message ?: "recognition error")}');")
-            }
-            override fun onTimeout() {
-                fire("window.__voskError&&window.__voskError('timeout');")
+            override fun onFinal(text: String?) {
+                ownStream?.close(); ownStream = null
+                dictation = null
+                if (text == null) fire("window.__voskError&&window.__voskError('recognition error');")
+                else fire("window.__voskResult&&window.__voskResult('${esc(text)}');")
             }
         }
 
@@ -535,36 +506,33 @@ class MainActivity : TauriActivity() {
                 return
             }
             Thread {
-                try {
-                    val modelDir = File(filesDir, "vosk-model")
-                    if (!modelDir.exists()) {
-                        fire("window.__voskError&&window.__voskError('Voice model not downloaded yet');")
-                        return@Thread
-                    }
-                    if (voskModel == null) voskModel = org.vosk.Model(modelDir.absolutePath)
-                    WakeWordService.sharedVoskModel = voskModel // share with screen-off dictation
-                    val rec = org.vosk.Recognizer(voskModel, 16000.0f)
-                    runOnUiThread {
-                        try {
-                            speechService = org.vosk.android.SpeechService(rec, 16000.0f)
-                            speechService!!.startListening(listener)
-                            fire("window.__voskStarted&&window.__voskStarted();")
-                        } catch (e: Exception) {
-                            fire("window.__voskError&&window.__voskError('${esc(e.message ?: "start failed")}');")
-                        }
-                    }
-                } catch (e: Exception) {
-                    fire("window.__voskError&&window.__voskError('${esc(e.message ?: "model load failed")}');")
+                val model = Dictation.voskModel(this@MainActivity)
+                if (model == null) {
+                    fire("window.__voskError&&window.__voskError('Voice model not downloaded yet');")
+                    return@Thread
                 }
+                val d = Dictation(Dictation.Engine.VOSK, model, null, timers = false, listener = listener)
+                dictation?.cancel()
+                dictation = d
+                // Step 2 of the rebuild feeds this from the wake-word service's stream
+                // (WakeWordService.instance?.dictate(d, ownsTurn = false)). Until the page
+                // stops calling WakeWordBridge.stop() when dictation starts, that would
+                // abort the dictation; so for now the mic button keeps a stream of its own.
+                val s = MicStream("VoskBridge")
+                s.sink = d
+                if (!s.open()) {
+                    dictation = null
+                    fire("window.__voskError&&window.__voskError('Microphone busy');")
+                    return@Thread
+                }
+                ownStream = s
+                fire("window.__voskStarted&&window.__voskStarted();")
             }.start()
         }
 
         @JavascriptInterface
         fun stopListening() {
-            runOnUiThread {
-                speechService?.stop()
-                speechService = null
-            }
+            dictation?.stop()
         }
 
         @JavascriptInterface
@@ -698,6 +666,10 @@ class MainActivity : TauriActivity() {
         @JavascriptInterface
         fun isNativeSpeaking(): Boolean = NativeVoiceAnswerer.speaking
 
+        /** The listener's state: off, loading, listening, dictating, turn, paused. */
+        @JavascriptInterface
+        fun state(): String = WakeWordService.instance?.state()?.name?.lowercase() ?: "off"
+
         /** Hands-free exchanges finished since the page last asked, as a JSON array of
          *  {sessionId, question, answer, at}. The page appends those belonging to the
          *  thread on screen. Nudged via window.__nativeTurns when one completes, and
@@ -723,6 +695,8 @@ class MainActivity : TauriActivity() {
                 fire("window.__nativeSpeaking&&window.__nativeSpeaking(${if (on) "true" else "false"});")
             }
             NativeVoiceAnswerer.onTurnCompleted = { fire("window.__nativeTurns&&window.__nativeTurns();") }
+            // The listener's state, pushed on every change (2026-10-20 rebuild).
+            WakeWordService.onStateChanged = { s -> fire("window.__wakeWordState&&window.__wakeWordState('$s');") }
             val intent = Intent(this@MainActivity, WakeWordService::class.java).apply {
                 putExtra("threshold", threshold)
                 putExtra("modelDir", modelDir.absolutePath)

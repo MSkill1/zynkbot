@@ -296,6 +296,14 @@ This needs to be resolved before Play Store launch. The core tension:
 
 **Open scoping question — decide before building:** whether Elder Mode addresses medication at all. Recall of what a doctor said, and when a dose was taken, is the most-requested capability and the one closest to regulated territory. The current HIPAA containment mode blocks dosing language outright, which would also block an elder's own recall questions. Whatever the answer, `DISCLAIMER.md`, the README, and the mode's own copy have to agree on it.
 
+### Diet Mode — a food log that knows which day a meal belongs to
+
+**Added 2026-10-20 (Matt, from using Zynkbot for dieting).** Not a separate app: a mode on the memory system, the way Elder Mode is. The first test exposed a gap in the memory model that any dated-event use (meals, doses, symptoms, spending) will hit:
+
+- **Memories carry only a created-at time, not an event date.** "Yesterday I had eggs" and "today I had oatmeal", stored minutes apart, land on the same day and are retrieved together by similarity and recency; a dinner suggestion then totals both days as one.
+- **Design, to decide with Matt before building:** an explicit event date on dated memories, separate from created-at; relative phrases ("today", "yesterday", "this morning") resolved to a calendar date at extraction time instead of defaulting to now; queries about "today's intake" filtered strictly by event date, not recency; a memory with no date language at all asks once rather than guessing. This touches the memory data model, so it is a discussion, not a patch.
+- Totals and suggestions (calories, macros, "what should I have for dinner") come after the date is right; without it they are confidently wrong.
+
 **Scope of Child Mode:** Content filtering at the Zynkbot layer — controlling what the AI will discuss, not device-level lockdown. Device-level MDM (factory reset protection, app blocking) is a separate product track requiring Android Enterprise Device Owner provisioning and is out of scope for this release. What Parenting Mode delivers is a private, safe AI companion that a child can trust to grow with them, while giving parents visibility into AI interactions and control over content boundaries.
 
 ### Child Mode Enhancements

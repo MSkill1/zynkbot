@@ -32,21 +32,15 @@ import kotlin.math.sin
  * while thinking a bright pulse runs along the strokes — top bar, diagonal, bottom
  * bar — on a loop. Gone when the session hides.
  *
- * Microphone discipline (learned on the OnePlus, 2026-09-03): the wake-word ONNX
- * loop and Vosk must never hold AudioRecord at the same time — a second reader on
- * the busy mic wedged the session with no timeout ever firing. So: release the
- * wake-word mic BEFORE starting Vosk, never call Vosk's stop() (which joins its
- * thread) on the main thread, and re-arm the wake word natively on hide.
+ * Microphone: one stream, owned by WakeWordService (2026-10-20 rebuild). The session
+ * asks it to feed a Dictation and tells it when the turn is over (onHide → endTurn).
+ * Before that, the session opened its own Vosk recorder beside the wake-word loop's,
+ * and a second reader on the busy mic wedged the session (OnePlus, 2026-09-03).
  */
 class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) {
     companion object {
         private const val TAG = "ZynkAssistantSession"
-        private const val SILENCE_MS = 1500L
-        private const val NO_SPEECH_MS = 6000L          // nothing heard after the chime → close (4 s cut a real "set a timer" off on 2026-09-08 pm; 6 s)
-        private const val SAFETY_TIMEOUT_MS = 30_000L   // hard cap; ongoing speech cannot extend it (12 s cut off dictated paragraphs; 30 s from 2026-09-09)
-        // OpenAI dictation caps its own recording at SAFETY_TIMEOUT_MS and then uploads;
-        // this backstop only catches a hung upload (2026-09-08).
-        private const val OPENAI_BACKSTOP_MS = SAFETY_TIMEOUT_MS + OpenAiDictation.HTTP_TIMEOUT_MS + 5_000L
+        // Dictation timers (silence 1.5 s, no speech 6 s, cap 30 s) live in Dictation.
         private const val MAX_QUERY_WORDS = 60
         private const val LOGO_DP = 120
         private const val BOTTOM_MARGIN_DP = 140
@@ -63,20 +57,12 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
      *  would otherwise carry on (transcript in, answer out). */
     @Volatile private var cancelled = false
 
-    @Volatile private var speechService: org.vosk.android.SpeechService? = null
-    private val silenceHandler = Handler(Looper.getMainLooper())
-    // Separate runnables so a partial transcript restarts only the silence timer. One
-    // removeCallbacksAndMessages(null) used to cancel the safety cap too, so continuous
-    // TV speech kept the session listening until the programme paused (2026-09-04).
-    private val silenceStop = Runnable { stopVoskAsync() }
-    private val hardStop = Runnable { Log.i(TAG, "Listening cap reached"); stopVoskAsync(); openAiRecorder?.cancel() }
-    // A false trigger in a quiet room used to hold the mic for the full 12 s cap;
-    // with no partial result in the first 4 s there is nobody talking to us (2026-09-08).
-    private val noSpeechStop = Runnable { Log.i(TAG, "No speech after the chime — closing"); stopVoskAsync() }
+    /** The dictation in flight, fed from the wake-word service's stream when Hey Zynk
+     *  is on, else from a stream of our own (the assistant gesture with it off). */
+    @Volatile private var dictation: Dictation? = null
+    private var ownStream: MicStream? = null
     @Volatile private var listenStartedAt = 0L
     @Volatile private var firstPartialLogged = false
-    /** In-flight OpenAI dictation, when the Voice settings selector says "OpenAI". */
-    @Volatile private var openAiRecorder: OpenAiDictation.Recorder? = null
     private val main = Handler(Looper.getMainLooper())
     private var zView: ZView? = null
 
@@ -228,10 +214,8 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         releaseScreen()
         stopListening()
         zView?.stop()
-        // Re-arm passive wake-word listening natively; the JS re-arm only runs when
-        // the app resumes, which a hands-free flow never does. (Refused while the
-        // native voice is still speaking — NativeVoiceAnswerer re-arms afterwards.)
-        Thread { try { WakeWordService.instance?.resumeMicAfterSession() } catch (e: Exception) { Log.w(TAG, "re-arm failed: ${e.message}") } }.start()
+        // The turn is over: the service goes back to listening by itself.
+        try { WakeWordService.instance?.endTurn() } catch (e: Exception) { Log.w(TAG, "endTurn failed: ${e.message}") }
         super.onHide()
     }
 
@@ -304,143 +288,76 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
     // ── dictation ────────────────────────────────────────────────────────────
 
     /**
-     * The Voice settings selector (Vosk offline / OpenAI Whisper) used to reach only
-     * the in-app mic button; hands-free always dictated with Vosk. Since 2026-09-08
-     * the session honours it too: OpenAI when selected and a key is on file, else
-     * Vosk. An OpenAI failure (not a cancel) falls back to Vosk once.
+     * The Voice settings selector (Vosk offline / OpenAI Whisper) is honoured here
+     * since 2026-09-08: OpenAI when selected and a key is on file, else Vosk. An
+     * OpenAI failure (not a cancel) falls back to Vosk once. Since the 2026-10-20
+     * rebuild the audio comes from the wake-word service's one stream (or a stream of
+     * our own when Hey Zynk is off), through [Dictation]; the timers live there.
      */
     private fun startListening() {
         val source = MainActivity.voiceInputSource(context)
-        if (source == "openai" && !OpenAiDictation.hasApiKey(context)) {
+        val key = OpenAiDictation.apiKey(context)
+        if (source == "openai" && key == null) {
             Log.w(TAG, "[Dictation] OpenAI selected but no OPENAI_API_KEY on file — using Vosk")
         }
-        if (source == "openai" && OpenAiDictation.hasApiKey(context)) startOpenAiListening() else startVoskListening()
+        val engine = if (source == "openai" && key != null) Dictation.Engine.WHISPER else Dictation.Engine.VOSK
+        startDictation(engine, key)
     }
 
-    private fun startOpenAiListening() {
-        Log.i(TAG, "[Dictation] engine=openai")
-        // Off the main thread: releasing the wake-word mic can wait up to 2s.
-        Thread {
-            val freed = try { WakeWordService.instance?.releaseMicForSession() ?: true } catch (e: Exception) { false }
-            if (!freed) Log.w(TAG, "Wake-word mic not confirmed released; starting OpenAI dictation anyway (its own cap will end it)")
-            if (cancelled) return@Thread
-            lateinit var rec: OpenAiDictation.Recorder
-            rec = OpenAiDictation.record(
-                context,
-                onSpeechStarted = { Log.i(TAG, "[Dictation] speech started") },
-                onDone = { text -> main.post { onOpenAiDone(rec, text) } }
-            )
-            openAiRecorder = rec
-            // stopListening() may have run between thread start and the assignment above.
-            if (cancelled || !ZynkAssistantService.sessionActive) rec.cancel()
-            silenceHandler.postDelayed(hardStop, OPENAI_BACKSTOP_MS)
-        }.start()
-    }
-
-    /** Main looper, like Vosk's onFinalResult. null = failure or cancel; "" = nothing heard. */
-    private fun onOpenAiDone(rec: OpenAiDictation.Recorder, text: String?) {
-        silenceHandler.removeCallbacksAndMessages(null)
-        openAiRecorder = null
-        if (cancelled) return
-        if (rec.isCancelled) {
-            // Ended by the backstop or by onHide — not a failure, so no Vosk fallback.
-            if (ZynkAssistantService.sessionActive) hide()
-            return
-        }
-        if (text == null) {
-            Log.w(TAG, "[Dictation] OpenAI failed — falling back to Vosk")
-            startVoskListening()
-            return
-        }
-        Log.i(TAG, "Transcript: \"$text\"")
-        answerAndFinish(text)
-    }
-
-    private fun startVoskListening() {
-        Log.i(TAG, "[Dictation] engine=vosk")
-        val model = WakeWordService.sharedVoskModel
-        if (model == null) {
-            Log.w(TAG, "No Vosk model loaded yet (wake-word listener hasn't run this session) — nothing to do")
+    private fun startDictation(engine: Dictation.Engine, key: String?) {
+        Log.i(TAG, "[Dictation] engine=${engine.name.lowercase()}")
+        val model = if (engine == Dictation.Engine.VOSK) Dictation.voskModel(context) else null
+        if (engine == Dictation.Engine.VOSK && model == null) {
+            Log.w(TAG, "No Vosk model on the phone — nothing to do")
             hide()
             return
         }
-
-        val accumulated = StringBuilder()
-        val listener = object : org.vosk.android.RecognitionListener {
-            override fun onPartialResult(h: String?) {
-                val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
-                if (partial.isNotBlank()) {
-                    if (!firstPartialLogged) { firstPartialLogged = true; Log.i(TAG, "[Dictation] first words after ${System.currentTimeMillis() - listenStartedAt} ms") }
-                    silenceHandler.removeCallbacks(noSpeechStop)
-                    silenceHandler.removeCallbacks(silenceStop)
-                    silenceHandler.postDelayed(silenceStop, SILENCE_MS)
-                }
+        listenStartedAt = System.currentTimeMillis(); firstPartialLogged = false
+        lateinit var d: Dictation
+        d = Dictation(engine, model, key, timers = true, listener = object : Dictation.Listener {
+            override fun onPartial(text: String) {
+                if (!firstPartialLogged) { firstPartialLogged = true; Log.i(TAG, "[Dictation] first words after ${System.currentTimeMillis() - listenStartedAt} ms") }
             }
-            override fun onResult(h: String?) {
-                val t = try { org.json.JSONObject(h ?: "").optString("text", "").trim() } catch (_: Exception) { "" }
-                if (t.isNotBlank()) synchronized(accumulated) {
-                    if (accumulated.isNotEmpty()) accumulated.append(" ")
-                    accumulated.append(t)
-                }
-            }
-            override fun onFinalResult(h: String?) {
-                val last = try { org.json.JSONObject(h ?: "").optString("text", "").trim() } catch (_: Exception) { "" }
-                val transcript = synchronized(accumulated) {
-                    buildString {
-                        append(accumulated)
-                        if (accumulated.isNotEmpty() && last.isNotBlank()) append(" ")
-                        append(last)
-                    }.trim().also { accumulated.clear() }
-                }
-                silenceHandler.removeCallbacksAndMessages(null)
-                speechService = null
+            override fun onFinal(text: String?) {
+                if (dictation !== d) return   // superseded or already stopped
+                dictation = null
+                ownStream?.close(); ownStream = null
                 if (cancelled) return
-                Log.i(TAG, "Transcript: \"$transcript\"")
-                answerAndFinish(transcript)
+                if (text == null) {
+                    if (d.isCancelled) {
+                        // Ended by the service (another app took the microphone, Hey Zynk
+                        // turned off, the watchdog) — not a failure, so no Vosk fallback.
+                        if (ZynkAssistantService.sessionActive) hide()
+                    } else if (engine == Dictation.Engine.WHISPER) {
+                        Log.w(TAG, "[Dictation] OpenAI failed — falling back to Vosk")
+                        startDictation(Dictation.Engine.VOSK, null)
+                    } else hide()
+                    return
+                }
+                Log.i(TAG, "Transcript: \"$text\"")
+                answerAndFinish(text)
             }
-            override fun onError(e: Exception?) {
-                Log.e(TAG, "Vosk error: ${e?.message}")
-                silenceHandler.removeCallbacksAndMessages(null)
-                hide()
-            }
-            override fun onTimeout() {
-                Log.w(TAG, "Vosk timeout — no speech detected")
-                hide()
-            }
+        })
+        dictation = d
+        val svc = WakeWordService.instance
+        if (svc != null && svc.isOn && svc.dictate(d, ownsTurn = true)) return
+        // Hey Zynk is off (the assistant gesture brought us here): a stream of our own.
+        val s = MicStream(TAG)
+        s.sink = d
+        if (!s.open()) {
+            Log.e(TAG, "Microphone could not be opened")
+            dictation = null
+            hide()
+            return
         }
-
-        // Off the main thread: releasing the wake-word mic can wait up to 2s, and
-        // Vosk callbacks are delivered on the main looper regardless.
-        Thread {
-            val freed = try { WakeWordService.instance?.releaseMicForSession() ?: true } catch (e: Exception) { false }
-            if (!freed) Log.w(TAG, "Wake-word mic not confirmed released; starting Vosk anyway (safety timeout will end it)")
-            try {
-                val rec = org.vosk.Recognizer(model, 16000.0f)
-                val service = org.vosk.android.SpeechService(rec, 16000.0f)
-                speechService = service
-                listenStartedAt = System.currentTimeMillis(); firstPartialLogged = false
-                service.startListening(listener)
-                silenceHandler.postDelayed(hardStop, SAFETY_TIMEOUT_MS)
-                silenceHandler.postDelayed(noSpeechStop, NO_SPEECH_MS)
-            } catch (e: Exception) {
-                Log.e(TAG, "Vosk start failed: ${e.message}")
-                main.post { hide() }
-            }
-        }.start()
-    }
-
-    /** Vosk's stop() joins its recognizer thread; never do that on the main thread. */
-    private fun stopVoskAsync() {
-        val service = speechService ?: return
-        Thread { try { service.stop() } catch (e: Exception) { Log.w(TAG, "Vosk stop failed: ${e.message}") } }.start()
+        ownStream = s
     }
 
     private fun stopListening() {
-        silenceHandler.removeCallbacksAndMessages(null)
-        stopVoskAsync()
-        speechService = null
-        openAiRecorder?.cancel()
-        openAiRecorder = null
+        val d = dictation
+        dictation = null
+        d?.cancel()
+        ownStream?.close(); ownStream = null
     }
 
     // ── answer ───────────────────────────────────────────────────────────────

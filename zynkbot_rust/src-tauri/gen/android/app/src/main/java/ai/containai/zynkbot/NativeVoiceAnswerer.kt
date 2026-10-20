@@ -35,11 +35,9 @@ object NativeVoiceAnswerer {
     @Volatile private var tts: TextToSpeech? = null
 
     /**
-     * True from the start of answer() until the reply has finished playing. Hard gate:
-     * WakeWordService refuses to start the microphone listener while this is true, no
-     * matter who asks (the web side's timers, the session's re-arm). Without it the
-     * listener came back mid-reply, heard Zynkbot's own voice, and sent the reply
-     * back as a new question (OnePlus, 2026-09-04).
+     * True from the start of answer() until the reply has finished playing. The page
+     * mirrors it on the Stop button. The microphone is handled by WakeWordService's
+     * state (a turn), not by this flag, since the 2026-10-20 rebuild.
      */
     @Volatile var speaking: Boolean = false
         private set
@@ -98,7 +96,10 @@ object NativeVoiceAnswerer {
         abortRequested = false
         speaking = true
         try { onSpeakingChanged?.invoke(true) } catch (_: Exception) {}
-        try { WakeWordService.instance?.releaseMicForSession(500) } catch (_: Exception) {}
+        // Inside a turn already (a wake, the session): nothing to do. Outside one (a
+        // page question answered by voice): open a turn so the detector does not hear
+        // this, and close it after.
+        val began = try { WakeWordService.instance?.beginTurn() ?: false } catch (_: Exception) { false }
         try {
             val engine = engine(context) ?: return
             val speaker = SentenceSpeaker(engine)
@@ -108,7 +109,7 @@ object NativeVoiceAnswerer {
         } finally {
             speaking = false
             try { onSpeakingChanged?.invoke(false) } catch (_: Exception) {}
-            try { WakeWordService.instance?.resumeMicAfterSession() } catch (_: Exception) {}
+            if (began) try { WakeWordService.instance?.endTurn() } catch (_: Exception) {}
         }
     }
 
@@ -147,20 +148,15 @@ object NativeVoiceAnswerer {
         abortRequested = false
         speaking = true
         try { onSpeakingChanged?.invoke(true) } catch (_: Exception) {}
-        // The speaking flag only blocks *starts* of the wake-word loop. If the loop is
-        // already running (the recording watch re-armed it the moment dictation ended,
-        // before this reply began — Pixel, build23), stop it now, or the phone hears
-        // its own answer and fires on it. Re-armed in the finally below.
-        try { WakeWordService.instance?.releaseMicForSession(500) } catch (_: Exception) {}
+        // A wake or the assistant session has the turn open already; then this is a
+        // no-op and the owner ends the turn. Otherwise this reply is its own turn.
+        val began = try { WakeWordService.instance?.beginTurn() ?: false } catch (_: Exception) { false }
         try {
             return answerInner(context, transcript)
         } finally {
             speaking = false
             try { onSpeakingChanged?.invoke(false) } catch (_: Exception) {}
-            // Speech is over: hand the microphone back to the wake word. Anything that
-            // tried to re-arm while we were speaking was refused, so this is the one
-            // re-arm that counts.
-            try { WakeWordService.instance?.resumeMicAfterSession() } catch (_: Exception) {}
+            if (began) try { WakeWordService.instance?.endTurn() } catch (_: Exception) {}
         }
     }
 
