@@ -24,7 +24,7 @@ A kit has no permissions, no network access and no code path of its own. Everyth
 ## How a user opts in
 
 - **End of onboarding:** one card. "Want to try Zynkbot in the kitchen? It will remember what you cook and what you like, and help you plan meals. Everything stays on this device." Buttons: *Turn on* / *Skip*. Skip is the default and nothing is created.
-- **System Controls panel:** a **Kits** section between Snap-ins and Knowledge Base (**decided**). It lists every kit with a switch. Kits that do not exist yet are shown greyed with a "future" tag so the shape of the idea is visible from day one: Kitchen (on/off), Garden (future), Workouts (future), Reading (future), Household (future). The greyed rows are labels only; nothing behind them.
+- **System Controls panel:** a **Kits** section between Snap-ins and Knowledge Base (**decided**). It lists every kit with a switch. Kits that do not exist yet are shown greyed with a "future" tag so the shape of the idea is visible from day one: Kitchen (on/off), Grocery (future), Garden (future), Workouts (future), Reading (future), Household (future). The greyed rows are labels only; nothing behind them.
 - **Turning a kit off** removes its instructions and chips immediately. Its memories stay unless the user presses *Forget everything from this kit*, which deletes the namespace.
 
 ### "Make it forget and start again"
@@ -89,6 +89,10 @@ Estimate: two days for 1–5 with the Kitchen kit; 6–7 are shared with the mem
   "report": { "title": "Kitchen", "fields": ["meals logged", "recipes liked", "recipes to avoid", "weekly quantities"] }
 }
 ```
+
+## The Grocery kit (noted 2026-10-20, Matt)
+
+A second kit, separate from the Kitchen kit, sold as a one-time purchase. Dictate your groceries to Zynkbot and it organises the list for you. Nothing designed yet beyond that; same four-part shape as above (standing instructions, a `grocery` namespace, opening questions, quick prompts) when it is written up.
 
 ## Tester task (for the beta package)
 
