@@ -11,6 +11,13 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 ### Chat prompt
 - Zynkbot may now ask first: if one or two missing details would change the answer, it asks for them briefly instead of guessing; otherwise it answers and says what it assumed. In testing before 1.0.
 
+### Cloud models
+- When Anthropic or OpenAI reports a problem inside the reply stream (overloaded, rate limit), Zynkbot now shows that message instead of an empty bubble. Until now the error was dropped and the reply came back blank; on 2026-10-21 that happened four times in a quarter of an hour. Anthropic overload is retried once after three seconds before the error is shown.
+- An empty reply from any model is shown as an error ("returned an empty reply. Try again"), never as a blank message.
+
+### Containment
+- The word lists behind the pattern check match whole words only. "something" no longer counts as "meth" and "begun" no longer counts as "gun"; a message about posting a plush toy was flagged as a harmful instruction request on 2026-10-21.
+
 ### Dictation
 - Live text: with Vosk (offline) dictation, the words appear in the message box as they are recognised, at the spot where the cursor was when you tapped the mic; the finished transcript takes their place. Android and desktop. Whisper (OpenAI) still shows its text only when you stop.
 - A Copy button appears in the message box whenever it has text, for using Zynkbot as the dictation tool and pasting the text elsewhere.

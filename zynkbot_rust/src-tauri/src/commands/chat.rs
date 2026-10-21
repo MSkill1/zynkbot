@@ -104,6 +104,10 @@ fn format_api_error(backend: &str, raw: &str) -> String {
         format!("❌ Your {} account doesn't have access to this model. Try selecting a different model in Settings → API Keys.", provider)
     } else if raw.contains("429") || raw.contains("rate_limit") || raw.contains("quota") {
         format!("❌ {} rate limit reached. Wait a moment and try again.", provider)
+    } else if raw.contains("529") || raw.contains("overloaded") {
+        format!("❌ {} is overloaded right now. Wait a moment and try again.", provider)
+    } else if raw.contains("empty reply") {
+        format!("❌ {} returned an empty reply. Try again.", provider)
     } else if raw.contains("connect") || raw.contains("timeout") || raw.contains("dns") || raw.contains("network") {
         format!("❌ Can't reach {}. Check your internet connection.", provider)
     } else {
@@ -864,6 +868,14 @@ pub async fn generate_reply(
             forced_backend
         ));
     };
+
+    // An empty reply is a failure, not an answer. On 2026-10-21 Anthropic closed four
+    // streams with no text (an error event the client then ignored) and the page
+    // showed an empty bubble each time. The page renders an Err as an error message.
+    if reply_text.trim().is_empty() {
+        println!("[RUST] ✗ {} returned an empty reply", forced_backend);
+        return Err(format_api_error(&forced_backend, "empty reply"));
+    }
 
     println!("[RUST] ✅ Pure Rust conversation complete");
 

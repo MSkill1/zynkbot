@@ -31,6 +31,18 @@ struct AnthropicSSEEvent {
     delta: Option<AnthropicStreamDelta>,
     #[serde(default)]
     usage: Option<AnthropicStreamUsage>,
+    /// Present on `{"type":"error",...}` events, which Anthropic sends inside an
+    /// otherwise successful stream for overload and rate-limit conditions.
+    #[serde(default)]
+    error: Option<AnthropicStreamError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicStreamError {
+    #[serde(rename = "type", default)]
+    error_type: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,8 +169,47 @@ pub async fn send_message(
 /// Send a message to Claude via Anthropic API with SSE token streaming.
 /// Calls `on_token` for each text delta as it arrives, then returns the
 /// complete LLMResponse (with accumulated content) when the stream closes.
+/// True for the errors Anthropic asks callers to retry after a short wait:
+/// HTTP 529 / `overloaded_error` and HTTP 429 / `rate_limit_error`.
+pub(crate) fn is_retryable(err: &LLMError) -> bool {
+    let msg = err.to_string();
+    msg.contains("overloaded") || msg.contains("529") || msg.contains("rate_limit") || msg.contains("429")
+}
+
+/// Streams a reply, retrying once after a short pause if Anthropic reports overload
+/// or a rate limit before any text has been emitted. A retry after text has reached
+/// the page would repeat that text, so it is not attempted.
 #[allow(dead_code)]
 pub async fn send_message_streaming<F>(
+    api_key: &str,
+    model: &str,
+    messages: Vec<Message>,
+    system_prompt: Option<String>,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+    on_token: F,
+) -> Result<LLMResponse, LLMError>
+where
+    F: Fn(String),
+{
+    let emitted = std::sync::atomic::AtomicBool::new(false);
+    let first = send_message_streaming_once(
+        api_key, model, messages.clone(), system_prompt.clone(), max_tokens, temperature,
+        |t| { emitted.store(true, std::sync::atomic::Ordering::SeqCst); on_token(t) },
+    ).await;
+    match first {
+        Err(ref e) if is_retryable(e) && !emitted.load(std::sync::atomic::Ordering::SeqCst) => {
+            println!("[Rust Anthropic] Retrying once in 3 s after: {}", e);
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            send_message_streaming_once(
+                api_key, model, messages, system_prompt, max_tokens, temperature, on_token,
+            ).await
+        }
+        other => other,
+    }
+}
+
+async fn send_message_streaming_once<F>(
     api_key: &str,
     model: &str,
     messages: Vec<Message>,
@@ -262,7 +313,18 @@ where
                         }
                     }
                 }
-                _ => {}
+                // Until 2026-10-21 this fell into the catch-all below: four replies
+                // that day ended as "Streaming complete (0 tokens)" with the page
+                // showing an empty bubble, because the overload error never surfaced.
+                "error" => {
+                    let (kind, msg) = event.error
+                        .map(|e| (e.error_type.unwrap_or_default(), e.message.unwrap_or_default()))
+                        .unwrap_or_default();
+                    println!("[Rust Anthropic] ✗ Error event in stream: {} — {}", kind, msg);
+                    return Err(LLMError::APIError(format!("{}: {}", kind, msg)));
+                }
+                "ping" | "content_block_start" | "content_block_stop" | "message_stop" => {}
+                other => println!("[Rust Anthropic] Unrecognised stream event: {}", other),
             }
         }
     }
@@ -386,7 +448,18 @@ where
                         }
                     }
                 }
-                _ => {}
+                // Until 2026-10-21 this fell into the catch-all below: four replies
+                // that day ended as "Streaming complete (0 tokens)" with the page
+                // showing an empty bubble, because the overload error never surfaced.
+                "error" => {
+                    let (kind, msg) = event.error
+                        .map(|e| (e.error_type.unwrap_or_default(), e.message.unwrap_or_default()))
+                        .unwrap_or_default();
+                    println!("[Rust Anthropic] ✗ Error event in stream: {} — {}", kind, msg);
+                    return Err(LLMError::APIError(format!("{}: {}", kind, msg)));
+                }
+                "ping" | "content_block_start" | "content_block_stop" | "message_stop" => {}
+                other => println!("[Rust Anthropic] Unrecognised stream event: {}", other),
             }
         }
     }
@@ -403,6 +476,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_event_in_stream_parses() {
+        let e: AnthropicSSEEvent = serde_json::from_str(
+            r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+        ).unwrap();
+        assert_eq!(e.event_type, "error");
+        let err = e.error.unwrap();
+        assert_eq!(err.error_type.as_deref(), Some("overloaded_error"));
+        assert_eq!(err.message.as_deref(), Some("Overloaded"));
+        assert!(is_retryable(&LLMError::APIError("overloaded_error: Overloaded".into())));
+        assert!(is_retryable(&LLMError::APIError("Status 529 Overloaded".into())));
+        assert!(!is_retryable(&LLMError::APIError("invalid_request_error: bad".into())));
+    }
 
     /// A response mixing a thinking block with a text block must parse, and only the
     /// text must survive. Guards the ensemble Phase 1 failure documented above.

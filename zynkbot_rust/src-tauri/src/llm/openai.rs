@@ -37,6 +37,19 @@ struct OpenAIRequest {
 
 // --- Streaming SSE types (OpenAI-compatible, also used by xAI) ---
 
+/// An OpenAI-compatible stream can carry `{"error": {...}}` in place of a chunk.
+/// Returns the error's message when `data` is such an object.
+pub(crate) fn stream_error_message(data: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(data).ok()?;
+    let err = v.get("error")?;
+    if err.is_null() { return None; }
+    Some(
+        err.get("message").and_then(|m| m.as_str()).map(|s| s.to_string())
+            .or_else(|| err.as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| err.to_string()),
+    )
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct OpenAIStreamChunk {
     pub choices: Vec<OpenAIStreamChoice>,
@@ -244,7 +257,15 @@ where
 
             let chunk: OpenAIStreamChunk = match serde_json::from_str(data) {
                 Ok(c) => c,
-                Err(_) => continue,
+                Err(_) => {
+                    // An error object in place of a chunk used to be skipped like any
+                    // malformed line, leaving an empty reply (2026-10-21).
+                    if let Some(msg) = stream_error_message(data) {
+                        println!("[Rust OpenAI] ✗ Error in stream: {}", msg);
+                        return Err(LLMError::APIError(msg));
+                    }
+                    continue;
+                }
             };
 
             for choice in chunk.choices {
@@ -340,7 +361,15 @@ where
 
             let chunk: OpenAIStreamChunk = match serde_json::from_str(data) {
                 Ok(c) => c,
-                Err(_) => continue,
+                Err(_) => {
+                    // An error object in place of a chunk used to be skipped like any
+                    // malformed line, leaving an empty reply (2026-10-21).
+                    if let Some(msg) = stream_error_message(data) {
+                        println!("[Rust OpenAI] ✗ Error in stream: {}", msg);
+                        return Err(LLMError::APIError(msg));
+                    }
+                    continue;
+                }
             };
 
             for choice in chunk.choices {
@@ -367,6 +396,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn error_object_in_stream_is_reported() {
+        assert_eq!(
+            stream_error_message(r#"{"error":{"message":"The server is overloaded","type":"server_error"}}"#).as_deref(),
+            Some("The server is overloaded"),
+        );
+        assert!(stream_error_message(r#"{"id":"x","choices":[]}"#).is_none());
+        assert!(stream_error_message("not json").is_none());
+    }
 
     #[tokio::test]
     async fn test_message_format() {
