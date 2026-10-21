@@ -21,6 +21,16 @@ Optional fifth part: a report section, used by the "what do you know about me" m
 
 A kit has no permissions, no network access and no code path of its own. Everything it does, the user could do by typing. That is deliberate: kits inherit the memory system's promise (local, visible, editable, deletable) without adding a trust surface.
 
+## Why someone else would write a kit (developer note, 2026-10-20)
+
+A kit is the cheapest way to give Zynkbot a job it was not built for, because it is a JSON file and needs no code. Anyone who knows a subject well can write one, and the memory system does the rest: remembers what the user told it, in the kit's own namespace, and keeps it on the device. Examples of the kind of kit a third party might write:
+
+- **A city kit, written by a local.** Someone who lives in Barcelona writes a kit for people visiting: the standing instructions carry what a visitor keeps asking (how the metro zones work, when restaurants actually open, which neighbourhoods suit which mood, a few Catalan phrases), the opening questions ask how long you are staying and what you like, and the memory holds where you have been and what you thought of it, so "where should we eat tonight" gets better each day of the trip.
+- **A club or hobby kit.** A home-brewing kit from someone who brews: it knows the vocabulary and the usual mistakes, asks what equipment you have, and remembers each batch, what you changed and how it turned out, so the next brew starts from your own history rather than a forum post.
+- **A "new to this" kit.** A first-year-allotment kit, a new-puppy kit, a first-baby kit: the author packs what they wish someone had told them, the kit remembers what the user has planted, fed or tried, and the user deletes the whole namespace the day they no longer need it.
+
+The point in each case is the same: the author supplies the knowledge once, the user's own memory supplies the rest, and nothing leaves the phone. The third-party question (signing, publishing) is still open; see the end of this document.
+
 ## How a user opts in
 
 - **End of onboarding:** one card. "Want to try Zynkbot in the kitchen? It will remember what you cook and what you like, and help you plan meals. Everything stays on this device." Buttons: *Turn on* / *Skip*. Skip is the default and nothing is created.
