@@ -2655,14 +2655,19 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
 /// One fact per line, third person, at most three; NONE when there is nothing. Lines
 /// that share no content word with the message are dropped, as the MEMORY_EXTRACT
 /// filter does.
-async fn local_memory_facts(message: &str, backend: &str, user_name: Option<&str>) -> Vec<String> {
-    let subject = user_name.unwrap_or("User").to_string();
-    let prompt = format!(
+/// The extraction call's prompt (shared with the memory bench).
+pub(crate) fn local_facts_prompt(message: &str, subject: &str) -> String {
+    format!(
         "List the personal facts about {subject} in this message that are worth remembering later: name, age, family, pets, work, home, health, feelings, likes and dislikes, plans, events.\n\
 Rules: one fact per line, in the third person, starting with \"{subject}\". At most 3 lines. Only facts the message states; nothing guessed. If there is nothing worth remembering, write NONE.\n\n\
 Message: \"{message}\"",
         subject = subject, message = message.replace('"', "'")
-    );
+    )
+}
+
+async fn local_memory_facts(message: &str, backend: &str, user_name: Option<&str>) -> Vec<String> {
+    let subject = user_name.unwrap_or("User").to_string();
+    let prompt = local_facts_prompt(message, &subject);
     let model_path = if backend.ends_with(".gguf") { backend.to_string() } else {
         match crate::llm::local_models::resolve_default_model_path() { Ok(p) => p, Err(e) => { println!("[RUST BACKGROUND] Local extraction: no model: {}", e); return Vec::new(); } }
     };
@@ -2686,15 +2691,24 @@ Message: \"{message}\"",
 /// stripped, NONE and stray REMEMBER lines ignored, at most three, and only lines that
 /// share a content word (longer than three letters) with the message, the same guard
 /// the MEMORY_EXTRACT path uses against invention.
-fn parse_local_facts(text: &str, message: &str) -> Vec<String> {
+pub(crate) fn parse_local_facts(text: &str, message: &str) -> Vec<String> {
+    // A content word: four letters or more, or a number of two digits or more ("I'm 52" —
+    // the bench on 2026-10-22 showed every model's "Matt is 52 years old." being dropped
+    // because 52 was too short to count).
+    let content = |w: &str| w.len() > 3 || (w.len() > 1 && w.chars().all(|c| c.is_ascii_digit()));
     let msg_words: std::collections::HashSet<String> = message.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 3).map(|w| w.to_string()).collect();
+        .split(|c: char| !c.is_alphanumeric()).filter(|w| content(w)).map(|w| w.to_string()).collect();
     let mut facts = Vec::new();
     for line in text.lines() {
-        let t = line.trim().trim_start_matches(|c: char| matches!(c, '-' | '*' | '•' | '0'..='9' | '.' | ')' | ' ')).trim();
+        // Numbering like "1." or "2)" is stripped only when followed by a dot or bracket;
+        // a fact that begins with a number ("52 is Matt's age") keeps it.
+        let mut t = line.trim().trim_start_matches(|c: char| matches!(c, '-' | '*' | '•' | ' '));
+        let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && digits <= 2 && t[digits..].starts_with(['.', ')']) { t = t[digits + 1..].trim_start(); }
+        let t = t.trim();
         if t.is_empty() || t.eq_ignore_ascii_case("none") || t.to_uppercase().starts_with("REMEMBER") { continue; }
         if t.split_whitespace().count() < 3 { continue; }
-        let shares = t.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| w.len() > 3 && msg_words.contains(w));
+        let shares = t.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| content(w) && msg_words.contains(w));
         if !shares { println!("[RUST BACKGROUND] Local extraction: dropped a fact that shares no words with the message: {}", t); continue; }
         facts.push(t.trim_end_matches('.').to_string() + ".");
         if facts.len() == 3 { break; }
@@ -2726,6 +2740,12 @@ mod local_facts_tests {
     fn a_line_sharing_no_words_with_the_message_is_dropped() {
         let out = parse_local_facts("Matt has a cat named Louie.\nMatt enjoys skiing every winter.", MSG);
         assert_eq!(out, vec!["Matt has a cat named Louie.".to_string()]);
+    }
+    #[test]
+    fn a_number_counts_as_a_shared_word() {
+        let out = parse_local_facts("Matt is 52 years old.\nMatt works as a software developer.", "I'm 52 and I work as a software developer.");
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert_eq!(out[0], "Matt is 52 years old.");
     }
     #[test]
     fn stray_flag_lines_and_fragments_are_ignored() {

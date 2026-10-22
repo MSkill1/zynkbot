@@ -38,6 +38,11 @@ fn build_prompt_for_model(model_path: &str, messages: &[Message]) -> String {
         ("Llama 3", build_llama3_prompt(messages, false))
     } else if model_name.contains("dolphin") || model_name.contains("openhermes") || model_name.contains("tinyllama") {
         ("ChatML", build_chatml_prompt(messages, false))
+    } else if model_name.contains("gemma") {
+        ("Gemma", build_gemma_prompt(messages))
+    } else if model_name.contains("lfm") || model_name.contains("granite") || model_name.contains("smollm") {
+        // LFM2, Granite 4 and SmolLM3 all use ChatML markers.
+        ("ChatML", build_chatml_prompt(messages, false))
     } else if model_name.contains("mistral") && model_name.contains("instruct") {
         ("Mistral Instruct", build_mistral_instruct_prompt(messages))
     } else if model_name.contains("phi-3") || model_name.contains("phi-4")
@@ -111,6 +116,40 @@ fn build_chatml_prompt(messages: &[Message], no_think: bool) -> String {
 /// `no_think`: inject `<think>\n\n</think>` after the assistant header to short-circuit
 /// DeepSeek R1's chain-of-thought. Without this, the model outputs `</think>` as its
 /// first token (trying to close a think block that was never opened).
+/// Gemma 3 and 4 turn format (2026-10-22). Gemma has no system role: the instructions
+/// go at the top of the first user turn. The engine's conversation prompt arrives as one
+/// user message with "USER'S QUESTION:" marking the question; both halves stay in that
+/// turn. BOS is added by the tokenizer.
+fn build_gemma_prompt(messages: &[Message]) -> String {
+    let mut prompt = String::new();
+    if messages.len() == 1 && messages[0].role == "user" {
+        let content = &messages[0].content;
+        let body = if let Some(q_pos) = content.find("USER'S QUESTION:") {
+            let system_part = content[..q_pos].trim();
+            let after_q = &content[q_pos + "USER'S QUESTION:".len()..];
+            let question = match after_q.find("\n\nYOUR RESPONSE:") { Some(r) => after_q[..r].trim(), None => after_q.trim() };
+            if system_part.is_empty() { question.to_string() } else { format!("{}\n\n{}", system_part, question) }
+        } else { content.trim().to_string() };
+        prompt.push_str(&format!("<start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model\n", body));
+        return prompt;
+    }
+    let mut pending_system = String::new();
+    for msg in messages {
+        match msg.role.as_str() {
+            "system" => pending_system = msg.content.clone(),
+            "user" => {
+                let body = if pending_system.is_empty() { msg.content.clone() } else { format!("{}\n\n{}", pending_system, msg.content) };
+                pending_system.clear();
+                prompt.push_str(&format!("<start_of_turn>user\n{}<end_of_turn>\n", body));
+            }
+            "assistant" => prompt.push_str(&format!("<start_of_turn>model\n{}<end_of_turn>\n", msg.content)),
+            _ => {}
+        }
+    }
+    prompt.push_str("<start_of_turn>model\n");
+    prompt
+}
+
 fn build_llama3_prompt(messages: &[Message], no_think: bool) -> String {
     // BOS token is injected by str_to_token(AddBos::Always) — don't include it here
     let mut prompt = String::new();

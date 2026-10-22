@@ -21,6 +21,8 @@ mod sync_harness_tests; // two-peer ZynkSync harness (docs/TESTING.md)
 #[cfg(test)]
 mod chat_harness_tests; // the chat path end to end against a pretend model
 #[cfg(test)]
+mod memory_bench; // which model makes the right memories: labs/memory_bench
+#[cfg(test)]
 mod sync_outbox_tests; // the outbox triggers (migration 0013)
 pub mod memory_extras;      // event date / namespace / tags / tone / entities from the decision call
 pub mod commands;           // Tauri command handlers (extracted from lib.rs)
@@ -876,6 +878,19 @@ async fn call_custom_for_memory_decision(prompt: &str) -> Result<String, String>
 }
 
 /// Call local GGUF model for memory decision
+/// One prompt to whichever backend `backend` names, plain text back: the memory bench
+/// (memory_bench.rs) uses it to put the same extraction task to every model. Same
+/// dispatch as the memory-decision calls above.
+#[allow(dead_code)]
+pub(crate) async fn call_backend_with_prompt(prompt: &str, backend: &str) -> Result<String, String> {
+    if backend.contains("anthropic") { call_anthropic_for_memory_decision(prompt).await }
+    else if backend.contains("openai") { call_openai_for_memory_decision(prompt).await }
+    else if backend.contains("xai") { call_xai_for_memory_decision(prompt).await }
+    else if backend.contains("mistral") { call_mistral_for_memory_decision(prompt).await }
+    else if backend == "custom" { call_custom_for_memory_decision(prompt).await }
+    else { call_local_for_memory_decision(prompt, backend, None).await }
+}
+
 async fn call_local_for_memory_decision(prompt: &str, backend: &str, json_schema: Option<&'static str>) -> Result<String, String> {
     use crate::llm::Message;
 
@@ -1080,6 +1095,12 @@ pub struct RelationshipClassification {
     relationship_type: String,  // "contradicts", "supports", "elaborates", "caused_by", "reminds_of", "none"
     reason: String,
     confidence: Option<f32>,  // 0.0-1.0 confidence score
+}
+
+#[allow(dead_code)]
+impl RelationshipClassification {
+    pub(crate) fn memory_id(&self) -> i32 { self.memory_id }
+    pub(crate) fn relationship_type(&self) -> &str { &self.relationship_type }
 }
 
 /// Enhanced memory decision that also classifies relationships with similar memories
