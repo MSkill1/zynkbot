@@ -20,7 +20,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ### Dictation
 - Live text: with Vosk (offline) dictation, the words appear in the message box as they are recognised, at the spot where the cursor was when you tapped the mic; the finished transcript takes their place. Android and desktop. Whisper (OpenAI) still shows its text only when you stop.
-- A Copy button appears in the message box whenever it has text, for using Zynkbot as the dictation tool and pasting the text elsewhere.
+- A Copy button appears in the message box whenever it has text, for using Zynkbot as the dictation tool and pasting the text elsewhere. A Clear button beside it empties the box.
 - Desktop (Linux and Windows): Vosk closes an utterance at a pause of about a second, and the desktop code read back only the last one when you stopped, so the words before a pause could be lost. Every finished utterance is now kept and joined.
 
 ### Web search

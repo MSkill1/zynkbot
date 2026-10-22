@@ -2444,6 +2444,31 @@ export default function App() {
                       {inputCopied ? '✓ Copied' : '⧉ Copy'}
                     </button>
                   )}
+                  {/* Clear button (2026-10-22): same rule as Copy — only while there is text.
+                      Dictated text that went elsewhere, or a false start, goes in one tap. */}
+                  {input.trim() && (
+                    <button
+                      onClick={() => { setInput(''); inputTextareaRef.current?.focus(); }}
+                      title="Clear the text in the box"
+                      style={{
+                        height: '28px',
+                        padding: '0 10px',
+                        background: 'linear-gradient(135deg, #6272a4 0%, #44475a 100%)',
+                        color: '#f8f8f2',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontWeight: 'bold',
+                        fontSize: '0.7rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      ✕ Clear
+                    </button>
+                  )}
                 </div>
 
                 {/* Mobile: circular mic button, bottom-right of textarea */}
