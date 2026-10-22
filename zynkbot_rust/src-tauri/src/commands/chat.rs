@@ -537,9 +537,13 @@ pub async fn generate_reply(
         // - 10 chunks (comprehensive coverage)
         // - 15% threshold (cast wide net - user knows what they're looking for)
         // - below the threshold, the 5 best chunks are still shown but labelled weak
-        let kb_chunk_limit = 10;
+        // On-device model (2026-10-22): four chunks, not ten. Ten chunks were 5,649
+        // characters, and with the rest of the prompt that was 4,212 tokens in a 4K
+        // window: "Prompt too long" instead of an answer.
+        let on_device = forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local");
+        let kb_chunk_limit = if on_device { 4 } else { 10 };
         let kb_similarity_threshold = 0.15;
-        let kb_weak_limit = 5;
+        let kb_weak_limit = if on_device { 2 } else { 5 };
 
         println!(
             "[KB RAG] 🔍 EXPLICIT KB SEARCH ({} chunks, {:.0}% threshold)",
@@ -893,21 +897,18 @@ pub async fn generate_reply(
     // Extract recalled memory IDs for later use
     let _recalled_memory_ids: Vec<i32> = recalled_memories.iter().map(|m| m.id).collect();
 
-    // STEP 6.5: Check if LLM requested a web search
-    let web_search_detected = reply_text.contains("WEB_SEARCH_NEEDED:");
-    let web_search_query = if web_search_detected {
+    // STEP 6.5: Check if LLM requested a web search. Tolerant of how small models write
+    // the marker: Qwen3-4B wrote `Web search needed: "current weather in Lima, Peru"` on
+    // 2026-10-22 and the search never ran.
+    let web_search_marker = find_web_search_marker(&reply_text);
+    let web_search_detected = web_search_marker.is_some();
+    let web_search_query = if let Some((_, after_pos)) = web_search_marker {
         println!("[RUST] LLM detected need for web search");
-
-        // Extract the suggested search query
-        if let Some(marker_pos) = reply_text.find("WEB_SEARCH_NEEDED:") {
-            let after_marker = &reply_text[marker_pos + 18..]; // Skip "WEB_SEARCH_NEEDED:"
-            let query_end = after_marker.find('\n').unwrap_or(after_marker.len());
-            let query = after_marker[..query_end].trim().to_string();
-            println!("[RUST] Suggested search query: {}", query);
-            Some(query)
-        } else {
-            None
-        }
+        let after_marker = &reply_text[after_pos..];
+        let query_end = after_marker.find('\n').unwrap_or(after_marker.len());
+        let query = after_marker[..query_end].trim().trim_matches(|c: char| matches!(c, '"' | '\'' | '“' | '”' | '[' | ']' | '*')).trim().to_string();
+        println!("[RUST] Suggested search query: {}", query);
+        if query.is_empty() { None } else { Some(query) }
     } else {
         None
     };
@@ -2049,6 +2050,9 @@ mod tests {
     fn web_search_marker_keeps_text_on_both_sides() {
         use super::strip_web_search_marker as strip;
         assert_eq!(strip("WEB_SEARCH_NEEDED: weather in Rutland"), "");
+        assert_eq!(strip("Web search needed: \"current weather in Lima, Peru\""), "");
+        assert_eq!(strip("**WEB_SEARCH_NEEDED**: news today"), "");
+        assert_eq!(super::find_web_search_marker("Web search needed: \"weather\"").map(|(a, b)| (a, &"Web search needed: \"weather\""[b..])), Some((0, "\"weather\"")));
         assert_eq!(strip("WEB_SEARCH_NEEDED: weather\n"), "");
         assert_eq!(strip("Here is what I know.\n\nWEB_SEARCH_NEEDED: q"), "Here is what I know.");
         assert_eq!(strip("WEB_SEARCH_NEEDED: q\n\nMeanwhile, a draft:\nDear Senator"), "Meanwhile, a draft:\nDear Senator");
@@ -2118,8 +2122,25 @@ mod tests {
 /// The reply without its `WEB_SEARCH_NEEDED: query` line. The marker and the rest of its
 /// line go; text before it and text after it are both kept, joined by a blank line.
 /// A reply that was only the marker becomes empty.
+/// Where the web-search marker starts and where its query begins, if a reply has one.
+/// Accepts `WEB_SEARCH_NEEDED:` and the ways small models write it: any case, spaces or
+/// underscores, markdown around it, a colon or dash after it (2026-10-22).
+fn find_web_search_marker(text: &str) -> Option<(usize, usize)> {
+    let lower = text.to_ascii_lowercase();
+    let start = ["web_search_needed", "web search needed", "web-search-needed"]
+        .iter().filter_map(|m| lower.find(m).map(|i| (i, m.len()))).min_by_key(|(i, _)| *i)?;
+    let (pos, len) = start;
+    let mut after = pos + len;
+    let bytes = text.as_bytes();
+    while after < bytes.len() && matches!(bytes[after], b' ' | b':' | b'-' | b'*' | b'_' | b'`') { after += 1; }
+    // Markdown wrappers before the marker belong to it too.
+    let mut begin = pos;
+    while begin > 0 && matches!(bytes[begin - 1], b'*' | b'_' | b'`' | b'#' | b'>' | b' ') && bytes[begin - 1] != b'\n' { begin -= 1; }
+    Some((begin, after))
+}
+
 fn strip_web_search_marker(text: &str) -> String {
-    let Some(pos) = text.find("WEB_SEARCH_NEEDED:") else { return text.trim().to_string() };
+    let Some((pos, _)) = find_web_search_marker(text) else { return text.trim().to_string() };
     let before = text[..pos].trim();
     let rest = &text[pos..];
     let after = match rest.find('\n') { Some(i) => rest[i + 1..].trim(), None => "" };
@@ -2656,6 +2677,16 @@ Message: \"{message}\"",
         Ok(Err(e)) => { println!("[RUST BACKGROUND] Local extraction failed: {}", e); return Vec::new(); }
         Err(e) => { println!("[RUST BACKGROUND] Local extraction task failed: {}", e); return Vec::new(); }
     };
+    let facts = parse_local_facts(&text, message);
+    println!("[RUST BACKGROUND] Local extraction: {} fact(s)", facts.len());
+    facts
+}
+
+/// The facts in the extraction call's reply: one per line, bullets and numbering
+/// stripped, NONE and stray REMEMBER lines ignored, at most three, and only lines that
+/// share a content word (longer than three letters) with the message, the same guard
+/// the MEMORY_EXTRACT path uses against invention.
+fn parse_local_facts(text: &str, message: &str) -> Vec<String> {
     let msg_words: std::collections::HashSet<String> = message.to_lowercase()
         .split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 3).map(|w| w.to_string()).collect();
     let mut facts = Vec::new();
@@ -2668,6 +2699,37 @@ Message: \"{message}\"",
         facts.push(t.trim_end_matches('.').to_string() + ".");
         if facts.len() == 3 { break; }
     }
-    println!("[RUST BACKGROUND] Local extraction: {} fact(s)", facts.len());
     facts
+}
+
+#[cfg(test)]
+mod local_facts_tests {
+    use super::parse_local_facts;
+    const MSG: &str = "I have a cat named Louie, and I'm planning a trip to Indiana in April.";
+
+    #[test]
+    fn one_fact_per_line_with_decoration_stripped() {
+        let out = parse_local_facts("1. Matt has a cat named Louie.\n- Matt plans a trip to Indiana in April", MSG);
+        assert_eq!(out, vec!["Matt has a cat named Louie.".to_string(), "Matt plans a trip to Indiana in April.".to_string()]);
+    }
+    #[test]
+    fn none_means_nothing() {
+        assert!(parse_local_facts("NONE", MSG).is_empty());
+        assert!(parse_local_facts("none\n", MSG).is_empty());
+    }
+    #[test]
+    fn at_most_three_facts() {
+        let text = "Matt has a cat named Louie.\nMatt plans a trip to Indiana.\nMatt likes April trips.\nMatt has another cat named Louie too.";
+        assert_eq!(parse_local_facts(text, MSG).len(), 3);
+    }
+    #[test]
+    fn a_line_sharing_no_words_with_the_message_is_dropped() {
+        let out = parse_local_facts("Matt has a cat named Louie.\nMatt enjoys skiing every winter.", MSG);
+        assert_eq!(out, vec!["Matt has a cat named Louie.".to_string()]);
+    }
+    #[test]
+    fn stray_flag_lines_and_fragments_are_ignored() {
+        let out = parse_local_facts("REMEMBER: yes\nLouie cat\nMatt has a cat named Louie.", MSG);
+        assert_eq!(out, vec!["Matt has a cat named Louie.".to_string()]);
+    }
 }

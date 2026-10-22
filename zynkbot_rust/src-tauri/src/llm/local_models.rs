@@ -364,6 +364,15 @@ pub fn background_retry<R>(what: &str, tries: usize, f: impl Fn() -> Result<R, L
     Err(LLMError::RequestFailed(format!("{} gave way to user messages {} times", what, tries)))
 }
 
+/// How many leading tokens of `tokens` the context already holds from `prev`, so they
+/// need not be read again. At least one token is always left to read, because the last
+/// token of the prompt is what produces the logits the first answer token is sampled from.
+pub fn reuse_count(prev: &[LlamaToken], tokens: &[LlamaToken]) -> usize {
+    if tokens.is_empty() { return 0; }
+    let common = prev.iter().zip(tokens.iter()).take_while(|(a, b)| a == b).count();
+    common.min(tokens.len() - 1)
+}
+
 /// Threads for inference. Desktop: every core. Phone: the fast cores only. A phone has
 /// small efficiency cores whose top speed is far below the others', and llama.cpp
 /// waits for the slowest thread at every step, so on a 1+5+2 Pixel 10 Pro XL eight
@@ -559,8 +568,7 @@ impl LocalModelSession {
 
         // Keep what the context already holds and matches the new prompt from the start;
         // drop the rest. At least the last prompt token is always read so there are logits.
-        let mut common = prev.iter().zip(tokens.iter()).take_while(|(a, b)| a == b).count();
-        if common >= tokens.len() { common = tokens.len() - 1; }
+        let mut common = reuse_count(prev, &tokens);
         if prev.is_empty() || common == 0 {
             ctx.clear_kv_cache();
             common = 0;
@@ -772,5 +780,31 @@ mod engine_smoke {
             .expect("third generation failed");
         println!("[engine_smoke] third turn {:?} -> {:?}", t2.elapsed(), out4);
         assert!(!out4.trim().is_empty(), "empty third reply");
+    }
+}
+
+#[cfg(test)]
+mod kept_context_tests {
+    use super::reuse_count;
+    use llama_cpp_2::token::LlamaToken;
+    fn t(v: &[i32]) -> Vec<LlamaToken> { v.iter().map(|&i| LlamaToken(i)).collect() }
+
+    #[test]
+    fn same_prompt_again_keeps_all_but_the_last_token() {
+        assert_eq!(reuse_count(&t(&[1, 2, 3, 4]), &t(&[1, 2, 3, 4])), 3);
+    }
+    #[test]
+    fn a_longer_prompt_with_the_same_start_keeps_the_start() {
+        assert_eq!(reuse_count(&t(&[1, 2, 3]), &t(&[1, 2, 3, 9, 9])), 3);
+    }
+    #[test]
+    fn divergence_keeps_up_to_the_first_difference() {
+        assert_eq!(reuse_count(&t(&[1, 2, 3, 4, 5]), &t(&[1, 2, 7, 8])), 2);
+    }
+    #[test]
+    fn nothing_held_or_nothing_shared_keeps_nothing() {
+        assert_eq!(reuse_count(&[], &t(&[1, 2])), 0);
+        assert_eq!(reuse_count(&t(&[5, 6]), &t(&[1, 2])), 0);
+        assert_eq!(reuse_count(&t(&[1]), &[]), 0);
     }
 }

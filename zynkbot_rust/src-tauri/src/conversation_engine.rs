@@ -302,7 +302,8 @@ After you indicate a web search is needed, the user will be shown your suggested
         // in MEMORY_EXTRACT lines and in conversational replies. Same line in both modes.
         if let Some(name) = user_name {
             system_prompt.push_str(&format!(
-                "The user's name is {name}. Use their name occasionally and naturally — not at the start of every reply. Do not address them by name as the first word of your response. Use it mid-sentence or when it adds warmth, the same way a friend would. Always use it in MEMORY_EXTRACT lines.\n\n"
+                "The user's name is {name}. Use their name occasionally and naturally — not at the start of every reply. Do not address them by name as the first word of your response. Use it mid-sentence or when it adds warmth, the same way a friend would.{extract_note}\n\n",
+                extract_note = if self.on_device { "" } else { " Always use it in MEMORY_EXTRACT lines." }
             ));
         }
 
@@ -535,5 +536,65 @@ mod tests {
             "Graph-linked memory should be in prompt");
         assert!(!prompt.contains(&entity_matched_only.content),
             "Entity-matched-only memory must NOT appear in prompt");
+    }
+}
+
+#[cfg(test)]
+mod on_device_prompt_tests {
+    use super::*;
+
+    fn turns(n: usize) -> Vec<ConversationTurn> {
+        (0..n).map(|i| ConversationTurn {
+            role: if i % 2 == 0 { "user".into() } else { "assistant".into() },
+            content: format!("message {i}"),
+        }).collect()
+    }
+    fn first_included(ctx: &str) -> usize {
+        // "USER: message 7" -> 7
+        let i = ctx.find("message ").unwrap() + "message ".len();
+        ctx[i..].split_whitespace().next().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn on_device_history_window_moves_in_blocks_of_six() {
+        let e = ConversationEngine::new().with_on_device(true);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(12), false)), 0);
+        // One over the window: jump a whole block, not one message.
+        assert_eq!(first_included(&e.build_conversation_context(&turns(13), false)), 6);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(18), false)), 6);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(19), false)), 12);
+    }
+    #[test]
+    fn custom_endpoint_history_window_slides_by_one() {
+        let e = ConversationEngine::new();
+        assert_eq!(first_included(&e.build_conversation_context(&turns(9), false)), 1);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(10), false)), 2);
+    }
+    #[test]
+    fn on_device_prompt_asks_only_for_the_answer_and_dates_after_the_conversation() {
+        let e = ConversationEngine::new().with_on_device(true);
+        let p = e.build_prompt("What is the capital of France?", Some(&turns(4)), None, false, Some("Matt"));
+        assert!(!p.contains("MEMORY_EXTRACT"), "no extraction instruction for the on-device model");
+        assert!(!p.contains("PART 1"));
+        assert!(!p.contains("REMEMBER:"));
+        assert!(p.contains("Keep it short"));
+        let date = p.find("Today's date is").expect("date present");
+        let history = p.find("RECENT CONVERSATION").expect("history present");
+        assert!(date > history, "the date comes after the conversation so the kept context survives the clock");
+    }
+    #[test]
+    fn custom_endpoint_keeps_the_two_part_prompt() {
+        let e = ConversationEngine::new();
+        let p = e.build_prompt("I have a dog named Rex.", None, None, false, Some("Matt"));
+        assert!(p.contains("PART 1 — MEMORY_EXTRACT"));
+        assert!(p.starts_with("Today's date is"));
+    }
+    #[test]
+    fn on_device_recalls_four_memories() {
+        let e = ConversationEngine::new().with_on_device(true);
+        let mems: Vec<Memory> = (0..7).map(|i| Memory { id: i, content: format!("fact number {i}"), original_text: None, title: None, similarity: Some(0.9), created_at: chrono::Utc::now() }).collect();
+        let ctx = e.build_memory_context(&mems, "question", false);
+        assert_eq!(ctx.matches("fact number").count(), 4);
+        assert_eq!(ConversationEngine::new().build_memory_context(&mems, "question", false).matches("fact number").count(), 7);
     }
 }
