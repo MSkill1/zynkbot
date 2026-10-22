@@ -6,7 +6,7 @@ person" barely. A small one-time set of other people saying the wake word fixes 
 
 **Collecting:** https://containai.ai/voice/ (source: the `containai-site` repository,
 `voice/index.html`). The person opens it on their phone, taps Start, says "Hey Zynk"
-twenty times with a counter, taps Send and shares one WAV: 16 kHz mono, twenty 3 s
+twenty times with a counter, taps Send and shares one zip holding one WAV (a bare .wav sent through WhatsApp came back re-encoded and undecodable, 2026-10-22): 16 kHz mono, twenty 3 s
 clips each followed by 1 s of silence, so the clips split at fixed offsets
 (clip k = samples [k·64000, k·64000 + 48000)). The page uploads nothing.
 

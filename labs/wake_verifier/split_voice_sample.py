@@ -1,7 +1,7 @@
 # Dry run of a containai.ai/voice recording: split the fixed-layout WAV into its clips,
 # stream each through the phone's wake chain (mel -> embedding -> hey_zynk), keep the ones
 # the detector fires on, and write their 192 pooled features at the fire point.
-#   python split_voice_sample.py <models dir> <recording.wav> <out.json> [verifier.json]
+#   python split_voice_sample.py <models dir> <recording.wav|.zip> <out.json> [verifier.json]
 # Layout from the page: 16 kHz mono, each clip 3.0 s followed by 1.0 s of silence.
 import sys, json, wave, numpy as np, onnxruntime as ort
 R, wav_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -9,7 +9,15 @@ verifier = json.load(open(sys.argv[4])) if len(sys.argv) > 4 else None
 so = ort.SessionOptions(); so.intra_op_num_threads = 2
 mel = ort.InferenceSession(f"{R}/melspectrogram.onnx", so); emb = ort.InferenceSession(f"{R}/embedding_model.onnx", so); kws = ort.InferenceSession(f"{R}/hey_zynk.onnx", so)
 run = lambda s, x: s.run(None, {s.get_inputs()[0].name: x})[0]
-with wave.open(wav_path) as w:
+if wav_path.lower().endswith(".zip"):   # the page sends the WAV inside a zip since 2026-10-22
+    import zipfile, io
+    with zipfile.ZipFile(wav_path) as z:
+        inner = next(n for n in z.namelist() if n.lower().endswith(".wav"))
+        wav_bytes = io.BytesIO(z.read(inner))
+    opener = lambda: wave.open(wav_bytes)
+else:
+    opener = lambda: wave.open(wav_path)
+with opener() as w:
     assert w.getframerate() == 16000 and w.getnchannels() == 1, "expected 16 kHz mono"
     pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
 CLIP, GAP = 48000, 16000
