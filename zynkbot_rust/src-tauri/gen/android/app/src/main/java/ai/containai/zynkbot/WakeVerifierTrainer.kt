@@ -50,15 +50,20 @@ import kotlin.math.sqrt
  * clip's features and label even after pruning its audio. So the profile gets better or
  * stays the same; it cannot drift.
  *
- * The written profile has an empty "owners" list, so WakeVerifier only *logs*
- * ("would reject") until enforcement is switched on deliberately after the field
- * numbers are in (ROADMAP: run log-only, enforce only if under 5% of answered wakes
- * would have been rejected).
+ * Enforcement is automatic (2026-10-22): a written profile lists this phone's user id as
+ * its owner, so WakeVerifier enforces it, when either the profile it replaces already
+ * enforced here (enforcement is never switched off by a retrain) or the candidate's
+ * held-out numbers clear AUTO_ENFORCE_KEEP and AUTO_ENFORCE_STOP. Below that bar the
+ * owners list is empty and the verifier only logs ("would reject"). A profile built into
+ * the APK for a named owner (hey_zynk_verifier.json with its own heldout_keep/stop) is
+ * the profile in use until the phone's own candidate is at least as good.
  */
 object WakeVerifierTrainer {
     private const val TAG = "WakeVerifierTrainer"
     const val MIN_REAL_CLIPS = 20          // fewer positives than this: no profile yet
     const val RETRAIN_EVERY_NEW_REAL = 5   // retrain once this many new real clips have arrived
+    const val AUTO_ENFORCE_KEEP = 0.9f     // held out: keep at least this share of the owner's wakes ...
+    const val AUTO_ENFORCE_STOP = 0.9f     // ... and stop at least this share of the negatives, to enforce on its own
     private const val DIM = 96
     private const val WINDOW = 16
     private const val FEATS = DIM + DIM
@@ -122,10 +127,19 @@ object WakeVerifierTrainer {
             // Promote only on improvement: held-out numbers for the candidate against the
             // held-out numbers recorded when the current profile was promoted.
             val (keepNew, stopNew) = heldOut(pos, negAll)
-            val keepOld = state.optDouble("heldout_keep", -1.0).toFloat()
-            val stopOld = state.optDouble("heldout_stop", -1.0).toFloat()
+            // The profile in use: the phone's own (with its numbers in the state file) or,
+            // failing that, the one built into the APK, whose numbers count only if it
+            // enforces here (another owner's numbers say nothing about this voice).
+            val userId = userId(context)
+            val inUse = profileInUse(context)
+            val inUseEnforces = inUse?.optJSONArray("owners")?.let { a ->
+                (0 until a.length()).any { a.optString(it) == "*" || (userId.isNotEmpty() && a.optString(it) == userId) } } ?: false
+            val keepOld: Float; val stopOld: Float
+            if (profileFile(context).isFile) { keepOld = state.optDouble("heldout_keep", -1.0).toFloat(); stopOld = state.optDouble("heldout_stop", -1.0).toFloat() }
+            else if (inUseEnforces) { keepOld = inUse!!.optDouble("heldout_keep", -1.0).toFloat(); stopOld = inUse.optDouble("heldout_stop", -1.0).toFloat() }
+            else { keepOld = -1f; stopOld = -1f }
             val heldOutLine = "held out: keeps %.0f%% of own wakes, stops %.0f%% of negatives".format(Locale.US, keepNew * 100, stopNew * 100)
-            if (profileFile(context).isFile && keepOld >= 0f) {
+            if (keepOld >= 0f) {
                 val worse = keepNew < keepOld - PROMOTE_TOLERANCE || stopNew < stopOld - PROMOTE_TOLERANCE ||
                     keepNew + stopNew < keepOld + stopOld
                 if (worse) {
@@ -133,10 +147,12 @@ object WakeVerifierTrainer {
                     // RETRAIN_EVERY_NEW_REAL more real clips instead of retrying every call.
                     stateFile(context).writeText(state.put("real_clips", pos.size).put("last_rejected", stamp).toString())
                     Log.i(TAG, "Candidate profile from ${pos.size} real clips not promoted ($heldOutLine; " +
-                        "profile in use had %.0f%% and %.0f%%) — keeping the profile in use".format(Locale.US, keepOld * 100, stopOld * 100))
+                        "profile in use had %.0f%% and %.0f%%".format(Locale.US, keepOld * 100, stopOld * 100) + ") — keeping the profile in use")
                     return false
                 }
             }
+            val enforce = inUseEnforces || (keepNew >= AUTO_ENFORCE_KEEP && stopNew >= AUTO_ENFORCE_STOP)
+            val owners = JSONArray().apply { if (enforce) put(if (userId.isNotEmpty()) userId else "*") }
             val json = JSONObject()
                 .put("version", 3)
                 .put("trained", "on this phone $stamp from ${pos.size} real clips vs ${neg.size} own false + ${generic.size} generic negatives")
@@ -145,22 +161,34 @@ object WakeVerifierTrainer {
                 .put("scale", JSONArray(model.scale.map { it.toDouble() }))
                 .put("coef", JSONArray(model.coef.map { it.toDouble() }))
                 .put("intercept", model.intercept.toDouble())
-                .put("owners", JSONArray())   // log-only until enforcement is switched on deliberately
+                .put("owners", owners)   // this phone's user id: enforce; empty: log-only (see the class note)
+                .put("heldout_keep", keepNew.toDouble()).put("heldout_stop", stopNew.toDouble())
                 .put("note", "Trained on the phone from the owner's labelled wake clips (WakeVerifierTrainer). A noise/TV filter, not a voice lock.")
             profileFile(context).parentFile?.mkdirs()
             profileFile(context).writeText(json.toString())
             stateFile(context).writeText(JSONObject().put("real_clips", pos.size).put("false_clips", neg.size).put("trained", stamp)
                 .put("heldout_keep", keepNew.toDouble()).put("heldout_stop", stopNew.toDouble()).toString())
             Log.i(TAG, "Profile trained in ${System.currentTimeMillis() - t0} ms: ${pos.size} real vs ${negAll.size} negatives; " +
-                "threshold %.3f keeps %d/%d own clips, stops %d/%d negatives (training set); $heldOutLine".format(
-                    Locale.US, threshold, ownScores.count { it >= threshold }, ownScores.size, stopped, negAll.size) +
-                if (keepOld >= 0f) " — promoted over %.0f%% and %.0f%%".format(Locale.US, keepOld * 100, stopOld * 100) else " — first profile")
+                "threshold %.3f keeps %d/%d own clips, stops %d/%d negatives (training set); ".format(
+                    Locale.US, threshold, ownScores.count { it >= threshold }, ownScores.size, stopped, negAll.size) + heldOutLine +
+                (if (keepOld >= 0f) " — promoted over %.0f%% and %.0f%%".format(Locale.US, keepOld * 100, stopOld * 100) else " — first profile") +
+                (if (enforce) "; enforcing" else "; log-only (below the ${(AUTO_ENFORCE_KEEP * 100).toInt()}%/${(AUTO_ENFORCE_STOP * 100).toInt()}% bar)"))
             return true
         } catch (e: Exception) {
             Log.w(TAG, "Training failed: ${e.message}")
             return false
         } finally { busy = false }
     }
+
+    private fun userId(context: Context): String =
+        try { File(context.filesDir, "zynkbot/.zynk_user_id").readText().trim() } catch (_: Exception) { "" }
+
+    /** The profile WakeVerifier.load would pick up right now: the phone's own file, else
+     *  the one built into the APK. Null if neither parses. */
+    private fun profileInUse(context: Context): JSONObject? = try {
+        val f = profileFile(context)
+        JSONObject(if (f.isFile) f.readText() else context.assets.open("wake-word-models/hey_zynk_verifier.json").bufferedReader().readText())
+    } catch (_: Exception) { null }
 
     /** Clips labelled before 2026-10-20 cannot be trusted: a wake the model dismissed as
      *  NO_QUERY was written up as real by the callers (see NativeVoiceAnswerer), so a

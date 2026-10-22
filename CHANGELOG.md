@@ -63,6 +63,8 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - The app asks once for the battery-optimisation exemption, from its second start (KI-087).
 
 ### Voice
+- Hey Zynk, Android: the voice check that runs after the wake word fires (the personal verifier) now enforces on its own. A profile the phone trains from the owner's wake clips is switched on when, tested on clips it did not train on, it keeps at least 90% of the owner's wakes and stops at least 90% of the noise, TV and other-voice clips; a retrain never switches enforcement off. The built-in profile is a new one in the shift-tolerant format (version 3) for the developer's phone, built from 45 wake clips against 110 noise/TV clips and 27 of another person saying the wake word: held out it kept 41 of 45 and stopped 124 of 137. It is a filter, not a lock.
+- Hey Zynk, Android: the speech gate (the check that someone is talking before the wake model runs) recovers from an error instead of switching itself off for the rest of the run. The error came from the detector being reset from another thread mid-chunk; the reset now happens on the audio thread. On 2026-10-21 the gate was off for twenty minutes without anything in the log but one line.
 - Timers understand spoken fractions ("two and a half minutes", "half an hour"). A misheard word between "timer" and the number no longer loses the timer (KI-093).
 
 ### Logs and settings

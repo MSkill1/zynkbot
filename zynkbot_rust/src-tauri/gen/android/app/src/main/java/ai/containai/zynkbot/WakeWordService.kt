@@ -70,6 +70,7 @@ class WakeWordService : Service() {
         const val VAD_WINDOW_FRAMES = 62    // ~2 s of 32 ms frames
         const val VAD_SPEECH = 0.5f         // Silero's own default; on the 2026-10-19 clip set every real wake had a frame ≥ 0.5 in its last 2 s
         const val VAD_SKIP_AFTER_FRAMES = 62
+        const val VAD_MAX_FAILURES = 5      // consecutive gate errors before it is switched off for this run
         const val TRIGGER_CLIP_CHUNKS = 40  // ~3.2 s: covers the models' full context (~2.5 s)
         const val MAX_LISTEN_MS = 30_000L   // hard cap on one dictation, ongoing speech cannot extend it (12 s cut off dictated paragraphs; matches ZynkAssistantSession since 2026-09-12)
         const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
@@ -183,6 +184,7 @@ class WakeWordService : Service() {
     private val vadRecent = ArrayDeque<Float>()     // last ~2 s of speech probabilities
     private var vadFramesSinceSpeech = 0
     private var vadSkipped = 0L
+    private var vadFailures = 0
     private fun vadRecentMax(): Float { var m = 0f; for (p in vadRecent) if (p > m) m = p; return m }
 
     /** Feed one 80 ms chunk to the VAD in 512-sample frames (leftover carried over). */
@@ -582,7 +584,15 @@ class WakeWordService : Service() {
         if (!pm.isInteractive) acquireAudioWakeLock()
     }
 
-    private fun resetDetector() {
+    /** Asked for from the state machine's thread; carried out by the audio thread at
+     *  its next chunk. Until 2026-10-22 the buffers were cleared here directly while
+     *  processChunk could be mid-way through them on the audio thread; the speech gate's
+     *  carry buffer then overran, the error handler switched the gate off for the rest
+     *  of the run, and the detector was back on the -46 dBFS gate (three times on
+     *  10-20, twenty minutes on 10-21). */
+    @Volatile private var detectorResetPending = false
+    private fun resetDetector() { detectorResetPending = true }
+    private fun applyDetectorReset() {
         melBuffer.clear(); embBuffer.clear()
         consecutiveHighScores = 0
         cooldownRemaining = COOLDOWN_CHUNKS   // don't re-trigger on the tail of a reply
@@ -694,6 +704,7 @@ class WakeWordService : Service() {
     }
 
     private fun processChunk(pcm16: ShortArray) {
+        if (detectorResetPending) { detectorResetPending = false; applyDetectorReset() }
         val env = ortEnv ?: return
         val mel = melSession ?: return
         val emb = embSession ?: return
@@ -722,7 +733,14 @@ class WakeWordService : Service() {
             // Speech gate, first stage: sound but no human voice for 2 s (a fan, a hum,
             // music without singing) — the wake models are not run at all.
             vadSession?.let { vad ->
-                try { runVad(env, vad, audioFloat) } catch (e: Exception) { Log.w(TAG, "Speech gate error, disabling it: ${e.message}"); vadSession = null }
+                try { runVad(env, vad, audioFloat); vadFailures = 0 } catch (e: Exception) {
+                    // Recover: start the gate's state over and carry on. Only a gate that
+                    // keeps failing is switched off (it was switched off on the first error
+                    // until 2026-10-22, and then stayed off for the rest of the run).
+                    vadFailures++; resetVad()
+                    if (vadFailures >= VAD_MAX_FAILURES) { Log.w(TAG, "Speech gate failed $vadFailures times in a row, disabling it: ${e.message}"); vadSession = null }
+                    else Log.w(TAG, "Speech gate error ($vadFailures), reset and carrying on: ${e.message}")
+                }
                 if (vadSession != null && vadFramesSinceSpeech > VAD_SKIP_AFTER_FRAMES) { vadSkipped++; return }
             }
 
