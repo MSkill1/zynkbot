@@ -201,6 +201,23 @@ export default function VoiceModal({
     } catch (_) {}
   }, [isOpen]);
 
+  // Voice enrollment card (Android): the wake service's status, re-read while the
+  // modal is open so the count moves as the clips come in.
+  const [enroll, setEnroll] = useState(null);
+  const readEnroll = () => {
+    try {
+      const raw = window.WakeWordBridge?.enrollmentStatus?.();
+      if (raw) setEnroll(JSON.parse(raw));
+    } catch (_) {}
+  };
+  useEffect(() => {
+    if (!isOpen || !window.WakeWordBridge?.enrollmentStatus) return;
+    readEnroll();
+    const t = setInterval(readEnroll, 1500);
+    return () => clearInterval(t);
+  }, [isOpen]);
+  const enrollCall = (fn) => () => { try { fn(); } catch (_) {} readEnroll(); };
+
   if (!isOpen) return null;
 
   const effectiveSource = voskAvailable ? (voiceInputSource || 'vosk') : 'openai';
@@ -260,6 +277,48 @@ export default function VoiceModal({
               closing tone tells you it fired and shut down without sending anything.
             </p>
 
+            {/* Teach Zynkbot your voice (2026-10-22): Start, then say "Hey Zynk" 20 times;
+                each one is saved as a real clip and only chimes, and until the twenty are
+                in the wake word answers nothing (paused: it does not count either). The
+                phone then trains its personal verifier from them and, if it tests well
+                enough, enforces it (WakeWordService enrollment, WakeVerifierTrainer). */}
+            {heyZynkEnabled && enroll && (() => {
+              const s = enroll.state;
+              const collecting = s === 'active' || s === 'paused';
+              const done = s === 'done' || enroll.enforcing;
+              const btn = (label, onClick, primary) => (
+                <button onClick={onClick} style={{
+                  padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', whiteSpace: 'nowrap',
+                  background: primary ? '#50fa7b' : '#44475a', color: primary ? '#282a36' : '#f8f8f2', cursor: 'pointer',
+                }}>{label}</button>
+              );
+              return (
+                <div style={{ ...rowStyle, alignItems: 'center', gap: '12px' }}>
+                  <div style={{ flex: 1 }}>
+                    <span style={labelStyle}>{collecting ? 'Say "Hey Zynk", wait for the count, say it again' : 'Teach Zynkbot your voice'}</span>
+                    <div style={mutedStyle}>
+                      {collecting
+                        ? (s === 'paused'
+                          ? 'Paused: nothing counts. Until the twenty are in, "Hey Zynk" does not answer.'
+                          : 'Somewhere quiet. Until the twenty are in, "Hey Zynk" only counts; it does not answer.')
+                        : done
+                          ? (enroll.enforcing ? 'Done. A "Hey Zynk" that does not sound like you is ignored.' : 'Done. It keeps learning as you use it.')
+                          : 'Say "Hey Zynk" twenty times so it learns to tell you from the TV. Take your time; the count is kept.'}
+                    </div>
+                  </div>
+                  {collecting && (
+                    <div style={{ textAlign: 'center', minWidth: '56px' }}>
+                      <div style={{ fontSize: '1.6rem', fontWeight: 'bold', lineHeight: 1, color: '#f8f8f2' }}>{enroll.count}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#9aa5c4' }}>of {enroll.needed}</div>
+                    </div>
+                  )}
+                  {s === 'active' && btn('Pause', enrollCall(() => window.WakeWordBridge.pauseEnrollment(true)), false)}
+                  {s === 'paused' && btn('Resume', enrollCall(() => window.WakeWordBridge.pauseEnrollment(false)), true)}
+                  {!collecting && btn(done ? 'Teach again' : 'Start', enrollCall(() => window.WakeWordBridge.startEnrollment()), !done)}
+                </div>
+              );
+            })()}
+
             {wakeClipStats && (() => {
               const ready = wakeClipStats.real >= wakeClipStats.needed;
               return (
@@ -267,17 +326,9 @@ export default function VoiceModal({
                   <div style={{ flex: 1 }}>
                     <span style={labelStyle}>Send my wake-word clips</span>
                     <div style={mutedStyle}>
-                      {ready
-                        ? 'Enough real clips to train a voice profile.'
-                        : `Lights up at ${wakeClipStats.needed} real "Hey Zynk" clips; keep using it.`}
+                      {wakeClipStats.real} of {wakeClipStats.needed} real "Hey Zynk" clips.
                       {' '}Clips stay on this phone until you send them.
                     </div>
-                  </div>
-                  <div style={{ textAlign: 'center', minWidth: '56px' }}>
-                    <div style={{ fontSize: '1.6rem', fontWeight: 'bold', lineHeight: 1, color: ready ? '#50fa7b' : '#f8f8f2' }}>
-                      {wakeClipStats.real}
-                    </div>
-                    <div style={{ fontSize: '0.7rem', color: '#9aa5c4' }}>of {wakeClipStats.needed}</div>
                   </div>
                   <button
                     disabled={!ready}

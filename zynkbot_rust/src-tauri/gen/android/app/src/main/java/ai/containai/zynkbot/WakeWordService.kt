@@ -120,6 +120,44 @@ class WakeWordService : Service() {
          *  proof against the TV for the strict-mode logic (2026-09-13). */
         @JvmStatic fun labelClip(real: Boolean) { instance?.labelLastClip(real) }
 
+        // ── voice enrollment (2026-10-22) ───────────────────────────────────────
+        // The Voice page's "Teach Zynkbot your voice" card: the owner taps Start and says the
+        // wake word ENROLL_CLIPS times; each wake is saved as a real clip and only chimes.
+        // Until the count is reached the wake word answers nothing; paused, it does not
+        // count either (a television cannot add to the twenty while the owner is away).
+        // The on-phone trainer builds the profile from the clips (WakeVerifierTrainer).
+        // State lives in one marker file so it survives restarts: active, paused, done; no
+        // file means never enrolled.
+        const val ENROLL_CLIPS = 20
+        private fun enrollMarker(context: Context) = File(context.filesDir, "zynkbot/wake-word-models/enrolling")
+        @JvmStatic fun enrollmentState(context: Context): String =
+            try { enrollMarker(context).readText().trim().ifEmpty { "none" } } catch (_: Exception) { "none" }
+
+        /** Begin, or begin again: the clip set, the phone's own profile and its training
+         *  state go, so the profile that comes out of this is built from these clips alone
+         *  (a wake the owner tapped away counts as "not me", which is right in use and
+         *  wrong while teaching). The profile built into the APK is untouched. */
+        @JvmStatic fun startEnrollment(context: Context) {
+            var n = 0
+            File(context.filesDir, "zynkbot/wake_triggers").listFiles()?.forEach { if (it.isFile && it.delete()) n++ }
+            val models = File(context.filesDir, "zynkbot/wake-word-models")
+            File(models, "hey_zynk_verifier.json").delete(); File(models, "verifier_training.json").delete()
+            models.mkdirs(); enrollMarker(context).writeText("active\n")
+            instance?.verifier = null   // back to the built-in profile until the trainer writes one
+            Log.i(TAG, "Voice enrollment started: $n clip files removed; collecting $ENROLL_CLIPS wake clips")
+        }
+
+        @JvmStatic fun setEnrollmentPaused(context: Context, paused: Boolean) {
+            if (enrollmentState(context) in setOf("active", "paused")) enrollMarker(context).writeText(if (paused) "paused\n" else "active\n")
+        }
+
+        /** What the card shows: state, clips so far, and whether a profile enforces here. */
+        @JvmStatic fun enrollmentStatus(context: Context): org.json.JSONObject {
+            val v = WakeVerifier.load(context, quiet = true)
+            return org.json.JSONObject().put("state", enrollmentState(context)).put("count", clipStats(context).getInt("real"))
+                .put("needed", ENROLL_CLIPS).put("enforcing", v?.enforcesOn(context) == true).put("profile", v?.trained ?: "")
+        }
+
         /** Counts behind the Voice-settings "Send my wake-word clips" button. */
         @JvmStatic fun clipStats(context: Context): org.json.JSONObject {
             val dir = File(context.filesDir, "zynkbot/wake_triggers")
@@ -693,9 +731,10 @@ class WakeWordService : Service() {
     /** Siri-style ongoing learning: retrain the personal verifier from the labelled
      *  clips when enough new ones have arrived (WakeVerifierTrainer decides), then
      *  pick the new profile up. Runs at service start and after every answered turn. */
-    private fun trainVerifierInBackground() {
+    private fun trainVerifierInBackground(delayMs: Long = 0) {
         Thread {
             try {
+                if (delayMs > 0) Thread.sleep(delayMs)
                 if (WakeVerifierTrainer.trainIfDue(this, loadedModelDir)) {
                     verifier = WakeVerifier.load(this)
                 }
@@ -815,6 +854,32 @@ class WakeWordService : Service() {
                         consecutiveHighScores = 0
                         cooldownRemaining = COOLDOWN_CHUNKS / 2
                         embBuffer.clear()
+                        return
+                    }
+                    // Voice enrollment: the owner is saying the wake word on purpose. Save it as
+                    // a real clip, chime, and stop there: no turn, and no verifier (there may
+                    // not be one yet). At ENROLL_CLIPS the profile trains.
+                    val enrolling = enrollmentState(this)
+                    if (enrolling == "paused") {
+                        Log.i(TAG, "Detection ignored: voice teaching is paused (score=%.3f)".format(Locale.US, score))
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2
+                        embBuffer.clear()
+                        return
+                    }
+                    if (enrolling == "active") {
+                        val n = clipStats(this).getInt("real") + 1
+                        Log.i(TAG, "Enrollment wake $n of $ENROLL_CLIPS (score=%.3f, level=%.1f dBFS, vad=%.2f)".format(Locale.US, score, level, voice))
+                        saveTriggerClip(score, pooled, label = true)
+                        Thread { playTone(R.raw.wake_chime) }.start()
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2   // ~2 s: the chime and the tail of this one cannot count twice
+                        embBuffer.clear()
+                        if (n >= ENROLL_CLIPS) {
+                            enrollMarker(this).writeText("done\n")
+                            Log.i(TAG, "Enrollment complete: $n clips; training the voice profile")
+                            trainVerifierInBackground(delayMs = 2000)   // the last clip is still being written
+                        }
                         return
                     }
                     val v = verifier ?: WakeVerifier.load(this).also { verifier = it }

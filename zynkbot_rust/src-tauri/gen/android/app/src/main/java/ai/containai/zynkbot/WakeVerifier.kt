@@ -36,7 +36,7 @@ class WakeVerifier private constructor(
         private const val TAG = "WakeVerifier"
         /** A verifier file in the app's data folder wins over the one built into the
          *  APK, so a personal profile can arrive without a release (2026-09-15). */
-        fun load(context: Context): WakeVerifier? = try {
+        fun load(context: Context, quiet: Boolean = false): WakeVerifier? = try {
             val local = java.io.File(context.filesDir, "zynkbot/wake-word-models/hey_zynk_verifier.json")
             val (text, source) = if (local.isFile) local.readText() to "data folder"
                                  else context.assets.open("wake-word-models/hey_zynk_verifier.json").bufferedReader().readText() to "built in"
@@ -46,7 +46,7 @@ class WakeVerifier private constructor(
             j.optJSONArray("owners")?.let { a -> for (i in 0 until a.length()) owners.add(a.getString(i)) }
             WakeVerifier(arr("mean"), arr("scale"), arr("coef"), j.getDouble("intercept").toFloat(),
                 j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"), owners)
-                .also { Log.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
+                .also { if (!quiet) Log.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
         } catch (e: Exception) { Log.w(TAG, "No verifier: ${e.message}"); null }
 
         /** The shift-invariant part of the features: per-dimension mean and max over the

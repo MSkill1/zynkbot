@@ -618,6 +618,15 @@ class MainActivity : TauriActivity() {
         @JavascriptInterface
         fun markAnswered() { WakeWordService.reportOutcome(true) }
 
+        /** Voice enrollment (2026-10-22): the Voice page's "Teach Zynkbot your voice" card.
+         *  Status is {state: none|active|paused|done, count, needed, enforcing, profile}. */
+        @JavascriptInterface
+        fun enrollmentStatus(): String = WakeWordService.enrollmentStatus(this@MainActivity).toString()
+        @JavascriptInterface
+        fun startEnrollment() { WakeWordService.startEnrollment(this@MainActivity) }
+        @JavascriptInterface
+        fun pauseEnrollment(paused: Boolean) { WakeWordService.setEnrollmentPaused(this@MainActivity, paused) }
+
         // The three ONNX models ship inside the APK under assets/wake-word-models/
         // (~3 MB). They are copied out to filesDir rather than read in place because
         // ONNX Runtime's createSession needs a real filesystem path, and assets live
