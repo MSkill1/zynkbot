@@ -485,13 +485,13 @@ NEW FACT:
 SIMILAR EXISTING MEMORIES:
 {}
 
-RELATIONSHIP TYPES:
-- "contradicts": Same attribute, different values — or opposite claims on the same topic
-- "supports": Reinforces or agrees with the existing memory
-- "elaborates": Adds detail or context to the existing memory
-- "caused_by": This fact describes a cause of the existing memory's effect
-- "reminds_of": Loosely related or tangentially connected
-- "none": No meaningful relationship
+RELATIONSHIP TYPES (pick the first that fits, top to bottom):
+- "contradicts": Same attribute, different values — or opposite claims on the same topic.
+- "elaborates": The new fact ADDS a detail the existing memory did not have (a name, a date, a place, a number, a reason). "Matt has a cat" + "Matt's cat is named Louie" = elaborates.
+- "supports": The new fact says the SAME thing again with NO new detail — a restatement or a confirmation. "Matt prefers tea" + "Matt likes tea more than coffee" = supports. If anything new is added, it is "elaborates", not "supports".
+- "caused_by": The new fact describes a cause of the existing memory's effect.
+- "reminds_of": Different facts about the same topic or the same person, loosely connected.
+- "none": The two facts are about different things. Use "none" whenever they do not share a subject, person, place or topic — two facts about the same user are NOT related just because they are both about the user.
 
 ⚠️ High semantic similarity does NOT mean agreement — opposite claims = contradiction.
 
@@ -1147,12 +1147,11 @@ TASK:
 
 RELATIONSHIP TYPES (in priority order):
 - "contradicts": Direct contradiction (e.g., "I believe X" vs "I don't believe X", "My dog is Max" vs "My dog is Wendy")
-  → CRITICAL: If the user affirms X but an existing memory negates X (or vice versa), it is ALWAYS a contradiction, even if they share similar topics or high semantic similarity!
-- "supports": Reinforces or agrees with the existing memory
-- "elaborates": Adds detail or context to the existing memory
+- "elaborates": The new memory ADDS a detail the existing one did not have (a name, a date, a place, a number, a reason). "Matt has a cat" + "Matt's cat is named Louie" = elaborates.
+- "supports": The new memory says the SAME thing again with NO new detail — a restatement or a confirmation. If anything new is added, it is "elaborates", not "supports".
 - "caused_by": This memory describes a cause of the existing memory's effect
-- "reminds_of": Loosely related or tangentially connected
-- "none": No meaningful relationship — return this if the connection is incidental
+- "reminds_of": Different facts about the same topic or the same person, loosely connected
+- "none": The two memories are about different things. Use "none" whenever they do not share a subject, person, place or topic — two facts about the same user are NOT related just because they are both about the user.
 
 ⚠️ CONTRADICTION DETECTION RULES (HIGHEST PRIORITY):
 1. Focus on the MAIN CLAIM, not descriptive phrases

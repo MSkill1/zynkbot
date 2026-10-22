@@ -1,7 +1,7 @@
 {
  "version": 1,
  "subject": "Matt",
- "note": "Memory bench cases (2026-10-22). Extraction: a produced fact matches an expected one when it contains every term in `must`; messages with an empty `expected` should produce nothing. Relationships: one existing memory per case; expected type among contradicts/supports/elaborates/reminds_of/none. Synthetic, plain personal facts; not anyone's private life.",
+ "note": "Memory bench cases (2026-10-22). Extraction: a produced fact matches an expected one when it contains every term in `must`; messages with an empty `expected` should produce nothing. Relationships: one existing memory per case; expected type among contradicts/supports/elaborates/reminds_of/none. Synthetic, plain personal facts; not anyone's private life. Round 2 (2026-10-22 evening): r09/r11/r13/r14 relabelled elaborates (they add a detail); four restatement cases added as supports.",
  "extraction": [
   {
    "id": "e01",
@@ -850,7 +850,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "elaborates"
    }
   },
   {
@@ -880,7 +880,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "elaborates"
    }
   },
   {
@@ -910,7 +910,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "elaborates"
    }
   },
   {
@@ -925,7 +925,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "elaborates"
    }
   },
   {
@@ -1166,6 +1166,66 @@
    "expected": {
     "memory_id": 101,
     "type": "none"
+   }
+  },
+  {
+   "id": "r31",
+   "new_fact": "Matt likes tea more than coffee.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt prefers tea to coffee.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "supports"
+   }
+  },
+  {
+   "id": "r32",
+   "new_fact": "Matt still has his cat Louie.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a cat named Louie.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "supports"
+   }
+  },
+  {
+   "id": "r33",
+   "new_fact": "Matt drives a Subaru.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt drives a 2019 Subaru Outback.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "supports"
+   }
+  },
+  {
+   "id": "r34",
+   "new_fact": "Matt is a Red Sox fan.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is a lifelong Red Sox fan.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "supports"
    }
   }
  ]

@@ -124,6 +124,31 @@ Quality on the second test message was poor: recall brought four unrelated memor
 test chatter (Spanish phrases, a speech) and the 2B refused and rambled. The bench
 decides; recall quality on a test-polluted memory store is its own problem.
 
+## Memory bench, first two rounds (2026-10-22; labs/memory_bench, memory_bench.rs)
+
+Extraction: 59 expected facts in 50 messages, 20 messages that should store nothing.
+Relationships: 30 pairs in round 1, 34 in round 2 (four mislabelled cases corrected — a new
+fact that adds a detail is "elaborates" — and four restatement cases added as "supports").
+
+| Model | Facts found | Invented | Junk on the 20 | Relationships r1 | r2, sharper definitions |
+|---|---|---|---|---|---|
+| Anthropic | 57/59 | 1 | 0 | 24/30 | 31/34 |
+| OpenAI | 55/59 | 0 | 0 | 22/30 | — |
+| Qwen3-4B Q4_K_M | 49 → 51/59 | 1 | 0 | 18/30 | 25/34 |
+| Gemma 4 E4B q4_0 | 7/59 (answers NONE to plain facts) | 0 | 0 | 21/30 | — |
+| Qwen3.5-2B Q4_K_M | 25/59 | 3 | 0 | 15/30 | — |
+
+What moved the relationship numbers: the definitions. "Elaborates" = adds a detail the
+memory did not have; "supports" = the same thing again with nothing new; "none" whenever
+the two facts share no subject, person, place or topic. The 4B went from 6/12 to 11/12 on
+elaborates and 1/4 to 4/4 on reminds-of. Still weak for the 4B: "none" (1/4; it links
+unrelated facts as reminds-of) and restatements (2/6; it calls them elaborates). No model
+stored junk on any of the 20 no-fact messages, so the two false memories of the afternoon
+were the old one-prompt flow's doing. Numbers in a fact were being dropped by the parser
+for every model (fixed in round 2). Decision from the numbers: Qwen3-4B is the memory
+model on the phone; the 2B is for chat speed only; Gemma 4 needs an extraction-prompt
+change before it can be judged.
+
 ## Seen on 2026-10-22 and not yet addressed
 
 - A web-search turn is two model passes. The second one carried the fetched pages: 1,851
