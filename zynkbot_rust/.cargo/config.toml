@@ -41,3 +41,11 @@ rustflags = ["-C", "target-cpu=x86-64"]
 # passing the LLVM spelling as well only produced an "unknown feature" warning on every
 # Android build (removed 2026-09-13).
 rustflags = ["-C", "target-feature=+fp16"]
+
+[env]
+# llama.cpp CPU kernels for Android. llama-cpp-sys-2's build script reads this in its
+# arm64-v8a branch only and passes it to ggml as the -march: ARMv8.2 with the dot-product
+# and half-precision instructions, i.e. phones and tablets from about 2018 on (Matt,
+# 2026-10-22: "we have to draw a line somewhere"). Without it the engine is built for the
+# 2016 baseline and read a 910-token prompt at about 10 tokens/s on a Pixel 10 Pro XL.
+GGML_CPU_ARM_ARCH = "armv8.2-a+dotprod+fp16"
