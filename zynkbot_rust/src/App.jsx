@@ -2639,11 +2639,12 @@ export default function App() {
                   ■ Stop
                 </button>
 
-                {/* Mobile-only: Memory Manager — BL (2,1); opens the modal via ref */}
+                {/* Mobile-only: Memory Manager — BL (2,1); opens the modal via ref. Never disabled
+                    while a reply is in progress (Matt, 2026-10-22): with a local model a reply
+                    can take a minute, and the memories are there to be read meanwhile. */}
                 {isMobile && (
                   <button
                     onClick={() => memoryManagerRef.current?.open()}
-                    disabled={isLoading}
                     title="Open Memory Manager"
                     style={{
                       width: '85px',
@@ -2657,11 +2658,11 @@ export default function App() {
                       color: '#fff',
                       border: 'none',
                       borderRadius: '8px',
-                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                      cursor: 'pointer',
                       fontWeight: 'bold',
                       fontSize: '0.72rem',
                       transition: 'all 0.2s',
-                      opacity: isLoading ? 0.5 : 1,
+                      opacity: 1,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',

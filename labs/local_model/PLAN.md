@@ -103,6 +103,27 @@ a 2B model is the next lever. The relationship call stepped aside for the user's
 message as designed, but only after finishing a 512-token piece (22 s); background
 reads now go in 128-token pieces.
 
+## 2B versus 4B, first look (2026-10-22, Pixel, Qwen3.5-2B Q4_K_M)
+
+| | Qwen3-4B | Qwen3.5-2B |
+|---|---|---|
+| Prompt read, cool phone | 39–49 tokens/s | 112–134 tokens/s |
+| Answer written, cool | 3–6 tokens/s | ~6 tokens/s (104 tokens in 17 s) |
+| Answer written, hot phone | ~1 | ~2.4 (74 tokens in 31 s) |
+| Kept context between turns | works (455–490 tokens kept) | **does not apply**: 0 kept every turn |
+
+Why the kept context fails on Qwen3.5: it is a hybrid model (part attention, part recurrent
+state; `LLM_ARCH_QWEN35` is in llama.cpp's hybrid list), and a recurrent state cannot be
+rolled back to an earlier position, so the engine's "drop everything after the shared
+part" returns false and the whole prompt is read again. Gemma 4 is not hybrid and should
+keep context. Possible fix for hybrids, later: save a checkpoint of the state right after
+the stable part (voice + conversation) and restore it next turn, then read only the rest;
+llama.cpp has state save/restore per sequence. Memory cost is the state size.
+
+Quality on the second test message was poor: recall brought four unrelated memories from
+test chatter (Spanish phrases, a speech) and the 2B refused and rambled. The bench
+decides; recall quality on a test-polluted memory store is its own problem.
+
 ## Seen on 2026-10-22 and not yet addressed
 
 - A web-search turn is two model passes. The second one carried the fetched pages: 1,851
