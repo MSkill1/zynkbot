@@ -28,6 +28,11 @@ pub struct Memory {
 }
 
 pub struct ConversationEngine {
+    /// The on-phone GGUF model (2026-10-22): answer-only reply prompt, date after the
+    /// conversation, four memories, history window in blocks. False for the cloud models
+    /// and for a "custom" endpoint, which is another machine's model and keeps the
+    /// MEMORY_EXTRACT flow.
+    on_device: bool,
 }
 
 /// What the model is shown for one memory: the stored fact, then "(you said: …)" when
@@ -48,8 +53,11 @@ pub fn memory_line(content: &str, original_text: Option<&str>) -> String {
 
 impl ConversationEngine {
     pub fn new() -> Self {
-        Self {}
+        Self { on_device: false }
     }
+
+    /// Mark this engine as building prompts for the on-phone GGUF model.
+    pub fn with_on_device(mut self, on_device: bool) -> Self { self.on_device = on_device; self }
 
     /// Determine if user input is memory-worthy
     /// Filters out conversational filler and acknowledgments
@@ -117,7 +125,7 @@ impl ConversationEngine {
         }
 
         // Adaptive context limits
-        let max_messages = if is_api_model { 40 } else { 8 };
+        let max_messages = if is_api_model { 40 } else if self.on_device { 12 } else { 8 };
 
         println!(
             "[Engine] Using {} model context limits: {} messages",
@@ -126,14 +134,21 @@ impl ConversationEngine {
         );
 
         // Take most recent messages
-        let recent_history: Vec<&ConversationTurn> = conversation_history
-            .iter()
-            .rev()
-            .take(max_messages)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+        // On-device model (2026-10-22): the window moves in blocks of six messages, not one
+        // at a time. The engine keeps the part of the prompt that is identical to the
+        // previous turn; a window that slid by one message every turn changed the text
+        // right after the voice instructions and threw the whole conversation away each
+        // time (only the 260-token voice part was kept on the Pixel). With blocks, the
+        // start of the history stays put for three exchanges, then jumps.
+        let start = if !self.on_device {
+            conversation_history.len().saturating_sub(max_messages)
+        } else if conversation_history.len() <= max_messages {
+            0
+        } else {
+            let over = conversation_history.len() - max_messages;
+            over.div_ceil(6) * 6
+        };
+        let recent_history: Vec<&ConversationTurn> = conversation_history[start..].iter().collect();
 
         println!("[Engine] Including {} recent conversation turns", recent_history.len());
 
@@ -166,7 +181,9 @@ impl ConversationEngine {
             .collect();
 
         // Adaptive context limits
-        let max_memories = if is_api_model { 20 } else { 7 };
+        // Local: 4 (was 7, 2026-10-22). The recalled memories are the part of the prompt a
+        // local model has to read anew every turn, at ~40 tokens/s.
+        let max_memories = if is_api_model { 20 } else if self.on_device { 4 } else { 7 };
 
         // Limit based on model type
         let limited_memories: Vec<&Memory> = if useful_memories.len() > max_memories {
@@ -226,6 +243,11 @@ impl ConversationEngine {
         let today = Local::now().format("%A, %B %-d, %Y at %-I:%M %p %Z").to_string();
         let subject_label = user_name.unwrap_or("User");
 
+        let opening = if self.on_device {
+            "Answer the user. Keep it short: a few sentences, unless they ask for more.\n\n".to_string()
+        } else {
+            format!("Today's date is {today}.\n\nYour output has two parts, always in this order:\nPART 1 — if the user stated personal facts: a MEMORY_EXTRACT line (see instructions below)\nPART 2 — your response as Zynkbot\n\n")
+        };
         let mut system_prompt = if is_api_model {
             format!("Today's date is {today}.\n\nYou are Zynkbot, a personal AI companion.
 
@@ -273,7 +295,7 @@ After you indicate a web search is needed, the user will be shown your suggested
         } else {
             // Slim prompt for local models: task-first framing so fact extraction (PART 1)
             // is understood as a primary output requirement, not an afterthought.
-            format!("Today's date is {today}.\n\nYour output has two parts, always in this order:\nPART 1 — if the user stated personal facts: a MEMORY_EXTRACT line (see instructions below)\nPART 2 — your response as Zynkbot\n\nAs Zynkbot, be warm, calm, and genuinely present. Never claim to be human or to replace people in the user's life. Be honest when uncertain. Don't flatter or validate automatically. Don't encourage dependency; reserve professional-help suggestions for real clinical/legal stakes. When someone shares grief or frustration, acknowledge it before solutions. Keep responses proportionate. If one or two missing details would change your answer, ask for them first, briefly; otherwise answer and say what you assumed. The user's data belongs to them.\n\nStored memories below are the user's own personal history — treat them as facts about their life and experiences. Reference them when relevant; answer general questions from training otherwise.\n\nThe current date and time are stated above — answer those directly, never search for them. For other real-time info (news, weather, prices, recent events) output: WEB_SEARCH_NEEDED: [query]. Questions using words like 'latest', 'recent', or 'news' require WEB_SEARCH_NEEDED — do not answer those from training data. Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history or memories.\n\n")
+            format!("{opening}As Zynkbot, be warm, calm, and genuinely present. Never claim to be human or to replace people in the user's life. Be honest when uncertain. Don't flatter or validate automatically. Don't encourage dependency; reserve professional-help suggestions for real clinical/legal stakes. When someone shares grief or frustration, acknowledge it before solutions. Keep responses proportionate. If one or two missing details would change your answer, ask for them first, briefly; otherwise answer and say what you assumed. The user's data belongs to them.\n\nStored memories below are the user's own personal history — treat them as facts about their life and experiences. Reference them when relevant; answer general questions from training otherwise.\n\nThe current date and time are stated above — answer those directly, never search for them. For other real-time info (news, weather, prices, recent events) output: WEB_SEARCH_NEEDED: [query]. Questions using words like 'latest', 'recent', or 'news' require WEB_SEARCH_NEEDED — do not answer those from training data. Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history or memories.\n\n")
         };
 
         // If we know the user's name, tell the LLM so it can use it instead of "User"
@@ -313,24 +335,33 @@ When NOT to extract:
 "#
             ));
         } else {
-            system_prompt.push_str(&format!(r#"PART 1 — MEMORY_EXTRACT
-Scan the user's message for personal facts (name, age, job, location, family, pets, feelings, preferences, plans, health). If ANY personal facts are present, the VERY FIRST LINE of your output MUST be:
-MEMORY_EXTRACT: [one third-person statement combining all facts, starting with "{subject_label}"]
+            // On-device model (2026-10-22, branch local-model): the reply is one job, the
+            // answer. Memory work is separate background calls (chat.rs local_memory_facts).
+            // Two things were tried in the reply first and both failed on a 4B model the same
+            // way: a MEMORY_EXTRACT line (the model wrote the line and stopped) and a closing
+            // "REMEMBER: yes/no" flag (the model wrote the flag and stopped, even on "I have a
+            // cat named Louie"). The small model does the last instruction it was given.
+            // A "custom" endpoint keeps the two-part format below, which its larger models follow.
+            if !self.on_device {
+                system_prompt.push_str(&format!(r#"PART 1 — MEMORY_EXTRACT
+    Scan the user's message for personal facts (name, age, job, location, family, pets, feelings, preferences, plans, health). If ANY personal facts are present, the VERY FIRST LINE of your output MUST be:
+    MEMORY_EXTRACT: [one third-person statement combining all facts, starting with "{subject_label}"]
 
-Output MEMORY_EXTRACT before your conversational response. If no personal facts exist, omit it entirely and go straight to PART 2. Write that line exactly as shown, beginning with MEMORY_EXTRACT: — do not write any other label or heading (such as "FACT EXTRACTION") in your reply.
+    Output MEMORY_EXTRACT before your conversational response. If no personal facts exist, omit it entirely and go straight to PART 2. Write that line exactly as shown, beginning with MEMORY_EXTRACT: — do not write any other label or heading (such as "FACT EXTRACTION") in your reply.
 
-Examples (first line of output when facts are present):
-- "I have a dog named Rex." → MEMORY_EXTRACT: {subject_label} has a dog named Rex.
-- "I'm 34 and work as a physical therapist." → MEMORY_EXTRACT: {subject_label} is 34 years old and works as a physical therapist.
-- "I've been feeling down lately." → MEMORY_EXTRACT: {subject_label} has been feeling down lately.
-- "I'm starting a book series." → MEMORY_EXTRACT: {subject_label} plans to start a book series.
+    Examples (first line of output when facts are present):
+    - "I have a dog named Rex." → MEMORY_EXTRACT: {subject_label} has a dog named Rex.
+    - "I'm 34 and work as a physical therapist." → MEMORY_EXTRACT: {subject_label} is 34 years old and works as a physical therapist.
+    - "I've been feeling down lately." → MEMORY_EXTRACT: {subject_label} has been feeling down lately.
+    - "I'm starting a book series." → MEMORY_EXTRACT: {subject_label} plans to start a book series.
 
-Do NOT extract for: chitchat, general knowledge, recall questions about stored memories, or current events.
+    Do NOT extract for: chitchat, general knowledge, recall questions about stored memories, or current events.
 
-PART 2 — your Zynkbot response follows on the next line.
+    PART 2 — your Zynkbot response follows on the next line.
 
-"#
-            ));
+    "#
+                ));
+            }
         }
 
         // Build conversation history context
@@ -347,11 +378,21 @@ PART 2 — your Zynkbot response follows on the next line.
             String::new()
         };
 
-        // Combine all parts
-        let prompt = format!(
-            "{}{}{}USER'S QUESTION: {}\n\nYOUR RESPONSE:",
-            system_prompt, history_context, memory_context, user_input
-        );
+        // Combine all parts. For a local model the date and time come after the voice and
+        // the conversation so far (2026-10-22): the engine keeps the part of the prompt that
+        // is identical to the previous turn, and a time stamp at the top changed every
+        // minute and threw all of it away.
+        let prompt = if !self.on_device {
+            format!(
+                "{}{}{}USER'S QUESTION: {}\n\nYOUR RESPONSE:",
+                system_prompt, history_context, memory_context, user_input
+            )
+        } else {
+            format!(
+                "{}{}Today's date is {today}.\n\n{}USER'S QUESTION: {}\n\nYOUR RESPONSE:",
+                system_prompt, history_context, memory_context, user_input
+            )
+        };
 
         prompt
     }

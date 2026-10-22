@@ -419,7 +419,11 @@ pub async fn generate_reply(
 
     // HYBRID SEARCH: Use hybrid_search for weighted entity + semantic scoring
     // Search limit matches build_memory_context caps: API gets more headroom, local stays lean
-    let memory_search_limit = if ConversationEngine::is_api_model(&forced_backend) { 15 } else { 10 };
+    // The web-search answer pass carries the fetched pages; for a local model it does not
+    // also carry recalled memories (18 were recalled for "the weather in Morocco" and read
+    // at 20 tokens/s on a warm phone, 2026-10-22).
+    let search_pass = message.starts_with("Answer the user's question using the web search results");
+    let memory_search_limit = if search_pass && !ConversationEngine::is_api_model(&forced_backend) { 0 } else { if ConversationEngine::is_api_model(&forced_backend) { 15 } else { 10 } };
 
     // Smart namespace filtering: search ONLY system memories if query is about Zynkbot
     let is_zynkbot_query = crate::is_query_about_zynkbot(&query);
@@ -574,7 +578,8 @@ pub async fn generate_reply(
     db_pool.close().await;
 
     // STEP 5: Build prompt using conversation engine
-    let engine = ConversationEngine::new();
+    let engine = ConversationEngine::new()
+        .with_on_device(forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local"));
 
     // Convert conversation history to conversation engine format
     let engine_history: Option<Vec<crate::conversation_engine::ConversationTurn>> = conversation_history.as_ref().map(|hist| {
@@ -848,9 +853,17 @@ pub async fn generate_reply(
 
         let model_path_clone = model_path.clone();
         let inference_start = std::time::Instant::now();
+        // The user's turn comes first: background memory calls step aside while this
+        // guard is held (local_models "foreground first", 2026-10-22).
+        let foreground = crate::llm::local_models::ForegroundGuard::new();
+        let sink_local = sink.clone();
         let response = tokio::task::spawn_blocking(move || {
+            let _hold = foreground;
             crate::llm::local_models::with_cached_session(&model_path_clone, |session| {
-                session.generate(messages, Some(4096), None, None)
+                // Streams like the cloud paths do (2026-10-22): each piece of text goes to the
+                // page as it is written.
+                let mut emit = |t: &str| sink_local.token(t);
+                session.generate_streaming(messages, Some(4096), None, None, Some(&mut emit))
             })
         })
         .await
@@ -917,7 +930,10 @@ pub async fn generate_reply(
                 for (i, r) in results.results.iter().enumerate() {
                     context.push_str(&format!("Source {}: {}\nURL: {}\n", i + 1, r.title, r.url));
                     if !r.snippet.is_empty() { context.push_str(&format!("Summary: {}\n", r.snippet)); }
-                    if let Some(body) = r.content.as_deref() { context.push_str(&format!("Content: {}\n", body.chars().take(800).collect::<String>())); }
+                    // A local model reads at ~40 tokens/s: 800 characters a page made the second
+                    // pass a 1,850-token, 64 s read on 2026-10-22. Half that for local models.
+                    let body_chars = if ConversationEngine::is_api_model(&forced_backend) { 800 } else { 300 };
+                    if let Some(body) = r.content.as_deref() { context.push_str(&format!("Content: {}\n", body.chars().take(body_chars).collect::<String>())); }
                     context.push('\n');
                 }
                 web_sources = Some(serde_json::json!({
@@ -972,6 +988,22 @@ pub async fn generate_reply(
     // parser and display stay in step.
     let reply_lines: Vec<&str> = reply_text.lines().collect();
     let mut consumed_extract_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // Local models end the reply with "REMEMBER: yes|no" (conversation_engine, 2026-10-22):
+    // the flag that decides whether the background extraction call runs. Taken from the
+    // last such line, hidden from the display. None when the model forgot it.
+    let mut local_remember: Option<bool> = None;
+    if !is_api {
+        for (idx, line) in reply_lines.iter().enumerate().rev() {
+            let t = line.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
+            if let Some(rest) = t.strip_prefix("remember") {
+                let rest = rest.trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—'));
+                if rest.starts_with("yes") { local_remember = Some(true); consumed_extract_lines.insert(idx); break; }
+                if rest.starts_with("no") { local_remember = Some(false); consumed_extract_lines.insert(idx); break; }
+            }
+        }
+        if let Some(flag) = local_remember { println!("[RUST] Local model's REMEMBER flag: {}", if flag { "yes" } else { "no" }); }
+        else { println!("[RUST] Local model gave no REMEMBER flag; the background extraction call decides"); }
+    }
     let mut heading_without_fact = false;
     let mut li = 0;
     while li < reply_lines.len() {
@@ -1352,7 +1384,15 @@ pub async fn generate_reply(
     // Storage happens only after contradiction detection completes.
     let bg_extracted_text: Option<String> = extracted_facts.into_iter().next();
 
-    if !effective_skip_memory && (memory_gate_passed || bg_extracted_text.is_some()) {
+    // Local-model flow (2026-10-22): the reply carried no MEMORY_EXTRACT; a background
+    // extraction call lists the facts, each its own memory. Skipped outright when the
+    // model said REMEMBER: no, unless the user said "Remember:".
+    // Only the on-device GGUF model: a "custom" endpoint is another server's model and
+    // keeps the MEMORY_EXTRACT path (the chat harness runs through one).
+    let local_flow = (forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local")) && !is_explicit_remember;
+    let local_said_no = local_flow && local_remember == Some(false);
+    if local_said_no { println!("[RUST] Local model: nothing to remember in this message; no background memory call"); }
+    if !effective_skip_memory && !local_said_no && (memory_gate_passed || bg_extracted_text.is_some()) {
         // Clone data needed for background task
         let bg_message = query.clone();  // Store clean question in memories, not file dump
         let bg_user_id = user_id.clone();
@@ -1367,452 +1407,25 @@ pub async fn generate_reply(
         let bg_is_api = is_api;
         let bg_is_explicit_remember = is_explicit_remember;
 
+        let bg_user_name = user_display_name.clone();
+        let bg = MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
+            bg_sink, bg_is_api, bg_is_explicit_remember, bg_user_name, query_entities: query_entities.clone() };
         // Spawn background task for memory processing
         tokio::spawn(async move {
-            // Use extracted fact as content when MEMORY_EXTRACT fired; raw message otherwise.
-            // The extracted fact is a clean, focused statement — better for storage and search.
-            let factual_content = bg_extracted_text.clone().unwrap_or_else(|| bg_message.clone());
-
-            // Generate embedding FIRST (needed for duplicate check and storage)
-            let factual_clone = factual_content.clone();
-            let message_embedding = match tokio::task::spawn_blocking(move || {
-                crate::llm::local_embeddings::generate_local_embedding(&factual_clone)
-            })
-            .await {
-                Ok(Ok(embedding)) => embedding,
-                Ok(Err(e)) => {
-                    println!("[RUST BACKGROUND] ⚠️ Failed to generate embedding: {}", e);
+            if local_flow {
+                // A separate call on the local model lists the facts (at most three), and each
+                // one goes through the same storage path as a MEMORY_EXTRACT fact did.
+                let facts = local_memory_facts(&bg.bg_message, &bg.bg_forced_backend, bg.bg_user_name.as_deref()).await;
+                if facts.is_empty() {
+                    println!("[RUST BACKGROUND] Local extraction found nothing to remember");
                     return;
                 }
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Embedding task panicked: {}", e);
-                    return;
-                }
-            };
-
-            // Emit pending indicator for Memory Manager spinner.
-            // Only fires when there is actually a memory candidate to potentially store.
-            // Local models without MEMORY_EXTRACT have no candidate and run silently.
-            let has_memory_candidate = bg_extracted_text.is_some() || bg_is_api || bg_is_explicit_remember;
-            let pending_id: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            if has_memory_candidate {
-                bg_sink.event("memory-processing-started", serde_json::json!({ "pending_id": pending_id }));
-            }
-
-            // Reconnect to database for memory storage
-            let db_url = crate::db::get_db_url();
-
-            let db_pool = match sqlx::SqlitePool::connect(&db_url).await {
-                Ok(pool) => pool,
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Failed to connect to database: {}", e);
-                    return;
-                }
-            };
-
-            // Do a BROADER search for relationship detection (more memories, lower threshold)
-            // This ensures we catch relationships even if the memory wasn't in the top 5 for conversation
-
-            let relationship_search_results = match crate::memory::hybrid_search(
-                &db_pool,
-                message_embedding.clone(),
-                query_entities.clone(),
-                Some(&bg_user_id),
-                None,  // All sessions
-                None,  // All namespaces
-                15,    // Search more memories (15 instead of 5)
-            ).await {
-                Ok(results) => results,
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Relationship search failed: {}", e);
-                    db_pool.close().await;
-                    return;
-                }
-            };
-
-            // Filter to >35% similarity — matches the hybrid search floor. The LLM handles
-            // false candidates correctly (returns NONE), so a conservative pre-filter here
-            // only causes missed relationships like niece/nephews at the same event (41%).
-            let mut similar_memories: Vec<(i32, String, Option<String>, f32)> = relationship_search_results
-                .into_iter()
-                .filter(|m| m.similarity.unwrap_or(0.0) >= 0.35)
-                .map(|m| (m.id, m.content.clone(), m.title.clone(), m.similarity.unwrap_or(0.0) as f32))
-                .collect();
-
-            // Sort by similarity (most relevant first) for relationship classification
-            // We want the MOST similar memories, not the most recent ones
-            similar_memories.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
-
-            // API models handle larger candidate sets well; local 7B models degrade with more context
-            let relationship_candidate_limit = if bg_is_api { 10 } else { 6 };
-            similar_memories.truncate(relationship_candidate_limit);
-
-            if !similar_memories.is_empty() {
-                println!("[RUST BACKGROUND] Found {} similar memories (>35% similarity) for relationship classification", similar_memories.len());
-            }
-
-            // DUPLICATE CHECK: Check if this is a duplicate
-            // First check hybrid score (>98%), then pure cosine (>93%)
-            // Hybrid score of 1.0 = exact match even if pure cosine is slightly lower due to entity boosting
-
-            let mut is_duplicate = false;
-            for (mem_id, _mem_content, _mem_title, hybrid_score) in &similar_memories {
-                // Check 1: Very high hybrid score indicates duplicate (entity + semantic match)
-                if *hybrid_score > 0.98 {
-                    println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% hybrid similarity",
-                             mem_id, hybrid_score * 100.0);
-                    println!("[RUST BACKGROUND] Skipping memory storage for duplicate");
-                    is_duplicate = true;
-                    break;
-                }
-
-                // Check 2: Pure cosine similarity (lowered threshold to 0.93 to catch near-duplicates)
-                if let Ok(Some(candidate_mem)) = crate::memory::get_memory(&db_pool, *mem_id).await {
-                    if let Some(ref candidate_embedding_vec) = candidate_mem.embedding {
-                        let pure_similarity = crate::llm::local_embeddings::cosine_similarity(
-                            &message_embedding,
-                            candidate_embedding_vec
-                        );
-
-                        if pure_similarity > 0.93 {
-                            println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% pure cosine similarity",
-                                     mem_id, pure_similarity * 100.0);
-                            println!("[RUST BACKGROUND] Skipping memory storage for duplicate");
-                            is_duplicate = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if is_duplicate {
-                if has_memory_candidate {
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
-                }
-                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "duplicate").await;
-                db_pool.close().await;
-                return;
-            }
-
-            // Local models: only proceed when MEMORY_EXTRACT fired — that's the storage
-            // decision for local. No extracted text means nothing to store.
-            // API models: always proceed to Call 2, which makes the should_remember decision.
-            if bg_extracted_text.is_none() && !bg_is_api {
-                if has_memory_candidate {
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
-                }
-                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
-                db_pool.close().await;
-                return;
-            }
-
-            println!("[RUST BACKGROUND] ✅ Proceeding with relationship classification");
-
-            // Local: MEMORY_EXTRACT fired → relationships + title only (should_remember=true).
-            // API: full should_remember + relationship classification.
-            let (should_remember, llm_title, llm_relationships, llm_extras) = if !bg_is_api {
-                match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
-                    Ok((title, rels, extras)) => {
-                        println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
-                        (true, title, rels, extras)
-                    }
-                    Err(e) => {
-                        println!("[RUST BACKGROUND] ⚠️ Relationship classifier failed: {} — storing without links", e);
-                        let fallback = crate::generate_title_from_content(&factual_content);
-                        (true, Some(fallback), Vec::new(), crate::memory_extras::MemoryExtras::default())
-                    }
+                for fact in facts {
+                    run_memory_background(bg.clone(), Some(fact)).await;
                 }
             } else {
-                // API: ask_llm_about_memory_with_relationships (should_remember + relationships)
-                match crate::ask_llm_about_memory_with_relationships(
-                    &bg_message,
-                    "Background memory processing",
-                    &similar_memories,
-                    &bg_forced_backend,
-                ).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        println!("[RUST BACKGROUND] ⚠️ LLM call failed: {}", e);
-                        if !bg_forced_backend.contains("local") && !bg_forced_backend.ends_with(".gguf") {
-                            match crate::ask_llm_about_memory_with_relationships(
-                                &bg_message,
-                                "Background memory processing",
-                                &similar_memories,
-                                "local",
-                            ).await {
-                                Ok(result) => result,
-                                Err(e2) => {
-                                    println!("[RUST BACKGROUND] ⚠️ Fallback also failed: {}", e2);
-                                    (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
-                                }
-                            }
-                        } else {
-                            (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
-                        }
-                    }
-                }
-            };
-
-            // Explicit "Remember:" command overrides LLM decision — user is the authority.
-            // The title comes from the user's own words too: the classifier sees the raw
-            // query, and on a dictated "remember cohen the gate code..." it titled the
-            // memory "Gate code for Cohen" (2026-09-07). The stored content is already
-            // the text after the keyword, so the title is cut from that.
-            let (should_remember, llm_title) = if bg_is_explicit_remember {
-                if !should_remember {
-                    println!("[RUST BACKGROUND] ✅ Explicit 'Remember:' command — overriding LLM decision to store");
-                }
-                let fallback_title = factual_content.chars().take(60).collect::<String>();
-                let fallback_title = if factual_content.chars().count() > 60 {
-                    format!("{}…", fallback_title)
-                } else {
-                    fallback_title
-                };
-                (true, Some(fallback_title))
-            } else {
-                (should_remember, llm_title)
-            };
-
-            if !should_remember {
-                bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
-                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
-                db_pool.close().await;
-                return;
+                run_memory_background(bg, bg_extracted_text).await;
             }
-
-            println!("[RUST BACKGROUND] ✅ LLM decided to remember: {:?}", llm_title);
-
-            // CHECK FOR CONTRADICTIONS (BEFORE STORAGE!)
-            // If LLM detected contradiction with sufficient confidence, emit event to frontend
-            // Require >= 0.65 to avoid false positives from local models
-            let contradiction_detected = llm_relationships.iter()
-                .any(|rel| rel.relationship_type == "contradicts" && rel.confidence.unwrap_or(0.0) >= 0.65);
-
-            // An explicit "Remember:" is stored no matter what. The contradiction modal
-            // needs the page in front to be answered; hands-free there is no page, so
-            // holding the memory for it meant the fact the user just dictated was never
-            // saved while the reply said it was (OnePlus, 2026-09-07). The user has
-            // already stated the new fact; the older memory stays and can be resolved
-            // or deleted in Memory Manager.
-            if contradiction_detected && bg_is_explicit_remember {
-                println!("[RUST BACKGROUND] ⚠️ Contradiction noted, but this is an explicit Remember — storing anyway");
-            }
-            if contradiction_detected && !bg_is_explicit_remember {
-                println!("[RUST BACKGROUND] ⚠️ CONTRADICTION DETECTED - emitting event to frontend (NOT storing yet)");
-
-                // Find the contradicting relationship
-                if let Some(contradiction) = llm_relationships.iter()
-                    .find(|rel| rel.relationship_type == "contradicts") {
-
-                    // Fetch the conflicting memory details
-                    if let Ok(Some(conflicting_memory)) = crate::memory::get_memory(&db_pool, contradiction.memory_id).await {
-                        // Prepare payload for frontend (memoryA = OLD, memoryB = NEW)
-                        let payload = serde_json::json!({
-                            "memoryA": {
-                                "id": conflicting_memory.id,
-                                "content": conflicting_memory.content,
-                                "title": conflicting_memory.title,
-                                "created_at": conflicting_memory.created_at.to_rfc3339(),
-                            },
-                            "memoryB": {
-                                "content": factual_content.clone(),
-                                "title": llm_title.clone(),
-                                "created_at": chrono::Utc::now().to_rfc3339(),
-                            },
-                            "reason": contradiction.reason,
-                            "confidence": contradiction.confidence.unwrap_or(0.75),
-                            "pending_memory": {
-                                "content": factual_content.clone(),
-                                "title": llm_title.clone(),
-                                "embedding": message_embedding.clone(),
-                                "original_text": bg_message.clone(),
-                            },
-                            "relationships": llm_relationships,
-                            "user_id": bg_user_id.clone(),
-                            "session_id": bg_session_id.clone(),
-                        });
-
-                        // Emit event to frontend to show modal
-                        bg_sink.event("contradiction-detected", payload);
-                        println!("[RUST BACKGROUND] 🔔 Contradiction event emitted - modal should appear");
-
-                        // Don't store memory yet - wait for user decision via resolve_memory_conflict_v2
-                        bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
-                        crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "contradiction").await;
-                        db_pool.close().await;
-                        return;
-                    }
-                }
-            }
-
-            // HIPAA mode: Enable ephemeral memory (8-hour expiration)
-            let _is_ephemeral = bg_containment_mode == "hipaa";
-
-            // Extract entities using NLP enhancer (no tags - entities handle everything)
-            // Note: We use LLM-generated title, NLP for entities/events
-            let message_for_nlp = factual_content.clone();
-            let (entities, event_type, event_date, namespace) = match tokio::task::spawn_blocking(move || {
-                let enhancer = crate::nlp_enhancer::NLPEnhancer::new();
-
-                // Generate namespace and detect events
-                let enhancement = enhancer.enhance(&message_for_nlp);
-
-                // Extract entities (includes both proper nouns AND common nouns)
-                let ents = enhancer.extract_entities(&message_for_nlp);
-                let entities_json = serde_json::json!(ents.iter().map(|e| {
-                    serde_json::json!({
-                        "word": e.word,
-                        "label": e.label,
-                        "score": e.score,
-                        "start": e.start,
-                        "end": e.end
-                    })
-                }).collect::<Vec<_>>());
-
-                (entities_json, enhancement.event_type, enhancement.event_date, enhancement.namespace)
-            })
-            .await {
-                Ok(result) => result,
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Failed to enhance memory: {}", e);
-                    db_pool.close().await;
-                    return;
-                }
-            };
-
-            // The decision call's own fields win over the NLP guesses when present and
-            // valid (2026-09-07): a real event date, a namespace from the known list,
-            // tags, tone, and named entities. NLP stays as the fallback.
-            let today = chrono::Utc::now().date_naive();
-            let namespace = crate::memory_extras::resolve_namespace(llm_extras.namespace.as_deref(), &namespace);
-            let event_date = crate::memory_extras::validate_event_date(llm_extras.event_date.as_deref(), &bg_message, today)
-                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
-                .or(event_date);
-            let tags = crate::memory_extras::clean_tags(llm_extras.tags.as_deref());
-            let (sentiment_label, sentiment_score) = crate::memory_extras::tone_to_sentiment(llm_extras.tone.as_deref());
-            let llm_entities = crate::memory_extras::clean_entities(llm_extras.entities.as_deref());
-
-            // Store memory in database (with LLM-generated title, NLP entities, and events!)
-            let memory_id = match crate::memory::insert_memory(
-                &db_pool,
-                llm_title.as_deref(),              // title (LLM-generated!)
-                &factual_content,                  // content (factual statements only!)
-                Some(bg_source_type),              // source_type ("hands_free" for wake-word turns)
-                Some(&bg_session_id),              // session_id
-                Some(message_embedding),           // embedding
-                None,                              // parent_scroll_id
-                None,                              // chunk_index
-                Some(&bg_user_id),                 // user_id
-                &namespace,                        // namespace (NLP-detected)
-                true,                              // is_syncable
-                false,                             // is_shareable
-                Some(entities.clone()),            // entities_detected (includes proper + common nouns!)
-                event_type.as_deref(),             // event_type (auto-detected!)
-                event_date,                        // event_date (auto-extracted!)
-                Some(&bg_message),                 // original_text (FULL original user message for context!)
-            ).await {
-                Ok(id) => {
-                    println!("[RUST BACKGROUND] ✅ Memory stored with ID: {}", id);
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
-                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "stored").await;
-                    id
-                }
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Failed to store memory: {}", e);
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
-                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "error").await;
-                    db_pool.close().await;
-                    return;
-                }
-            };
-
-            let _ = sqlx::query("UPDATE memories SET provenance_json = ? WHERE id = ?")
-                .bind(serde_json::json!({ "annotated": "at write", "by": bg_forced_backend.clone(), "requested": bg_is_explicit_remember }).to_string())
-                .bind(memory_id).execute(&db_pool).await;
-            if let Err(e) = crate::memory::set_memory_extras(&db_pool, memory_id, &tags, sentiment_label, sentiment_score).await {
-                println!("[RUST BACKGROUND] ⚠️ Could not save tags/tone: {}", e);
-            }
-            // Entities: the model's list when it gave one, else the name-finder's proper nouns.
-            let entity_rows: Vec<crate::memory_extras::EntityOut> = if !llm_entities.is_empty() {
-                llm_entities
-            } else {
-                entities.as_array().map(|arr| arr.iter().filter_map(|e| {
-                    let word = e.get("word")?.as_str()?.trim().to_string();
-                    let label = e.get("label")?.as_str().unwrap_or("").to_string();
-                    let score = e.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0);
-                    if word.chars().count() < 3 || word.starts_with("##") || score < 0.6 { return None; }
-                    let kind = if label.contains("PER") { "person" } else if label.contains("LOC") { "place" } else if label.contains("ORG") { "org" } else if word.chars().next().map_or(false, |c| c.is_uppercase()) { "thing" } else { return None; };
-                    Some(crate::memory_extras::EntityOut { name: word, kind: kind.to_string() })
-                }).collect()).unwrap_or_default()
-            };
-            match crate::memory::insert_memory_entities(&db_pool, memory_id, &entity_rows).await {
-                Ok(n) if n > 0 => println!("[RUST BACKGROUND] {} entit{} recorded", n, if n == 1 { "y" } else { "ies" }),
-                Ok(_) => {}
-                Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not save entities: {}", e),
-            }
-
-            // Store LLM-classified relationships (if any)
-            if !llm_relationships.is_empty() {
-                println!("[RUST BACKGROUND] Creating {} LLM-classified relationships...", llm_relationships.len());
-
-                for rel in &llm_relationships {
-                    // Skip "none" relationships
-                    if rel.relationship_type == "none" {
-                        continue;
-                    }
-
-                    // Create relationship in database
-                    match crate::memory::create_memory_link(
-                        &db_pool,
-                        memory_id,
-                        rel.memory_id,
-                        &rel.relationship_type,
-                        rel.confidence.unwrap_or(0.75),
-                        Some(&rel.reason),
-                        "llm",
-                    ).await {
-                        Ok(link_id) => {
-                            println!("[RUST BACKGROUND] ✅ Created {} relationship (link #{}): {} -> {}",
-                                     rel.relationship_type, link_id, memory_id, rel.memory_id);
-                        }
-                        Err(e) => {
-                            println!("[RUST BACKGROUND] ⚠️ Failed to create relationship: {}", e);
-                        }
-                    }
-                }
-
-                // Update timestamps to trigger sync
-                let relationship_count = llm_relationships.iter()
-                    .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
-                    .count();
-
-                if relationship_count > 0 {
-                    let memory_ids: Vec<i32> = llm_relationships.iter()
-                        .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
-                        .map(|r| r.memory_id)
-                        .chain(std::iter::once(memory_id))
-                        .collect();
-
-                    for mem_id in memory_ids {
-                        let _ = sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ?")
-                            .bind(mem_id)
-                            .execute(&db_pool)
-                            .await;
-                    }
-                    println!("[RUST BACKGROUND] ✅ Updated {} memory timestamps to trigger relationship sync", relationship_count + 1);
-                }
-            }
-
-            // Relationship classification complete
-            if !llm_relationships.is_empty() {
-                println!("[RUST BACKGROUND] ✅ Classified {} relationships", llm_relationships.len());
-            }
-
-            db_pool.close().await;
-            println!("[RUST BACKGROUND] 🏁 Memory processing complete");
         });
     }
  else {
@@ -2545,4 +2158,516 @@ fn extract_marker_remainder(line: &str) -> Option<String> {
         return None;
     }
     None
+}
+
+/// Everything the background memory task needs from the turn that spawned it.
+#[derive(Clone)]
+struct MemoryBg {
+    bg_message: String,
+    bg_user_id: String,
+    bg_session_id: String,
+    bg_forced_backend: String,
+    bg_source_type: &'static str,
+    bg_containment_mode: String,
+    bg_sink: std::sync::Arc<dyn crate::response_sink::ResponseSink>,
+    bg_is_api: bool,
+    bg_is_explicit_remember: bool,
+    bg_user_name: Option<String>,
+    query_entities: Vec<String>,
+}
+
+/// The background memory pipeline for one candidate fact (or, with None, for the raw
+/// message): embedding, duplicate and contradiction checks, the memory decision,
+/// relationships, storage. Was the body of the spawned task in send_message_with_memory
+/// until 2026-10-22; lifted out so the local-model flow can run it once per fact.
+async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) {
+    let MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
+        bg_sink, bg_is_api, bg_is_explicit_remember, bg_user_name: _, query_entities } = bg;
+            // Use extracted fact as content when MEMORY_EXTRACT fired; raw message otherwise.
+            // The extracted fact is a clean, focused statement — better for storage and search.
+            let factual_content = bg_extracted_text.clone().unwrap_or_else(|| bg_message.clone());
+
+            // Generate embedding FIRST (needed for duplicate check and storage)
+            let factual_clone = factual_content.clone();
+            let message_embedding = match tokio::task::spawn_blocking(move || {
+                crate::llm::local_embeddings::generate_local_embedding(&factual_clone)
+            })
+            .await {
+                Ok(Ok(embedding)) => embedding,
+                Ok(Err(e)) => {
+                    println!("[RUST BACKGROUND] ⚠️ Failed to generate embedding: {}", e);
+                    return;
+                }
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Embedding task panicked: {}", e);
+                    return;
+                }
+            };
+
+            // Emit pending indicator for Memory Manager spinner.
+            // Only fires when there is actually a memory candidate to potentially store.
+            // Local models without MEMORY_EXTRACT have no candidate and run silently.
+            let has_memory_candidate = bg_extracted_text.is_some() || bg_is_api || bg_is_explicit_remember;
+            let pending_id: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            if has_memory_candidate {
+                bg_sink.event("memory-processing-started", serde_json::json!({ "pending_id": pending_id }));
+            }
+
+            // Reconnect to database for memory storage
+            let db_url = crate::db::get_db_url();
+
+            let db_pool = match sqlx::SqlitePool::connect(&db_url).await {
+                Ok(pool) => pool,
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Failed to connect to database: {}", e);
+                    return;
+                }
+            };
+
+            // Do a BROADER search for relationship detection (more memories, lower threshold)
+            // This ensures we catch relationships even if the memory wasn't in the top 5 for conversation
+
+            let relationship_search_results = match crate::memory::hybrid_search(
+                &db_pool,
+                message_embedding.clone(),
+                query_entities.clone(),
+                Some(&bg_user_id),
+                None,  // All sessions
+                None,  // All namespaces
+                15,    // Search more memories (15 instead of 5)
+            ).await {
+                Ok(results) => results,
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Relationship search failed: {}", e);
+                    db_pool.close().await;
+                    return;
+                }
+            };
+
+            // Filter to >35% similarity — matches the hybrid search floor. The LLM handles
+            // false candidates correctly (returns NONE), so a conservative pre-filter here
+            // only causes missed relationships like niece/nephews at the same event (41%).
+            let mut similar_memories: Vec<(i32, String, Option<String>, f32)> = relationship_search_results
+                .into_iter()
+                .filter(|m| m.similarity.unwrap_or(0.0) >= 0.35)
+                .map(|m| (m.id, m.content.clone(), m.title.clone(), m.similarity.unwrap_or(0.0) as f32))
+                .collect();
+
+            // Sort by similarity (most relevant first) for relationship classification
+            // We want the MOST similar memories, not the most recent ones
+            similar_memories.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+
+            // API models handle larger candidate sets well; local 7B models degrade with more context
+            let relationship_candidate_limit = if bg_is_api { 10 } else { 6 };
+            similar_memories.truncate(relationship_candidate_limit);
+
+            if !similar_memories.is_empty() {
+                println!("[RUST BACKGROUND] Found {} similar memories (>35% similarity) for relationship classification", similar_memories.len());
+            }
+
+            // DUPLICATE CHECK: Check if this is a duplicate
+            // First check hybrid score (>98%), then pure cosine (>93%)
+            // Hybrid score of 1.0 = exact match even if pure cosine is slightly lower due to entity boosting
+
+            let mut is_duplicate = false;
+            for (mem_id, _mem_content, _mem_title, hybrid_score) in &similar_memories {
+                // Check 1: Very high hybrid score indicates duplicate (entity + semantic match)
+                if *hybrid_score > 0.98 {
+                    println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% hybrid similarity",
+                             mem_id, hybrid_score * 100.0);
+                    println!("[RUST BACKGROUND] Skipping memory storage for duplicate");
+                    is_duplicate = true;
+                    break;
+                }
+
+                // Check 2: Pure cosine similarity (lowered threshold to 0.93 to catch near-duplicates)
+                if let Ok(Some(candidate_mem)) = crate::memory::get_memory(&db_pool, *mem_id).await {
+                    if let Some(ref candidate_embedding_vec) = candidate_mem.embedding {
+                        let pure_similarity = crate::llm::local_embeddings::cosine_similarity(
+                            &message_embedding,
+                            candidate_embedding_vec
+                        );
+
+                        if pure_similarity > 0.93 {
+                            println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% pure cosine similarity",
+                                     mem_id, pure_similarity * 100.0);
+                            println!("[RUST BACKGROUND] Skipping memory storage for duplicate");
+                            is_duplicate = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if is_duplicate {
+                if has_memory_candidate {
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                }
+                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "duplicate").await;
+                db_pool.close().await;
+                return;
+            }
+
+            // Local models: only proceed when MEMORY_EXTRACT fired — that's the storage
+            // decision for local. No extracted text means nothing to store.
+            // API models: always proceed to Call 2, which makes the should_remember decision.
+            if bg_extracted_text.is_none() && !bg_is_api {
+                if has_memory_candidate {
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                }
+                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
+                db_pool.close().await;
+                return;
+            }
+
+            println!("[RUST BACKGROUND] ✅ Proceeding with relationship classification");
+
+            // Local: MEMORY_EXTRACT fired → relationships + title only (should_remember=true).
+            // API: full should_remember + relationship classification.
+            let (should_remember, llm_title, llm_relationships, llm_extras) = if !bg_is_api {
+                match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
+                    Ok((title, rels, extras)) => {
+                        println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
+                        (true, title, rels, extras)
+                    }
+                    Err(e) => {
+                        println!("[RUST BACKGROUND] ⚠️ Relationship classifier failed: {} — storing without links", e);
+                        let fallback = crate::generate_title_from_content(&factual_content);
+                        (true, Some(fallback), Vec::new(), crate::memory_extras::MemoryExtras::default())
+                    }
+                }
+            } else {
+                // API: ask_llm_about_memory_with_relationships (should_remember + relationships)
+                match crate::ask_llm_about_memory_with_relationships(
+                    &bg_message,
+                    "Background memory processing",
+                    &similar_memories,
+                    &bg_forced_backend,
+                ).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        println!("[RUST BACKGROUND] ⚠️ LLM call failed: {}", e);
+                        if !bg_forced_backend.contains("local") && !bg_forced_backend.ends_with(".gguf") {
+                            match crate::ask_llm_about_memory_with_relationships(
+                                &bg_message,
+                                "Background memory processing",
+                                &similar_memories,
+                                "local",
+                            ).await {
+                                Ok(result) => result,
+                                Err(e2) => {
+                                    println!("[RUST BACKGROUND] ⚠️ Fallback also failed: {}", e2);
+                                    (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
+                                }
+                            }
+                        } else {
+                            (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
+                        }
+                    }
+                }
+            };
+
+            // Explicit "Remember:" command overrides LLM decision — user is the authority.
+            // The title comes from the user's own words too: the classifier sees the raw
+            // query, and on a dictated "remember cohen the gate code..." it titled the
+            // memory "Gate code for Cohen" (2026-09-07). The stored content is already
+            // the text after the keyword, so the title is cut from that.
+            let (should_remember, llm_title) = if bg_is_explicit_remember {
+                if !should_remember {
+                    println!("[RUST BACKGROUND] ✅ Explicit 'Remember:' command — overriding LLM decision to store");
+                }
+                let fallback_title = factual_content.chars().take(60).collect::<String>();
+                let fallback_title = if factual_content.chars().count() > 60 {
+                    format!("{}…", fallback_title)
+                } else {
+                    fallback_title
+                };
+                (true, Some(fallback_title))
+            } else {
+                (should_remember, llm_title)
+            };
+
+            if !should_remember {
+                bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
+                db_pool.close().await;
+                return;
+            }
+
+            println!("[RUST BACKGROUND] ✅ LLM decided to remember: {:?}", llm_title);
+
+            // CHECK FOR CONTRADICTIONS (BEFORE STORAGE!)
+            // If LLM detected contradiction with sufficient confidence, emit event to frontend
+            // Require >= 0.65 to avoid false positives from local models
+            let contradiction_detected = llm_relationships.iter()
+                .any(|rel| rel.relationship_type == "contradicts" && rel.confidence.unwrap_or(0.0) >= 0.65);
+
+            // An explicit "Remember:" is stored no matter what. The contradiction modal
+            // needs the page in front to be answered; hands-free there is no page, so
+            // holding the memory for it meant the fact the user just dictated was never
+            // saved while the reply said it was (OnePlus, 2026-09-07). The user has
+            // already stated the new fact; the older memory stays and can be resolved
+            // or deleted in Memory Manager.
+            if contradiction_detected && bg_is_explicit_remember {
+                println!("[RUST BACKGROUND] ⚠️ Contradiction noted, but this is an explicit Remember — storing anyway");
+            }
+            if contradiction_detected && !bg_is_explicit_remember {
+                println!("[RUST BACKGROUND] ⚠️ CONTRADICTION DETECTED - emitting event to frontend (NOT storing yet)");
+
+                // Find the contradicting relationship
+                if let Some(contradiction) = llm_relationships.iter()
+                    .find(|rel| rel.relationship_type == "contradicts") {
+
+                    // Fetch the conflicting memory details
+                    if let Ok(Some(conflicting_memory)) = crate::memory::get_memory(&db_pool, contradiction.memory_id).await {
+                        // Prepare payload for frontend (memoryA = OLD, memoryB = NEW)
+                        let payload = serde_json::json!({
+                            "memoryA": {
+                                "id": conflicting_memory.id,
+                                "content": conflicting_memory.content,
+                                "title": conflicting_memory.title,
+                                "created_at": conflicting_memory.created_at.to_rfc3339(),
+                            },
+                            "memoryB": {
+                                "content": factual_content.clone(),
+                                "title": llm_title.clone(),
+                                "created_at": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "reason": contradiction.reason,
+                            "confidence": contradiction.confidence.unwrap_or(0.75),
+                            "pending_memory": {
+                                "content": factual_content.clone(),
+                                "title": llm_title.clone(),
+                                "embedding": message_embedding.clone(),
+                                "original_text": bg_message.clone(),
+                            },
+                            "relationships": llm_relationships,
+                            "user_id": bg_user_id.clone(),
+                            "session_id": bg_session_id.clone(),
+                        });
+
+                        // Emit event to frontend to show modal
+                        bg_sink.event("contradiction-detected", payload);
+                        println!("[RUST BACKGROUND] 🔔 Contradiction event emitted - modal should appear");
+
+                        // Don't store memory yet - wait for user decision via resolve_memory_conflict_v2
+                        bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
+                        crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "contradiction").await;
+                        db_pool.close().await;
+                        return;
+                    }
+                }
+            }
+
+            // HIPAA mode: Enable ephemeral memory (8-hour expiration)
+            let _is_ephemeral = bg_containment_mode == "hipaa";
+
+            // Extract entities using NLP enhancer (no tags - entities handle everything)
+            // Note: We use LLM-generated title, NLP for entities/events
+            let message_for_nlp = factual_content.clone();
+            let (entities, event_type, event_date, namespace) = match tokio::task::spawn_blocking(move || {
+                let enhancer = crate::nlp_enhancer::NLPEnhancer::new();
+
+                // Generate namespace and detect events
+                let enhancement = enhancer.enhance(&message_for_nlp);
+
+                // Extract entities (includes both proper nouns AND common nouns)
+                let ents = enhancer.extract_entities(&message_for_nlp);
+                let entities_json = serde_json::json!(ents.iter().map(|e| {
+                    serde_json::json!({
+                        "word": e.word,
+                        "label": e.label,
+                        "score": e.score,
+                        "start": e.start,
+                        "end": e.end
+                    })
+                }).collect::<Vec<_>>());
+
+                (entities_json, enhancement.event_type, enhancement.event_date, enhancement.namespace)
+            })
+            .await {
+                Ok(result) => result,
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Failed to enhance memory: {}", e);
+                    db_pool.close().await;
+                    return;
+                }
+            };
+
+            // The decision call's own fields win over the NLP guesses when present and
+            // valid (2026-09-07): a real event date, a namespace from the known list,
+            // tags, tone, and named entities. NLP stays as the fallback.
+            let today = chrono::Utc::now().date_naive();
+            let namespace = crate::memory_extras::resolve_namespace(llm_extras.namespace.as_deref(), &namespace);
+            let event_date = crate::memory_extras::validate_event_date(llm_extras.event_date.as_deref(), &bg_message, today)
+                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                .or(event_date);
+            let tags = crate::memory_extras::clean_tags(llm_extras.tags.as_deref());
+            let (sentiment_label, sentiment_score) = crate::memory_extras::tone_to_sentiment(llm_extras.tone.as_deref());
+            let llm_entities = crate::memory_extras::clean_entities(llm_extras.entities.as_deref());
+
+            // Store memory in database (with LLM-generated title, NLP entities, and events!)
+            let memory_id = match crate::memory::insert_memory(
+                &db_pool,
+                llm_title.as_deref(),              // title (LLM-generated!)
+                &factual_content,                  // content (factual statements only!)
+                Some(bg_source_type),              // source_type ("hands_free" for wake-word turns)
+                Some(&bg_session_id),              // session_id
+                Some(message_embedding),           // embedding
+                None,                              // parent_scroll_id
+                None,                              // chunk_index
+                Some(&bg_user_id),                 // user_id
+                &namespace,                        // namespace (NLP-detected)
+                true,                              // is_syncable
+                false,                             // is_shareable
+                Some(entities.clone()),            // entities_detected (includes proper + common nouns!)
+                event_type.as_deref(),             // event_type (auto-detected!)
+                event_date,                        // event_date (auto-extracted!)
+                Some(&bg_message),                 // original_text (FULL original user message for context!)
+            ).await {
+                Ok(id) => {
+                    println!("[RUST BACKGROUND] ✅ Memory stored with ID: {}", id);
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
+                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "stored").await;
+                    id
+                }
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Failed to store memory: {}", e);
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
+                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "error").await;
+                    db_pool.close().await;
+                    return;
+                }
+            };
+
+            let _ = sqlx::query("UPDATE memories SET provenance_json = ? WHERE id = ?")
+                .bind(serde_json::json!({ "annotated": "at write", "by": bg_forced_backend.clone(), "requested": bg_is_explicit_remember }).to_string())
+                .bind(memory_id).execute(&db_pool).await;
+            if let Err(e) = crate::memory::set_memory_extras(&db_pool, memory_id, &tags, sentiment_label, sentiment_score).await {
+                println!("[RUST BACKGROUND] ⚠️ Could not save tags/tone: {}", e);
+            }
+            // Entities: the model's list when it gave one, else the name-finder's proper nouns.
+            let entity_rows: Vec<crate::memory_extras::EntityOut> = if !llm_entities.is_empty() {
+                llm_entities
+            } else {
+                entities.as_array().map(|arr| arr.iter().filter_map(|e| {
+                    let word = e.get("word")?.as_str()?.trim().to_string();
+                    let label = e.get("label")?.as_str().unwrap_or("").to_string();
+                    let score = e.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                    if word.chars().count() < 3 || word.starts_with("##") || score < 0.6 { return None; }
+                    let kind = if label.contains("PER") { "person" } else if label.contains("LOC") { "place" } else if label.contains("ORG") { "org" } else if word.chars().next().map_or(false, |c| c.is_uppercase()) { "thing" } else { return None; };
+                    Some(crate::memory_extras::EntityOut { name: word, kind: kind.to_string() })
+                }).collect()).unwrap_or_default()
+            };
+            match crate::memory::insert_memory_entities(&db_pool, memory_id, &entity_rows).await {
+                Ok(n) if n > 0 => println!("[RUST BACKGROUND] {} entit{} recorded", n, if n == 1 { "y" } else { "ies" }),
+                Ok(_) => {}
+                Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not save entities: {}", e),
+            }
+
+            // Store LLM-classified relationships (if any)
+            if !llm_relationships.is_empty() {
+                println!("[RUST BACKGROUND] Creating {} LLM-classified relationships...", llm_relationships.len());
+
+                for rel in &llm_relationships {
+                    // Skip "none" relationships
+                    if rel.relationship_type == "none" {
+                        continue;
+                    }
+
+                    // Create relationship in database
+                    match crate::memory::create_memory_link(
+                        &db_pool,
+                        memory_id,
+                        rel.memory_id,
+                        &rel.relationship_type,
+                        rel.confidence.unwrap_or(0.75),
+                        Some(&rel.reason),
+                        "llm",
+                    ).await {
+                        Ok(link_id) => {
+                            println!("[RUST BACKGROUND] ✅ Created {} relationship (link #{}): {} -> {}",
+                                     rel.relationship_type, link_id, memory_id, rel.memory_id);
+                        }
+                        Err(e) => {
+                            println!("[RUST BACKGROUND] ⚠️ Failed to create relationship: {}", e);
+                        }
+                    }
+                }
+
+                // Update timestamps to trigger sync
+                let relationship_count = llm_relationships.iter()
+                    .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
+                    .count();
+
+                if relationship_count > 0 {
+                    let memory_ids: Vec<i32> = llm_relationships.iter()
+                        .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
+                        .map(|r| r.memory_id)
+                        .chain(std::iter::once(memory_id))
+                        .collect();
+
+                    for mem_id in memory_ids {
+                        let _ = sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ?")
+                            .bind(mem_id)
+                            .execute(&db_pool)
+                            .await;
+                    }
+                    println!("[RUST BACKGROUND] ✅ Updated {} memory timestamps to trigger relationship sync", relationship_count + 1);
+                }
+            }
+
+            // Relationship classification complete
+            if !llm_relationships.is_empty() {
+                println!("[RUST BACKGROUND] ✅ Classified {} relationships", llm_relationships.len());
+            }
+
+            db_pool.close().await;
+            println!("[RUST BACKGROUND] 🏁 Memory processing complete");
+}
+
+/// Local-model flow, step 2 (labs/local_model/PLAN.md): ask the local model, in the
+/// background and yielding to the user's turns, which personal facts the message holds.
+/// One fact per line, third person, at most three; NONE when there is nothing. Lines
+/// that share no content word with the message are dropped, as the MEMORY_EXTRACT
+/// filter does.
+async fn local_memory_facts(message: &str, backend: &str, user_name: Option<&str>) -> Vec<String> {
+    let subject = user_name.unwrap_or("User").to_string();
+    let prompt = format!(
+        "List the personal facts about {subject} in this message that are worth remembering later: name, age, family, pets, work, home, health, feelings, likes and dislikes, plans, events.\n\
+Rules: one fact per line, in the third person, starting with \"{subject}\". At most 3 lines. Only facts the message states; nothing guessed. If there is nothing worth remembering, write NONE.\n\n\
+Message: \"{message}\"",
+        subject = subject, message = message.replace('"', "'")
+    );
+    let model_path = if backend.ends_with(".gguf") { backend.to_string() } else {
+        match crate::llm::local_models::resolve_default_model_path() { Ok(p) => p, Err(e) => { println!("[RUST BACKGROUND] Local extraction: no model: {}", e); return Vec::new(); } }
+    };
+    let messages = vec![crate::llm::Message { role: "user".to_string(), content: prompt }];
+    let result = tokio::task::spawn_blocking(move || {
+        crate::llm::local_models::background_retry("Memory extraction", 3, || {
+            crate::llm::local_models::generate_with_local_model(&model_path, messages.clone(), Some(200), Some(0.1))
+        })
+    }).await;
+    let text = match result {
+        Ok(Ok(r)) => r.content,
+        Ok(Err(e)) => { println!("[RUST BACKGROUND] Local extraction failed: {}", e); return Vec::new(); }
+        Err(e) => { println!("[RUST BACKGROUND] Local extraction task failed: {}", e); return Vec::new(); }
+    };
+    let msg_words: std::collections::HashSet<String> = message.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 3).map(|w| w.to_string()).collect();
+    let mut facts = Vec::new();
+    for line in text.lines() {
+        let t = line.trim().trim_start_matches(|c: char| matches!(c, '-' | '*' | '•' | '0'..='9' | '.' | ')' | ' ')).trim();
+        if t.is_empty() || t.eq_ignore_ascii_case("none") || t.to_uppercase().starts_with("REMEMBER") { continue; }
+        if t.split_whitespace().count() < 3 { continue; }
+        let shares = t.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| w.len() > 3 && msg_words.contains(w));
+        if !shares { println!("[RUST BACKGROUND] Local extraction: dropped a fact that shares no words with the message: {}", t); continue; }
+        facts.push(t.trim_end_matches('.').to_string() + ".");
+        if facts.len() == 3 { break; }
+    }
+    println!("[RUST BACKGROUND] Local extraction: {} fact(s)", facts.len());
+    facts
 }

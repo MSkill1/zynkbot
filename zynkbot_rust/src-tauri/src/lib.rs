@@ -528,12 +528,15 @@ Return ONLY valid JSON starting with {{:
         let backend_clone = backend.to_string();
         let prompt_clone = prompt.clone();
         tokio::task::spawn_blocking(move || {
-            crate::llm::local_models::with_cached_session(&backend_clone, |sess| {
-                let messages = vec![llm::Message {
-                    role: "user".to_string(),
-                    content: prompt_clone,
-                }];
-                sess.generate(messages, Some(4096), Some(0.1), Some(RELATIONSHIP_SCHEMA))
+            // Background: steps aside for a user's message and runs again after.
+            crate::llm::local_models::background_retry("Relationship classification", 3, || {
+                crate::llm::local_models::with_cached_session(&backend_clone, |sess| {
+                    let messages = vec![llm::Message {
+                        role: "user".to_string(),
+                        content: prompt_clone.clone(),
+                    }];
+                    sess.generate(messages, Some(4096), Some(0.1), Some(RELATIONSHIP_SCHEMA))
+                })
             })
         })
         .await
@@ -889,21 +892,24 @@ async fn call_local_for_memory_decision(prompt: &str, backend: &str, json_schema
 
     let model_path_clone = model_path.clone();
     let response = tokio::task::spawn_blocking(move || {
-        if let Some(schema) = json_schema {
-            // Grammar-constrained: model physically cannot produce invalid JSON
-            llm::local_models::generate_with_local_model_constrained(
-                &model_path_clone,
-                messages,
-                schema,
-            )
-        } else {
-            llm::local_models::generate_with_local_model(
-                &model_path_clone,
-                messages,
-                Some(4096),
-                Some(0.3),
-            )
-        }
+        // Background: steps aside for a user's message and runs again after.
+        llm::local_models::background_retry("Memory decision", 3, || {
+            if let Some(schema) = json_schema {
+                // Grammar-constrained: model physically cannot produce invalid JSON
+                llm::local_models::generate_with_local_model_constrained(
+                    &model_path_clone,
+                    messages.clone(),
+                    schema,
+                )
+            } else {
+                llm::local_models::generate_with_local_model(
+                    &model_path_clone,
+                    messages.clone(),
+                    Some(4096),
+                    Some(0.3),
+                )
+            }
+        })
     })
     .await
     .map_err(|e| format!("Failed to run local model task: {}", e))?
