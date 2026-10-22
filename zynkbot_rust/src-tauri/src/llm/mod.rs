@@ -6,68 +6,10 @@ pub mod openai;
 pub mod xai;  // xAI (Grok) API - OpenAI-compatible
 pub mod local_embeddings;
 
-#[cfg(not(target_os = "android"))]
+// On-device GGUF inference on every platform, Android included (2026-10-22, branch
+// local-model). The Android stub that returned "Local models not supported on Android"
+// from every call lived here from 2026-09 until then.
 pub mod local_models;
-
-// Android stub: local GGUF LLM inference is Phase 2. Avoids scattering #[cfg]
-// throughout chat.rs and lib.rs while keeping the type system consistent.
-#[cfg(target_os = "android")]
-pub mod local_models {
-    use super::{LLMError, LLMResponse, Message};
-
-    pub struct LocalModelSession;
-
-    // `load` mirrors the desktop API; on Android nothing calls it because on-device
-    // GGUF inference is compiled out, so silence the dead-code warning rather than
-    // let every phone build print it.
-    #[allow(dead_code)]
-    impl LocalModelSession {
-        pub fn load(_path: &str) -> Result<Self, LLMError> {
-            Err(LLMError::APIError("Local models not supported on Android".to_string()))
-        }
-        pub fn generate(
-            &self,
-            _messages: Vec<Message>,
-            _max_tokens: Option<u32>,
-            _temperature: Option<f32>,
-            _json_schema: Option<&str>,
-        ) -> Result<LLMResponse, LLMError> {
-            Err(LLMError::APIError("Local models not supported on Android".to_string()))
-        }
-    }
-
-    /// Mirrors the desktop signature so call sites in chat.rs and lib.rs compile
-    /// unchanged. Added because main introduced this function and its callers
-    /// without a matching Android stub, which broke the Android build — main is
-    /// not built for Android, so nothing caught it there.
-    pub fn with_cached_session<F, R>(_model_path: &str, _f: F) -> Result<R, LLMError>
-    where
-        F: FnOnce(&LocalModelSession) -> Result<R, LLMError>,
-    {
-        Err(LLMError::APIError("Local models not supported on Android".to_string()))
-    }
-
-    pub fn resolve_default_model_path() -> Result<String, LLMError> {
-        Err(LLMError::APIError("Local models not supported on Android".to_string()))
-    }
-
-    pub fn generate_with_local_model(
-        _model_path: &str,
-        _messages: Vec<Message>,
-        _max_tokens: Option<u32>,
-        _temperature: Option<f32>,
-    ) -> Result<LLMResponse, LLMError> {
-        Err(LLMError::APIError("Local models not supported on Android".to_string()))
-    }
-
-    pub fn generate_with_local_model_constrained(
-        _model_path: &str,
-        _messages: Vec<Message>,
-        _json_schema: &str,
-    ) -> Result<LLMResponse, LLMError> {
-        Err(LLMError::APIError("Local models not supported on Android".to_string()))
-    }
-}
 
 // pub mod whisper;    // TEMPORARILY DISABLED: Conflicts with llama-cpp-2 (GGML symbols)
 

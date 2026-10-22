@@ -390,9 +390,13 @@ impl LocalModelSession {
             max_output_tokens
         );
 
-        let tokens = self.model
-            .str_to_token(&prompt, llama_cpp_2::model::AddBos::Always)
-            .map_err(|e| LLMError::RequestFailed(format!("Failed to tokenize prompt: {}", e)))?;
+        // llama-cpp-2 0.1.160 (2026-10-22): tokenisation moved to the vocab. `add_special`
+        // adds BOS only for models that want one (Qwen's template has none); `parse_special`
+        // turns the chat-template markers in the prompt into their tokens, as before.
+        let tokens = self.model.vocab().tokenize(prompt.as_bytes(), true, true);
+        if tokens.is_empty() {
+            return Err(LLMError::RequestFailed("Failed to tokenize prompt: no tokens".to_string()));
+        }
 
         println!("[Rust Local Models] Prompt: {} tokens (n_batch: {})", tokens.len(), self.n_ctx);
 
@@ -452,6 +456,7 @@ impl LocalModelSession {
         };
 
         let mut output = String::new();
+        let mut pending: Vec<u8> = Vec::new();
         let prompt_len = tokens.len();
         let mut token_count = 0;
 
@@ -459,14 +464,23 @@ impl LocalModelSession {
             let new_token_id = sampler.sample(&ctx, -1);
             sampler.accept(new_token_id);
 
-            if self.model.is_eog_token(new_token_id) {
+            if self.model.vocab().is_eog(new_token_id) {
                 break;
             }
 
-            #[allow(deprecated)]
-            match self.model.token_to_str(new_token_id, llama_cpp_2::model::Special::Plaintext) {
-                Ok(token_str) => output.push_str(&token_str),
-                Err(_) => {}
+            // A token is bytes, and one character can span two tokens. Bytes are kept until
+            // they form whole characters, so nothing is dropped (the old per-token string
+            // conversion silently lost a token whose bytes were not valid on their own).
+            pending.extend_from_slice(&self.model.vocab().token_to_piece(new_token_id, false, None));
+            match std::str::from_utf8(&pending) {
+                Ok(s) => { output.push_str(s); pending.clear(); }
+                Err(e) => {
+                    let valid = e.valid_up_to();
+                    if valid > 0 {
+                        output.push_str(std::str::from_utf8(&pending[..valid]).unwrap_or(""));
+                        pending.drain(..valid);
+                    }
+                }
             }
 
             let next_pos = prompt_len + token_count;
@@ -480,6 +494,7 @@ impl LocalModelSession {
         }
 
         println!("[Rust Local Models] ✅ Generated {} tokens", token_count);
+        if !pending.is_empty() { output.push_str(&String::from_utf8_lossy(&pending)); }
         println!("[Rust Local Models] Output length: {} chars", output.len());
         println!(
             "[Rust Local Models] Output preview: {}...",
@@ -546,4 +561,21 @@ pub fn query_local_model(model_path: &str, prompt: &str) -> Result<String, LLMEr
     )?;
 
     Ok(response.content)
+}
+
+#[cfg(test)]
+mod engine_smoke {
+    /// Loads the GGUF named by LOCAL_MODEL_PATH and asks it one thing. Ignored by default
+    /// (needs a model file and a minute of CPU); run after an engine-crate bump:
+    ///   LOCAL_MODEL_PATH=/path/model.gguf LD_LIBRARY_PATH=lib/vosk cargo test --lib engine_smoke -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn engine_smoke_generates_text() {
+        let path = std::env::var("LOCAL_MODEL_PATH").expect("LOCAL_MODEL_PATH");
+        let t0 = std::time::Instant::now();
+        let out = super::query_local_model(&path, "Reply with one short sentence: what is the capital of France?")
+            .expect("generation failed");
+        println!("[engine_smoke] {:?} -> {:?}", t0.elapsed(), out);
+        assert!(!out.trim().is_empty(), "empty reply");
+    }
 }

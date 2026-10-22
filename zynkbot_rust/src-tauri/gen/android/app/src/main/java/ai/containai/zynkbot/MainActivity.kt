@@ -1305,6 +1305,26 @@ class MainActivity : TauriActivity() {
     private fun ensureShareDir() {
         zynkShareDir()
         migrateOldShareFolder()
+        importModelFilesFromShare()
+    }
+
+    /** A model file (.gguf) placed in the Zynkbot folder is installed (2026-10-22, branch
+     *  local-model): it moves into the models folder the Rust side scans
+     *  (files/zynkbot/models/user), so the phone can run it the way the desktop runs a
+     *  file dropped into its models folder. Same filesystem, so the move is a rename. */
+    private fun importModelFilesFromShare() {
+        try {
+            val dest = File(filesDir, "zynkbot/models/user").apply { mkdirs() }
+            var moved = 0
+            for (f in zynkShareDir().listFiles() ?: emptyArray()) {
+                if (!f.isFile || !f.name.endsWith(".gguf", ignoreCase = true)) continue
+                val target = File(dest, f.name)
+                if (target.exists()) target.delete()
+                if (f.renameTo(target)) { moved++; Log.i("Zynkbot", "Model file installed from the Zynkbot folder: ${f.name} (${f.length() / 1_000_000} MB)") }
+                else Log.w("Zynkbot", "Could not move model file ${f.name} into the models folder")
+            }
+            if (moved > 0) ZynkShareProvider.markChanged(this)
+        } catch (e: Exception) { Log.w("Zynkbot", "Model import skipped: ${e.message}") }
     }
 
     /**

@@ -25,11 +25,9 @@ async fn build_custom_client(base_url: &str) -> reqwest::Client {
 }
 
 /// Can the "local" backend (or this .gguf path) actually answer on this device?
-/// Never on Android: llm/mod.rs stubs local models out there.
+/// On Android too since 2026-10-22 (the engine builds for the phone; a model file in
+/// the phone's models folder is all it takes).
 fn local_backend_usable(backend: &str) -> bool {
-    if cfg!(target_os = "android") {
-        return false;
-    }
     if backend.ends_with(".gguf") {
         return std::path::Path::new(backend).is_file();
     }
