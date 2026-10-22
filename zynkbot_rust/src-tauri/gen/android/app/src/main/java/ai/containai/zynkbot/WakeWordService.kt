@@ -76,7 +76,7 @@ class WakeWordService : Service() {
         const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
         const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers (phones with an enforcing verifier)
         const val TRIGGER_CLIPS_KEPT_UNVERIFIED = 60   // no verifier yet: keep enough to train one (Matt's took 33 real clips)
-        const val CLIPS_NEEDED_FOR_VERIFIER = 30       // real clips before "Send my wake-word clips" lights up
+        const val CLIPS_NEEDED_FOR_VERIFIER = 20       // real clips before "Send my wake-word clips" lights up: one taught set (ENROLL_CLIPS)
         // Detections on audio quieter than this are ignored. Set from the Pixel's log of
         // 2026-09-08: a real "Hey Zynk" from ~20 ft measured -31.5 dBFS; ten of the
         // twenty-two false firings that morning sat between -40 and -47. Stricter still
