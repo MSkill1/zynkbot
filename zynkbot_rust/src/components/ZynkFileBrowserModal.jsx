@@ -61,6 +61,16 @@ const isKBCompatible = (filename) => KB_TYPES.has(filename.split('.').pop().toLo
 // A model file: "→ Models" makes it usable here without taking it out of the share (2026-10-23).
 const isModelFile = (filename) => filename.toLowerCase().endsWith('.gguf');
 
+// The phone's screen stays on while any download runs (MainActivity.keepScreenOn), so the
+// app stays in front and a long model transfer is not frozen with the screen. Tracked per
+// file; released when the last one ends or fails.
+const activeDownloads = new Set();
+const holdScreen = (key, on) => {
+  if (!window.AndroidPaths?.keepScreenOn) return;
+  if (on) activeDownloads.add(key); else activeDownloads.delete(key);
+  try { window.AndroidPaths.keepScreenOn(activeDownloads.size > 0); } catch (_) {}
+};
+
 function formatBytes(bytes) {
   if (!bytes) return '';
   if (bytes < 1024) return `${bytes} B`;
@@ -202,6 +212,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     listen('zynklink:download:start', (event) => {
       const { relative_path, total_bytes } = event.payload || {};
       if (!relative_path) return;
+      holdScreen(relative_path, true);
       setDownloads(prev => ({
         ...prev,
         [relative_path]: {
@@ -266,6 +277,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     listen('zynklink:download:complete', (event) => {
       const { relative_path, total_bytes, indexed, index_error } = event.payload || {};
       if (!relative_path) return;
+      holdScreen(relative_path, false);
       setDownloads(prev => {
         const existing = prev[relative_path];
         if (!existing) return prev;
@@ -296,6 +308,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     listen('zynklink:download:cancelled', (event) => {
       const { relative_path } = event.payload || {};
       if (!relative_path) return;
+      holdScreen(relative_path, false);
       // Remove the row immediately on cancellation — the user already knows
       // they clicked cancel; no need to leave a "cancelled" status hanging
       // around. The error toast from setMessage() already conveys what happened.
@@ -361,6 +374,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
       window.dispatchEvent(new CustomEvent('zynk-models-changed'));
       setTimeout(() => setMessage(''), 5000);
     } catch (err) {
+      holdScreen(relativePath, false);
       setMessage(`✗ Failed: ${err}`);
       setTimeout(() => setMessage(''), 6000);
     }

@@ -1283,15 +1283,27 @@ async fn handle_zynklink_download(
         eprintln!("[ZynkLink] ⚠️ {} is empty on disk — the receiver will get an empty file", filename);
     }
 
-    let stream = futures::stream::unfold(file, |mut file| async move {
+    // Tell the page a transfer is being served, so the phone holds its screen on while it
+    // sends (App.jsx listens; MainActivity.keepScreenOn; 2026-10-23). The guard travels
+    // with the stream and fires "end" when the stream is dropped, whether the download
+    // finished or the connection broke.
+    fn emit_serving(name: &str) {
+        if let Ok(guard) = crate::APP_HANDLE.lock() {
+            if let Some(app) = guard.as_ref() { let _ = app.emit(name, serde_json::json!({})); }
+        }
+    }
+    struct ServingGuard;
+    impl Drop for ServingGuard { fn drop(&mut self) { emit_serving("zynklink:serving:end"); } }
+    emit_serving("zynklink:serving:start");
+    let stream = futures::stream::unfold((file, ServingGuard), |(mut file, guard)| async move {
         let mut buf = vec![0u8; 65536];
         match file.read(&mut buf).await {
             Ok(0) => None,
             Ok(n) => {
                 buf.truncate(n);
-                Some((Ok::<_, std::io::Error>(buf), file))
+                Some((Ok::<_, std::io::Error>(buf), (file, guard)))
             }
-            Err(e) => Some((Err(e), file)),
+            Err(e) => Some((Err(e), (file, guard))),
         }
     });
 

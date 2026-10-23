@@ -265,6 +265,15 @@ export default function App() {
     }).then(fn => { unlisten = fn; });
     return () => { if (unlisten) unlisten(); clearTimeout(timer); };
   }, []);
+  // The sending phone holds its screen on while it serves a ZynkLink download
+  // (MainActivity.keepScreenOn; events from zynklink.rs handle_zynklink_download).
+  useEffect(() => {
+    if (!window.AndroidPaths?.keepScreenOn) return;
+    let active = 0; let unStart, unEnd;
+    listen('zynklink:serving:start', () => { active += 1; try { window.AndroidPaths.keepScreenOn(true); } catch (_) {} }).then(fn => { unStart = fn; });
+    listen('zynklink:serving:end', () => { active = Math.max(0, active - 1); try { window.AndroidPaths.keepScreenOn(active > 0); } catch (_) {} }).then(fn => { unEnd = fn; });
+    return () => { if (unStart) unStart(); if (unEnd) unEnd(); };
+  }, []);
   // Sovereign, not Guardian: a new user's first real answer used to be an
   // occasional hard block from a demo-grade classifier, which is a bad first
   // impression for a safety layer that exists to be shown off, not to actually

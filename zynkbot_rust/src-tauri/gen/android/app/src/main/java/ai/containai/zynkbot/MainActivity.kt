@@ -356,6 +356,17 @@ class MainActivity : TauriActivity() {
             return true
         }
 
+        /** Hold the screen on while a large ZynkLink transfer runs, either direction, so the
+         *  app stays in front and the transfer is not frozen with the screen (2026-10-23: a
+         *  2.5 GB model transfer died when the phones went dark). Released when it ends. */
+        @JavascriptInterface
+        fun keepScreenOn(on: Boolean) {
+            runOnUiThread {
+                val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                if (on) window.addFlags(flag) else window.clearFlags(flag)
+            }
+        }
+
         @JavascriptInterface
         fun getShareDir(): String {
             return try {
