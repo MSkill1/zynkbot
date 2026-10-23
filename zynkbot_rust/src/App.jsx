@@ -232,6 +232,7 @@ export default function App() {
     <>Everything stays on your device. Your memories and conversations never leave unless you choose to back them up.</>,
     <>Include "<strong>Zynkbot</strong>" in your question to ask about its own features — e.g. "Zynkbot, how does Ensemble mode work?"</>,
     <>The <strong>mic button</strong> lets you dictate your message — transcribed locally on-device, no internet needed.</>,
+    <>Use Zynkbot as a <strong>memo pad</strong>: dictate with the mic, then tap <strong>Copy</strong> by the text box. No need to send.</>,
   ];
   const [tipIdx, setTipIdx] = useState(() => Math.floor(Math.random() * TIPS.length));
   const [editingMessageId, setEditingMessageId] = useState(null);
