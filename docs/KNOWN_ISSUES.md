@@ -76,7 +76,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ### KI-098 — The desktop build with `--features cuda` no longer links after the engine upgrade (open)
 **Status:** Open, found 2026-10-23 starting the desktop dev app on `memory-types` (same engine as `local-model`). The app runs without the feature; desktop local models then use the CPU.
 **Description:** Since llama-cpp-2 moved to 0.1.160 (for the Android build of the engine, `local-model` 2026-10-21), the CUDA objects it compiles (`mmq-instance-*.cu.o`) are built without position-independent code, and rust-lld refuses them: `relocation R_X86_64_PC32 cannot be used against symbol 'stderr'; recompile with -fPIC`. The desktop had not been rebuilt with the feature since the upgrade; the Oct 17 build still ran.
-**Fix:** Not yet. Likely the sys crate's CMake flags for CUDA need `CMAKE_POSITION_INDEPENDENT_CODE=ON` (or the `cuda` feature needs the newer crate's own flag); to try when the desktop GPU path matters again.
+**Fix:** The flag above. The C++ side of the engine already builds position-independent; only the CUDA kernels (`.cu` files) did not, and the toolkit reads `CUDAFLAGS` from the environment at configure time.
 
 ### KI-083 — Windows: the settings file was ignored at startup once a local model was selected (fixed)
 **Status:** Fixed on `sync-rebuild` 2026-10-06 (`env_file.rs`). Values that need it are written in quotes, and the file is read line by line so one unreadable line no longer discards the rest. The startup log says how many settings loaded and names any line it could not read.

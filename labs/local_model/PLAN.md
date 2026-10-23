@@ -178,3 +178,23 @@ Every change: the same two messages on the same phone, cold and warm — a short
 and the "favourite breakfast" memory message — with `Prompt read in`, `Generated`,
 `Local model inference` and `Total request time` from the log, and whether anything was
 killed for memory.
+
+## Four-type relationship scheme — bench, 2026-10-23 (branch `memory-types`)
+
+Types reduced to `updates` / `contradicts` / `related` / `none` (stored: plus `resolves`), 44 cases
+(10 updates, 5 contradicts, 21 related, 8 none). Relationships only, `MEMORY_BENCH_SKIP_EXTRACTION=1`.
+
+| Prompt variant | Anthropic | Qwen3-4B Q4_K_M | 4B by type (updates / contradicts / related / none) |
+|---|---|---|---|
+| Four types, definitions only | 43/44 | 32/44 | 9/10 · 4/5 · 17/21 · 2/8 |
+| + five worked examples (ZYNK_REL_FEWSHOT) | — | 30/44 | 9/10 · 4/5 · 14/21 · 3/8 |
+| + "if the best answer is none, say none" (tried, removed) | — | 31/44 | 9/10 · 4/5 · 16/21 · 2/8 |
+
+Reading: the scheme is right (the strong model gets every real update and both traps). The 4B's
+two habits are structural, not prompt-fixable from here: it will not say "none" (six of eight
+unrelated pairs become `related`), and it over-reaches for `updates` on four `related` pairs
+(a sister visiting from where she lives). Worked examples made the second habit worse; the
+"say none" line changed nothing and was removed (Matt: wasted space). Hence the rule shipped in `filter_local_links`: the on-device
+model's `updates` becomes `contradicts`, so the conflict card asks. Its loose `related` links
+pollute recall but do no other harm; the fine-tuning track is the lever for both habits.
+Reports: `~/Documents/Zynk_related/memory_bench/four_types*/`.

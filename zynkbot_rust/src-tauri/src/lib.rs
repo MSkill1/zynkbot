@@ -489,7 +489,7 @@ RELATIONSHIP TYPES (pick the first that fits, top to bottom):
 - "updates": The new fact REPLACES an older state of the same thing, and the wording signals the change ("moved", "now", "switched to", "new", "no longer", "quit", "used to", "retired"). "Matt lives in Rutland" + "Matt moved to Burlington" = updates. The old memory is kept as history.
 - "contradicts": Same attribute, different values, with NO sign that one came after the other — or opposite claims on the same topic. "Matt's cat is Milo" + "Matt's cat is Louie" = contradicts (a second cat or a mistake; the user is asked).
 - "related": The same specific subject (the same person, pet, place, thing or habit), adding to it or confirming it. "Matt has a cat" + "Matt's cat is named Louie" = related.
-- "none": Different things. Use "none" whenever they do not share a specific subject — two facts about the same user are NOT related just because they are both about the user, and a shared broad topic (both about food, both about family, both hobbies) is not enough. If the best answer is "none", say "none"; it is a normal answer, not a failure.
+- "none": Different things. Use "none" whenever they do not share a specific subject — two facts about the same user are NOT related just because they are both about the user, and a shared broad topic (both about food, both about family, both hobbies) is not enough.
 
 ⚠️ High semantic similarity does NOT mean agreement — opposite claims = contradiction.
 
@@ -1195,7 +1195,7 @@ RELATIONSHIP TYPES (pick the first that fits, top to bottom):
 - "updates": The new memory REPLACES an older state of the same thing, and the wording signals the change ("moved", "now", "switched to", "new", "no longer", "quit", "used to", "retired"). "Matt lives in Rutland" + "Matt moved to Burlington" = updates. The old memory is kept as history.
 - "contradicts": Same attribute, different values, with NO sign that one came after the other — or opposite claims on the same topic. "My dog is Max" + "My dog is Wendy" = contradicts (a second dog or a mistake; the user is asked).
 - "related": The same specific subject (the same person, pet, place, thing or habit), adding to it or confirming it. "Matt has a cat" + "Matt's cat is named Louie" = related.
-- "none": Different things. Use "none" whenever they do not share a specific subject — two facts about the same user are NOT related just because they are both about the user, and a shared broad topic (both about food, both about family, both hobbies) is not enough. If the best answer is "none", say "none"; it is a normal answer, not a failure.
+- "none": Different things. Use "none" whenever they do not share a specific subject — two facts about the same user are NOT related just because they are both about the user, and a shared broad topic (both about food, both about family, both hobbies) is not enough.
 
 ⚠️ CONTRADICTION DETECTION RULES (HIGHEST PRIORITY):
 1. Focus on the MAIN CLAIM, not descriptive phrases

@@ -49,3 +49,9 @@ rustflags = ["-C", "target-feature=+fp16"]
 # 2026-10-22: "we have to draw a line somewhere"). Without it the engine is built for the
 # 2016 baseline and read a 910-token prompt at about 10 tokens/s on a Pixel 10 Pro XL.
 GGML_CPU_ARM_ARCH = "armv8.2-a+dotprod+fp16"
+# Desktop GPU builds (--features cuda): the engine's CUDA kernels must be position-independent
+# to link into the app; the C++ side already is. Without this, llama-cpp-2 0.1.160 fails at
+# link time with "relocation R_X86_64_PC32 cannot be used against symbol 'stderr'" (KI-098,
+# 2026-10-23). The toolkit reads CUDAFLAGS at configure time, so a changed value needs
+# `cargo clean -p llama-cpp-sys-2` once. Harmless for Android, which has no CUDA.
+CUDAFLAGS = "-Xcompiler -fPIC"
