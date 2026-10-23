@@ -43,12 +43,12 @@ rustflags = ["-C", "target-cpu=x86-64"]
 rustflags = ["-C", "target-feature=+fp16"]
 
 [env]
-# llama.cpp CPU kernels for Android. llama-cpp-sys-2's build script reads this in its
-# arm64-v8a branch only and passes it to ggml as the -march: ARMv8.2 with the dot-product
-# and half-precision instructions, i.e. phones and tablets from about 2018 on (Matt,
-# 2026-10-22: "we have to draw a line somewhere"). Without it the engine is built for the
-# 2016 baseline and read a 910-token prompt at about 10 tokens/s on a Pixel 10 Pro XL.
-GGML_CPU_ARM_ARCH = "armv8.2-a+dotprod+fp16"
+# llama.cpp CPU kernels for Android. Until 2026-10-23 this pinned GGML_CPU_ARM_ARCH to
+# "armv8.2-a+dotprod+fp16" (phones from about 2018 on; the 2016 baseline read a 910-token
+# prompt at about 10 tokens/s on a Pixel 10 Pro XL). With the engine's backends built as
+# loadable modules (Cargo.toml, `dynamic-backends`), ggml builds every ARM CPU variant and
+# picks the best one for the phone at start-up, and refuses the pin ("Cannot use both
+# GGML_CPU_ARM_ARCH and GGML_CPU_ALL_VARIANTS"), so the pin is gone.
 # Desktop GPU builds (--features cuda): the engine's CUDA kernels must be position-independent
 # to link into the app; the C++ side already is. Without this, llama-cpp-2 0.1.160 fails at
 # link time with "relocation R_X86_64_PC32 cannot be used against symbol 'stderr'" (KI-098,

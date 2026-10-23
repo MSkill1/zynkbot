@@ -267,7 +267,32 @@ fn build_simple_prompt(messages: &[Message]) -> String {
 }
 
 // llama.cpp backend — initialized once, lives for the process lifetime
+/// Android: the folder the APK's native libraries were loaded from, read from this
+/// process's memory map (the line that maps libapp_lib.so). The engine's backend modules
+/// sit beside it (build.rs copies them into jniLibs).
+#[cfg(target_os = "android")]
+fn native_library_dir() -> Option<std::path::PathBuf> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    maps.lines()
+        .find(|l| l.contains("libapp_lib.so"))
+        .and_then(|l| l.split_whitespace().last())
+        .map(std::path::PathBuf::from)
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+}
+
 static BACKEND: Lazy<LlamaBackend> = Lazy::new(|| {
+    // Android: load the engine's backend modules before init (2026-10-23). The CPU
+    // modules always load; the OpenCL module loads only where the phone's driver is
+    // present and visible, so the same APK uses the GPU where there is one and the CPU
+    // elsewhere. llama.cpp logs each module it loads ("load_backend: ...").
+    #[cfg(target_os = "android")]
+    match native_library_dir() {
+        Some(dir) => {
+            println!("[Rust Local Models] Loading engine backends from {}", dir.display());
+            llama_cpp_2::llama_backend::load_backends_from_path(&dir);
+        }
+        None => println!("[Rust Local Models] ⚠️ Could not find the native library folder; engine backends not loaded"),
+    }
     let mut backend = LlamaBackend::init().unwrap_or_else(|e| panic!("Failed to initialize llama.cpp backend: {e}"));
     backend.void_logs();
     backend

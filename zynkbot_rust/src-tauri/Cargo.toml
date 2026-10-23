@@ -192,7 +192,11 @@ opt-level = 3
 [target.'cfg(target_os = "android")'.dependencies]
 # OpenCL GPU backend for the local model (2026-10-23). The engine offloads layers when the
 # phone's OpenCL driver reports a device and runs on the CPU otherwise.
-llama-cpp-2 = { version = "0.1.160", features = ["opencl"] }
+# `dynamic-backends`: the engine's backends (CPU variants, OpenCL) are separate .so files
+# loaded at start-up from the app's native library folder (local_models.rs); a phone whose
+# OpenCL driver is missing or hidden simply runs on the CPU instead of refusing to start
+# (the OnePlus did refuse, 2026-10-23, with the backend linked in directly).
+llama-cpp-2 = { version = "0.1.160", features = ["opencl", "dynamic-backends"] }
 openssl = { version = "0.10", features = ["vendored"] }
 # Matches the version Tauri's Android layer already pulls in (see Cargo.lock) so
 # there is a single jni in the tree. Used by android_jni.rs for the ZynkCore door.
