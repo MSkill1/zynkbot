@@ -94,21 +94,18 @@ CREATE TABLE memory_links (
     CONSTRAINT memory_links_check CHECK (source_memory_id <> target_memory_id),
     CONSTRAINT memory_links_confidence_check CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CONSTRAINT memory_links_relation_type_check CHECK (
-        relation_type IN ('supports', 'contradicts', 'elaborates',
-                          'reminds_of', 'caused_by', 'quotes', 'resolves')
+        relation_type IN ('contradicts', 'updates', 'related', 'resolves')  -- since 0022
     ),
     UNIQUE (source_memory_id, target_memory_id, relation_type)
 );
 ```
 
-**Relation Types:**
-- `supports` / `supported_by` - One memory supports another
-- `contradicts` / `contradicted_by` - Conflicting information
-- `elaborates` / `elaborated_by` - Adds detail to another memory
-- `reminds_of` - Associative connection
-- `caused_by` / `causes` - Causal relationship
-- `quotes` / `quoted_by` - One memory quotes another
-- `resolves` / `resolved_by` - Conflict resolution
+**Relation Types** (migration 0022, 2026-10-23 — the table was rebuilt to change this CHECK):
+- `related` - Same specific subject; pulled into recall. Absorbed `supports`, `elaborates`, `caused_by`
+- `contradicts` / `contradicted_by` - Conflicting information; the user is asked
+- `updates` / `updated_by` - The source memory replaces the target; the target gets `memories.temporal_status = 'superseded'`
+- `resolves` / `resolved_by` - The user's explanation of a resolved conflict
+- Dropped: `reminds_of`, `quotes`, `mentions` (rows deleted by 0022)
 
 **Indexes:**
 - `idx_memory_links_source` - B-tree on source_memory_id
@@ -145,11 +142,8 @@ CREATE VIEW memory_relationships AS
   SELECT target_memory_id AS memory_id,
          source_memory_id AS related_memory_id,
          CASE relation_type
-           WHEN 'supports' THEN 'supported_by'
            WHEN 'contradicts' THEN 'contradicted_by'
-           WHEN 'elaborates' THEN 'elaborated_by'
-           WHEN 'caused_by' THEN 'causes'
-           WHEN 'quotes' THEN 'quoted_by'
+           WHEN 'updates' THEN 'updated_by'
            WHEN 'resolves' THEN 'resolved_by'
            ELSE relation_type
          END AS relation_type,

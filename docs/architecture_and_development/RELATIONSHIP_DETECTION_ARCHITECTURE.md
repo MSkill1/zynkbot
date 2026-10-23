@@ -32,9 +32,9 @@ Duplicate Check (pre-LLM)
 ┌──────────────────────────────────────────────┐
 │ LLM RELATIONSHIP CLASSIFIER (Primary)        │
 │ Backend: anthropic/openai/xai/local         │
-│ Classifies: contradicts, supports,          │
-│            elaborates, caused_by,           │
-│            reminds_of, none                 │
+│ Classifies: updates, contradicts,           │
+│            related, none                    │
+│            (four types since 0022, 2026-10-23)│
 └──────────────────────────────────────────────┘
     ↓
 Did LLM return relationships?
@@ -83,13 +83,14 @@ Contradiction detected?
 }
 ```
 
-**Relationship Types:**
-- `contradicts`: Direct contradiction (e.g., "I believe X" vs "I don't believe X")
-- `supports`: Reinforces existing memory
-- `elaborates`: Adds detail to existing memory
-- `caused_by`: Causal relationship
-- `reminds_of`: Loosely related
-- `none`: No meaningful relationship
+**Relationship Types** (reduced to these by migration 0022, 2026-10-23; each one makes the app do something different):
+- `updates`: The new fact replaces an older state of the same thing ("moved", "now", "no longer"). The old memory is marked `superseded`, leaves recall and stays in Memory Manager as history with a "Make current again" button.
+- `contradicts`: Same attribute, different values, with no sign of which came later. The user is asked (conflict card).
+- `related`: Same specific subject, adding to it or confirming it. Pulled into recall through one-hop graph traversal. Replaces the old `supports`, `elaborates` and `caused_by`, which behaved identically.
+- `none`: Different things. The old `reminds_of` (loosely connected) is gone: it was the one type that did harm in the memory bench, and semantic search already finds loosely related memories at recall time.
+- `resolves` is stored too, but only written by the conflict card when the user explains how both memories are true.
+
+**On-device model:** its `updates` answers are turned into `contradicts` before storage (`filter_local_links`), so the conflict card asks the user instead of the phone's model replacing a memory on its own. On the bench Qwen3-4B called four `related` pairs `updates`; the cloud models got all ten real updates right and keep the automatic path. The card's "Keep new memory" has done the `updates` thing since 2026-10-23: the old memory is marked `superseded` and kept as history, never deleted.
 
 **Contradiction Detection Rules:**
 1. Focus on MAIN CLAIM, not descriptive phrases

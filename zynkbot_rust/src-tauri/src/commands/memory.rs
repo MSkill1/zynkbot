@@ -23,7 +23,7 @@ pub async fn list_memories(
             is_syncable, is_shareable,
             event_type, event_date,
             link_count, is_ephemeral, expires_at,
-            entities_detected, original_text, tags,
+            entities_detected, original_text, tags, temporal_status,
             NULL as similarity
         FROM memories
         WHERE TRUE
@@ -176,6 +176,27 @@ pub async fn update_memory(
         }
         Err(e) => Err(format!("Failed to update memory: {}", e)),
     }
+}
+
+/// Make a replaced memory current again (Memory Manager "Make current again", 2026-10-23).
+/// Clears temporal_status and removes the "updates" link(s) that pointed at it, so both
+/// memories stand as current; the user can still delete either one.
+#[tauri::command]
+pub async fn restore_memory(memory_id: i32) -> Result<bool, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url)
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    memory::set_temporal_status(&pool, memory_id, None)
+        .await
+        .map_err(|e| format!("Failed to restore memory: {}", e))?;
+    sqlx::query("DELETE FROM memory_links WHERE relation_type = 'updates' AND target_memory_id = ?")
+        .bind(memory_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to remove the replacing link: {}", e))?;
+    println!("[Rust] restore_memory: memory #{} is current again", memory_id);
+    Ok(true)
 }
 
 /// Delete a memory and propagate deletion to synced devices
@@ -1057,45 +1078,26 @@ pub async fn resolve_memory_conflict_v2(
         }
 
         "keep_new" => {
-            println!("[Rust] Resolution: Keep NEW memory, delete OLD #{}", conflicting_memory_id);
-
-            // Compute hash before deleting so we can propagate to sync peers
-            let content_hash: Option<String> = sqlx::query_scalar::<_, String>(
-                "SELECT content FROM memories WHERE id = ?"
-            )
-            .bind(conflicting_memory_id)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|content| {
-                use sha2::{Digest, Sha256};
-                format!("{:x}", Sha256::digest(content.as_bytes()))
-            });
-
-            sqlx::query("DELETE FROM memories WHERE id = ?")
-                .bind(conflicting_memory_id)
-                .execute(&pool)
-                .await
-                .map_err(|e| format!("Failed to delete old memory: {}", e))?;
-
-            println!("[Rust] ✅ Deleted old memory #{}", conflicting_memory_id);
-
-            // Propagate deletion to sync peers so they don't restore the old memory.
-            // In the background: each unreachable peer costs a 10 s timeout, and the
-            // user was sitting in the conflict dialog for all of them (2026-09-20).
-            // A peer that misses this catches up on its next sync.
-            if let Some(hash) = content_hash {
-                tokio::spawn(async move {
-                    let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
-                    if let Some(service) = zynksync_service.as_ref() {
-                        // Peers learn of it from the outbox; the tombstone stays local.
-                        let _ = service.record_tombstones(&[hash]).await;
-                    }
-                });
-            }
+            // Since 2026-10-23 "keep new" is an update, not a deletion: the old memory is
+            // marked replaced and kept as history (out of recall, "REPLACED" in Memory
+            // Manager, "Make current again" to undo), linked from the new one with
+            // "updates". Only the user deletes memories, and only in Memory Manager.
+            println!("[Rust] Resolution: Keep NEW memory, OLD #{} becomes history", conflicting_memory_id);
 
             let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
+
+            memory::set_temporal_status(&pool, conflicting_memory_id, Some("superseded"))
+                .await
+                .map_err(|e| format!("Failed to mark the old memory as replaced: {}", e))?;
+            let _ = memory::create_memory_link(
+                &pool,
+                new_memory_id,
+                conflicting_memory_id,
+                "updates",
+                0.95,
+                Some("The user chose the new memory on the conflict card"),
+                "user",
+            ).await;
 
             for rel in relationships.iter().filter(|r| r.memory_id != conflicting_memory_id && r.relationship_type != "none") {
                 let _ = memory::create_memory_link(
@@ -1115,7 +1117,7 @@ pub async fn resolve_memory_conflict_v2(
                 "success": true,
                 "action": "kept_new",
                 "new_memory_id": new_memory_id,
-                "message": "Old memory deleted, new memory stored"
+                "message": "New memory stored; the old one is kept as history"
             }))
         }
 

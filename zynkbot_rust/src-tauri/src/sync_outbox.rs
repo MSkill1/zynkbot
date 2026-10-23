@@ -916,6 +916,9 @@ async fn apply_link(tx: &mut Transaction<'_, Sqlite>, link: &SyncLink) -> Result
         return Ok(false);
     };
     if source == target { return Ok(false); }
+    // An older device may still name a type from before migration 0022; a type that is no
+    // longer stored is consumed without a row.
+    let Some(relation_type) = crate::memory::normalize_relation_type(&link.relation_type) else { return Ok(true); };
     let existing: Option<i64> = sqlx::query_scalar("SELECT id FROM memory_links WHERE sync_id = ?")
         .bind(&link.sync_id).fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: find link: {}", e))?;
     let existing = match existing {
@@ -923,7 +926,7 @@ async fn apply_link(tx: &mut Transaction<'_, Sqlite>, link: &SyncLink) -> Result
         None => {
             let by_key: Option<i64> = sqlx::query_scalar(
                 "SELECT id FROM memory_links WHERE source_memory_id = ? AND target_memory_id = ? AND relation_type = ? LIMIT 1")
-                .bind(source).bind(target).bind(&link.relation_type)
+                .bind(source).bind(target).bind(relation_type)
                 .fetch_optional(&mut **tx).await.map_err(|e| format!("outbox: find link by key: {}", e))?;
             if let Some(id) = by_key {
                 sqlx::query("UPDATE memory_links SET sync_id = ? WHERE id = ?").bind(&link.sync_id).bind(id)
@@ -942,7 +945,7 @@ async fn apply_link(tx: &mut Transaction<'_, Sqlite>, link: &SyncLink) -> Result
             sqlx::query(
                 "INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence, notes, created_by, created_at, sync_id)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-                .bind(source).bind(target).bind(&link.relation_type).bind(link.confidence).bind(&link.notes)
+                .bind(source).bind(target).bind(relation_type).bind(link.confidence).bind(&link.notes)
                 .bind(&link.created_by).bind(&link.created_at).bind(&link.sync_id)
                 .execute(&mut **tx).await.map_err(|e| format!("outbox: insert link: {}", e))?;
         }

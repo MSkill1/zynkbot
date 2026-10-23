@@ -5,17 +5,11 @@ import "../styles/MemoryGraphModal.css";
 
 // Relationship type colors - MOVED OUTSIDE component to prevent infinite loop
 const relationColors = {
-  'supports': '#50fa7b',       // Green
-  'supported_by': '#50fa7b',
+  'related': '#8be9fd',        // Cyan
   'contradicts': '#ff5555',    // Red
   'contradicted_by': '#ff5555',
-  'elaborates': '#8be9fd',     // Cyan
-  'elaborated_by': '#8be9fd',
-  'reminds_of': '#f1fa8c',     // Yellow
-  'caused_by': '#bd93f9',      // Purple
-  'causes': '#bd93f9',
-  'quotes': '#ffb86c',         // Orange
-  'quoted_by': '#ffb86c',
+  'updates': '#50fa7b',        // Green
+  'updated_by': '#50fa7b',
   'resolves': '#ff79c6',       // Pink
   'resolved_by': '#ff79c6',
 };
@@ -248,24 +242,16 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
           </button>
           <div className="graph-legend">
             <div className="legend-item">
-              <div className="legend-color" style={{ background: '#50fa7b' }}></div>
-              <span>Supports</span>
+              <div className="legend-color" style={{ background: '#8be9fd' }}></div>
+              <span>Related</span>
             </div>
             <div className="legend-item">
               <div className="legend-color" style={{ background: '#ff5555' }}></div>
               <span>Contradicts</span>
             </div>
             <div className="legend-item">
-              <div className="legend-color" style={{ background: '#8be9fd' }}></div>
-              <span>Elaborates</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-color" style={{ background: '#f1fa8c' }}></div>
-              <span>Reminds Of</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-color" style={{ background: '#bd93f9' }}></div>
-              <span>Causes</span>
+              <div className="legend-color" style={{ background: '#50fa7b' }}></div>
+              <span>Updates</span>
             </div>
             <div className="legend-item">
               <div className="legend-color" style={{ background: '#ff79c6' }}></div>

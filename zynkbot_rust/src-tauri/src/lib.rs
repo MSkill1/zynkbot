@@ -486,12 +486,10 @@ SIMILAR EXISTING MEMORIES:
 {}
 
 RELATIONSHIP TYPES (pick the first that fits, top to bottom):
-- "contradicts": Same attribute, different values — or opposite claims on the same topic.
-- "elaborates": The new fact ADDS a detail the existing memory did not have (a name, a date, a place, a number, a reason). "Matt has a cat" + "Matt's cat is named Louie" = elaborates.
-- "supports": The new fact says the SAME thing again with NO new detail — a restatement or a confirmation. "Matt prefers tea" + "Matt likes tea more than coffee" = supports. If anything new is added, it is "elaborates", not "supports".
-- "caused_by": The new fact describes a cause of the existing memory's effect.
-- "reminds_of": Different facts about the same topic or the same person, loosely connected.
-- "none": The two facts are about different things. Use "none" whenever they do not share a subject, person, place or topic — two facts about the same user are NOT related just because they are both about the user.
+- "updates": The new fact REPLACES an older state of the same thing, and the wording signals the change ("moved", "now", "switched to", "new", "no longer", "quit", "used to", "retired"). "Matt lives in Rutland" + "Matt moved to Burlington" = updates. The old memory is kept as history.
+- "contradicts": Same attribute, different values, with NO sign that one came after the other — or opposite claims on the same topic. "Matt's cat is Milo" + "Matt's cat is Louie" = contradicts (a second cat or a mistake; the user is asked).
+- "related": The same specific subject (the same person, pet, place, thing or habit), adding to it or confirming it. "Matt has a cat" + "Matt's cat is named Louie" = related.
+- "none": Different things. Use "none" whenever they do not share a specific subject — two facts about the same user are NOT related just because they are both about the user, and a shared broad topic (both about food, both about family, both hobbies) is not enough. If the best answer is "none", say "none"; it is a normal answer, not a failure.
 
 ⚠️ High semantic similarity does NOT mean agreement — opposite claims = contradiction.
 
@@ -503,7 +501,7 @@ Return ONLY valid JSON starting with {{:
   "relationships": [
     {{
       "memory_id": 123,
-      "relationship_type": "contradicts|supports|elaborates|caused_by|reminds_of|none",
+      "relationship_type": "contradicts|updates|related|none",
       "reason": "Brief explanation",
       "confidence": 0.95
     }}
@@ -1092,7 +1090,7 @@ const EXTRAS_SCHEMA: &str = r#"{
 pub struct RelationshipClassification {
     #[serde(deserialize_with = "deserialize_memory_id")]
     memory_id: i32,
-    relationship_type: String,  // "contradicts", "supports", "elaborates", "caused_by", "reminds_of", "none"
+    relationship_type: String,  // "contradicts", "updates", "related", "none" (migration 0022)
     reason: String,
     confidence: Option<f32>,  // 0.0-1.0 confidence score
 }
@@ -1111,6 +1109,36 @@ pub(crate) const LOCAL_LINK_CONFIDENCE_FLOOR: f32 = 0.0;
 pub(crate) fn apply_link_floor(rels: Vec<RelationshipClassification>, floor: f32) -> Vec<RelationshipClassification> {
     rels.into_iter()
         .filter(|r| r.relationship_type == "none" || r.confidence.map_or(true, |c| c >= floor))
+        .collect()
+}
+
+/// Link types an on-device model's answer never stores. Empty since the type scheme of
+/// migration 0022 (2026-10-23): before it, "reminds_of" was listed here because all three
+/// of Qwen3-4B's wrong links in the memory bench were "reminds_of" between unrelated
+/// facts, and a wrong link keeps doing damage because graph traversal pulls the linked
+/// memory into later prompts. "reminds_of" no longer exists; the bench on the new scheme
+/// decides whether "related" from the on-device model needs the same treatment.
+pub(crate) const LOCAL_DROPPED_LINK_TYPES: &[&str] = &[];
+
+/// Everything an on-device model's relationship answer must pass before storage: the
+/// confidence floor, the dropped-types list, and "updates" turned into "contradicts" so
+/// the conflict card asks the user instead of the phone's model replacing a memory on
+/// its own. On the four-type bench (2026-10-23) Qwen3-4B called four "related" pairs
+/// "updates" (a sister visiting from where she lives, a flight on Thursday "replacing"
+/// a trip this week); each would silently have marked a true memory as replaced. The
+/// cloud models, which got all ten real updates and both traps right, keep the
+/// automatic path. Matt: "it proposes, you dispose."
+pub(crate) fn filter_local_links(rels: Vec<RelationshipClassification>) -> Vec<RelationshipClassification> {
+    apply_link_floor(rels, LOCAL_LINK_CONFIDENCE_FLOOR)
+        .into_iter()
+        .filter(|r| !LOCAL_DROPPED_LINK_TYPES.contains(&r.relationship_type.as_str()))
+        .map(|mut r| {
+            if r.relationship_type == "updates" {
+                r.relationship_type = "contradicts".to_string();
+                r.reason = format!("Possibly an update: {}", r.reason);
+            }
+            r
+        })
         .collect()
 }
 
@@ -1163,13 +1191,11 @@ TASK:
 2. If yes, generate a concise, descriptive title (max 50 characters)
 3. For EACH similar memory above, classify the relationship:
 
-RELATIONSHIP TYPES (in priority order):
-- "contradicts": Direct contradiction (e.g., "I believe X" vs "I don't believe X", "My dog is Max" vs "My dog is Wendy")
-- "elaborates": The new memory ADDS a detail the existing one did not have (a name, a date, a place, a number, a reason). "Matt has a cat" + "Matt's cat is named Louie" = elaborates.
-- "supports": The new memory says the SAME thing again with NO new detail — a restatement or a confirmation. If anything new is added, it is "elaborates", not "supports".
-- "caused_by": This memory describes a cause of the existing memory's effect
-- "reminds_of": Different facts about the same topic or the same person, loosely connected
-- "none": The two memories are about different things. Use "none" whenever they do not share a subject, person, place or topic — two facts about the same user are NOT related just because they are both about the user.
+RELATIONSHIP TYPES (pick the first that fits, top to bottom):
+- "updates": The new memory REPLACES an older state of the same thing, and the wording signals the change ("moved", "now", "switched to", "new", "no longer", "quit", "used to", "retired"). "Matt lives in Rutland" + "Matt moved to Burlington" = updates. The old memory is kept as history.
+- "contradicts": Same attribute, different values, with NO sign that one came after the other — or opposite claims on the same topic. "My dog is Max" + "My dog is Wendy" = contradicts (a second dog or a mistake; the user is asked).
+- "related": The same specific subject (the same person, pet, place, thing or habit), adding to it or confirming it. "Matt has a cat" + "Matt's cat is named Louie" = related.
+- "none": Different things. Use "none" whenever they do not share a specific subject — two facts about the same user are NOT related just because they are both about the user, and a shared broad topic (both about food, both about family, both hobbies) is not enough. If the best answer is "none", say "none"; it is a normal answer, not a failure.
 
 ⚠️ CONTRADICTION DETECTION RULES (HIGHEST PRIORITY):
 1. Focus on the MAIN CLAIM, not descriptive phrases
@@ -1256,7 +1282,7 @@ OUTPUT FORMAT:
   "relationships": [
     {{
       "memory_id": 123,
-      "relationship_type": "contradicts|supports|elaborates|caused_by|reminds_of|none",
+      "relationship_type": "contradicts|updates|related|none",
       "reason": "Brief explanation of the relationship",
       "confidence": 0.95
     }}
@@ -2569,6 +2595,7 @@ pub fn run() {
             commands::memory::find_memory_source,
             commands::memory::update_memory,
             commands::memory::delete_memory,
+            commands::memory::restore_memory,
             commands::memory::get_memory,
             // Onboarding
             commands::onboarding::store_onboarding_response,
@@ -2794,6 +2821,14 @@ mod link_floor_tests {
         let out = apply_link_floor(vec![rel("reminds_of", Some(0.4)), rel("elaborates", Some(0.9)), rel("supports", Some(0.7))], 0.7);
         let kinds: Vec<&str> = out.iter().map(|r| r.relationship_type.as_str()).collect();
         assert_eq!(kinds, vec!["elaborates", "supports"]);
+    }
+    #[test]
+    fn on_device_links_pass_the_dropped_types_list_and_updates_become_a_question() {
+        let out = filter_local_links(vec![rel("related", Some(0.92)), rel("updates", Some(0.9)), rel("contradicts", None), rel("none", Some(0.5))]);
+        let kinds: Vec<&str> = out.iter().map(|r| r.relationship_type.as_str()).collect();
+        let kept: Vec<&str> = ["related", "contradicts", "contradicts", "none"].into_iter().filter(|t| !LOCAL_DROPPED_LINK_TYPES.contains(t)).collect();
+        assert_eq!(kinds, kept);
+        assert!(out[1].reason.starts_with("Possibly an update"));
     }
     #[test]
     fn none_and_unscored_links_pass_through() {

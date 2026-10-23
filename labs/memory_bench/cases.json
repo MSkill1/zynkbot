@@ -760,7 +760,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "contradicts"
+    "type": "updates"
    }
   },
   {
@@ -775,7 +775,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "contradicts"
+    "type": "updates"
    }
   },
   {
@@ -820,7 +820,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "contradicts"
+    "type": "related"
    }
   },
   {
@@ -850,7 +850,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -865,7 +865,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "related"
    }
   },
   {
@@ -880,7 +880,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -895,7 +895,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "related"
    }
   },
   {
@@ -910,7 +910,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -925,7 +925,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -940,7 +940,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -955,7 +955,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -970,7 +970,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -985,7 +985,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -1000,7 +1000,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -1015,7 +1015,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -1030,7 +1030,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -1045,7 +1045,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "elaborates"
+    "type": "related"
    }
   },
   {
@@ -1060,7 +1060,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "reminds_of"
+    "type": "none"
    }
   },
   {
@@ -1075,7 +1075,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "reminds_of"
+    "type": "none"
    }
   },
   {
@@ -1090,7 +1090,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "reminds_of"
+    "type": "none"
    }
   },
   {
@@ -1105,7 +1105,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "reminds_of"
+    "type": "none"
    }
   },
   {
@@ -1180,7 +1180,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "related"
    }
   },
   {
@@ -1195,7 +1195,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "related"
    }
   },
   {
@@ -1210,7 +1210,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "related"
    }
   },
   {
@@ -1225,7 +1225,157 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "supports"
+    "type": "related"
+   }
+  },
+  {
+   "id": "r35",
+   "new_fact": "Matt moved to Burlington last month.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt lives in Rutland.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r36",
+   "new_fact": "Matt's doctor switched him from lisinopril to losartan.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt takes lisinopril for his blood pressure.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r37",
+   "new_fact": "Matt just bought a Subaru Outback.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt drives a Ford F-150.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r38",
+   "new_fact": "Matt retired from the post office last spring.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt works at the post office.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r39",
+   "new_fact": "Matt's dog Max passed away in June.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a dog named Max.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r40",
+   "new_fact": "Matt now takes his coffee black.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt takes two sugars in his coffee.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r41",
+   "new_fact": "Matt switched from Verizon to T-Mobile.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt's phone is on Verizon.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r42",
+   "new_fact": "Matt used to play tennis every Saturday but stopped after his knee surgery.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt plays tennis every Saturday.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r43",
+   "new_fact": "Matt has a second cat named Pepper.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a cat named Louie.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r44",
+   "new_fact": "Matt's sister Janet is visiting from Arizona next week.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt's sister Janet lives in Arizona.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
    }
   }
  ]

@@ -721,14 +721,14 @@ fn b22_a_memory_link_travels_and_dies_with_its_memory() {
         b.pair_with(&a).await;
         let dog = a.add_memory("Max is my dog").await;
         let park = a.add_memory("Max likes the park").await;
-        crate::memory::create_memory_link(&a.pool, dog, park, "elaborates", 0.9, Some("same dog"), "test").await.expect("link");
+        crate::memory::create_memory_link(&a.pool, dog, park, "related", 0.9, Some("same dog"), "test").await.expect("link");
         a.sync_with(&b).await;
 
         let on_phone: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT s.content, t.content, l.relation_type FROM memory_links l
              JOIN memories s ON s.id = l.source_memory_id JOIN memories t ON t.id = l.target_memory_id")
             .fetch_all(&b.pool).await.unwrap();
-        assert_eq!(on_phone, vec![("Max is my dog".to_string(), "Max likes the park".to_string(), "elaborates".to_string())], "the link did not arrive between the right memories");
+        assert_eq!(on_phone, vec![("Max is my dog".to_string(), "Max likes the park".to_string(), "related".to_string())], "the link did not arrive between the right memories");
 
         a.svc.record_tombstones(&[crate::sync_outbox::content_hash("Max likes the park")]).await.unwrap();
         sqlx::query("DELETE FROM memories WHERE id = ?").bind(park).execute(&a.pool).await.unwrap();

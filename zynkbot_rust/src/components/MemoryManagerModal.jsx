@@ -335,6 +335,21 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   };
 
   // Delete relationship
+  // A replaced memory becomes current again; both memories then stand (2026-10-23).
+  const handleMakeCurrent = async (memoryId) => {
+    try {
+      await invoke('restore_memory', { memoryId });
+      await fetchMemories();
+      setSelectedMemory(prev => (prev && prev.id === memoryId) ? { ...prev, temporal_status: null } : prev);
+      if (onMemoriesChanged) {
+        onMemoriesChanged();
+      }
+    } catch (error) {
+      console.error('Failed to restore memory:', error);
+      alert(`Error restoring memory: ${error}`);
+    }
+  };
+
   const handleDeleteRelationship = async (linkId) => {
     if (!await confirmDialog('Are you sure you want to delete this relationship?')) {
       return;
@@ -856,6 +871,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       <span style={{ background: '#bd93f9', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', flexShrink: 0 }}>
                         {mem.namespace.toUpperCase()}
                       </span>
+                      {mem.temporal_status === 'superseded' && (
+                        <span title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
+                          REPLACED
+                        </span>
+                      )}
                       <span style={{ color: '#6272a4', fontSize: '0.75rem', flex: 1 }}>
                         {new Date(mem.created_at).toLocaleDateString()}
                       </span>
@@ -1246,6 +1266,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                             <span className="memory-namespace-badge">
                               {mem.namespace.toUpperCase()}
                             </span>
+                            {mem.temporal_status === 'superseded' && (
+                              <span className="memory-namespace-badge" title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a' }}>
+                                REPLACED
+                              </span>
+                            )}
                           </div>
                           <span className="memory-date">
                             {new Date(mem.created_at).toLocaleDateString()}
@@ -1370,6 +1395,14 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     <div className="detail-row">
                       <strong>Source:</strong> {selectedMemory.source_type || 'N/A'}
                     </div>
+                    {selectedMemory.temporal_status === 'superseded' && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> replaced by a newer memory. Kept as history and left out of recall.{' '}
+                        <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }}>
+                          Make current again
+                        </button>
+                      </div>
+                    )}
                     {selectedMemory.session_id && onOpenConversation && (
                       <div className="detail-row">
                         <button
@@ -1470,12 +1503,9 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                             onChange={(e) => handleUpdateRelationType(rel.id, e.target.value)}
                             title="Change relationship type"
                           >
-                            <option value="supports">supports</option>
+                            <option value="related">related</option>
                             <option value="contradicts">contradicts</option>
-                            <option value="elaborates">elaborates</option>
-                            <option value="reminds_of">reminds_of</option>
-                            <option value="caused_by">caused_by</option>
-                            <option value="quotes">quotes</option>
+                            <option value="updates">updates</option>
                             <option value="resolves">resolves</option>
                           </select>
                           <span className="relationship-direction">

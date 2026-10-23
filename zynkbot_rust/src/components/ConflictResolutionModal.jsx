@@ -120,7 +120,7 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                 />
                 <span className="option-label">
                   <strong>Keep new memory</strong>
-                  <span className="option-description">Discard the older memory — the new statement replaces it</span>
+                  <span className="option-description">The new statement replaces the older memory, which is kept as history and can be made current again in Memory Manager</span>
                 </span>
               </label>
 

@@ -351,7 +351,7 @@ async fn o17_a_link_queues_an_insert_an_update_and_a_delete_named_by_its_own_syn
     let a = add_memory(&pool, "Max is my dog").await;
     let b = add_memory(&pool, "Max likes the park").await;
     clear_outbox(&pool).await;
-    sqlx::query("INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence) VALUES (?, ?, 'elaborates', 0.9)")
+    sqlx::query("INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence) VALUES (?, ?, 'related', 0.9)")
         .bind(a).bind(b).execute(&pool).await.unwrap();
     let link_sync_id: String = sqlx::query_scalar("SELECT sync_id FROM memory_links").fetch_one(&pool).await.unwrap();
     sqlx::query("UPDATE memory_links SET confidence = 0.5").execute(&pool).await.unwrap();
@@ -408,4 +408,42 @@ async fn migrations_0020_and_0021_queue_the_deletions_and_forget_the_inbox() {
         ("hash:aa".to_string(), "delete".to_string(), Some("2026-10-05T10:00:00.000Z".to_string())),
         ("hash:bb".to_string(), "delete".to_string(), Some("2026-10-07T10:00:00.000Z".to_string())),
     ]);
+}
+
+/// Migration 0022 rebuilds memory_links around four types: the old "supports" /
+/// "elaborates" / "caused_by" become "related" (strongest of a pair kept), "reminds_of"
+/// and friends are deleted, link_count is recomputed, the CHECK accepts only the new
+/// names, and nothing is queued for sync while it happens.
+#[tokio::test]
+async fn migration_0022_collapses_relationship_types() {
+    let pool = pool_with_migrations_below(22).await;
+    for i in 1..=3 {
+        sqlx::query("INSERT INTO memories (id, title, content, user_id, namespace) VALUES (?, 'm', ?, 'u', 'personal')")
+            .bind(i).bind(format!("memory {}", i)).execute(&pool).await.unwrap();
+    }
+    for (s, t, ty, conf) in [(1, 2, "supports", 0.6), (1, 2, "elaborates", 0.9), (2, 3, "reminds_of", 0.9), (1, 3, "contradicts", 0.8), (3, 1, "caused_by", 0.7)] {
+        sqlx::query("INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence) VALUES (?, ?, ?, ?)")
+            .bind(s).bind(t).bind(ty).bind(conf).execute(&pool).await.unwrap();
+    }
+    sqlx::query("DELETE FROM sync_outbox").execute(&pool).await.unwrap();
+
+    let m = sqlx::migrate!("./migrations");
+    let mig = m.iter().find(|m| m.version == 22).expect("0022 missing");
+    sqlx::raw_sql(&mig.sql).execute(&pool).await.expect("0022 failed");
+
+    let links: Vec<(i64, i64, String, f64)> = sqlx::query_as("SELECT source_memory_id, target_memory_id, relation_type, confidence FROM memory_links ORDER BY source_memory_id, target_memory_id")
+        .fetch_all(&pool).await.unwrap();
+    assert_eq!(links, vec![(1, 2, "related".into(), 0.9), (1, 3, "contradicts".into(), 0.8), (3, 1, "related".into(), 0.7)]);
+    let counts: Vec<(i64,)> = sqlx::query_as("SELECT link_count FROM memories ORDER BY id").fetch_all(&pool).await.unwrap();
+    assert_eq!(counts, vec![(3,), (1,), (2,)]);
+    assert!(outbox(&pool).await.is_empty(), "the rebuild must not queue sync rows");
+    let suppressed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_suppress").fetch_one(&pool).await.unwrap();
+    assert_eq!(suppressed, 0);
+    let rejected = sqlx::query("INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type) VALUES (2, 3, 'reminds_of')").execute(&pool).await;
+    assert!(rejected.is_err(), "old type names are no longer accepted");
+    sqlx::query("INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type) VALUES (2, 3, 'updates')").execute(&pool).await.expect("new type accepted");
+    let queued: Vec<_> = outbox(&pool).await.into_iter().filter(|r| r.0 == "memory_links").collect();
+    assert_eq!(queued.len(), 1, "a normal insert after the rebuild still syncs: {:?}", queued);
+    let incoming: Vec<(String,)> = sqlx::query_as("SELECT relation_type FROM memory_relationships WHERE memory_id = 3 AND direction = 'incoming' ORDER BY relation_type").fetch_all(&pool).await.unwrap();
+    assert_eq!(incoming, vec![("contradicted_by".to_string(),), ("updated_by".to_string(),)]);
 }

@@ -49,6 +49,11 @@ pub struct Memory {
     /// JSON array of lowercase topic words from the decision call (migration 0011).
     #[sqlx(default)]
     pub tags: Option<String>,
+    /// NULL for a current memory; "superseded" once an "updates" link replaced it with a
+    /// newer memory (migration 0022, 2026-10-23). A superseded memory leaves recall and
+    /// stays visible in Memory Manager as history, with a way back.
+    #[sqlx(default)]
+    pub temporal_status: Option<String>,
     #[sqlx(default)]
     pub similarity: Option<f64>,
 }
@@ -199,7 +204,7 @@ async fn fetch_memories_by_ids(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
                 is_syncable, is_shareable, event_type, event_date,
-                link_count, is_ephemeral, expires_at, entities_detected, original_text
+                link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE id IN ({})",
         placeholders
     );
@@ -327,7 +332,8 @@ pub async fn hybrid_search(
     // Step 1: fetch candidates that have an embedding or entity data
     let mut sql = String::from(
         "SELECT id, embedding, entities_detected FROM memories \
-         WHERE (embedding IS NOT NULL OR (entities_detected IS NOT NULL AND entities_detected != '[]'))",
+         WHERE (embedding IS NOT NULL OR (entities_detected IS NOT NULL AND entities_detected != '[]')) \
+         AND (temporal_status IS NULL OR temporal_status != 'superseded')",
     );
     // Exclude system memories EXCEPT when explicitly searching the system user.
     // Zynkbot system-doc queries pass user_id = "system"; without this guard the
@@ -431,7 +437,7 @@ pub async fn list_memories(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
                 is_syncable, is_shareable, event_type, event_date,
-                link_count, is_ephemeral, expires_at, entities_detected, original_text
+                link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE user_id != 'system'",
     );
 
@@ -469,7 +475,7 @@ pub async fn get_memory(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
                 is_syncable, is_shareable, event_type, event_date,
-                link_count, is_ephemeral, expires_at, entities_detected, original_text
+                link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE id = ?",
     )
     .bind(memory_id)
@@ -610,6 +616,35 @@ pub async fn get_memory_links(
     .await
 }
 
+/// The relationship types the app stores (migration 0022, 2026-10-23). Each one makes
+/// the app do something different: "contradicts" asks the user, "updates" replaces an
+/// older memory and keeps it as history, "related" pulls the linked memory into recall,
+/// "resolves" is the user's own explanation of a settled conflict.
+pub const RELATION_TYPES: [&str; 4] = ["contradicts", "updates", "related", "resolves"];
+
+/// The stored name for a relationship type, including the names used before 0022 (an
+/// older device may still send them). `None` for a type that is no longer stored.
+pub fn normalize_relation_type(t: &str) -> Option<&'static str> {
+    match t {
+        "contradicts" => Some("contradicts"),
+        "updates" => Some("updates"),
+        "related" | "supports" | "elaborates" | "caused_by" => Some("related"),
+        "resolves" => Some("resolves"),
+        _ => None,
+    }
+}
+
+/// Mark a memory as replaced by a newer one (`Some("superseded")`) or current again
+/// (`None`). Bumps updated_at so the change syncs.
+pub async fn set_temporal_status(pool: &SqlitePool, memory_id: i32, status: Option<&str>) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE memories SET temporal_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(status)
+        .bind(memory_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Create a new memory link (semantic relationship).
 #[allow(dead_code)]
 pub async fn create_memory_link(
@@ -621,14 +656,10 @@ pub async fn create_memory_link(
     notes: Option<&str>,
     created_by: &str,
 ) -> Result<i32, sqlx::Error> {
-    let valid_types = [
-        "supports", "contradicts", "elaborates", "reminds_of",
-        "caused_by", "quotes", "resolves", "mentions",
-    ];
-    if !valid_types.contains(&relation_type) {
+    if !RELATION_TYPES.contains(&relation_type) {
         return Err(sqlx::Error::Protocol(format!(
             "Invalid relation_type: {}. Must be one of: {:?}",
-            relation_type, valid_types
+            relation_type, RELATION_TYPES
         )));
     }
     if !(0.0..=1.0).contains(&confidence) {

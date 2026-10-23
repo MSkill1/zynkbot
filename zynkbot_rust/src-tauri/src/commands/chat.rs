@@ -455,8 +455,8 @@ pub async fn generate_reply(
     };
 
     // ONE-HOP GRAPH TRAVERSAL: For each recalled memory, pull in all directly
-    // linked memories regardless of relation type (supports, reminds_of, elaborates,
-    // contradicts, resolves, related, etc.). Links are sorted by confidence so the
+    // linked memories regardless of relation type (related, contradicts, updates,
+    // resolves), skipping memories a newer one has replaced. Links are sorted by confidence so the
     // strongest associations are included first. Capped at 8 hop-memories total to
     // bound prompt size; build_memory_context enforces the final per-model limit.
     const MAX_HOP_MEMORIES: usize = 8;
@@ -488,6 +488,9 @@ pub async fn generate_reply(
                         continue;
                     }
                     if let Ok(Some(linked_mem)) = crate::memory::get_memory(&db_pool, linked_id).await {
+                        if linked_mem.temporal_status.as_deref() == Some("superseded") {
+                            continue;
+                        }
                         if already_included_content.contains(&linked_mem.content) {
                             continue;
                         }
@@ -2348,15 +2351,17 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
 
             // Local: MEMORY_EXTRACT fired → relationships + title only (should_remember=true).
             // API: full should_remember + relationship classification.
+            // On-device model: its links go through the floor and the dropped-types list
+            // (lib.rs LOCAL_LINK_CONFIDENCE_FLOOR / LOCAL_DROPPED_LINK_TYPES, memory bench
+            // 2026-10-22/23) and are tagged "local_llm" so they can be found and reviewed later.
+            let bg_on_device = bg_forced_backend.ends_with(".gguf") || bg_forced_backend.to_lowercase().contains("local");
+            let link_created_by = if bg_on_device { "local_llm" } else { "llm" };
             let (should_remember, llm_title, llm_relationships, llm_extras) = if !bg_is_api {
                 match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
                     Ok((title, rels, extras)) => {
-                        // On-device model: drop links it is not sure of (lib.rs
-                        // LOCAL_LINK_CONFIDENCE_FLOOR, from the memory bench 2026-10-22).
-                        let on_device = bg_forced_backend.ends_with(".gguf") || bg_forced_backend.to_lowercase().contains("local");
                         let before = rels.len();
-                        let rels = if on_device { crate::apply_link_floor(rels, crate::LOCAL_LINK_CONFIDENCE_FLOOR) } else { rels };
-                        if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} low-confidence link(s) from the local model", before - rels.len()); }
+                        let rels = if bg_on_device { crate::filter_local_links(rels) } else { rels };
+                        if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} link(s) from the local model (floor / dropped types)", before - rels.len()); }
                         println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
                         (true, title, rels, extras)
                     }
@@ -2613,7 +2618,7 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
                         &rel.relationship_type,
                         rel.confidence.unwrap_or(0.75),
                         Some(&rel.reason),
-                        "llm",
+                        link_created_by,
                     ).await {
                         Ok(link_id) => {
                             println!("[RUST BACKGROUND] ✅ Created {} relationship (link #{}): {} -> {}",
@@ -2621,6 +2626,19 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
                         }
                         Err(e) => {
                             println!("[RUST BACKGROUND] ⚠️ Failed to create relationship: {}", e);
+                        }
+                    }
+
+                    // "updates": the new memory replaces the older state of the same thing.
+                    // The older memory leaves recall and stays as history; Memory Manager
+                    // shows it as replaced with a way back (migration 0022, 2026-10-23).
+                    if rel.relationship_type == "updates" {
+                        match crate::memory::set_temporal_status(&db_pool, rel.memory_id, Some("superseded")).await {
+                            Ok(()) => {
+                                println!("[RUST BACKGROUND] 🔁 Memory #{} replaces #{}; the older one is kept as history", memory_id, rel.memory_id);
+                                bg_sink.event("memory-superseded", serde_json::json!({ "new_memory_id": memory_id, "old_memory_id": rel.memory_id }));
+                            }
+                            Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not mark memory #{} as replaced: {}", rel.memory_id, e),
                         }
                     }
                 }
