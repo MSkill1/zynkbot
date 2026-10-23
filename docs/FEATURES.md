@@ -446,7 +446,7 @@ Automatically detects when new information contradicts existing memories.
 3. **Contradiction Resolution Modal** appears
 4. User chooses:
    - Keep old memory (discard new)
-   - Keep new memory (the old one is kept as history, out of recall, and can be made current again)
+   - Keep new memory (the old one is kept as history, out of recall, and can be brought back with "Undo replacement")
    - Not a contradiction (both are true and unrelated — removes the contradiction edge)
    - Accept the contradiction (keeps both with the contradiction edge intact)
    - Resolve with explanation (stores an explanation memory linked to both via `resolves` edges)

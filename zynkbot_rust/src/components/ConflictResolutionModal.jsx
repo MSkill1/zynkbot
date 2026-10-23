@@ -124,7 +124,7 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                 />
                 <span className="option-label">
                   <strong>{isUpdate ? 'Yes, the new one replaces it' : 'Keep new memory'}</strong>
-                  <span className="option-description">The new statement replaces the older memory, which is kept as history and can be made current again in Memory Manager</span>
+                  <span className="option-description">The new statement replaces the older memory, which is kept as history; "Undo replacement" in Memory Manager brings it back</span>
                 </span>
               </label>
 
