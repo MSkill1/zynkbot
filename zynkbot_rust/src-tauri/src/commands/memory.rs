@@ -1149,7 +1149,14 @@ pub async fn resolve_memory_conflict_v2(
         }
 
         "keep_both" => {
-            println!("[Rust] Resolution: Accept contradiction — keeping both memories");
+            // When the card was the "Is this an update?" form (the local model's "updates"
+            // turned into a question, reason "Possibly an update…"), "keep both" means the
+            // two are about the same thing and both stand: a "related" link, not a
+            // contradiction (2026-10-23).
+            let was_update_question = relationships.iter()
+                .any(|r| r.memory_id == conflicting_memory_id && r.reason.starts_with("Possibly an update"));
+            let link_type = if was_update_question { "related" } else { "contradicts" };
+            println!("[Rust] Resolution: keep both memories, linked as {}", link_type);
 
             let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
 
@@ -1157,14 +1164,14 @@ pub async fn resolve_memory_conflict_v2(
                 &pool,
                 new_memory_id,
                 conflicting_memory_id,
-                "contradicts",
+                link_type,
                 0.95,
                 Some("user_acknowledged"),
                 "user",
             ).await
-            .map_err(|e| format!("Failed to create contradiction link: {}", e))?;
+            .map_err(|e| format!("Failed to create {} link: {}", link_type, e))?;
 
-            println!("[Rust] ✅ Created contradicts relationship: {} <-> {}", new_memory_id, conflicting_memory_id);
+            println!("[Rust] ✅ Created {} relationship: {} <-> {}", link_type, new_memory_id, conflicting_memory_id);
 
             for rel in relationships.iter().filter(|r| r.relationship_type != "contradicts" && r.relationship_type != "none") {
                 let _ = memory::create_memory_link(

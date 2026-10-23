@@ -9,6 +9,10 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
   if (!isOpen || !conflict) return null;
 
   const { memoryA, memoryB, sharedEntities } = conflict;
+  // On a phone the local model's "updates" answers arrive as a question for the user,
+  // with the reason prefixed "Possibly an update" (lib.rs filter_local_links, 2026-10-23).
+  // The same card then asks the real question instead of calling it a contradiction.
+  const isUpdate = typeof conflict.reason === 'string' && conflict.reason.startsWith('Possibly an update');
 
   if (!memoryA || !memoryB) return null;
 
@@ -55,17 +59,17 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
       <div className="modal-content conflict-resolution">
         <button className="modal-close" onClick={handleCancel}>×</button>
 
-        <h2>⚠️ Possible Conflict Detected</h2>
+        <h2>{isUpdate ? '🔁 Is this an update?' : '⚠️ Possible Conflict Detected'}</h2>
         <p className="conflict-subtitle">
-          Two memories may contradict each other
+          {isUpdate ? 'The new statement may replace an older memory' : 'Two memories may contradict each other'}
           {sharedEntities && sharedEntities.length > 0 && <> about <strong>{sharedEntities.join(", ")}</strong></>}.
-          Choose how to resolve it.
+          {isUpdate ? ' Say which it is.' : ' Choose how to resolve it.'}
         </p>
 
         <div className="conflict-layout">
           {/* Left column: memory boxes */}
           <div className="conflict-left">
-            <h3>Conflicting Memories</h3>
+            <h3>{isUpdate ? 'Older and newer' : 'Conflicting Memories'}</h3>
             <div className="conflict-memories">
               <div className="conflict-memory memory-a">
                 <div className="memory-header">
@@ -104,8 +108,8 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                   onChange={() => handleOptionChange(keepOldValue)}
                 />
                 <span className="option-label">
-                  <strong>Keep old memory #{oldMemory.id}</strong>
-                  <span className="option-description">Discard the new statement — the older memory is correct</span>
+                  <strong>{isUpdate ? 'No, the old memory still stands' : `Keep old memory #${oldMemory.id}`}</strong>
+                  <span className="option-description">{isUpdate ? 'Drop the new statement' : 'Discard the new statement — the older memory is correct'}</span>
                 </span>
               </label>
 
@@ -119,7 +123,7 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                   onChange={() => handleOptionChange(keepNewValue)}
                 />
                 <span className="option-label">
-                  <strong>Keep new memory</strong>
+                  <strong>{isUpdate ? 'Yes, the new one replaces it' : 'Keep new memory'}</strong>
                   <span className="option-description">The new statement replaces the older memory, which is kept as history and can be made current again in Memory Manager</span>
                 </span>
               </label>
@@ -134,8 +138,8 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                   onChange={() => handleOptionChange("not_a_contradiction")}
                 />
                 <span className="option-label">
-                  <strong>Not a contradiction</strong>
-                  <span className="option-description">Both are true and unrelated — keep both, remove the contradiction edge</span>
+                  <strong>{isUpdate ? 'Not related' : 'Not a contradiction'}</strong>
+                  <span className="option-description">{isUpdate ? 'Keep the new memory with no link to the old one' : 'Both are true and unrelated — keep both, remove the contradiction edge'}</span>
                 </span>
               </label>
 
@@ -149,8 +153,8 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                   onChange={() => handleOptionChange("keep_both")}
                 />
                 <span className="option-label">
-                  <strong>Accept the contradiction</strong>
-                  <span className="option-description">Keep both memories with the contradiction edge intact</span>
+                  <strong>{isUpdate ? 'No, keep both as they are' : 'Accept the contradiction'}</strong>
+                  <span className="option-description">{isUpdate ? 'Both stay current, linked as related' : 'Keep both memories with the contradiction edge intact'}</span>
                 </span>
               </label>
 
