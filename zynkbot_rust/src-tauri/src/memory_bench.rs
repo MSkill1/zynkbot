@@ -28,7 +28,7 @@ struct ExpectedRel { memory_id: i32, #[serde(rename = "type")] kind: String }
 #[derive(Serialize, Default)]
 struct ExtractionResult { id: String, raw: String, facts: Vec<String>, found: usize, missed: usize, invented: usize, junk: usize, seconds: f32, error: Option<String> }
 #[derive(Serialize, Default)]
-struct RelationshipResult { id: String, expected: String, got: String, correct: bool, seconds: f32, error: Option<String> }
+struct RelationshipResult { id: String, expected: String, got: String, confidence: Option<f32>, correct: bool, seconds: f32, error: Option<String> }
 #[derive(Serialize)]
 struct Report { backend: String, date: String, extraction: Vec<ExtractionResult>, relationships: Vec<RelationshipResult>, summary: Summary }
 #[derive(Serialize, Default, Clone)]
@@ -79,7 +79,8 @@ async fn memory_bench() {
         let mut sm = Summary::default();
         let t_all = std::time::Instant::now();
 
-        for c in &cases.extraction {
+        let skip_extraction = std::env::var("MEMORY_BENCH_SKIP_EXTRACTION").is_ok();
+        for c in cases.extraction.iter().filter(|_| !skip_extraction) {
             let prompt = crate::commands::chat::local_facts_prompt(&c.message, &cases.subject);
             let t = std::time::Instant::now();
             let mut r = ExtractionResult { id: c.id.clone(), ..Default::default() };
@@ -118,7 +119,9 @@ async fn memory_bench() {
             sm.relationship_cases += 1;
             match crate::ask_llm_for_relationships(&c.new_fact, &similar, backend).await {
                 Ok((_title, rels, _extras)) => {
-                    let got = rels.iter().find(|x| x.memory_id() == c.expected.memory_id).map(|x| x.relationship_type().to_string()).unwrap_or_else(|| "none".to_string());
+                    let hit = rels.iter().find(|x| x.memory_id() == c.expected.memory_id);
+                    let got = hit.map(|x| x.relationship_type().to_string()).unwrap_or_else(|| "none".to_string());
+                    r.confidence = hit.and_then(|x| x.confidence());
                     r.got = got.clone();
                     r.correct = got.eq_ignore_ascii_case(&c.expected.kind);
                     if r.correct { sm.relationships_correct += 1; }
@@ -130,6 +133,23 @@ async fn memory_bench() {
             report.relationships.push(r);
         }
 
+        // Confidence floor sweep: how many relationship cases would be right if every link
+        // under the floor were treated as "none"? Shows whether a floor helps the local
+        // model's habit of linking unrelated facts without costing the real links.
+        print!("    floor sweep (correct of {}):", report.relationships.len());
+        for floor in [0.0f32, 0.5, 0.6, 0.7, 0.8, 0.9] {
+            let ok = report.relationships.iter().filter(|r| {
+                let got = if r.got != "none" && r.confidence.map_or(false, |c| c < floor) { "none" } else { r.got.as_str() };
+                got.eq_ignore_ascii_case(&r.expected)
+            }).count();
+            print!("  {:.1}→{}", floor, ok);
+        }
+        println!();
+        let floored = report.relationships.iter().filter(|r| {
+            let got = if r.got != "none" && r.confidence.map_or(false, |c| c < crate::LOCAL_LINK_CONFIDENCE_FLOOR) { "none" } else { r.got.as_str() };
+            got.eq_ignore_ascii_case(&r.expected)
+        }).count();
+        println!("    with the app's floor ({:.2}) for on-device models: {} correct", crate::LOCAL_LINK_CONFIDENCE_FLOOR, floored);
         sm.seconds = t_all.elapsed().as_secs_f32();
         println!("--- {} summary: facts found {}/{}, invented {}, junk on {}/{} no-fact messages, relationships {}/{} correct, errors {}, {:.0}s",
             short_name(backend), sm.found, sm.expected_facts, sm.invented, sm.junk, sm.cases_without_facts, sm.relationships_correct, sm.relationship_cases, sm.errors, sm.seconds);

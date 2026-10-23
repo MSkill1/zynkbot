@@ -149,6 +149,20 @@ for every model (fixed in round 2). Decision from the numbers: Qwen3-4B is the m
 model on the phone; the 2B is for chat speed only; Gemma 4 needs an extraction-prompt
 change before it can be judged.
 
+### Confidence floor: measured and not adopted (2026-10-22 evening)
+
+Sweep on the 4B's 34 relationship cases: floor 0.0→25 correct, 0.5→25, 0.6→25, 0.7→25,
+0.8→25, 0.9→27. The model reports 0.85–0.98 on every link, wrong ones included; the three
+links it invented between unrelated facts came at 0.85, 0.85, 0.92, and its correct
+"reminds of" links at 0.92. A floor at 0.9 gains two and sits on top of the real links.
+Conclusion: the 4B's confidence carries no information, so the floor is left at 0.0
+(mechanism and tests kept). What would address the "links unrelated facts" habit: the
+links it invents are all "reminds of", the loosest type, and graph traversal pulls linked
+memories into later prompts, so a wrong "reminds of" pollutes recall (the Spanish test
+phrases recalled for a dessert question). Option for Matt: do not store "reminds of" from
+the on-device model (loses 4 correct weak links on the bench, removes 3 wrong ones; the
+wrong ones cost more than the weak ones are worth).
+
 ## Seen on 2026-10-22 and not yet addressed
 
 - A web-search turn is two model passes. The second one carried the fetched pages: 1,851

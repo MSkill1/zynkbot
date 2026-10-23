@@ -2351,6 +2351,12 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
             let (should_remember, llm_title, llm_relationships, llm_extras) = if !bg_is_api {
                 match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
                     Ok((title, rels, extras)) => {
+                        // On-device model: drop links it is not sure of (lib.rs
+                        // LOCAL_LINK_CONFIDENCE_FLOOR, from the memory bench 2026-10-22).
+                        let on_device = bg_forced_backend.ends_with(".gguf") || bg_forced_backend.to_lowercase().contains("local");
+                        let before = rels.len();
+                        let rels = if on_device { crate::apply_link_floor(rels, crate::LOCAL_LINK_CONFIDENCE_FLOOR) } else { rels };
+                        if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} low-confidence link(s) from the local model", before - rels.len()); }
                         println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
                         (true, title, rels, extras)
                     }

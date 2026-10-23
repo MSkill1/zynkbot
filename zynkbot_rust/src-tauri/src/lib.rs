@@ -1097,10 +1097,28 @@ pub struct RelationshipClassification {
     confidence: Option<f32>,  // 0.0-1.0 confidence score
 }
 
+/// Links from the on-device model under this confidence are dropped (treated as "none").
+/// Inert at 0.0 (2026-10-22): the memory bench's sweep showed Qwen3-4B reports 0.85–0.98
+/// on every link, wrong ones included (its three links between unrelated facts came at
+/// 0.85, 0.85 and 0.92; its correct "reminds of" links at 0.92). No floor separates them
+/// without also cutting real links, so the model's own confidence is not the lever. The
+/// mechanism stays for a model whose confidence does carry information.
+pub(crate) const LOCAL_LINK_CONFIDENCE_FLOOR: f32 = 0.0;
+
+/// The relationships an on-device model's answer keeps: "none" entries pass through
+/// (they are skipped at storage anyway); a named link stays only at or above `floor`.
+/// A link with no confidence given is kept — the floor is for the model's own doubt.
+pub(crate) fn apply_link_floor(rels: Vec<RelationshipClassification>, floor: f32) -> Vec<RelationshipClassification> {
+    rels.into_iter()
+        .filter(|r| r.relationship_type == "none" || r.confidence.map_or(true, |c| c >= floor))
+        .collect()
+}
+
 #[allow(dead_code)]
 impl RelationshipClassification {
     pub(crate) fn memory_id(&self) -> i32 { self.memory_id }
     pub(crate) fn relationship_type(&self) -> &str { &self.relationship_type }
+    pub(crate) fn confidence(&self) -> Option<f32> { self.confidence }
 }
 
 /// Enhanced memory decision that also classifies relationships with similar memories
@@ -2762,5 +2780,24 @@ fn load_env_file(path: &std::path::Path) {
         Ok((n, skipped)) if skipped.is_empty() => println!("[Dotenv] {} setting(s) loaded", n),
         Ok((n, skipped)) => println!("[Dotenv] {} setting(s) loaded; could not read line(s) {:?} of {}", n, skipped, path.display()),
         Err(e) => println!("[Dotenv] Could not read {}: {}", path.display(), e),
+    }
+}
+
+#[cfg(test)]
+mod link_floor_tests {
+    use super::*;
+    fn rel(t: &str, c: Option<f32>) -> RelationshipClassification {
+        RelationshipClassification { memory_id: 1, relationship_type: t.to_string(), reason: String::new(), confidence: c }
+    }
+    #[test]
+    fn links_under_the_floor_are_dropped_and_confident_ones_kept() {
+        let out = apply_link_floor(vec![rel("reminds_of", Some(0.4)), rel("elaborates", Some(0.9)), rel("supports", Some(0.7))], 0.7);
+        let kinds: Vec<&str> = out.iter().map(|r| r.relationship_type.as_str()).collect();
+        assert_eq!(kinds, vec!["elaborates", "supports"]);
+    }
+    #[test]
+    fn none_and_unscored_links_pass_through() {
+        let out = apply_link_floor(vec![rel("none", Some(0.1)), rel("contradicts", None)], 0.7);
+        assert_eq!(out.len(), 2);
     }
 }
