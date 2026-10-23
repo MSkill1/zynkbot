@@ -116,9 +116,11 @@ ndarray = "0.16"
 # local-model): llama-cpp-sys-2's build script compiles llama.cpp for aarch64-linux-android
 # with the NDK's CMake toolchain when ANDROID_NDK (or NDK_HOME via the SDK) is set.
 # Pinned at the version whose llama.cpp knows Gemma 4 and Qwen3.5 (0.1.160, 2026-10-15).
-llama-cpp-2 = "0.1.160"
+# Declared per platform below: Android adds the OpenCL backend (Adreno GPUs on Snapdragon
+# phones, PowerVR on the Pixel 10; headers and import library in android-opencl/).
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
+llama-cpp-2 = "0.1.160"
 # Cross-platform mic capture, bypassing WebView getUserMedia (broken on Linux Tauri).
 cpal = "0.15"
 
@@ -188,6 +190,9 @@ opt-level = 3
 opt-level = 3
 
 [target.'cfg(target_os = "android")'.dependencies]
+# OpenCL GPU backend for the local model (2026-10-23). The engine offloads layers when the
+# phone's OpenCL driver reports a device and runs on the CPU otherwise.
+llama-cpp-2 = { version = "0.1.160", features = ["opencl"] }
 openssl = { version = "0.10", features = ["vendored"] }
 # Matches the version Tauri's Android layer already pulls in (see Cargo.lock) so
 # there is a single jni in the tree. Used by android_jni.rs for the ZynkCore door.

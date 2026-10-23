@@ -473,7 +473,9 @@ impl LocalModelSession {
         // llama.cpp silently ignores this on CPU-only builds — safe in both modes.
         #[cfg(feature = "cuda")]
         println!("[Rust Local Models] ⚡ CUDA build — requesting 999 GPU layers");
-        #[cfg(not(feature = "cuda"))]
+        #[cfg(all(not(feature = "cuda"), target_os = "android"))]
+        println!("[Rust Local Models] ⚡ Android build with the OpenCL backend — requesting 999 GPU layers (CPU if the phone reports no OpenCL device)");
+        #[cfg(all(not(feature = "cuda"), not(target_os = "android")))]
         println!("[Rust Local Models] ℹ️  CPU-only build — GPU offload disabled");
 
         let model_params = LlamaModelParams::default().with_n_gpu_layers(999);

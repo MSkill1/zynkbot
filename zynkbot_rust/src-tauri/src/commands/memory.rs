@@ -178,6 +178,89 @@ pub async fn update_memory(
     }
 }
 
+/// Answer a card about two memories that are both already stored (the on-device model's
+/// store-first card, 2026-10-23). Decisions: keep_new (the old one becomes history, linked
+/// "updates"), keep_old (the new one is deleted), not_a_contradiction (no link between
+/// them), keep_both (the link stays "contradicts"), keep_both_related (the link becomes
+/// "related"; the "Is this an update?" card's keep-both), both_with_explanation (the
+/// explanation is stored and linked "resolves" to both).
+#[tauri::command]
+pub async fn resolve_stored_conflict(
+    new_memory_id: i32,
+    old_memory_id: i32,
+    decision: String,
+    explanation: Option<String>,
+    user_id: String,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url)
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let unlink = |pool: sqlx::SqlitePool| async move {
+        sqlx::query("DELETE FROM memory_links WHERE (source_memory_id = ? AND target_memory_id = ?) OR (source_memory_id = ? AND target_memory_id = ?)")
+            .bind(new_memory_id).bind(old_memory_id).bind(old_memory_id).bind(new_memory_id)
+            .execute(&pool).await.map(|_| ()).map_err(|e| format!("Failed to remove the link: {}", e))
+    };
+    println!("[Rust] Stored-pair resolution: {} (new #{}, old #{})", decision, new_memory_id, old_memory_id);
+    match decision.as_str() {
+        "keep_new" => {
+            unlink(pool.clone()).await?;
+            memory::set_temporal_status(&pool, old_memory_id, Some("superseded"))
+                .await.map_err(|e| format!("Failed to mark the old memory as replaced: {}", e))?;
+            let _ = memory::create_memory_link(&pool, new_memory_id, old_memory_id, "updates", 0.95,
+                Some("The user chose the new memory on the card"), "user").await;
+            Ok(serde_json::json!({ "success": true, "action": "kept_new" }))
+        }
+        "keep_old" => {
+            unlink(pool.clone()).await?;
+            delete_memory(new_memory_id).await?;
+            Ok(serde_json::json!({ "success": true, "action": "kept_old" }))
+        }
+        "not_a_contradiction" => {
+            unlink(pool.clone()).await?;
+            Ok(serde_json::json!({ "success": true, "action": "not_a_contradiction" }))
+        }
+        "keep_both" => Ok(serde_json::json!({ "success": true, "action": "kept_both" })),
+        "keep_both_related" => {
+            sqlx::query("UPDATE memory_links SET relation_type = 'related' WHERE (source_memory_id = ? AND target_memory_id = ?) OR (source_memory_id = ? AND target_memory_id = ?)")
+                .bind(new_memory_id).bind(old_memory_id).bind(old_memory_id).bind(new_memory_id)
+                .execute(&pool).await.map_err(|e| format!("Failed to relabel the link: {}", e))?;
+            Ok(serde_json::json!({ "success": true, "action": "kept_both_related" }))
+        }
+        "both_with_explanation" => {
+            let expl = explanation.unwrap_or_default();
+            if expl.trim().is_empty() {
+                return Ok(serde_json::json!({ "success": true, "action": "kept_both" }));
+            }
+            let expl_clone = expl.clone();
+            let expl_embedding = tokio::task::spawn_blocking(move || {
+                crate::llm::local_embeddings::generate_local_embedding(&expl_clone)
+            }).await
+            .map_err(|e| format!("Failed to generate embedding: {}", e))?
+            .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+            let explanation_id = memory::insert_memory(
+                &pool,
+                Some("Resolution of contradictory memories"),
+                &expl,
+                Some("user_explanation"),
+                Some(&session_id),
+                Some(expl_embedding),
+                None, None,
+                Some(&user_id),
+                "personal",
+                true, false,
+                None, None, None,
+                Some(&expl),
+            ).await.map_err(|e| format!("Failed to store the explanation: {}", e))?;
+            let _ = memory::create_memory_link(&pool, explanation_id, new_memory_id, "resolves", 0.95, Some("Resolves contradiction"), "user").await;
+            let _ = memory::create_memory_link(&pool, explanation_id, old_memory_id, "resolves", 0.95, Some("Resolves contradiction"), "user").await;
+            Ok(serde_json::json!({ "success": true, "action": "both_with_explanation", "explanation_id": explanation_id }))
+        }
+        other => Err(format!("Unknown decision: {}", other)),
+    }
+}
+
 /// Make a replaced memory current again (Memory Manager "Undo replacement", 2026-10-23).
 /// Clears temporal_status and removes the "updates" link(s) that pointed at it, so both
 /// memories stand as current; the user can still delete either one.

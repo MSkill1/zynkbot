@@ -55,3 +55,8 @@ GGML_CPU_ARM_ARCH = "armv8.2-a+dotprod+fp16"
 # 2026-10-23). The toolkit reads CUDAFLAGS at configure time, so a changed value needs
 # `cargo clean -p llama-cpp-sys-2` once. Harmless for Android, which has no CUDA.
 CUDAFLAGS = "-Xcompiler -fPIC"
+# Android OpenCL backend (2026-10-23): llama-cpp-sys-2's build script hands these to CMake
+# as OpenCL_INCLUDE_DIR / OpenCL_LIBRARY when its `opencl` feature is on (the NDK has no
+# OpenCL SDK). Paths are relative to this file's parent, so they travel with the repo.
+OPENCL_INCLUDE_DIR = { value = "src-tauri/android-opencl/include", relative = true }
+OPENCL_LIBRARY = { value = "src-tauri/android-opencl/lib/libOpenCL.so", relative = true }

@@ -2600,6 +2600,7 @@ pub fn run() {
             commands::memory::update_memory,
             commands::memory::delete_memory,
             commands::memory::restore_memory,
+            commands::memory::resolve_stored_conflict,
             commands::memory::get_memory,
             // Onboarding
             commands::onboarding::store_onboarding_response,

@@ -1014,18 +1014,33 @@ export default function App() {
         throw new Error(`Unknown resolution option: ${resolution.option}`);
       }
 
-      console.log(`Calling resolve_memory_conflict_v2 with decision: ${decision}`);
-
-      // Call the NEW resolve command with pending memory data
-      const result = await invoke('resolve_memory_conflict_v2', {
-        pendingMemoryJson: JSON.stringify(conflict.pending_memory),
-        conflictingMemoryId: conflict.memoryA.id,
-        decision: decision,
-        explanation: resolution.explanation || null,
-        relationshipsJson: JSON.stringify(conflict.relationships || []),
-        userId: conflict.user_id || userId,
-        sessionId: conflict.session_id || sessionId,
-      });
+      let result;
+      if (conflict.stored_memory_id) {
+        // The on-device model's card: both memories are already stored (store first, ask
+        // after, 2026-10-23). "Keep both" on the "Is this an update?" form links them as related.
+        const isUpdateQuestion = typeof conflict.reason === 'string' && conflict.reason.startsWith('Possibly an update');
+        const storedDecision = (decision === 'keep_both' && isUpdateQuestion) ? 'keep_both_related' : decision;
+        console.log(`Calling resolve_stored_conflict with decision: ${storedDecision}`);
+        result = await invoke('resolve_stored_conflict', {
+          newMemoryId: conflict.stored_memory_id,
+          oldMemoryId: conflict.memoryA.id,
+          decision: storedDecision,
+          explanation: resolution.explanation || null,
+          userId: conflict.user_id || userId,
+          sessionId: conflict.session_id || sessionId,
+        });
+      } else {
+        console.log(`Calling resolve_memory_conflict_v2 with decision: ${decision}`);
+        result = await invoke('resolve_memory_conflict_v2', {
+          pendingMemoryJson: JSON.stringify(conflict.pending_memory),
+          conflictingMemoryId: conflict.memoryA.id,
+          decision: decision,
+          explanation: resolution.explanation || null,
+          relationshipsJson: JSON.stringify(conflict.relationships || []),
+          userId: conflict.user_id || userId,
+          sessionId: conflict.session_id || sessionId,
+        });
+      }
 
       console.log('✅ Conflict resolved successfully:', result);
 
@@ -1033,7 +1048,7 @@ export default function App() {
       if (decision === 'keep_old') {
         notify('Kept the existing memory; the new statement was discarded');
       } else if (decision === 'keep_new') {
-        notify('Kept the new memory; the old one was deleted');
+        notify('Kept the new memory; the old one is kept as history');
       } else if (decision === 'not_a_contradiction') {
         notify('Both memories kept; no longer marked as contradicting');
       } else if (decision === 'keep_both') {
@@ -2267,36 +2282,36 @@ export default function App() {
               </div>
             )}
             <div className={isMobile ? 'mobile-conv-history-wrap' : undefined} style={{ position: 'relative' }}>
+<div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 4px 8px', borderBottom: '1px solid #44475a', marginBottom: '4px', minHeight: '28px' }}>
+                {editingThreadTitle !== null ? (
+                  <input
+                    autoFocus
+                    value={editingThreadTitle}
+                    onChange={(e) => setEditingThreadTitle(e.target.value)}
+                    onBlur={commitThreadTitle}
+                    onKeyDown={(e) => { if (e.key === 'Enter') commitThreadTitle(); if (e.key === 'Escape') setEditingThreadTitle(null); }}
+                    maxLength={120}
+                    style={{ flex: 1, fontSize: '0.9rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #6272a4', background: '#282a36', color: '#f8f8f2' }}
+                  />
+                ) : (
+                  <span
+                    onClick={() => setEditingThreadTitle(threadTitle)}
+                    title="Tap to rename this conversation"
+                    style={{ flex: 1, fontSize: '0.9rem', color: threadTitle ? '#f8f8f2' : '#6272a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
+                  >
+                    {threadTitle || 'New conversation'}
+                  </span>
+                )}
+                {editingThreadTitle === null && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingThreadTitle(threadTitle)}
+                    title="Rename this conversation"
+                    style={{ background: 'transparent', border: 'none', color: '#9aa5c4', cursor: 'pointer', fontSize: '0.95rem', padding: '0 4px' }}
+                  >✏️</button>
+                )}
+              </div>
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 4px 8px', borderBottom: '1px solid #44475a', marginBottom: '8px', minHeight: '28px' }}>
-                  {editingThreadTitle !== null ? (
-                    <input
-                      autoFocus
-                      value={editingThreadTitle}
-                      onChange={(e) => setEditingThreadTitle(e.target.value)}
-                      onBlur={commitThreadTitle}
-                      onKeyDown={(e) => { if (e.key === 'Enter') commitThreadTitle(); if (e.key === 'Escape') setEditingThreadTitle(null); }}
-                      maxLength={120}
-                      style={{ flex: 1, fontSize: '0.9rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #6272a4', background: '#282a36', color: '#f8f8f2' }}
-                    />
-                  ) : (
-                    <span
-                      onClick={() => setEditingThreadTitle(threadTitle)}
-                      title="Tap to rename this conversation"
-                      style={{ flex: 1, fontSize: '0.9rem', color: threadTitle ? '#f8f8f2' : '#6272a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
-                    >
-                      {threadTitle || 'New conversation'}
-                    </span>
-                  )}
-                  {editingThreadTitle === null && (
-                    <button
-                      type="button"
-                      onClick={() => setEditingThreadTitle(threadTitle)}
-                      title="Rename this conversation"
-                      style={{ background: 'transparent', border: 'none', color: '#9aa5c4', cursor: 'pointer', fontSize: '0.95rem', padding: '0 4px' }}
-                    >✏️</button>
-                  )}
-                </div>
                 {messages.length === 0 ? (
                   <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
                 ) : (

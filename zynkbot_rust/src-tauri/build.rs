@@ -14,6 +14,18 @@ fn main() {
     println!("cargo:rustc-env=ZYNKBOT_GIT_HASH={}", git_hash);
     println!("cargo:rerun-if-changed=../.git/HEAD");
 
+    // Android: the local-model engine is built with the OpenCL GPU backend (Cargo.toml,
+    // feature `opencl`; 2026-10-23). llama-cpp-sys-2 compiles the backend but leaves the
+    // final `-lOpenCL` to the top-level crate, so without this the app library carries
+    // unresolved cl* symbols and Android refuses to load it. Link against the vendored
+    // import library at build time; at run time the phone's own /vendor/lib64/libOpenCL.so
+    // (a public library on Qualcomm and Pixel devices) is loaded by that name.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        println!("cargo:rustc-link-search=native={}/android-opencl/lib", manifest_dir);
+        println!("cargo:rustc-link-lib=dylib=OpenCL");
+    }
+
     // Desktop-only: point the linker at bundled libvosk.so for offline dictation.
     // libvosk.so from alphacep/vosk-api v0.3.45 (Linux x86_64)
     // sha256: 85c4654de3acdeb99abab86eeb2a6e603927d37089597c0fcc33d8638dc2ccaf

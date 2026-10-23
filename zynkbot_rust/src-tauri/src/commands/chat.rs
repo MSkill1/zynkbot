@@ -2446,7 +2446,17 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
             if contradiction_detected && bg_is_explicit_remember {
                 println!("[RUST BACKGROUND] ⚠️ Contradiction noted, but this is an explicit Remember — storing anyway");
             }
-            if contradiction_detected && !bg_is_explicit_remember {
+            // On-device model (2026-10-23): store first, ask after. Its background pass can
+            // take minutes on a phone, the card then arrives when the user has moved on, and
+            // a memory held for an unanswered card was simply lost (the kitchen-scale test).
+            // So the new memory is stored like any other, and the card is raised afterwards
+            // about the already-stored pair (resolve_stored_conflict). Cloud models keep the
+            // ask-first card: theirs arrives in seconds.
+            let ask_after_store = contradiction_detected && !bg_is_explicit_remember && bg_on_device;
+            if ask_after_store {
+                println!("[RUST BACKGROUND] ⚠️ Contradiction from the on-device model — storing first, asking after");
+            }
+            if contradiction_detected && !bg_is_explicit_remember && !bg_on_device {
                 println!("[RUST BACKGROUND] ⚠️ CONTRADICTION DETECTED - emitting event to frontend (NOT storing yet)");
 
                 // Find the contradicting relationship
@@ -2662,6 +2672,37 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
                             .await;
                     }
                     println!("[RUST BACKGROUND] ✅ Updated {} memory timestamps to trigger relationship sync", relationship_count + 1);
+                }
+            }
+
+            // The on-device model's card, raised about the stored pair (see ask_after_store).
+            if ask_after_store {
+                if let Some(contradiction) = llm_relationships.iter()
+                    .find(|rel| rel.relationship_type == "contradicts") {
+                    if let Ok(Some(conflicting_memory)) = crate::memory::get_memory(&db_pool, contradiction.memory_id).await {
+                        let payload = serde_json::json!({
+                            "stored_memory_id": memory_id,
+                            "memoryA": {
+                                "id": conflicting_memory.id,
+                                "content": conflicting_memory.content,
+                                "title": conflicting_memory.title,
+                                "created_at": conflicting_memory.created_at.to_rfc3339(),
+                            },
+                            "memoryB": {
+                                "id": memory_id,
+                                "content": factual_content.clone(),
+                                "title": llm_title.clone(),
+                                "created_at": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "reason": contradiction.reason,
+                            "confidence": contradiction.confidence.unwrap_or(0.75),
+                            "relationships": llm_relationships,
+                            "user_id": bg_user_id.clone(),
+                            "session_id": bg_session_id.clone(),
+                        });
+                        bg_sink.event("contradiction-detected", payload);
+                        println!("[RUST BACKGROUND] 🔔 Card raised about stored memory #{} and #{}", memory_id, conflicting_memory.id);
+                    }
                 }
             }
 
