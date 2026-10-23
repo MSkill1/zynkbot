@@ -125,6 +125,37 @@ class MainActivity : TauriActivity() {
         wv.post { wv.evaluateJavascript(script, null) }
     }
 
+    // "Move to…" on the Current Model page (2026-10-23): the system "save as" picker chooses
+    // where a model file goes, the file is streamed there, and the original is removed.
+    // Android gives an app no other way to write outside its own storage without a
+    // storage permission. A 2.5 GB model takes a minute or so; the page shows progress.
+    private var pendingMoveSource: File? = null
+    private val moveFileLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val wv = webViewRef?.get() ?: return@registerForActivityResult
+        val src = pendingMoveSource
+        pendingMoveSource = null
+        val js = { s: String -> wv.post { wv.evaluateJavascript(s, null) } }
+        if (uri == null || src == null) {
+            js("window.__zmvReject&&window.__zmvReject('cancelled');window.__zmvResolve=null;window.__zmvReject=null;")
+            return@registerForActivityResult
+        }
+        Thread {
+            try {
+                contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
+                    ?: throw IllegalStateException("could not open the destination")
+                if (!src.delete()) Log.w("Zynkbot", "Model moved but the original could not be removed: ${src.name}")
+                val escaped = uri.toString().replace("\\", "\\\\").replace("'", "\\'")
+                js("window.__zmvResolve&&window.__zmvResolve('$escaped');window.__zmvResolve=null;window.__zmvReject=null;")
+            } catch (e: Exception) {
+                try { android.provider.DocumentsContract.deleteDocument(contentResolver, uri) } catch (_: Exception) {}
+                val msg = (e.message ?: "failed").replace("\\", "\\\\").replace("'", "\\'")
+                js("window.__zmvReject&&window.__zmvReject('$msg');window.__zmvResolve=null;window.__zmvReject=null;")
+            }
+        }.start()
+    }
+
     // File picker for adding files into ZynkbotShare
     private val pickFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -311,6 +342,17 @@ class MainActivity : TauriActivity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             runOnUiThread { startActivity(Intent.createChooser(send, "Send wake-word clips")) }
+            return true
+        }
+
+        /** Current Model page "Move to…": open the system save-as picker for this model
+         *  file; the page waits on window.__zmvResolve / __zmvReject. */
+        @JavascriptInterface
+        fun moveFileTo(path: String): Boolean {
+            val f = File(path)
+            if (!f.isFile) return false
+            pendingMoveSource = f
+            runOnUiThread { moveFileLauncher.launch(f.name) }
             return true
         }
 
@@ -1305,26 +1347,10 @@ class MainActivity : TauriActivity() {
     private fun ensureShareDir() {
         zynkShareDir()
         migrateOldShareFolder()
-        importModelFilesFromShare()
-    }
-
-    /** A model file (.gguf) placed in the Zynkbot folder is installed (2026-10-22, branch
-     *  local-model): it moves into the models folder the Rust side scans
-     *  (files/zynkbot/models/user), so the phone can run it the way the desktop runs a
-     *  file dropped into its models folder. Same filesystem, so the move is a rename. */
-    private fun importModelFilesFromShare() {
-        try {
-            val dest = File(filesDir, "zynkbot/models/user").apply { mkdirs() }
-            var moved = 0
-            for (f in zynkShareDir().listFiles() ?: emptyArray()) {
-                if (!f.isFile || !f.name.endsWith(".gguf", ignoreCase = true)) continue
-                val target = File(dest, f.name)
-                if (target.exists()) target.delete()
-                if (f.renameTo(target)) { moved++; Log.i("Zynkbot", "Model file installed from the Zynkbot folder: ${f.name} (${f.length() / 1_000_000} MB)") }
-                else Log.w("Zynkbot", "Could not move model file ${f.name} into the models folder")
-            }
-            if (moved > 0) ZynkShareProvider.markChanged(this)
-        } catch (e: Exception) { Log.w("Zynkbot", "Model import skipped: ${e.message}") }
+        // A .gguf in the Zynkbot folder stays there (2026-10-23). Until then it was moved
+        // into the models folder at startup, which took it out of the share and made it
+        // impossible to pass on over Wi-Fi (Matt). "Add to my models" in the ZynkLink
+        // file list links it into the models folder instead (Rust add_model_from_file).
     }
 
     /**

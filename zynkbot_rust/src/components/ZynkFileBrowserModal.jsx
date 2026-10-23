@@ -58,6 +58,8 @@ function fileIcon(filename) {
 
 const KB_TYPES = new Set(['pdf', 'txt', 'md', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'htm', 'toml', 'rs', 'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'cpp', 'c', 'h', 'css', 'log']);
 const isKBCompatible = (filename) => KB_TYPES.has(filename.split('.').pop().toLowerCase());
+// A model file: "→ Models" makes it usable here without taking it out of the share (2026-10-23).
+const isModelFile = (filename) => filename.toLowerCase().endsWith('.gguf');
 
 function formatBytes(bytes) {
   if (!bytes) return '';
@@ -67,7 +69,7 @@ function formatBytes(bytes) {
   return `${(bytes / 1073741824).toFixed(2)} GB`;
 }
 
-function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave, shareId, deviceId, isOwnShare }) {
+function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave, onAddModel, shareId, deviceId, isOwnShare }) {
   const isExpanded = expandedFolders.has(name);
   const childKeys = Object.keys(node.children);
 
@@ -90,6 +92,7 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
               onToggle={onToggle}
               onKB={onKB}
               onSave={onSave}
+              onAddModel={onAddModel}
               shareId={shareId}
               deviceId={deviceId}
               isOwnShare={isOwnShare}
@@ -104,9 +107,18 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
                 {file.file_size > 0 && (
                   <span className="zfb-file-size">{formatBytes(file.file_size)}</span>
                 )}
-                {!isOwnShare && (
+                {(!isOwnShare || isModelFile(filename)) && (
                   <div className="zfb-file-actions">
-                    {isKBCompatible(filename) && (
+                    {isModelFile(filename) && (
+                      <button
+                        className="zfb-btn-kb"
+                        onClick={() => onAddModel(shareId, file.relative_path, deviceId)}
+                        title="Add to my models: make this model available in the model list"
+                      >
+                        → Models
+                      </button>
+                    )}
+                    {!isOwnShare && isKBCompatible(filename) && (
                       <button
                         className="zfb-btn-kb"
                         onClick={() => onKB(shareId, file.relative_path, deviceId)}
@@ -115,13 +127,15 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
                         → KB
                       </button>
                     )}
-                    <button
-                      className="zfb-btn-save"
-                      onClick={() => onSave(shareId, file.relative_path, deviceId)}
-                      title="Save to custom location"
-                    >
-                      Save…
-                    </button>
+                    {!isOwnShare && (
+                      <button
+                        className="zfb-btn-save"
+                        onClick={() => onSave(shareId, file.relative_path, deviceId)}
+                        title="Save to custom location"
+                      >
+                        Save…
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -325,6 +339,33 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     });
   };
 
+  // A .gguf on a linked device or in your own share folder becomes a usable model (Matt,
+  // 2026-10-23). On a phone the download lands in the share folder first, so the model can
+  // be passed on; it is then linked into the models folder. Nothing leaves the share.
+  const handleAddModel = async (shareId, relativePath, deviceId) => {
+    const filename = relativePath.replace(/\\/g, '/').split('/').pop();
+    try {
+      let path;
+      if (deviceId === localDeviceId) {
+        path = await invoke('get_shared_file_path', { shareId, relativePath });
+      } else {
+        setMessage(`Downloading ${filename}… a large model takes a few minutes`);
+        const dest = window.AndroidPaths
+          ? `${window.AndroidPaths.getShareDir()}/${filename}`
+          : `${await invoke('models_user_dir')}/${filename}`;
+        path = await invoke('download_to_custom_location', { shareId, relativePath, deviceId, destinationPath: dest });
+        if (window.AndroidPaths) { try { window.AndroidPaths.shareFileWritten?.(path); } catch (_) {} }
+      }
+      const res = await invoke('add_model_from_file', { path });
+      setMessage(res?.how === 'already' ? `✓ Already in your models: ${filename}` : `✓ Added to your models: ${filename}`);
+      window.dispatchEvent(new CustomEvent('zynk-models-changed'));
+      setTimeout(() => setMessage(''), 5000);
+    } catch (err) {
+      setMessage(`✗ Failed: ${err}`);
+      setTimeout(() => setMessage(''), 6000);
+    }
+  };
+
   const handleKB = async (shareId, relativePath, deviceId) => {
     if (!userId) { setMessage('✗ User ID not available'); return; }
     const filename = relativePath.replace(/\\/g, '/').split('/').pop();
@@ -475,12 +516,17 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                     {file.file_size > 0 && (
                       <span className="zfb-file-size">{formatBytes(file.file_size)}</span>
                     )}
-                    {!isOwnShare && (
+                    {(!isOwnShare || isModelFile(filename)) && (
                       <div className="zfb-file-actions">
-                        {isKBCompatible(filename) && (
+                        {isModelFile(filename) && (
+                          <button className="zfb-btn-kb" onClick={() => handleAddModel(shareId, file.relative_path, deviceId)} title="Add to my models: make this model available in the model list">→ Models</button>
+                        )}
+                        {!isOwnShare && isKBCompatible(filename) && (
                           <button className="zfb-btn-kb" onClick={() => handleKB(shareId, file.relative_path, deviceId)} title="Download to Knowledge Base">→ KB</button>
                         )}
-                        <button className="zfb-btn-save" onClick={() => handleSave(shareId, file.relative_path, deviceId)} title="Save to custom location">Save…</button>
+                        {!isOwnShare && (
+                          <button className="zfb-btn-save" onClick={() => handleSave(shareId, file.relative_path, deviceId)} title="Save to custom location">Save…</button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -497,6 +543,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                   onToggle={toggleFolder}
                   onKB={handleKB}
                   onSave={handleSave}
+                  onAddModel={handleAddModel}
                   shareId={shareId}
                   deviceId={deviceId}
                   isOwnShare={isOwnShare}

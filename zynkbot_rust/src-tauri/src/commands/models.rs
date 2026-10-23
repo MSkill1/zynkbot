@@ -164,6 +164,171 @@ pub async fn list_user_models() -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// One model file on this device, for the Current Model page's list (2026-10-23).
+#[derive(Debug, serde::Serialize)]
+pub struct LocalModelFile {
+    pub filename: String,
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+/// The model files the engine can see, with sizes. Until 2026-10-23 a phone had no
+/// way to see or remove a model once it was on the device (Matt: "I don't even know
+/// where that folder is").
+#[tauri::command]
+pub async fn list_local_model_files() -> Result<Vec<LocalModelFile>, String> {
+    let user_models_dir = crate::db::get_models_dir().join("user");
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&user_models_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || !path.extension().map_or(false, |e| e.eq_ignore_ascii_case("gguf")) { continue; }
+            let Some(filename) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            files.push(LocalModelFile { filename: filename.to_string(), path: path.to_string_lossy().to_string(), size_bytes });
+        }
+    }
+    files.sort_by(|a, b| a.filename.to_lowercase().cmp(&b.filename.to_lowercase()));
+    Ok(files)
+}
+
+/// The folder the engine scans for models, created if missing. The desktop downloads a
+/// model from a linked device straight into it; a phone downloads into its share folder
+/// first (so the model can be passed on) and then installs it from there.
+#[tauri::command]
+pub async fn models_user_dir() -> Result<String, String> {
+    let dir = crate::db::get_models_dir().join("user");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create the models folder: {}", e))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Make a model file available to the engine without taking it away from where it is
+/// (Matt, 2026-10-23: a model in the share folder stays there so it can be traded on
+/// over Wi-Fi). The file is linked into the models folder, which lists the same file
+/// in two places while using the space once; when the two folders are on different
+/// filesystems it is copied instead. Returns the installed path and how it got there.
+#[tauri::command]
+pub async fn add_model_from_file(path: String) -> Result<serde_json::Value, String> {
+    let models_user = crate::db::get_models_dir().join("user");
+    let (installed, how) = install_model_file(std::path::Path::new(&path), &models_user)?;
+    println!("[RUST] Model {} ({}): {}", installed.display(), how, path);
+    Ok(serde_json::json!({ "path": installed.to_string_lossy(), "how": how }))
+}
+
+pub(crate) fn install_model_file(src: &std::path::Path, models_user: &std::path::Path) -> Result<(std::path::PathBuf, &'static str), String> {
+    if !src.is_file() { return Err(format!("Model file not found: {}", src.display())); }
+    if !src.extension().map_or(false, |e| e.eq_ignore_ascii_case("gguf")) {
+        return Err("Only .gguf model files can be added".to_string());
+    }
+    let filename = src.file_name().ok_or("Model file has no name")?;
+    std::fs::create_dir_all(models_user).map_err(|e| format!("Could not create the models folder: {}", e))?;
+    let dest = models_user.join(filename);
+    if dest.exists() {
+        let same = match (std::fs::canonicalize(src), std::fs::canonicalize(&dest)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+        let same = same || same_file(src, &dest);
+        if same { return Ok((dest, "already")); }
+        return Err(format!("A model named {} is already installed; remove it first", filename.to_string_lossy()));
+    }
+    match std::fs::hard_link(src, &dest) {
+        Ok(()) => Ok((dest, "linked")),
+        Err(_) => {
+            std::fs::copy(src, &dest).map_err(|e| format!("Could not copy the model into the models folder: {}", e))?;
+            Ok((dest, "copied"))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(ma), Ok(mb)) => ma.dev() == mb.dev() && ma.ino() == mb.ino(),
+        _ => false,
+    }
+}
+#[cfg(not(unix))]
+fn same_file(_a: &std::path::Path, _b: &std::path::Path) -> bool { false }
+
+/// Move a model out of the models folder to a place the user chose (desktop "Move to…";
+/// Android does this through the system picker in MainActivity). A rename when the
+/// destination is on the same filesystem, otherwise copy then delete.
+#[tauri::command]
+pub async fn move_user_model(filename: String, destination_path: String) -> Result<String, String> {
+    let models_user = crate::db::get_models_dir().join("user");
+    let dest = move_model_file(&models_user, &filename, std::path::Path::new(&destination_path))?;
+    println!("[RUST] Moved user model {} to {}", filename, dest.display());
+    Ok(dest.to_string_lossy().to_string())
+}
+
+pub(crate) fn move_model_file(models_user: &std::path::Path, filename: &str, destination: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let src = models_user.join(filename);
+    if !src.starts_with(models_user) || filename.contains('/') || filename.contains('\\') {
+        return Err("Invalid filename".to_string());
+    }
+    if !src.is_file() { return Err(format!("Model file not found: {}", filename)); }
+    let dest = if destination.is_dir() { destination.join(filename) } else { destination.to_path_buf() };
+    if dest.exists() { return Err(format!("{} already exists", dest.display())); }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Could not create {}: {}", parent.display(), e))?;
+    }
+    if std::fs::rename(&src, &dest).is_err() {
+        std::fs::copy(&src, &dest).map_err(|e| format!("Could not copy the model: {}", e))?;
+        std::fs::remove_file(&src).map_err(|e| format!("Copied, but could not remove the original: {}", e))?;
+    }
+    Ok(dest)
+}
+
+#[cfg(test)]
+mod model_file_tests {
+    use super::*;
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("zynk_model_files_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    #[test]
+    fn a_model_in_the_share_is_linked_not_moved_and_adding_again_is_a_no_op() {
+        let d = scratch("link");
+        let share = d.join("share"); let models = d.join("models/user");
+        std::fs::create_dir_all(&share).unwrap();
+        let src = share.join("tiny.gguf"); std::fs::write(&src, b"GGUF").unwrap();
+        let (dest, how) = install_model_file(&src, &models).unwrap();
+        assert!(src.is_file(), "the share copy stays");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"GGUF");
+        assert!(how == "linked" || how == "copied");
+        let (_, again) = install_model_file(&src, &models).unwrap();
+        assert_eq!(again, "already");
+        let other = share.join("other.txt"); std::fs::write(&other, b"x").unwrap();
+        assert!(install_model_file(&other, &models).is_err(), "only .gguf");
+    }
+    #[test]
+    fn a_different_file_with_the_same_name_is_refused() {
+        let d = scratch("clash");
+        let models = d.join("models/user"); std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(models.join("m.gguf"), b"installed").unwrap();
+        let src = d.join("m.gguf"); std::fs::write(&src, b"different").unwrap();
+        let err = install_model_file(&src, &models).unwrap_err();
+        assert!(err.contains("already installed"), "{}", err);
+    }
+    #[test]
+    fn moving_a_model_out_leaves_the_models_folder_and_refuses_bad_names() {
+        let d = scratch("move");
+        let models = d.join("models/user"); std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(models.join("m.gguf"), b"GGUF").unwrap();
+        let out = d.join("elsewhere");
+        let dest = move_model_file(&models, "m.gguf", &out.join("kept.gguf")).unwrap();
+        assert_eq!(dest, out.join("kept.gguf"));
+        assert!(!models.join("m.gguf").exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"GGUF");
+        assert!(move_model_file(&models, "../m.gguf", &out).is_err());
+        assert!(move_model_file(&models, "missing.gguf", &out).is_err());
+    }
+}
+
 /// Delete a user model file by filename
 #[tauri::command]
 pub async fn delete_user_model(filename: String) -> Result<(), String> {

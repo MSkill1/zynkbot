@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from
 import { v4 as uuidv4 } from 'uuid';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import { open as openFileDialog, save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import "./styles/App.css";
 // LiveInsightsPanel removed - simplified to single-column layout
 import ContainmentModeSelector from "./components/ContainmentModeSelector";
@@ -241,6 +241,8 @@ export default function App() {
     return localStorage.getItem('zynkbot_preferred_model') || 'local';
   });
   const [availableModels, setAvailableModels] = useState([]);
+  // The model files on this device, for the Current Model page (2026-10-23).
+  const [localModelFiles, setLocalModelFiles] = useState([]);
   // Sovereign, not Guardian: a new user's first real answer used to be an
   // occasional hard block from a demo-grade classifier, which is a bad first
   // impression for a safety layer that exists to be shown off, not to actually
@@ -459,6 +461,58 @@ export default function App() {
       }
     };
     fetchIdentity();
+  }, []);
+
+  const fetchLocalModelFiles = async () => {
+    try { setLocalModelFiles(await invoke('list_local_model_files')); } catch (_) { setLocalModelFiles([]); }
+  };
+  const formatModelSize = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`);
+  // After a model file left the device: refresh both lists and, if it was the one in
+  // use, fall back to the first model that remains.
+  const afterModelFileGone = async (path) => {
+    let models = [];
+    try { models = await invoke('get_models'); setAvailableModels(models); } catch (_) {}
+    await fetchLocalModelFiles();
+    if (modelType === path) setModelType(models.find(m => m.id !== path)?.id || 'local');
+  };
+  const handleRemoveModelFile = async (file) => {
+    const ok = await confirmDialog(`Remove ${file.filename} (${formatModelSize(file.size_bytes)}) from this device? This cannot be undone.`);
+    if (!ok) return;
+    try {
+      await invoke('delete_user_model', { filename: file.filename });
+      await afterModelFileGone(file.path);
+    } catch (e) { await messageDialog(`Could not remove the model: ${e}`); }
+  };
+  // Desktop: the save dialog names the destination and Rust moves the file. Android: the
+  // system save-as picker (MainActivity.moveFileTo) streams it where the user chooses.
+  const handleMoveModelFile = async (file) => {
+    try {
+      if (window.AndroidPaths?.moveFileTo) {
+        setModelMoveBusy(file.path);
+        await new Promise((resolve, reject) => {
+          window.__zmvResolve = resolve; window.__zmvReject = reject;
+          if (!window.AndroidPaths.moveFileTo(file.path)) { window.__zmvResolve = null; window.__zmvReject = null; reject('file not found'); }
+        });
+      } else {
+        const dest = await saveFileDialog({ defaultPath: file.filename, title: 'Move model to' });
+        if (!dest) return;
+        setModelMoveBusy(file.path);
+        await invoke('move_user_model', { filename: file.filename, destinationPath: dest });
+      }
+      await afterModelFileGone(file.path);
+    } catch (e) {
+      if (e !== 'cancelled') await messageDialog(`Could not move the model: ${e}`);
+    } finally { setModelMoveBusy(null); }
+  };
+  const [modelMoveBusy, setModelMoveBusy] = useState(null);
+  useEffect(() => {
+    if (controlsPage === 'model') fetchLocalModelFiles();
+  }, [controlsPage]);
+  useEffect(() => {
+    const onChanged = () => { fetchModels(); fetchLocalModelFiles(); };
+    window.addEventListener('zynk-models-changed', onChanged);
+    return () => window.removeEventListener('zynk-models-changed', onChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Function to fetch models (can be called on demand)
@@ -1736,7 +1790,7 @@ export default function App() {
             {modelType && modelType.endsWith('.gguf') ? (
               <>
                 <strong>Local Model:</strong> Runs on your device for complete privacy.
-                Performance depends on hardware - add .gguf model files to the models/ directory.
+                Performance depends on hardware. Add a .gguf file through the Zynkbot folder or from a linked device.
               </>
             ) : (
               <>
@@ -1745,6 +1799,32 @@ export default function App() {
               </>
             )}
           </p>
+          {localModelFiles.length > 0 && (
+            <div style={{ marginTop: '14px' }}>
+              <div style={{ fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '6px' }}>Local models on this device</div>
+              {localModelFiles.map(f => (
+                <div key={f.path} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderTop: '1px solid #44475a', fontSize: '0.85rem' }}>
+                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>{f.filename.replace(/\.gguf$/i, '')}</span>
+                  <span style={{ color: '#6272a4', flexShrink: 0 }}>{formatModelSize(f.size_bytes)}</span>
+                  <button
+                    onClick={() => handleMoveModelFile(f)}
+                    disabled={modelMoveBusy === f.path}
+                    title="Move this model file somewhere else on this device"
+                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #6272a4', background: 'transparent', color: '#f8f8f2', cursor: 'pointer', fontSize: '0.8rem' }}
+                  >
+                    {modelMoveBusy === f.path ? 'Moving…' : 'Move to…'}
+                  </button>
+                  <button
+                    onClick={() => handleRemoveModelFile(f)}
+                    title="Remove this model file from this device"
+                    style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', background: '#ff5555', color: '#282a36', cursor: 'pointer', fontSize: '0.8rem' }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         </ControlsPage>
       )}
