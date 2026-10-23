@@ -113,8 +113,11 @@ Zynkbot supports multiple LLM backends with mid-conversation switching via the U
 #### Option 1: Local Inference (Default, Privacy-First)
 
 **How it works:**
-- Place `.gguf` model files in `zynkbot_rust/src-tauri/models/user/` directory
-- Models are auto-discovered and appear in Settings panel
+- Desktop: place `.gguf` model files in the models folder (`Add Models` on the Current Model page opens it)
+- Phone: put the `.gguf` in the Zynkbot folder (Files app or Share sheet), open the ZynkLink file list and tap **→ Models**; the file stays in the folder so it can be passed on
+- From a linked device over Wi-Fi: browse its share in ZynkLink and tap **→ Models** on the `.gguf`; no internet involved
+- The Current Model page lists the model files on this device with their sizes, with **Move to…** and **Remove** for each (added 2026-10-23)
+- Models are auto-discovered and appear in the model picker
 - No API key needed - runs completely offline
 
 **Recommended models:**
