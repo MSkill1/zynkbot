@@ -729,10 +729,20 @@ pub async fn download_to_knowledge_base(
                 return Err("Cancelled by user".to_string());
             }
 
-            let chunk = chunk_result
-                .map_err(|e| format!("Network read error mid-transfer: {}", e))?;
-            file.write_all(&chunk).await
-                .map_err(|e| format!("Failed to write chunk to disk: {}", e))?;
+            // A failed transfer leaves no half file behind (2026-10-23: a model transfer
+            // died at 46% when the serving phone's app was closed; the 1.15 GB .part sat
+            // in the share folder). Until transfers can resume, the next attempt starts over.
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    return Err(format!("Network read error mid-transfer: {}", e));
+                }
+            };
+            if let Err(e) = file.write_all(&chunk).await {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(format!("Failed to write chunk to disk: {}", e));
+            }
             bytes_written += chunk.len() as u64;
 
             if bytes_written - last_event_at >= 262_144 {
@@ -931,10 +941,20 @@ pub async fn download_to_custom_location(
                 return Err("Cancelled by user".to_string());
             }
 
-            let chunk = chunk_result
-                .map_err(|e| format!("Network read error mid-transfer: {}", e))?;
-            file.write_all(&chunk).await
-                .map_err(|e| format!("Failed to write chunk to disk: {}", e))?;
+            // A failed transfer leaves no half file behind (2026-10-23: a model transfer
+            // died at 46% when the serving phone's app was closed; the 1.15 GB .part sat
+            // in the share folder). Until transfers can resume, the next attempt starts over.
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    return Err(format!("Network read error mid-transfer: {}", e));
+                }
+            };
+            if let Err(e) = file.write_all(&chunk).await {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                return Err(format!("Failed to write chunk to disk: {}", e));
+            }
             bytes_written += chunk.len() as u64;
 
             if bytes_written - last_event_at >= 262_144 {
