@@ -333,3 +333,52 @@ fn c05_a_reply_carrying_a_memory_marker_becomes_a_memory() {
             "the marked fact was not stored; memories: {:?}", stored);
     });
 }
+
+/// "updates" (migration 0022, 2026-10-23): the newer memory replaces the older state of the
+/// same thing. The older memory is kept, marked superseded, linked from the new one with
+/// "updates", leaves the prompt, and "Make current again" brings it back.
+#[test]
+fn c06_an_update_replaces_the_older_memory_and_keeps_it_as_history() {
+    let _env = hold_env();
+    rt_test(async {
+        let model = FakeModel::start().await;
+        let bench = Bench::new(&model).await;
+        model.will_say("Rutland is a nice town.\nMEMORY_EXTRACT: The user lives in Rutland");
+        model.will_decide(r#"{"should_remember": true, "title": "Lives in Rutland"}"#);
+        bench.ask(Arc::new(RecordingSink::default()), "custom", "I live in Rutland", true).await;
+        bench.wait_for_memory_containing("Rutland").await;
+        let old_id: i64 = sqlx::query_scalar("SELECT id FROM memories WHERE content LIKE '%Rutland%'")
+            .fetch_one(&bench.pool).await.unwrap();
+
+        model.will_say("Congratulations on the move.\nMEMORY_EXTRACT: The user moved to Burlington");
+        model.will_decide(&format!(r#"{{"should_remember": true, "title": "Moved to Burlington", "relationships": [{{"memory_id": {}, "relationship_type": "updates", "reason": "moved house", "confidence": 0.95}}]}}"#, old_id));
+        bench.ask(Arc::new(RecordingSink::default()), "custom", "I moved to Burlington last month", true).await;
+        bench.wait_for_memory_containing("Burlington").await;
+
+        let mut status: Option<String> = None;
+        for _ in 0..40 {
+            status = sqlx::query_scalar("SELECT temporal_status FROM memories WHERE id = ?").bind(old_id).fetch_one(&bench.pool).await.unwrap();
+            if status.as_deref() == Some("superseded") { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        assert_eq!(status.as_deref(), Some("superseded"), "the older memory was not marked replaced");
+        let link: (String, String) = sqlx::query_as("SELECT relation_type, created_by FROM memory_links WHERE target_memory_id = ?")
+            .bind(old_id).fetch_one(&bench.pool).await.unwrap();
+        assert_eq!(link, ("updates".to_string(), "llm".to_string()));
+
+        // The replaced memory stays out of the prompt; the new one reaches it.
+        model.will_say("You live in Burlington.");
+        model.will_decide(r#"{"should_remember": false}"#);
+        bench.ask(Arc::new(RecordingSink::default()), "custom", "Where do I live these days?", true).await;
+        let requests = model.chat_requests();
+        let prompt = FakeModel::prompt_of(requests.last().unwrap());
+        assert!(prompt.contains("Burlington"), "the new memory did not reach the prompt: {}", prompt);
+        assert!(!prompt.contains("Rutland"), "the replaced memory still reaches the prompt: {}", prompt);
+
+        // "Make current again" (restore_memory) undoes it.
+        crate::memory::set_temporal_status(&bench.pool, old_id as i32, None).await.unwrap();
+        sqlx::query("DELETE FROM memory_links WHERE relation_type = 'updates' AND target_memory_id = ?").bind(old_id).execute(&bench.pool).await.unwrap();
+        let back: Option<String> = sqlx::query_scalar("SELECT temporal_status FROM memories WHERE id = ?").bind(old_id).fetch_one(&bench.pool).await.unwrap();
+        assert!(back.is_none(), "the restored memory should be current again");
+    });
+}
