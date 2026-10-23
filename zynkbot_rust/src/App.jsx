@@ -243,6 +243,23 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState([]);
   // The model files on this device, for the Current Model page (2026-10-23).
   const [localModelFiles, setLocalModelFiles] = useState([]);
+  // The first time the local model is chosen, say once what to expect (Matt, 2026-10-23:
+  // the limit is speed, not intelligence, so set the time expectation rather than hide
+  // features). Never shown again on this device.
+  useEffect(() => {
+    if (!modelType || !modelType.endsWith('.gguf')) return;
+    let seen = false;
+    try { seen = !!localStorage.getItem('zynkbot_local_model_intro_seen'); } catch (_) {}
+    if (seen) return;
+    try { localStorage.setItem('zynkbot_local_model_intro_seen', '1'); } catch (_) {}
+    messageDialog(
+      'You are now using the local model. It runs entirely on this device and nothing leaves it.\n\n' +
+      'What to expect: replies take half a minute to a minute on a phone, so keep questions short. ' +
+      'Memories still save in the background. Web search, Ensemble and image questions need a cloud model.\n\n' +
+      'Switch back any time under Current Model.'
+    );
+  }, [modelType]);
+
   // The conversation's name, shown in one line above the messages with a pencil to rename
   // (Matt, 2026-10-23: "I can't believe it took this long"). The backend fills it from the
   // first message; History renames it too, and tells us through a window event.
@@ -1843,7 +1860,7 @@ export default function App() {
             ) : (
               availableModels.map(model => (
                 <option key={model.id} value={model.id}>
-                  {model.name}
+                  {model.model_type === 'local' ? `${model.name} — local, offline, slower` : model.name}
                 </option>
               ))
             )}
@@ -2316,7 +2333,7 @@ export default function App() {
                   <div className="message bot-message">
                     <div className="message-content">
                       {modelType && modelType.endsWith('.gguf')
-                        ? '⏳ Processing with local model...'
+                        ? '⏳ Local model is thinking. On a phone this takes half a minute or more; the words appear as they come.'
                         : 'Thinking...'}
                     </div>
                   </div>
@@ -2709,8 +2726,10 @@ export default function App() {
                 {/* Ensemble — mobile: TL (1,1); desktop: TR (1,2) */}
                 <button
                   onClick={() => setShowEnsemble(true)}
-                  disabled={isLoading || containmentMode === 'child'}
-                  title={containmentMode === 'child' ? 'Ensemble mode is not available in Child safety mode' : 'Multi-model collaboration'}
+                  disabled={isLoading || containmentMode === 'child' || (modelType && modelType.endsWith('.gguf'))}
+                  title={containmentMode === 'child' ? 'Ensemble mode is not available in Child safety mode'
+                    : (modelType && modelType.endsWith('.gguf')) ? 'Ensemble needs cloud models; switch off the local model to use it'
+                    : 'Multi-model collaboration'}
                   style={{
                     width: '85px',
                     height: '42px',
