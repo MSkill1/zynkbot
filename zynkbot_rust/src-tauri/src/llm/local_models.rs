@@ -477,6 +477,13 @@ impl LocalModelSession {
         println!("[Rust Local Models] ℹ️  CPU-only build — GPU offload disabled");
 
         let model_params = LlamaModelParams::default().with_n_gpu_layers(999);
+        // Android experiment (2026-10-23, after reading PocketPal's shipped defaults): with
+        // memory-mapping the 2.5 GB file is pulled off storage as it is first used, so the
+        // first reply after a load is slow and Android counts the pages twice. Off, the
+        // load takes a few seconds longer and then stays put. Measured against the
+        // 2026-10-22 numbers on the Pixel; kept only if the first reply gets faster.
+        #[cfg(target_os = "android")]
+        let model_params = model_params.with_use_mmap(false);
         let model = LlamaModel::load_from_file(&BACKEND, path, &model_params)
             .map_err(|e| LLMError::RequestFailed(format!("Failed to load model: {}", e)))?;
 

@@ -243,6 +243,37 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState([]);
   // The model files on this device, for the Current Model page (2026-10-23).
   const [localModelFiles, setLocalModelFiles] = useState([]);
+  // The conversation's name, shown in one line above the messages with a pencil to rename
+  // (Matt, 2026-10-23: "I can't believe it took this long"). The backend fills it from the
+  // first message; History renames it too, and tells us through a window event.
+  const [threadTitle, setThreadTitle] = useState('');
+  const [editingThreadTitle, setEditingThreadTitle] = useState(null); // null, or the draft text
+  const fetchThreadTitle = async () => {
+    if (!userId || !sessionId) return;
+    try {
+      const sessions = await invoke('list_conversation_sessions', { userId, limit: 200, offset: 0 });
+      const mine = (sessions || []).find(s => s.session_id === sessionId);
+      setThreadTitle(mine?.title || '');
+    } catch (_) {}
+  };
+  useEffect(() => {
+    fetchThreadTitle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, userId, messages.length]);
+  useEffect(() => {
+    const onRenamed = (e) => { if (e.detail?.sessionId === sessionId) setThreadTitle(e.detail.title || ''); };
+    window.addEventListener('zynk-session-renamed', onRenamed);
+    return () => window.removeEventListener('zynk-session-renamed', onRenamed);
+  }, [sessionId]);
+  const commitThreadTitle = async () => {
+    const value = (editingThreadTitle || '').trim();
+    setEditingThreadTitle(null);
+    if (!value || value === threadTitle || !userId) return;
+    try {
+      await invoke('set_session_title', { sessionId, userId, title: value });
+      setThreadTitle(value);
+    } catch (e) { console.error('[Thread title] rename failed:', e); }
+  };
   // One quiet line above the input when a memory replaced an older one (Matt, 2026-10-23:
   // "so you know something changed without a card"). Fades on its own.
   const [memoryUpdateNotice, setMemoryUpdateNotice] = useState('');
@@ -2220,6 +2251,35 @@ export default function App() {
             )}
             <div className={isMobile ? 'mobile-conv-history-wrap' : undefined} style={{ position: 'relative' }}>
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 4px 8px', borderBottom: '1px solid #44475a', marginBottom: '8px', minHeight: '28px' }}>
+                  {editingThreadTitle !== null ? (
+                    <input
+                      autoFocus
+                      value={editingThreadTitle}
+                      onChange={(e) => setEditingThreadTitle(e.target.value)}
+                      onBlur={commitThreadTitle}
+                      onKeyDown={(e) => { if (e.key === 'Enter') commitThreadTitle(); if (e.key === 'Escape') setEditingThreadTitle(null); }}
+                      maxLength={120}
+                      style={{ flex: 1, fontSize: '0.9rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #6272a4', background: '#282a36', color: '#f8f8f2' }}
+                    />
+                  ) : (
+                    <span
+                      onClick={() => setEditingThreadTitle(threadTitle)}
+                      title="Tap to rename this conversation"
+                      style={{ flex: 1, fontSize: '0.9rem', color: threadTitle ? '#f8f8f2' : '#6272a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
+                    >
+                      {threadTitle || 'New conversation'}
+                    </span>
+                  )}
+                  {editingThreadTitle === null && (
+                    <button
+                      type="button"
+                      onClick={() => setEditingThreadTitle(threadTitle)}
+                      title="Rename this conversation"
+                      style={{ background: 'transparent', border: 'none', color: '#9aa5c4', cursor: 'pointer', fontSize: '0.95rem', padding: '0 4px' }}
+                    >✏️</button>
+                  )}
+                </div>
                 {messages.length === 0 ? (
                   <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
                 ) : (

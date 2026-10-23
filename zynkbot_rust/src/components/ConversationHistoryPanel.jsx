@@ -241,6 +241,8 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     try {
       await invoke("set_session_title", { sessionId: id, userId, title: value.trim() });
       setSessions((prev) => prev.map((s) => (s.session_id === id ? { ...s, title: value.trim() } : s)));
+      // The title line above the messages follows a rename made here (App.jsx).
+      window.dispatchEvent(new CustomEvent('zynk-session-renamed', { detail: { sessionId: id, title: value.trim() } }));
     } catch (err) {
       console.error("[History] rename failed:", err);
     }
