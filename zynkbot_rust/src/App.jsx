@@ -243,6 +243,28 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState([]);
   // The model files on this device, for the Current Model page (2026-10-23).
   const [localModelFiles, setLocalModelFiles] = useState([]);
+  // One quiet line above the input when a memory replaced an older one (Matt, 2026-10-23:
+  // "so you know something changed without a card"). Fades on its own.
+  const [memoryUpdateNotice, setMemoryUpdateNotice] = useState('');
+  useEffect(() => {
+    let unlisten; let timer;
+    listen('memory-superseded', async (e) => {
+      const { new_memory_id, old_memory_id } = e.payload || {};
+      try {
+        const [fresh, old] = await Promise.all([
+          invoke('get_memory', { memoryId: new_memory_id }),
+          invoke('get_memory', { memoryId: old_memory_id }),
+        ]);
+        const name = (m) => (m?.title || m?.content || '').replace(/\s+/g, ' ').slice(0, 60);
+        setMemoryUpdateNotice(`Updated: "${name(fresh)}" replaces "${name(old)}". The old one is kept as history in Memory Manager.`);
+      } catch (_) {
+        setMemoryUpdateNotice('Updated: a memory replaced an older one. The old one is kept as history in Memory Manager.');
+      }
+      clearTimeout(timer);
+      timer = setTimeout(() => setMemoryUpdateNotice(''), 12000);
+    }).then(fn => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); clearTimeout(timer); };
+  }, []);
   // Sovereign, not Guardian: a new user's first real answer used to be an
   // occasional hard block from a demo-grade classifier, which is a bad first
   // impression for a safety layer that exists to be shown off, not to actually
@@ -2316,6 +2338,15 @@ export default function App() {
               </div>
             )}
 
+            {memoryUpdateNotice && (
+              <div
+                onClick={() => setMemoryUpdateNotice('')}
+                title="Tap to dismiss"
+                style={{ fontSize: '0.8rem', color: '#9aa5c4', padding: '4px 8px', marginTop: '6px', borderLeft: '3px solid #50fa7b', background: '#282a36', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                🔁 {memoryUpdateNotice}
+              </div>
+            )}
             {/* INPUT LAYOUT: Textarea + 2x2 Button Grid */}
             <div className="chat-input-wrapper" style={{ display: 'flex', gap: '10px', alignItems: 'stretch', marginTop: '8px' }}>
               {/* Left: Textarea with KB button inside */}
