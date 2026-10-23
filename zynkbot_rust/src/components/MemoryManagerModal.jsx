@@ -960,6 +960,16 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     <div className="detail-row">
                       <strong>Created:</strong> {new Date(selectedMemory.created_at).toLocaleString()}
                     </div>
+                    {selectedMemory.temporal_status === 'superseded' && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> replaced by a newer memory. Kept as history and left out of recall.
+                        <div style={{ marginTop: '6px' }}>
+                          <button type="button" className="edit-button" style={{ height: '36px', padding: '0 14px' }} title="This memory becomes current again; both are kept" onClick={() => handleMakeCurrent(selectedMemory.id)}>
+                            Undo replacement
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {selectedMemory.session_id && onOpenConversation && (
                       <div className="detail-row">
                         <button
@@ -1017,6 +1027,15 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                             {rel.relation_type}
                           </span>
                           <span style={{ color: '#f1fa8c', fontWeight: 'bold' }}>{rel.direction === 'outgoing' ? '→' : '←'}</span>
+                          {rel.relation_type === 'updates' && rel.direction === 'outgoing' && (
+                            <button
+                              type="button"
+                              className="edit-button"
+                              style={{ height: '26px', padding: '0 10px', fontSize: '0.78rem' }}
+                              title="The memory this one replaced becomes current again; both are kept"
+                              onClick={() => handleMakeCurrent(rel.related_memory_id)}
+                            >Revert to previous</button>
+                          )}
                           <button
                             onClick={() => handleDeleteRelationship(rel.id)}
                             style={{ marginLeft: 'auto', background: '#ff5555', border: 'none', color: '#fff', borderRadius: '4px', width: '26px', height: '26px', cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
@@ -1398,8 +1417,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     {selectedMemory.temporal_status === 'superseded' && (
                       <div className="detail-row">
                         <strong>Status:</strong> replaced by a newer memory. Kept as history and left out of recall.{' '}
-                        <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }}>
-                          Make current again
+                        <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="This memory becomes current again; both are kept">
+                          Undo replacement
                         </button>
                       </div>
                     )}
@@ -1511,6 +1530,17 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                           <span className="relationship-direction">
                             {rel.direction === 'outgoing' ? '→' : '←'}
                           </span>
+                          {rel.relation_type === 'updates' && rel.direction === 'outgoing' && (
+                            <button
+                              type="button"
+                              className="edit-button"
+                              style={{ height: '28px', padding: '0 10px', fontSize: '0.8rem' }}
+                              title="The memory this one replaced becomes current again; both are kept"
+                              onClick={() => handleMakeCurrent(rel.related_memory_id)}
+                            >
+                              Revert to previous
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDeleteRelationship(rel.id)}
                             className="delete-rel-button"

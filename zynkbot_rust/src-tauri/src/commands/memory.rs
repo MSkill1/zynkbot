@@ -178,7 +178,7 @@ pub async fn update_memory(
     }
 }
 
-/// Make a replaced memory current again (Memory Manager "Make current again", 2026-10-23).
+/// Make a replaced memory current again (Memory Manager "Undo replacement", 2026-10-23).
 /// Clears temporal_status and removes the "updates" link(s) that pointed at it, so both
 /// memories stand as current; the user can still delete either one.
 #[tauri::command]
@@ -1080,7 +1080,7 @@ pub async fn resolve_memory_conflict_v2(
         "keep_new" => {
             // Since 2026-10-23 "keep new" is an update, not a deletion: the old memory is
             // marked replaced and kept as history (out of recall, "REPLACED" in Memory
-            // Manager, "Make current again" to undo), linked from the new one with
+            // Manager, "Undo replacement" to undo), linked from the new one with
             // "updates". Only the user deletes memories, and only in Memory Manager.
             println!("[Rust] Resolution: Keep NEW memory, OLD #{} becomes history", conflicting_memory_id);
 

@@ -336,7 +336,7 @@ fn c05_a_reply_carrying_a_memory_marker_becomes_a_memory() {
 
 /// "updates" (migration 0022, 2026-10-23): the newer memory replaces the older state of the
 /// same thing. The older memory is kept, marked superseded, linked from the new one with
-/// "updates", leaves the prompt, and "Make current again" brings it back.
+/// "updates", leaves the prompt, and "Undo replacement" brings it back.
 #[test]
 fn c06_an_update_replaces_the_older_memory_and_keeps_it_as_history() {
     let _env = hold_env();
@@ -375,7 +375,7 @@ fn c06_an_update_replaces_the_older_memory_and_keeps_it_as_history() {
         assert!(prompt.contains("Burlington"), "the new memory did not reach the prompt: {}", prompt);
         assert!(!prompt.contains("Rutland"), "the replaced memory still reaches the prompt: {}", prompt);
 
-        // "Make current again" (restore_memory) undoes it.
+        // "Undo replacement" (restore_memory) undoes it.
         crate::memory::set_temporal_status(&bench.pool, old_id as i32, None).await.unwrap();
         sqlx::query("DELETE FROM memory_links WHERE relation_type = 'updates' AND target_memory_id = ?").bind(old_id).execute(&bench.pool).await.unwrap();
         let back: Option<String> = sqlx::query_scalar("SELECT temporal_status FROM memories WHERE id = ?").bind(old_id).fetch_one(&bench.pool).await.unwrap();

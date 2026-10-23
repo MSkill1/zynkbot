@@ -84,7 +84,7 @@ Contradiction detected?
 ```
 
 **Relationship Types** (reduced to these by migration 0022, 2026-10-23; each one makes the app do something different):
-- `updates`: The new fact replaces an older state of the same thing ("moved", "now", "no longer"). The old memory is marked `superseded`, leaves recall and stays in Memory Manager as history with a "Make current again" button.
+- `updates`: The new fact replaces an older state of the same thing ("moved", "now", "no longer"). The old memory is marked `superseded`, leaves recall and stays in Memory Manager as history with a "Undo replacement" button.
 - `contradicts`: Same attribute, different values, with no sign of which came later. The user is asked (conflict card).
 - `related`: Same specific subject, adding to it or confirming it. Pulled into recall through one-hop graph traversal. Replaces the old `supports`, `elaborates` and `caused_by`, which behaved identically.
 - `none`: Different things. The old `reminds_of` (loosely connected) is gone: it was the one type that did harm in the memory bench, and semantic search already finds loosely related memories at recall time.
