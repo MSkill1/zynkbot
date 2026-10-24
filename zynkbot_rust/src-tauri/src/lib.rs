@@ -22,6 +22,7 @@ mod sync_harness_tests; // two-peer ZynkSync harness (docs/TESTING.md)
 mod chat_harness_tests; // the chat path end to end against a pretend model
 #[cfg(test)]
 mod memory_bench; // which model makes the right memories: labs/memory_bench
+pub mod memory_prompts; // the memory pipeline's prompts in one place (2026-10-24)
 #[cfg(test)]
 mod sync_outbox_tests; // the outbox triggers (migration 0013)
 pub mod memory_extras;      // event date / namespace / tags / tone / entities from the decision call
@@ -521,6 +522,8 @@ Return ONLY valid JSON starting with {{:
         call_openai_for_memory_decision(&prompt).await?
     } else if backend.contains("xai") {
         call_xai_for_memory_decision(&prompt).await?
+    } else if backend.contains("mistral") {
+        call_mistral_for_memory_decision(&prompt).await?
     } else if backend == "custom" {
         call_custom_for_memory_decision(&prompt).await?
     } else if backend.ends_with(".gguf") {
@@ -887,6 +890,14 @@ pub(crate) async fn call_backend_with_prompt(prompt: &str, backend: &str) -> Res
     else if backend.contains("mistral") { call_mistral_for_memory_decision(prompt).await }
     else if backend == "custom" { call_custom_for_memory_decision(prompt).await }
     else { call_local_for_memory_decision(prompt, backend, None).await }
+}
+
+/// Like call_backend_with_prompt, but a local model is held to `schema` (constrained
+/// decoding); cloud models get the prompt as is. The memory bench's call 2 goes through here.
+#[allow(dead_code)]
+pub(crate) async fn call_backend_with_schema(prompt: &str, backend: &str, schema: &'static str) -> Result<String, String> {
+    if backend.ends_with(".gguf") || backend == "local" { call_local_for_memory_decision(prompt, backend, Some(schema)).await }
+    else { call_backend_with_prompt(prompt, backend).await }
 }
 
 async fn call_local_for_memory_decision(prompt: &str, backend: &str, json_schema: Option<&'static str>) -> Result<String, String> {

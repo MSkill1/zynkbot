@@ -1,4 +1,4 @@
-//! Which model makes the right memories? The same two tasks the app runs after a message,
+//! Which model makes the right memories? The same tasks the app runs after a message,
 //! fed with known inputs, scored, one table per backend (labs/memory_bench/cases.json,
 //! 2026-10-22). Quality does not depend on the phone, so this runs on the desktop with
 //! the same GGUF files; speed is measured on the phone separately.
@@ -9,15 +9,19 @@
 //! MEMORY_BENCH_SET overrides the case file; MEMORY_BENCH_OUT the results folder
 //! (default ~/Documents/Zynk_related/memory_bench). Cloud backends need their key in the
 //! environment or in the desktop app's .env, which is read if present.
+//!
+//! 2026-10-24: extraction is call 2 of the rewritten pipeline (memory_prompts.rs): facts
+//! with titles, dates, tags, tone and entities in one JSON answer. Titles and dates are
+//! scored too. The 10-22 result files were made with the older one-fact-per-line prompt.
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 struct Cases { subject: String, extraction: Vec<ExtractionCase>, relationships: Vec<RelationshipCase> }
 #[derive(Deserialize)]
-struct ExtractionCase { id: String, message: String, expected: Vec<Expected> }
+struct ExtractionCase { id: String, message: String, #[serde(default)] context: Option<String>, expected: Vec<Expected> }
 #[derive(Deserialize)]
-struct Expected { must: Vec<String> }
+struct Expected { must: Vec<String>, #[serde(default)] days_ago: Option<i64> }
 #[derive(Deserialize)]
 struct RelationshipCase { id: String, new_fact: String, existing: Vec<Existing>, expected: ExpectedRel }
 #[derive(Deserialize)]
@@ -26,7 +30,11 @@ struct Existing { id: i32, content: String, title: Option<String> }
 struct ExpectedRel { memory_id: i32, #[serde(rename = "type")] kind: String }
 
 #[derive(Serialize, Default)]
-struct ExtractionResult { id: String, raw: String, facts: Vec<String>, found: usize, missed: usize, invented: usize, junk: usize, seconds: f32, error: Option<String> }
+struct ExtractionResult {
+    id: String, raw: String, facts: Vec<String>, titles: Vec<String>, dates: Vec<Option<String>>,
+    found: usize, missed: usize, invented: usize, junk: usize, titles_ok: usize, dates_ok: usize, dates_wrong: usize,
+    seconds: f32, error: Option<String>,
+}
 #[derive(Serialize, Default)]
 struct RelationshipResult { id: String, expected: String, got: String, confidence: Option<f32>, correct: bool, seconds: f32, error: Option<String> }
 #[derive(Serialize)]
@@ -35,6 +43,7 @@ struct Report { backend: String, date: String, extraction: Vec<ExtractionResult>
 struct Summary {
     cases_with_facts: usize, expected_facts: usize, found: usize, missed: usize, invented: usize,
     cases_without_facts: usize, clean: usize, junk: usize,
+    facts_total: usize, titles_ok: usize, dates_expected: usize, dates_ok: usize, dates_wrong: usize,
     relationship_cases: usize, relationships_correct: usize, errors: usize, seconds: f32,
 }
 
@@ -72,6 +81,11 @@ async fn memory_bench() {
     std::fs::create_dir_all(&out_dir).ok();
     let backends: Vec<String> = std::env::var("MEMORY_BENCH_BACKENDS").expect("MEMORY_BENCH_BACKENDS").split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     let date = chrono::Local::now().format("%Y%m%d-%H%M").to_string();
+    let today = chrono::Local::now().date_naive();
+    // MEMORY_BENCH_DELAY_MS: pause between calls for rate-limited keys (Mistral answered
+    // 429 to 98 of 128 back-to-back calls on 2026-10-24).
+    let delay_ms: u64 = std::env::var("MEMORY_BENCH_DELAY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let pause = || async move { if delay_ms > 0 { tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await; } };
 
     for backend in &backends {
         println!("\n=== {} ===", backend);
@@ -81,13 +95,23 @@ async fn memory_bench() {
 
         let skip_extraction = std::env::var("MEMORY_BENCH_SKIP_EXTRACTION").is_ok();
         for c in cases.extraction.iter().filter(|_| !skip_extraction) {
-            let prompt = crate::commands::chat::local_facts_prompt(&c.message, &cases.subject);
+            pause().await;
+            let prompt = crate::memory_prompts::extraction_prompt(&c.message, &cases.subject, c.context.as_deref(), today);
             let t = std::time::Instant::now();
             let mut r = ExtractionResult { id: c.id.clone(), ..Default::default() };
-            match crate::call_backend_with_prompt(&prompt, backend).await {
+            // MEMORY_BENCH_NO_SCHEMA: let a local model answer free-form (the JSON is parsed
+            // leniently) to measure what the grammar itself costs in recall (2026-10-24).
+            let answer = if std::env::var("MEMORY_BENCH_NO_SCHEMA").is_ok() { crate::call_backend_with_prompt(&prompt, backend).await }
+                else { crate::call_backend_with_schema(&prompt, backend, crate::memory_prompts::EXTRACTION_SCHEMA).await };
+            match answer {
                 Ok(text) => {
                     r.raw = text.clone();
-                    r.facts = crate::commands::chat::parse_local_facts(&text, &c.message);
+                    let facts = crate::memory_prompts::parse_extraction(&text, &c.message);
+                    r.facts = facts.iter().map(|f| f.fact.clone()).collect();
+                    r.titles = facts.iter().map(|f| f.title.clone().unwrap_or_default()).collect();
+                    r.dates = facts.iter().map(|f| f.extras.event_date.clone()).collect();
+                    r.titles_ok = r.titles.iter().filter(|t| !t.trim().is_empty() && t.chars().count() <= 50).count();
+                    sm.facts_total += facts.len(); sm.titles_ok += r.titles_ok;
                     if c.expected.is_empty() {
                         sm.cases_without_facts += 1;
                         if r.facts.is_empty() { sm.clean += 1; } else { r.junk = r.facts.len(); sm.junk += 1; }
@@ -96,7 +120,14 @@ async fn memory_bench() {
                         let mut used = vec![false; r.facts.len()];
                         for exp in &c.expected {
                             match r.facts.iter().position(|f| matches(f, exp)) {
-                                Some(i) => { r.found += 1; used[i] = true; }
+                                Some(i) => {
+                                    r.found += 1; used[i] = true;
+                                    if let Some(days) = exp.days_ago {
+                                        sm.dates_expected += 1;
+                                        let want = (today - chrono::Duration::days(days)).format("%Y-%m-%d").to_string();
+                                        if r.dates[i].as_deref() == Some(want.as_str()) { r.dates_ok += 1; sm.dates_ok += 1; } else { r.dates_wrong += 1; sm.dates_wrong += 1; }
+                                    }
+                                }
                                 None => r.missed += 1,
                             }
                         }
@@ -108,11 +139,14 @@ async fn memory_bench() {
             }
             r.seconds = t.elapsed().as_secs_f32();
             let mark = if r.error.is_some() { "ERR" } else if c.expected.is_empty() { if r.junk == 0 { "clean" } else { "JUNK" } } else if r.missed == 0 && r.invented == 0 { "ok" } else { "part" };
-            println!("  {} {:5} {:4.1}s  {:?}", c.id, mark, r.seconds, r.facts);
+            let shown: Vec<String> = r.facts.iter().zip(r.titles.iter()).zip(r.dates.iter())
+                .map(|((f, t), d)| format!("{} [{}{}]", f, t, d.as_ref().map(|d| format!(", {d}")).unwrap_or_default())).collect();
+            println!("  {} {:5} {:4.1}s  {:?}", c.id, mark, r.seconds, shown);
             report.extraction.push(r);
         }
 
         for c in &cases.relationships {
+            pause().await;
             let similar: Vec<(i32, String, Option<String>, f32)> = c.existing.iter().map(|e| (e.id, e.content.clone(), e.title.clone(), 0.8)).collect();
             let t = std::time::Instant::now();
             let mut r = RelationshipResult { id: c.id.clone(), expected: c.expected.kind.clone(), ..Default::default() };
@@ -151,8 +185,8 @@ async fn memory_bench() {
         }).count();
         println!("    with the app's floor ({:.2}) for on-device models: {} correct", crate::LOCAL_LINK_CONFIDENCE_FLOOR, floored);
         sm.seconds = t_all.elapsed().as_secs_f32();
-        println!("--- {} summary: facts found {}/{}, invented {}, junk on {}/{} no-fact messages, relationships {}/{} correct, errors {}, {:.0}s",
-            short_name(backend), sm.found, sm.expected_facts, sm.invented, sm.junk, sm.cases_without_facts, sm.relationships_correct, sm.relationship_cases, sm.errors, sm.seconds);
+        println!("--- {} summary: facts found {}/{}, invented {}, junk on {}/{} no-fact messages, titles ok {}/{}, dates ok {}/{}, relationships {}/{} correct, errors {}, {:.0}s",
+            short_name(backend), sm.found, sm.expected_facts, sm.invented, sm.junk, sm.cases_without_facts, sm.titles_ok, sm.facts_total, sm.dates_ok, sm.dates_expected, sm.relationships_correct, sm.relationship_cases, sm.errors, sm.seconds);
         report.summary = sm.clone();
         let path = format!("{}/{}-{}.json", out_dir, short_name(backend), date);
         std::fs::write(&path, serde_json::to_string_pretty(&report).unwrap()).expect("write report");

@@ -1,7 +1,7 @@
 {
  "version": 1,
  "subject": "Matt",
- "note": "Memory bench cases (2026-10-22). Extraction: a produced fact matches an expected one when it contains every term in `must`; messages with an empty `expected` should produce nothing. Relationships: one existing memory per case; expected type among contradicts/supports/elaborates/reminds_of/none. Synthetic, plain personal facts; not anyone's private life. Round 2 (2026-10-22 evening): r09/r11/r13/r14 relabelled elaborates (they add a detail); four restatement cases added as supports.",
+ "note": "Memory bench cases (2026-10-22). Extraction: a produced fact matches an expected one when it contains every term in `must`; messages with an empty `expected` should produce nothing; `days_ago` names the event date the fact should carry, relative to the run day; `context` is the exchange just before the message. Relationships: one existing memory per case; expected type among updates/contradicts/related/none (four types since 2026-10-23). Synthetic, plain personal facts; not anyone's private life. 2026-10-24: e71-e84 added from the kinds of junk seen in real use (translation requests, pasted third-party text, questions restated as facts, TV speech) plus dated facts, feelings, and two cases that need the previous turn to resolve a pronoun.",
  "extraction": [
   {
    "id": "e01",
@@ -715,6 +715,140 @@
    "id": "e70",
    "message": "Never mind, forget it.",
    "expected": []
+  },
+  {
+   "id": "e71",
+   "message": "Please translate: I'm glad you got the money, Mrs. Rivera. Let me know how the ice cream sells.",
+   "expected": []
+  },
+  {
+   "id": "e72",
+   "message": "Translate to Spanish, print only the translation: You look great. I hope you sleep well tonight.",
+   "expected": []
+  },
+  {
+   "id": "e73",
+   "message": "She wrote back: 'Hola Mateo, lamento no haber visto tu mensaje, espero que estés bien, mi nieta está mejor.' What does it say?",
+   "expected": []
+  },
+  {
+   "id": "e74",
+   "message": "Could I put a pinch of sea salt in my coffee every morning? Would it be noticeable?",
+   "expected": []
+  },
+  {
+   "id": "e75",
+   "message": "Is there anything interesting I could do, chemistry-wise, with a jar of old cooking fat?",
+   "expected": []
+  },
+  {
+   "id": "e76",
+   "message": "Are you here? Yeah. You sure you ain't the police, right? I promise. I'm cool if you're cool.",
+   "expected": []
+  },
+  {
+   "id": "e77",
+   "message": "I replaced my kitchen scale yesterday with one that does grams and ounces.",
+   "expected": [
+    {
+     "must": [
+      "scale"
+     ],
+     "days_ago": 1
+    }
+   ]
+  },
+  {
+   "id": "e78",
+   "message": "I switched my phone plan from Verizon to T-Mobile last week.",
+   "expected": [
+    {
+     "must": [
+      "t-mobile"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e79",
+   "message": "Make a note, my weight today was 307.8 and I'm fasting.",
+   "expected": [
+    {
+     "must": [
+      "307.8"
+     ],
+     "days_ago": 0
+    },
+    {
+     "must": [
+      "fasting"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e80",
+   "message": "I've been feeling very depressed since my uncle died last month.",
+   "expected": [
+    {
+     "must": [
+      "depressed"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e81",
+   "message": "My phone plan is with Verizon.",
+   "expected": [
+    {
+     "must": [
+      "verizon"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e82",
+   "message": "I was worried about electrolytes while I was in ketosis, so I added salt.",
+   "expected": [
+    {
+     "must": [
+      "electrolyte"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e83",
+   "context": "Zynkbot: How did Louie's vet visit go?",
+   "message": "He's fine, just needed his shots. The vet said he's a little overweight.",
+   "expected": [
+    {
+     "must": [
+      "louie",
+      "shots"
+     ]
+    },
+    {
+     "must": [
+      "overweight"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e84",
+   "context": "Zynkbot: Where are you thinking of going in April?",
+   "message": "Indiana, to see my sister.",
+   "expected": [
+    {
+     "must": [
+      "indiana",
+      "sister"
+     ]
+    }
+   ]
   }
  ],
  "relationships": [
