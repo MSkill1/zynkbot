@@ -51,6 +51,20 @@ pub fn memory_line(content: &str, original_text: Option<&str>) -> String {
     }
 }
 
+/// On-device prompt budget (2026-10-24). The phone reads the prompt at ~37 tokens/s on a
+/// Pixel 10 and ~50 on a OnePlus 12R, so every token in front of the question is time.
+pub const ON_DEVICE_MESSAGE_CHARS: usize = 400;
+pub const ON_DEVICE_MEMORY_CHARS: usize = 300;
+pub const ON_DEVICE_HISTORY_BLOCK: usize = 4;
+
+/// The first `max` characters of `text`, with an ellipsis when something was cut.
+/// Character-based, never a byte slice (a multi-byte character would panic).
+pub fn cut_chars(text: &str, max: usize) -> String {
+    let t = text.trim();
+    if t.chars().count() <= max { return t.to_string(); }
+    format!("{}…", t.chars().take(max).collect::<String>().trim_end())
+}
+
 impl ConversationEngine {
     pub fn new() -> Self {
         Self { on_device: false }
@@ -125,7 +139,10 @@ impl ConversationEngine {
         }
 
         // Adaptive context limits
-        let max_messages = if is_api_model { 40 } else if self.on_device { 12 } else { 8 };
+        // On-device: 8 messages (was 12, 2026-10-24), each cut to ON_DEVICE_MESSAGE_CHARS.
+        // Nothing capped a message's length before; a thread with a few long replies put
+        // 2,617 tokens in front of a one-line question on the Pixel (70 s at 37 tokens/s).
+        let max_messages = if is_api_model { 40 } else if self.on_device { 8 } else { 8 };
 
         println!(
             "[Engine] Using {} model context limits: {} messages",
@@ -140,13 +157,15 @@ impl ConversationEngine {
         // right after the voice instructions and threw the whole conversation away each
         // time (only the 260-token voice part was kept on the Pixel). With blocks, the
         // start of the history stays put for three exchanges, then jumps.
+        // Blocks of four since 2026-10-24 (were six with a 12-message window): the window
+        // holds five to eight messages and its start stays put for two exchanges.
         let start = if !self.on_device {
             conversation_history.len().saturating_sub(max_messages)
         } else if conversation_history.len() <= max_messages {
             0
         } else {
             let over = conversation_history.len() - max_messages;
-            over.div_ceil(6) * 6
+            over.div_ceil(ON_DEVICE_HISTORY_BLOCK) * ON_DEVICE_HISTORY_BLOCK
         };
         let recent_history: Vec<&ConversationTurn> = conversation_history[start..].iter().collect();
 
@@ -155,7 +174,8 @@ impl ConversationEngine {
         let mut context = String::from("RECENT CONVERSATION:\n");
         for turn in recent_history {
             let role = turn.role.to_uppercase();
-            context.push_str(&format!("{}: {}\n", role, turn.content));
+            let content = if self.on_device { cut_chars(&turn.content, ON_DEVICE_MESSAGE_CHARS) } else { turn.content.clone() };
+            context.push_str(&format!("{}: {}\n", role, content));
         }
         context.push('\n');
 
@@ -183,7 +203,9 @@ impl ConversationEngine {
         // Adaptive context limits
         // Local: 4 (was 7, 2026-10-22). The recalled memories are the part of the prompt a
         // local model has to read anew every turn, at ~40 tokens/s.
-        let max_memories = if is_api_model { 20 } else if self.on_device { 4 } else { 7 };
+        // On-device 3 (4 until 2026-10-24), and the fact only: the "you said" text doubled
+        // each line and the fact is what the model needs.
+        let max_memories = if is_api_model { 20 } else if self.on_device { 3 } else { 7 };
 
         // Limit based on model type
         let limited_memories: Vec<&Memory> = if useful_memories.len() > max_memories {
@@ -209,7 +231,7 @@ impl ConversationEngine {
             // Showing the words alone left the model unable to name the furniture oils
             // the content held ("I saved a note but don't know what the item was",
             // 2026-10-08): the fact goes first, the user's words after it when they differ.
-            let text_for_llm = memory_line(&mem.content, mem.original_text.as_deref());
+            let text_for_llm = if self.on_device { cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS) } else { memory_line(&mem.content, mem.original_text.as_deref()) };
             let date_str = mem.created_at.format("%B %-d, %Y").to_string();
             context.push_str(&format!("{}. ({}) {}\n", idx + 1, date_str, text_for_llm));
             // Character-based, not byte-based: a byte slice panics inside a multi-byte
@@ -292,6 +314,12 @@ IMPORTANT: Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal 
 After you indicate a web search is needed, the user will be shown your suggested query (which they can edit before running) and can decide whether to run the search.
 
 ")
+        } else if self.on_device {
+            // On-device (2026-10-24): about 85 words. The companion voice in four sentences,
+            // the memories line and the web-search rule; the explanations around them went,
+            // and the "ask for missing details first" line (2026-10-20, written for GPT) is
+            // left out so a 4B model answers rather than questions back.
+            format!("{opening}You are Zynkbot, a warm, honest companion. Never claim to be human or to replace the people in the user's life. Say so when you are unsure. Do not flatter. When someone shares grief or frustration, acknowledge it before solutions.\n\nStored memories below are the user's own history; treat them as facts about their life.\n\nFor news, weather, prices or recent events, output: WEB_SEARCH_NEEDED: [query]. Never for the date or time, or for the user's own history.\n\n")
         } else {
             // Slim prompt for local models: task-first framing so fact extraction (PART 1)
             // is understood as a primary output requirement, not an afterthought.
@@ -556,13 +584,39 @@ mod on_device_prompt_tests {
     }
 
     #[test]
-    fn on_device_history_window_moves_in_blocks_of_six() {
+    fn on_device_history_window_moves_in_blocks_of_four() {
         let e = ConversationEngine::new().with_on_device(true);
-        assert_eq!(first_included(&e.build_conversation_context(&turns(12), false)), 0);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(8), false)), 0);
         // One over the window: jump a whole block, not one message.
-        assert_eq!(first_included(&e.build_conversation_context(&turns(13), false)), 6);
-        assert_eq!(first_included(&e.build_conversation_context(&turns(18), false)), 6);
-        assert_eq!(first_included(&e.build_conversation_context(&turns(19), false)), 12);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(9), false)), 4);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(12), false)), 4);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(13), false)), 8);
+    }
+    #[test]
+    fn on_device_messages_are_cut_to_400_characters_custom_endpoint_not() {
+        let long = "x".repeat(1000);
+        let t = vec![ConversationTurn { role: "assistant".into(), content: long.clone() }];
+        let on = ConversationEngine::new().with_on_device(true).build_conversation_context(&t, false);
+        assert!(on.contains(&format!("{}…", "x".repeat(400))));
+        assert!(!on.contains(&"x".repeat(401)));
+        let custom = ConversationEngine::new().build_conversation_context(&t, false);
+        assert!(custom.contains(&long));
+    }
+    #[test]
+    fn on_device_memory_lines_carry_the_fact_only() {
+        let mems = vec![Memory { id: 1, content: "Matt has a cat named Louie.".into(), original_text: Some("I have a cat named Louie and he is orange".into()), title: None, similarity: Some(0.9), created_at: chrono::Utc::now() }];
+        let on = ConversationEngine::new().with_on_device(true).build_memory_context(&mems, "q", false);
+        assert!(on.contains("Matt has a cat named Louie.") && !on.contains("you said"));
+        let custom = ConversationEngine::new().build_memory_context(&mems, "q", false);
+        assert!(custom.contains("you said"));
+    }
+    #[test]
+    fn on_device_instructions_stay_short() {
+        let e = ConversationEngine::new().with_on_device(true);
+        let p = e.build_prompt("hello", Some(&turns(2)), None, false, Some("Matt"));
+        let instructions = &p[..p.find("RECENT CONVERSATION").unwrap()];
+        assert!(instructions.split_whitespace().count() < 140, "{} words", instructions.split_whitespace().count());
+        assert!(p.contains("WEB_SEARCH_NEEDED"));
     }
     #[test]
     fn custom_endpoint_history_window_slides_by_one() {
@@ -590,11 +644,11 @@ mod on_device_prompt_tests {
         assert!(p.starts_with("Today's date is"));
     }
     #[test]
-    fn on_device_recalls_four_memories() {
+    fn on_device_recalls_three_memories() {
         let e = ConversationEngine::new().with_on_device(true);
         let mems: Vec<Memory> = (0..7).map(|i| Memory { id: i, content: format!("fact number {i}"), original_text: None, title: None, similarity: Some(0.9), created_at: chrono::Utc::now() }).collect();
         let ctx = e.build_memory_context(&mems, "question", false);
-        assert_eq!(ctx.matches("fact number").count(), 4);
+        assert_eq!(ctx.matches("fact number").count(), 3);
         assert_eq!(ConversationEngine::new().build_memory_context(&mems, "question", false).matches("fact number").count(), 7);
     }
 }
