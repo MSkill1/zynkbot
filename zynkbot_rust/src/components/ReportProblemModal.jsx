@@ -10,6 +10,7 @@ const ISSUES_URL = 'https://github.com/MSkill1/zynkbot/issues/new';
 export default function ReportProblemModal({ isOpen, onClose, context, threadText, backend }) {
   const [description, setDescription] = useState('');
   const [includeThread, setIncludeThread] = useState(false);
+  const [includeWake, setIncludeWake] = useState(false);   // Hey Zynk log: wakes heard and why ignored (2026-10-24)
   const [report, setReport] = useState('');
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -40,6 +41,7 @@ export default function ReportProblemModal({ isOpen, onClose, context, threadTex
         backend: backend || '',
         thread: includeThread ? (threadText || '') : null,
         logLines: 300,
+        includeWake,
       });
       setReport(text);
     } catch (e) {
@@ -102,6 +104,10 @@ export default function ReportProblemModal({ isOpen, onClose, context, threadTex
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '10px 0', fontSize: '0.85rem', color: '#f8f8f2' }}>
           <input type="checkbox" checked={includeThread} onChange={(e) => setIncludeThread(e.target.checked)} />
           Include the current conversation text in the report
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '10px 0', fontSize: '0.85rem', color: '#f8f8f2' }}>
+          <input type="checkbox" checked={includeWake} onChange={(e) => setIncludeWake(e.target.checked)} />
+          Include the Hey Zynk log (wakes it heard and why it ignored any; what you said is left out unless the box above is ticked)
         </label>
 
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>

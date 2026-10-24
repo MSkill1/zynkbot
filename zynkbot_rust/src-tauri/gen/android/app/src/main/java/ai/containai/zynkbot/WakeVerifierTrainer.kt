@@ -83,7 +83,7 @@ object WakeVerifierTrainer {
     fun saveFeatures(context: Context, stem: String, pooled: FloatArray) {
         try {
             File(clipDir(context), "$stem.feat").writeText(pooled.joinToString(" ") { "%.5f".format(Locale.US, it) })
-        } catch (e: Exception) { Log.w(TAG, "Could not save features for $stem: ${e.message}") }
+        } catch (e: Exception) { WakeLog.w(TAG, "Could not save features for $stem: ${e.message}") }
     }
 
     /** Train if there is enough new labelled material. Safe to call often; it returns at
@@ -106,7 +106,7 @@ object WakeVerifierTrainer {
                 if (real) pos.add(row) else neg.add(row)
             }
             if (pos.size < MIN_REAL_CLIPS) {
-                Log.i(TAG, "Not training: ${pos.size} real clips with features, need $MIN_REAL_CLIPS")
+                WakeLog.i(TAG, "Not training: ${pos.size} real clips with features, need $MIN_REAL_CLIPS")
                 return false
             }
             val state = try { JSONObject(stateFile(context).readText()) } catch (_: Exception) { JSONObject() }
@@ -115,7 +115,7 @@ object WakeVerifierTrainer {
 
             val generic = loadGenericNegatives(context)
             val negAll = ArrayList<FloatArray>(neg.size + generic.size).apply { addAll(neg); addAll(generic) }
-            if (negAll.isEmpty()) { Log.w(TAG, "Not training: no negatives"); return false }
+            if (negAll.isEmpty()) { WakeLog.w(TAG, "Not training: no negatives"); return false }
             val t0 = System.currentTimeMillis()
             val model = fit(pos, negAll)
             val ownScores = pos.map { model.score(it) }.sorted()
@@ -146,7 +146,7 @@ object WakeVerifierTrainer {
                     // Not promoted. Remember the clip count so the next attempt waits for
                     // RETRAIN_EVERY_NEW_REAL more real clips instead of retrying every call.
                     stateFile(context).writeText(state.put("real_clips", pos.size).put("last_rejected", stamp).toString())
-                    Log.i(TAG, "Candidate profile from ${pos.size} real clips not promoted ($heldOutLine; " +
+                    WakeLog.i(TAG, "Candidate profile from ${pos.size} real clips not promoted ($heldOutLine; " +
                         "profile in use had %.0f%% and %.0f%%".format(Locale.US, keepOld * 100, stopOld * 100) + ") — keeping the profile in use")
                     return false
                 }
@@ -168,14 +168,14 @@ object WakeVerifierTrainer {
             profileFile(context).writeText(json.toString())
             stateFile(context).writeText(JSONObject().put("real_clips", pos.size).put("false_clips", neg.size).put("trained", stamp)
                 .put("heldout_keep", keepNew.toDouble()).put("heldout_stop", stopNew.toDouble()).toString())
-            Log.i(TAG, "Profile trained in ${System.currentTimeMillis() - t0} ms: ${pos.size} real vs ${negAll.size} negatives; " +
+            WakeLog.i(TAG, "Profile trained in ${System.currentTimeMillis() - t0} ms: ${pos.size} real vs ${negAll.size} negatives; " +
                 "threshold %.3f keeps %d/%d own clips, stops %d/%d negatives (training set); ".format(
                     Locale.US, threshold, ownScores.count { it >= threshold }, ownScores.size, stopped, negAll.size) + heldOutLine +
                 (if (keepOld >= 0f) " — promoted over %.0f%% and %.0f%%".format(Locale.US, keepOld * 100, stopOld * 100) else " — first profile") +
                 (if (enforce) "; enforcing" else "; log-only (below the ${(AUTO_ENFORCE_KEEP * 100).toInt()}%/${(AUTO_ENFORCE_STOP * 100).toInt()}% bar)"))
             return true
         } catch (e: Exception) {
-            Log.w(TAG, "Training failed: ${e.message}")
+            WakeLog.w(TAG, "Training failed: ${e.message}")
             return false
         } finally { busy = false }
     }
@@ -210,9 +210,9 @@ object WakeVerifierTrainer {
             stateFile(context).delete()
             marker.parentFile?.mkdirs()
             marker.writeText("labels corrected 2026-10-20\n")
-            Log.i(TAG, "Wake clip set reset (labels before 2026-10-20 were unreliable): $files files removed " +
+            WakeLog.i(TAG, "Wake clip set reset (labels before 2026-10-20 were unreliable): $files files removed " +
                 "($real real, $falseN false)${if (profile) ", on-phone profile removed" else ""}; collecting again")
-        } catch (e: Exception) { Log.w(TAG, "Clip set reset failed: ${e.message}") }
+        } catch (e: Exception) { WakeLog.w(TAG, "Clip set reset failed: ${e.message}") }
     }
 
     // ── features ─────────────────────────────────────────────────────────────
@@ -245,10 +245,10 @@ object WakeVerifierTrainer {
                     val pooled = featuresFromWav(wav, env, mel, emb) ?: continue
                     File(dir, "$stem.feat").writeText(pooled.joinToString(" ") { "%.5f".format(Locale.US, it) })
                     done++
-                } catch (e: Exception) { Log.w(TAG, "Features from ${wav.name} failed: ${e.message}") }
+                } catch (e: Exception) { WakeLog.w(TAG, "Features from ${wav.name} failed: ${e.message}") }
             }
         } finally { mel.close(); emb.close() }
-        if (done > 0) Log.i(TAG, "Computed features for $done older clips")
+        if (done > 0) WakeLog.i(TAG, "Computed features for $done older clips")
     }
 
     private fun featuresFromWav(wav: File, env: OrtEnvironment, mel: OrtSession, emb: OrtSession): FloatArray? {
@@ -294,7 +294,7 @@ object WakeVerifierTrainer {
         val rows = JSONObject(text).getJSONArray("rows")
         List(rows.length()) { r -> val a = rows.getJSONArray(r); FloatArray(a.length()) { a.getDouble(it).toFloat() } }
             .filter { it.size == FEATS }
-    } catch (e: Exception) { Log.w(TAG, "No generic negatives: ${e.message}"); emptyList() }
+    } catch (e: Exception) { WakeLog.w(TAG, "No generic negatives: ${e.message}"); emptyList() }
 
     // ── held-out evaluation ──────────────────────────────────────────────────
 

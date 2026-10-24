@@ -15,6 +15,7 @@ pub async fn build_problem_report(
     backend: String,
     thread: Option<String>,
     log_lines: Option<usize>,
+    include_wake: Option<bool>,
 ) -> Result<String, String> {
     let version = app.package_info().version.to_string();
     let git = option_env!("ZYNKBOT_GIT_HASH").unwrap_or("unknown");
@@ -58,5 +59,44 @@ pub async fn build_problem_report(
     out.push_str(&format!("### Last {} log lines ({}, {})\n\n```\n", logs.len(), source, if include_conversation { "credentials masked" } else { "credentials masked; message text and memory titles omitted" }));
     out.push_str(&logs.join("\n"));
     out.push_str("\n```\n");
+    // Hey Zynk's own log (Android; WakeLog.kt, 2026-10-24): every wake heard, kept or
+    // ignored and why. Lives beside the Rust log; absent on the desktop. Included only
+    // when the user ticks the box, since a chat problem has no use for it, and its
+    // transcript lines (what the user said hands-free) are masked unless the conversation
+    // box is ticked too.
+    let wake_path = crate::app_log::file_path().with_file_name("wake.log");
+    if let (true, Some(wake)) = (include_wake.unwrap_or(false), crate::app_log::tail_lines(&wake_path, 200.min(n)).filter(|l| !l.is_empty())) {
+        let wake: Vec<String> = wake.into_iter()
+            .map(|l| crate::app_log::redact(&l))
+            .map(|l| if include_conversation { l } else { mask_wake_transcript(&l) })
+            .collect();
+        out.push_str(&format!("\n### Hey Zynk: last {} lines\n\n```\n", wake.len()));
+        out.push_str(&wake.join("\n"));
+        out.push_str("\n```\n");
+    }
     Ok(out)
+}
+
+/// A wake-log line with any quoted transcript replaced: `Screen-off transcript: "..."`,
+/// `Answering natively: "..."`, `Delivering transcript to app: "..."` carry the user's
+/// spoken words; the scores and reasons around them are what a report needs.
+fn mask_wake_transcript(line: &str) -> String {
+    let lower = line.to_ascii_lowercase();
+    if !(lower.contains("transcript") || lower.contains("answering natively")) { return line.to_string(); }
+    match (line.find('"'), line.rfind('"')) {
+        (Some(a), Some(b)) if b > a => format!("{}\"[spoken text omitted]\"{}", &line[..a], &line[b + 1..]),
+        _ => line.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod wake_mask_tests {
+    use super::mask_wake_transcript;
+    #[test]
+    fn transcript_lines_are_masked_and_others_kept() {
+        assert_eq!(mask_wake_transcript(r#"10-24 12:00:00.000 I/WakeWordService: Answering natively: "set a timer for two minutes""#),
+            r#"10-24 12:00:00.000 I/WakeWordService: Answering natively: "[spoken text omitted]""#);
+        let kept = "10-24 12:00:00.000 I/WakeWordService: Detection ignored: verifier says not the owner (0.012 <= 0.50)";
+        assert_eq!(mask_wake_transcript(kept), kept);
+    }
 }

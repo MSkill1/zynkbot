@@ -44,26 +44,26 @@ class MicStream(private val tag: String = "MicStream") {
         val rec = try {
             AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize)
         } catch (e: Exception) {
-            Log.e(tag, "AudioRecord init failed: ${e.message}"); return false
+            WakeLog.e(tag, "AudioRecord init failed: ${e.message}"); return false
         }
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(tag, "AudioRecord not initialized"); rec.release(); return false
+            WakeLog.e(tag, "AudioRecord not initialized"); rec.release(); return false
         }
         sessionId = rec.audioSessionId
         try { rec.startRecording() } catch (e: Exception) {
-            Log.e(tag, "startRecording failed: ${e.message}"); rec.release(); sessionId = -1; return false
+            WakeLog.e(tag, "startRecording failed: ${e.message}"); rec.release(); sessionId = -1; return false
         }
         if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-            Log.e(tag, "AudioRecord did not start (mic busy?)"); rec.release(); sessionId = -1; return false
+            WakeLog.e(tag, "AudioRecord did not start (mic busy?)"); rec.release(); sessionId = -1; return false
         }
         // Ask Android to subtract the phone's own speaker output from this stream. Whether
         // the device really does it is only known by trying; the log says what happened.
         try {
             if (AcousticEchoCanceler.isAvailable()) {
                 aec = AcousticEchoCanceler.create(rec.audioSessionId)?.also { it.setEnabled(true) }
-                Log.i(tag, "Echo canceller: ${if (aec?.enabled == true) "enabled" else "not enabled"}")
-            } else Log.i(tag, "Echo canceller: not available on this device")
-        } catch (e: Exception) { Log.w(tag, "Echo canceller: ${e.message}") }
+                WakeLog.i(tag, "Echo canceller: ${if (aec?.enabled == true) "enabled" else "not enabled"}")
+            } else WakeLog.i(tag, "Echo canceller: not available on this device")
+        } catch (e: Exception) { WakeLog.w(tag, "Echo canceller: ${e.message}") }
         running = true
         val t = Thread({
             val chunk = ShortArray(CHUNK_SAMPLES)
@@ -71,7 +71,7 @@ class MicStream(private val tag: String = "MicStream") {
             while (running) {
                 val n = rec.read(chunk, 0, CHUNK_SAMPLES)
                 if (n == CHUNK_SAMPLES) {
-                    try { sink?.onChunk(chunk, n) } catch (e: Exception) { Log.e(tag, "Sink error: ${e.javaClass.simpleName}: ${e.message}") }
+                    try { sink?.onChunk(chunk, n) } catch (e: Exception) { WakeLog.e(tag, "Sink error: ${e.javaClass.simpleName}: ${e.message}") }
                 } else if (n < 0) { lost = "read returned $n"; break }
             }
             try { rec.stop() } catch (_: Exception) {}
@@ -79,12 +79,12 @@ class MicStream(private val tag: String = "MicStream") {
             try { aec?.release() } catch (_: Exception) {}
             aec = null
             sessionId = -1
-            Log.i(tag, "Microphone stream closed${if (lost != null) " ($lost)" else ""}")
+            WakeLog.i(tag, "Microphone stream closed${if (lost != null) " ($lost)" else ""}")
             if (lost != null && running) { running = false; onLost?.invoke(lost) }
         }, "MicStream")
         thread = t
         t.start()
-        Log.i(tag, "Microphone stream open (session $sessionId)")
+        WakeLog.i(tag, "Microphone stream open (session $sessionId)")
         return true
     }
 

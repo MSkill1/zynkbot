@@ -46,8 +46,8 @@ class WakeVerifier private constructor(
             j.optJSONArray("owners")?.let { a -> for (i in 0 until a.length()) owners.add(a.getString(i)) }
             WakeVerifier(arr("mean"), arr("scale"), arr("coef"), j.getDouble("intercept").toFloat(),
                 j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"), owners)
-                .also { if (!quiet) Log.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
-        } catch (e: Exception) { Log.w(TAG, "No verifier: ${e.message}"); null }
+                .also { if (!quiet) WakeLog.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
+        } catch (e: Exception) { WakeLog.w(TAG, "No verifier: ${e.message}"); null }
 
         /** The shift-invariant part of the features: per-dimension mean and max over the
          *  window (2 × dim numbers). This is what the on-phone trainer stores per clip
