@@ -157,56 +157,55 @@ class MainActivity : TauriActivity() {
     }
 
     // File picker for adding files into ZynkbotShare
+    // Add Files in the share browser: the phone's document picker in multi mode (long-press
+    // the first file, tap the rest, then the picker's Select). Single-file until 2026-10-24,
+    // when the first tap returned and the picker closed (Matt). Every chosen file is copied
+    // into ZynkbotShare on a background thread; the page gets the count.
     private val pickFileLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
         val wv = webViewRef?.get() ?: return@registerForActivityResult
-        if (uri == null) {
+        if (uris.isNullOrEmpty()) {
             wv.post { wv.evaluateJavascript(
                 "window.__zfpReject&&window.__zfpReject('cancelled');window.__zfpResolve=null;window.__zfpReject=null;", null) }
             return@registerForActivityResult
         }
-        // Copy the file into ZynkbotShare on a background thread
         Thread {
-            try {
-                val destDir = zynkShareDir()
-                destDir.mkdirs()
-                val resolve = { f: File ->
-                    val escaped = f.absolutePath.replace("\\", "\\\\").replace("'", "\\'")
-                    wv.post { wv.evaluateJavascript(
-                        "window.__zfpResolve&&window.__zfpResolve('$escaped');window.__zfpResolve=null;window.__zfpReject=null;", null) }
-                }
-                // Picked from the Zynkbot location itself (the picker lists it since
-                // ZynkShareProvider, 2026-09-19): the file is already here. Copying it
-                // onto itself emptied it — the write below truncates the file before
-                // the read starts (two 0-byte files on the Pixel, 2026-09-20). Hand the
-                // existing path back instead.
-                if (uri.authority == ZynkShareProvider.AUTHORITY) {
-                    val existing = File(destDir, android.provider.DocumentsContract.getDocumentId(uri))
-                    if (existing.isFile && existing.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
-                        resolve(existing)
-                        return@Thread
-                    }
-                }
-                // Resolve a display name for the file
-                val fileName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    cursor.moveToFirst()
-                    if (nameIndex >= 0) cursor.getString(nameIndex) else null
-                } ?: uri.lastPathSegment ?: "file"
-                // Never replace a file already here; "(2)" it, as the Share receiver does.
-                val dest = ZynkShareProvider.uniqueFile(destDir, fileName)
-                contentResolver.openInputStream(uri)?.use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
-                }
-                ZynkShareProvider.notifyFilesApp(this@MainActivity)
-                resolve(dest)
-            } catch (e: Exception) {
-                val msg = (e.message ?: "copy failed").replace("'", "\\'")
-                wv.post { wv.evaluateJavascript(
-                    "window.__zfpReject&&window.__zfpReject('$msg');window.__zfpResolve=null;window.__zfpReject=null;", null) }
+            var added = 0
+            var lastError: String? = null
+            for (uri in uris) {
+                try { copyPickedIntoShare(uri); added++ } catch (e: Exception) { lastError = e.message ?: "copy failed" }
             }
+            if (added > 0) ZynkShareProvider.notifyFilesApp(this@MainActivity)
+            val script = if (added == 0) {
+                val msg = (lastError ?: "copy failed").replace("'", "\\'")
+                "window.__zfpReject&&window.__zfpReject('$msg');window.__zfpResolve=null;window.__zfpReject=null;"
+            } else {
+                "window.__zfpResolve&&window.__zfpResolve('$added');window.__zfpResolve=null;window.__zfpReject=null;"
+            }
+            wv.post { wv.evaluateJavascript(script, null) }
         }.start()
+    }
+
+    /** One picked document copied into ZynkbotShare, never replacing a file already there
+     *  ("(2)" it, as the Share receiver does). A file picked from the Zynkbot location itself
+     *  is handed back as is: copying it onto itself emptied it (two 0-byte files on the
+     *  Pixel, 2026-09-20), because the write truncates before the read starts. */
+    private fun copyPickedIntoShare(uri: Uri): File {
+        val destDir = zynkShareDir()
+        destDir.mkdirs()
+        if (uri.authority == ZynkShareProvider.AUTHORITY) {
+            val existing = File(destDir, android.provider.DocumentsContract.getDocumentId(uri))
+            if (existing.isFile && existing.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) return existing
+        }
+        val fileName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            cursor.moveToFirst()
+            if (nameIndex >= 0) cursor.getString(nameIndex) else null
+        } ?: uri.lastPathSegment ?: "file"
+        val dest = ZynkShareProvider.uniqueFile(destDir, fileName)
+        contentResolver.openInputStream(uri)?.use { input -> dest.outputStream().use { output -> input.copyTo(output) } }
+        return dest
     }
 
     // Multi-select pickers for chat attachments. The generic "get content" route the

@@ -294,6 +294,14 @@ export default function App() {
   // One quiet line above the input when a memory replaced an older one (Matt, 2026-10-23:
   // "so you know something changed without a card"). Fades on its own.
   const [memoryUpdateNotice, setMemoryUpdateNotice] = useState('');
+  // The same line carries other one-sentence notices (Ensemble on the local model,
+  // 2026-10-24); showNotice sets it and clears it after 12 s.
+  const noticeTimer = useRef(null);
+  const showNotice = (text) => {
+    setMemoryUpdateNotice(text);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setMemoryUpdateNotice(''), 12000);
+  };
   useEffect(() => {
     let unlisten; let timer;
     listen('memory-superseded', async (e) => {
@@ -2739,9 +2747,15 @@ export default function App() {
                 )}
 
                 {/* Ensemble — mobile: TL (1,1); desktop: TR (1,2) */}
+                {/* On the local model the button stays tappable but grey: a disabled button
+                    on a phone shows no tooltip and looked live while doing nothing (Matt,
+                    2026-10-24). The tap explains in the notice line instead. */}
                 <button
-                  onClick={() => setShowEnsemble(true)}
-                  disabled={isLoading || containmentMode === 'child' || (modelType && modelType.endsWith('.gguf'))}
+                  onClick={() => {
+                    if (modelType && modelType.endsWith('.gguf')) { showNotice('Ensemble needs cloud models. Pick one in the model menu to use it.'); return; }
+                    setShowEnsemble(true);
+                  }}
+                  disabled={isLoading || containmentMode === 'child'}
                   title={containmentMode === 'child' ? 'Ensemble mode is not available in Child safety mode'
                     : (modelType && modelType.endsWith('.gguf')) ? 'Ensemble needs cloud models; switch off the local model to use it'
                     : 'Multi-model collaboration'}
@@ -2753,7 +2767,7 @@ export default function App() {
                     minHeight: '42px',
                     maxHeight: '42px',
                     padding: '0',
-                    background: containmentMode === 'child' ? '#6272a4' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    background: (containmentMode === 'child' || (modelType && modelType.endsWith('.gguf'))) ? '#6272a4' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                     color: '#fff',
                     border: 'none',
                     borderRadius: '8px',
@@ -2761,7 +2775,7 @@ export default function App() {
                     fontWeight: 'bold',
                     fontSize: '0.75rem',
                     transition: 'all 0.2s',
-                    opacity: (isLoading || containmentMode === 'child') ? 0.5 : 1,
+                    opacity: (isLoading || containmentMode === 'child' || (modelType && modelType.endsWith('.gguf'))) ? 0.5 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -2770,7 +2784,7 @@ export default function App() {
                     gridColumn: isMobile ? 1 : 2,
                     gridRow: 1,
                   }}
-                  onMouseOver={(e) => !(isLoading || containmentMode === 'child') && (e.target.style.transform = 'translateY(-2px)')}
+                  onMouseOver={(e) => !(isLoading || containmentMode === 'child' || (modelType && modelType.endsWith('.gguf'))) && (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                 >
                   Ensemble

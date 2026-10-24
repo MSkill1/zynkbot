@@ -438,7 +438,8 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
   const handleAddFile = async () => {
     if (!window.AndroidPaths) return;
     try {
-      await new Promise((resolve, reject) => {
+      // The phone's picker in multi mode (2026-10-24): resolves with how many were copied.
+      const added = await new Promise((resolve, reject) => {
         window.__zfpResolve = resolve;
         window.__zfpReject = reject;
         window.AndroidPaths.pickFile();
@@ -446,7 +447,8 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
       setMessage('Scanning…');
       await invoke('scan_shared_directory', { shareId, maxFiles: 1000 });
       await loadFiles();
-      setMessage('✓ File added');
+      const n = parseInt(added, 10) || 1;
+      setMessage(n === 1 ? '✓ 1 file added' : `✓ ${n} files added`);
       setTimeout(() => setMessage(''), 3000);
     } catch (e) {
       if (e !== 'cancelled') { setMessage('✗ ' + e); setTimeout(() => setMessage(''), 4000); }
@@ -487,7 +489,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
             )}
             {window.AndroidPaths && isOwnShare ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleAddFile}>
+                <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleAddFile} title="Pick one file, or long-press the first to pick several">
                   + Add Files
                 </button>
                 <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleRefreshOwn} disabled={loading}>
