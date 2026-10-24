@@ -2129,8 +2129,29 @@ pub(crate) async fn extract_facts(bg: &MemoryBg) -> Result<Vec<crate::memory_pro
     let text = crate::call_backend_with_schema(&prompt, &bg.bg_forced_backend, schema).await
         .map_err(|e| { println!("[RUST BACKGROUND] Call 2 failed: {}", e); e })?;
     let facts = crate::memory_prompts::parse_extraction(&text, &bg.bg_message);
+    let facts = drop_near_duplicates(facts);
     println!("[RUST BACKGROUND] Call 2: {} fact(s)", facts.len());
     Ok(facts)
+}
+
+/// Two facts from one message that mean the same thing keep only the first: the word rule
+/// in the parser catches restatements, this catches rewordings ("I'm at 0.4" / "the reading
+/// came back point four") by embedding similarity. The threshold sits under the storage
+/// path's cross-memory duplicate check, which these pairs slipped past on 2026-10-24.
+pub(crate) const SAME_MESSAGE_DUPLICATE_SIMILARITY: f32 = 0.86;
+fn drop_near_duplicates(facts: Vec<crate::memory_prompts::ExtractedFact>) -> Vec<crate::memory_prompts::ExtractedFact> {
+    if facts.len() < 2 { return facts; }
+    let mut kept: Vec<(crate::memory_prompts::ExtractedFact, Option<Vec<f32>>)> = Vec::new();
+    for f in facts {
+        let emb = crate::llm::local_embeddings::generate_local_embedding(&f.fact).ok();
+        let dup = match &emb {
+            Some(e) => kept.iter().find(|(k, ke)| ke.as_ref().map_or(false, |ke| crate::llm::local_embeddings::cosine_similarity(e, ke) >= SAME_MESSAGE_DUPLICATE_SIMILARITY)).map(|(k, _)| k.fact.clone()),
+            None => None,
+        };
+        if let Some(d) = dup { println!("[RUST BACKGROUND] Call 2: dropped a near-duplicate of \"{}\": {}", d, f.fact); continue; }
+        kept.push((f, emb));
+    }
+    kept.into_iter().map(|(f, _)| f).collect()
 }
 
 /// Call 2's fields where it gave them, call 3's otherwise.

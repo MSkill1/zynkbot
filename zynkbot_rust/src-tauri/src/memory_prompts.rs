@@ -34,7 +34,7 @@ pub fn extraction_prompt_with(message: &str, subject: &str, recent_turns: Option
 
 {context}Read {subject}'s message below. List the personal facts about {subject} in it, up to {max}, one sentence per fact, keeping the message's own words and every detail (names, places, dates, numbers): the people in their life, where they live and go, their work and past work, health, how they are feeling, what they own and the services they use, routines and habits, plans and events, likes and dislikes, names and numbers they ask to keep.
 
-Rules: only what the message states, nothing guessed. What {subject} asks is not a fact, but what {subject} states while asking is: 'Raspberry pie is my favorite. What's a good recipe?' holds one fact, that raspberry pie is {subject}'s favorite, because {subject} states it. 'Could I put salt in my coffee?' holds none, because {subject} only asks; a question says nothing about what {subject} does or has. Nothing from text {subject} quotes, pastes or asks to translate. Greetings and thanks are not facts. If the message holds no fact about {subject}, write NONE.
+Rules: only what the message states, nothing guessed. One thing with its details is one fact: 'I'm flying to Denver Thursday for my nephew's wedding' is one fact (where, when, why together), not three. What {subject} asks is not a fact, but what {subject} states while asking is: 'Raspberry pie is my favorite. What's a good recipe?' holds one fact, that raspberry pie is {subject}'s favorite, because {subject} states it. 'Could I put salt in my coffee?' holds none, because {subject} only asks; a question says nothing about what {subject} does or has. Nothing from text {subject} quotes, pastes or asks to translate. Greetings and thanks are not facts. If the message holds no fact about {subject}, write NONE.
 
 For each fact give:
 - \"fact\": one sentence in the third person, starting with \"{subject}\"
@@ -168,12 +168,31 @@ pub fn parse_extraction(text: &str, message: &str) -> Vec<ExtractedFact> {
             continue;
         }
         if out.iter().any(|o| o.fact.eq_ignore_ascii_case(&(fact.clone() + "."))) { continue; }
+        // A restatement of a fact already kept ("User is at point four on their keto
+        // reading" after "User just took their first keto reading and is at point four",
+        // Pixel 2026-10-24): nearly all of its content words are in the earlier one.
+        if let Some(earlier) = out.iter().find(|o| restates(&fact, &o.fact)) {
+            println!("[Memory] call 2: dropped a restatement of \"{}\": {}", earlier.fact, fact);
+            continue;
+        }
         f.fact = fact + ".";
         f.title = Some(clean_title(f.title.as_deref(), &f.fact));
         out.push(f);
         if out.len() == MAX_FACTS { break; }
     }
     out
+}
+
+/// Does `later` only restate `earlier`? True when at least four fifths of `later`'s content
+/// words (at least two of them) appear in `earlier`. "Flying to Denver on Thursday" after
+/// "going to Denver for the wedding" shares one word of three and is kept: a different fact.
+pub fn restates(later: &str, earlier: &str) -> bool {
+    let words = |t: &str| -> Vec<String> { t.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| is_content_word(w)).map(str::to_string).collect() };
+    let l = words(later);
+    if l.len() < 2 { return false; }
+    let e: std::collections::HashSet<String> = words(earlier).into_iter().collect();
+    let shared = l.iter().filter(|w| e.contains(*w)).count();
+    shared * 5 >= l.len() * 4
 }
 
 /// A title of at most 50 characters: the model's if it gave one, else the fact's opening.
@@ -249,6 +268,21 @@ mod tests {
         assert!(full.contains("\"tags\"") && full.contains("\"entities\""));
         assert!(!slim.contains("\"tags\"") && !slim.contains("\"entities\"") && slim.contains("\"event_date\""));
         assert!(slim.len() < full.len());
+    }
+
+    #[test]
+    fn a_restatement_in_the_same_answer_is_dropped_but_a_split_is_kept() {
+        let msg = "I bought a Keto-Mojo meter and just took my first keto reading, I'm at point four. I'm flying to Denver Thursday for my nephew's wedding.";
+        let text = r#"{"facts": [
+            {"fact": "User just took their first keto reading and is at point four right now.", "title": "First keto reading"},
+            {"fact": "User is at point four on their keto reading.", "title": "Keto point four"},
+            {"fact": "User is going to Denver for their nephew's wedding.", "title": "Wedding"},
+            {"fact": "User is flying to Denver on Thursday.", "title": "Flight"}]}"#;
+        let out: Vec<String> = parse_extraction(text, msg).into_iter().map(|f| f.fact).collect();
+        assert_eq!(out.len(), 3, "{:?}", out);
+        assert!(out.iter().all(|f| !f.starts_with("User is at point four")));
+        assert!(restates("User is at point four on their keto reading", "User just took their first keto reading and is at point four right now"));
+        assert!(!restates("User is flying to Denver on Thursday", "User is going to Denver for their nephew's wedding"));
     }
 
     #[test]
