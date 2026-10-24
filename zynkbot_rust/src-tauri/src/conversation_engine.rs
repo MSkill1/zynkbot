@@ -225,8 +225,37 @@ impl ConversationEngine {
             return String::new();
         }
 
+        // Facts that came from the same message are written as one block: the message the
+        // user said, then its facts (Matt, 2026-10-24: "if multiple memories tie to one
+        // thing, it's worth the AI getting the full context it came from"). Since call 2
+        // makes one memory per fact, three siblings used to carry the same "you said" quote
+        // three times; now once. A fact with no recalled sibling is a line as before.
+        let normalise = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        let mut groups: Vec<(Option<String>, Vec<&Memory>)> = Vec::new();
+        for mem in &limited_memories {
+            let key = mem.original_text.as_deref().filter(|t| !t.trim().is_empty()).map(normalise);
+            match key.as_ref().and_then(|k| groups.iter_mut().find(|(gk, _)| gk.as_ref() == Some(k))) {
+                Some((_, members)) => members.push(mem),
+                None => groups.push((key, vec![mem])),
+            }
+        }
+        let quote_chars = if self.on_device { ON_DEVICE_MEMORY_CHARS } else { 400 };
         let mut context = String::from("USER'S STORED MEMORIES:\n");
-        for (idx, mem) in limited_memories.iter().enumerate() {
+        let mut idx = 0;
+        for (_, members) in &groups {
+            idx += 1;
+            if members.len() >= 2 {
+                let first = members[0];
+                let date_str = first.created_at.format("%B %-d, %Y").to_string();
+                let said = cut_chars(first.original_text.as_deref().unwrap_or(""), quote_chars);
+                context.push_str(&format!("{}. ({}) You said: \"{}\"\n", idx, date_str, said));
+                for mem in members {
+                    context.push_str(&format!("   - {}\n", cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS)));
+                }
+                println!("[Engine]   Including a group of {} facts from one message", members.len());
+                continue;
+            }
+            let mem = members[0];
             // The content is the fact as stored, from a photo, an attachment or an
             // inference as much as from words; original_text is what the user said.
             // Showing the words alone left the model unable to name the furniture oils
@@ -234,7 +263,7 @@ impl ConversationEngine {
             // 2026-10-08): the fact goes first, the user's words after it when they differ.
             let text_for_llm = if self.on_device { cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS) } else { memory_line(&mem.content, mem.original_text.as_deref()) };
             let date_str = mem.created_at.format("%B %-d, %Y").to_string();
-            context.push_str(&format!("{}. ({}) {}\n", idx + 1, date_str, text_for_llm));
+            context.push_str(&format!("{}. ({}) {}\n", idx, date_str, text_for_llm));
             // Character-based, not byte-based: a byte slice panics inside a multi-byte
             // character (an em dash at bytes 59..62 killed a Spanish translation
             // request on 2026-09-13 — the request died with no reply).
@@ -569,6 +598,24 @@ mod on_device_prompt_tests {
         let custom = ConversationEngine::new().build_memory_context(&mems, "q", false);
         assert!(custom.contains("you said"));
     }
+    #[test]
+    fn facts_from_one_message_are_written_as_one_block_with_the_quote_once() {
+        let said = "I have a cat named Louie and I'm flying to Denver Thursday for my nephew's wedding.";
+        let m = |id: i32, content: &str, said: Option<&str>| Memory { id, content: content.into(), original_text: said.map(str::to_string), title: None, similarity: Some(0.9), created_at: chrono::Utc::now() };
+        let mems = vec![
+            m(1, "Matt has a cat named Louie.", Some(said)),
+            m(2, "Matt's dentist is Dr. Patel.", Some("I switched my dentist to Dr. Patel last week.")),
+            m(3, "Matt is flying to Denver on Thursday for his nephew's wedding.", Some(said)),
+        ];
+        for engine in [ConversationEngine::new(), ConversationEngine::new().with_on_device(true)] {
+            let ctx = engine.build_memory_context(&mems, "q", false);
+            assert_eq!(ctx.matches("Denver Thursday for my nephew's wedding").count(), 1, "the quote appears once: {}", ctx);
+            assert!(ctx.contains("   - Matt has a cat named Louie.") && ctx.contains("   - Matt is flying to Denver"), "{}", ctx);
+            assert!(ctx.contains("Matt's dentist is Dr. Patel."), "the single fact stays a line: {}", ctx);
+            assert!(ctx.contains("1. ") && ctx.contains("2. ") && !ctx.contains("3. "), "two items, not three: {}", ctx);
+        }
+    }
+
     #[test]
     fn on_device_instructions_stay_short() {
         let e = ConversationEngine::new().with_on_device(true);

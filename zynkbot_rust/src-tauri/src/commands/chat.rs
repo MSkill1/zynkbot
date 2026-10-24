@@ -2169,7 +2169,9 @@ fn merge_extras(a: crate::memory_extras::MemoryExtras, b: crate::memory_extras::
 /// message): embedding, duplicate and contradiction checks, the memory decision,
 /// relationships, storage. Was the body of the spawned task in send_message_with_memory
 /// until 2026-10-22; lifted out so the local-model flow can run it once per fact.
-pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::ExtractedFact) {
+/// Returns the id of the memory it stored, None when nothing was stored (duplicate, held for a
+/// contradiction card, or an error), so the caller can link the facts of one message.
+pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::ExtractedFact) -> Option<i32> {
     let MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
         bg_sink, bg_is_explicit_remember, bg_user_name: _, bg_recent_turns: _, query_entities } = bg;
             // The stored text is the fact from call 2 (or the words after "Remember:"), never
@@ -2186,11 +2188,11 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                 Ok(Ok(embedding)) => embedding,
                 Ok(Err(e)) => {
                     println!("[RUST BACKGROUND] ⚠️ Failed to generate embedding: {}", e);
-                    return;
+                    return None;
                 }
                 Err(e) => {
                     println!("[RUST BACKGROUND] ⚠️ Embedding task panicked: {}", e);
-                    return;
+                    return None;
                 }
             };
 
@@ -2211,7 +2213,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                 Ok(pool) => pool,
                 Err(e) => {
                     println!("[RUST BACKGROUND] ⚠️ Failed to connect to database: {}", e);
-                    return;
+                    return None;
                 }
             };
 
@@ -2231,7 +2233,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                 Err(e) => {
                     println!("[RUST BACKGROUND] ⚠️ Relationship search failed: {}", e);
                     db_pool.close().await;
-                    return;
+                    return None;
                 }
             };
 
@@ -2298,7 +2300,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                 }
                 crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "duplicate").await;
                 db_pool.close().await;
-                return;
+                return None;
             }
 
             println!("[RUST BACKGROUND] ✅ Proceeding with relationship classification");
@@ -2370,7 +2372,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                 bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
                 crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
                 db_pool.close().await;
-                return;
+                return None;
             }
 
             println!("[RUST BACKGROUND] ✅ LLM decided to remember: {:?}", llm_title);
@@ -2443,7 +2445,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                         bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
                         crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "contradiction").await;
                         db_pool.close().await;
-                        return;
+                        return None;
                     }
                 }
             }
@@ -2479,7 +2481,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                 Err(e) => {
                     println!("[RUST BACKGROUND] ⚠️ Failed to enhance memory: {}", e);
                     db_pool.close().await;
-                    return;
+                    return None;
                 }
             };
 
@@ -2525,7 +2527,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                     bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
                     crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "error").await;
                     db_pool.close().await;
-                    return;
+                    return None;
                 }
             };
 
@@ -2657,6 +2659,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
 
             db_pool.close().await;
             println!("[RUST BACKGROUND] 🏁 Memory processing complete");
+            Some(memory_id)
 }
 
 

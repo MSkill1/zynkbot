@@ -173,8 +173,24 @@ async fn process(pool: &SqlitePool, job: Job, sink: Arc<dyn crate::response_sink
         }
         return Ok(());
     }
+    let mut stored: Vec<i32> = Vec::new();
     for fact in facts {
-        crate::commands::chat::run_memory_background(bg.clone(), fact).await;
+        if let Some(id) = crate::commands::chat::run_memory_background(bg.clone(), fact).await { stored.push(id); }
+    }
+    // Facts from one message are linked "related" to each other, no model call (Matt,
+    // 2026-10-24): the flight, the wedding and the cat came from one breath, and three
+    // unlinked nodes were a worse record of it than one memory had been.
+    if stored.len() > 1 {
+        if let Ok(p) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+            let mut made = 0;
+            for i in 0..stored.len() {
+                for j in (i + 1)..stored.len() {
+                    if crate::memory::create_memory_link(&p, stored[j], stored[i], "related", 1.0, Some("said in the same message"), "same_message").await.is_ok() { made += 1; }
+                }
+            }
+            println!("[Memory jobs] job {}: {} fact(s) linked to each other ({} link(s))", job.id, stored.len(), made);
+            p.close().await;
+        }
     }
     Ok(())
 }

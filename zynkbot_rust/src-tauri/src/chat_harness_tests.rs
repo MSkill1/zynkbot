@@ -381,6 +381,27 @@ fn c08_a_yes_with_no_facts_stores_nothing() {
     });
 }
 
+/// Facts from one message are linked to each other (2026-10-24), with no model call.
+#[test]
+fn c09_two_facts_from_one_message_are_linked_as_related() {
+    let _env = hold_env();
+    rt_test(async {
+        let model = FakeModel::start().await;
+        let bench = Bench::new(&model).await;
+        model.will_say("Sounds like a good week.\nMEMORY: yes");
+        model.will_extract(r#"{"facts": [{"fact": "The user has a cat named Louie.", "title": "Cat Louie"}, {"fact": "The user is flying to Denver on Thursday.", "title": "Denver flight"}]}"#);
+        bench.ask(Arc::new(RecordingSink::default()), "custom", "I have a cat named Louie and I'm flying to Denver on Thursday", true).await;
+        bench.wait_for_memory_containing("Denver").await;
+        let mut link: Option<(String, String)> = None;
+        for _ in 0..40 {
+            link = sqlx::query_as("SELECT relation_type, created_by FROM memory_links WHERE created_by = 'same_message'").fetch_optional(&bench.pool).await.unwrap();
+            if link.is_some() { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        assert_eq!(link, Some(("related".to_string(), "same_message".to_string())), "the two facts were not linked");
+    });
+}
+
 /// "updates" (migration 0022, 2026-10-23): the newer memory replaces the older state of the
 /// same thing. The older memory is kept, marked superseded, linked from the new one with
 /// "updates", leaves the prompt, and "Undo replacement" brings it back.
