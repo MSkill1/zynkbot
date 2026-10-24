@@ -267,33 +267,62 @@ fn build_simple_prompt(messages: &[Message]) -> String {
 }
 
 // llama.cpp backend — initialized once, lives for the process lifetime
-/// Android: the folder the APK's native libraries were loaded from, read from this
-/// process's memory map (the line that maps libapp_lib.so). The engine's backend modules
-/// sit beside it (build.rs copies them into jniLibs).
+/// Android: load the engine's backend modules by file name. The APK keeps its native
+/// libraries inside base.apk (Android's default since API 23: no copy on disk), so there is
+/// no folder to scan and the engine's own search-by-directory found nothing — the first
+/// loadable-modules build (2026-10-23) registered no backend and every model load failed.
+/// dlopen by bare name goes through the app's library namespace, which does look inside
+/// the APK. build.rs bakes in the names of the modules it packaged (ZB_ANDROID_BACKENDS).
 #[cfg(target_os = "android")]
-fn native_library_dir() -> Option<std::path::PathBuf> {
-    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
-    maps.lines()
-        .find(|l| l.contains("libapp_lib.so"))
-        .and_then(|l| l.split_whitespace().last())
-        .map(std::path::PathBuf::from)
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+fn load_android_backends() {
+    let names: Vec<&str> = option_env!("ZB_ANDROID_BACKENDS")
+        .unwrap_or("")
+        .split(',')
+        .filter(|n| !n.is_empty())
+        .collect();
+    let load = |name: &str| -> bool {
+        let c = std::ffi::CString::new(name).expect("module name without NUL");
+        let reg = unsafe { llama_cpp_sys_2::ggml_backend_load(c.as_ptr()) };
+        println!("[Rust Local Models] engine module {name}: {}", if reg.is_null() { "not loaded" } else { "loaded" });
+        !reg.is_null()
+    };
+    // CPU: the variants form a chain (each adds instructions to the one before), so the most
+    // capable one this chip supports is the first that loads in descending name order; an
+    // unsupported variant reports a score of 0 and the engine does not register it.
+    // Capped at armv8.6: the armv9 variants (SVE2) loaded on the Pixel 10 on 2026-10-24 and
+    // the model then produced an end-of-answer token first, every time, where the same
+    // model file had answered the evening before on the built-in engine. The OnePlus runs
+    // armv8.6 and answers. SVE2 gains nothing measurable on a 4B model; the variants stay
+    // packaged so this can be re-tested by lifting the cap.
+    let mut cpu: Vec<&str> = names.iter().copied().filter(|n| n.starts_with("libggml-cpu")).collect();
+    let before = cpu.len();
+    cpu.retain(|n| !n.contains("armv9"));
+    if cpu.len() < before { println!("[Rust Local Models] {} armv9 CPU module(s) skipped (cap at armv8.6, 2026-10-24)", before - cpu.len()); }
+    cpu.sort_unstable_by(|a, b| b.cmp(a));
+    if !cpu.iter().any(|n| load(n)) {
+        println!("[Rust Local Models] ⚠️ no CPU engine module loaded ({} packaged)", cpu.len());
+    }
+    // What the engine ended up with, e.g. "GPUOpenCL" and "CPU".
+    let devices: Vec<String> = (0..unsafe { llama_cpp_sys_2::ggml_backend_dev_count() })
+        .map(|i| unsafe {
+            let dev = llama_cpp_sys_2::ggml_backend_dev_get(i);
+            std::ffi::CStr::from_ptr(llama_cpp_sys_2::ggml_backend_dev_name(dev)).to_string_lossy().into_owned()
+        })
+        .collect();
+    println!("[Rust Local Models] engine devices: {}", if devices.is_empty() { "none".to_string() } else { devices.join(", ") });
 }
 
 static BACKEND: Lazy<LlamaBackend> = Lazy::new(|| {
-    // Android: load the engine's backend modules before init (2026-10-23). The CPU
-    // modules always load; the OpenCL module loads only where the phone's driver is
-    // present and visible, so the same APK uses the GPU where there is one and the CPU
-    // elsewhere. llama.cpp logs each module it loads ("load_backend: ...").
+    // Android: load the engine's backend modules before init (2026-10-23). The CPU module
+    // always loads; the OpenCL module loads only where the phone's driver is present and
+    // visible, so the same APK uses the GPU where there is one and the CPU elsewhere.
     #[cfg(target_os = "android")]
-    match native_library_dir() {
-        Some(dir) => {
-            println!("[Rust Local Models] Loading engine backends from {}", dir.display());
-            llama_cpp_2::llama_backend::load_backends_from_path(&dir);
-        }
-        None => println!("[Rust Local Models] ⚠️ Could not find the native library folder; engine backends not loaded"),
-    }
+    load_android_backends();
     let mut backend = LlamaBackend::init().unwrap_or_else(|e| panic!("Failed to initialize llama.cpp backend: {e}"));
+    // Desktop: the engine's own messages are noise. Android: keep them (2026-10-24) — they
+    // are the only place that says how many layers went to the GPU and how much memory
+    // each side took, and the GPU path is still being measured there.
+    #[cfg(not(target_os = "android"))]
     backend.void_logs();
     backend
 });
@@ -499,18 +528,18 @@ impl LocalModelSession {
         #[cfg(feature = "cuda")]
         println!("[Rust Local Models] ⚡ CUDA build — requesting 999 GPU layers");
         #[cfg(all(not(feature = "cuda"), target_os = "android"))]
-        println!("[Rust Local Models] ⚡ Android build with the OpenCL backend — requesting 999 GPU layers (CPU if the phone reports no OpenCL device)");
+        println!("[Rust Local Models] ℹ️  Android: CPU engine (the GPU path was measured slower on the Adreno 740 and refused on the Pixel, 2026-10-24)");
         #[cfg(all(not(feature = "cuda"), not(target_os = "android")))]
         println!("[Rust Local Models] ℹ️  CPU-only build — GPU offload disabled");
 
-        let model_params = LlamaModelParams::default().with_n_gpu_layers(999);
-        // Android experiment (2026-10-23, after reading PocketPal's shipped defaults): with
-        // memory-mapping the 2.5 GB file is pulled off storage as it is first used, so the
-        // first reply after a load is slow and Android counts the pages twice. Off, the
-        // load takes a few seconds longer and then stays put. Measured against the
-        // 2026-10-22 numbers on the Pixel; kept only if the first reply gets faster.
-        #[cfg(target_os = "android")]
-        let model_params = model_params.with_use_mmap(false);
+        // Android asks for no GPU layers: with the OpenCL module gone there is no GPU device,
+        // and 999 would only be noise in the engine log. Desktop CUDA keeps 999.
+        let gpu_layers: u32 = if cfg!(target_os = "android") { 0 } else { 999 };
+        let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
+        // Memory-mapping stays on everywhere. Turning it off on Android (2026-10-23
+        // experiment) did not make the first reply faster and held the whole model in
+        // working memory; with the GPU path on, the OnePlus froze with 57 MB free
+        // (2026-10-24). Mapped pages can be dropped and re-read under pressure.
         let model = LlamaModel::load_from_file(&BACKEND, path, &model_params)
             .map_err(|e| LLMError::RequestFailed(format!("Failed to load model: {}", e)))?;
 

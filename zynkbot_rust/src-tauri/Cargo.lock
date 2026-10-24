@@ -185,6 +185,7 @@ dependencies = [
  "jni",
  "lazy_static",
  "llama-cpp-2",
+ "llama-cpp-sys-2",
  "log",
  "ndarray",
  "once_cell",

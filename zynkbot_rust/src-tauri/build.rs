@@ -15,12 +15,11 @@ fn main() {
     println!("cargo:rerun-if-changed=../.git/HEAD");
 
     // Android: the local-model engine is built as shared libraries with loadable backends
-    // (Cargo.toml: llama-cpp-2 features `opencl` + `dynamic-backends`, 2026-10-23). The
-    // engine crate's CMake build leaves libllama/libggml*.so and the backend modules in its
-    // own output folder; the APK only packages what sits in jniLibs, so copy them there.
-    // The crate's output folder is a sibling of ours under target/<triple>/<profile>/build/.
-    // The vendored OpenCL import library (android-opencl/lib) is link-time only and is
-    // deliberately not copied: at run time the phone's own libOpenCL.so is wanted.
+    // (Cargo.toml: llama-cpp-2 feature `dynamic-backends`, 2026-10-23; the OpenCL backend
+    // was dropped on 2026-10-24 after measuring it). The engine crate's CMake build leaves
+    // libllama/libggml*.so and the CPU-variant modules in its own output folder; the APK
+    // only packages what sits in jniLibs, so copy them there. The crate's output folder is
+    // a sibling of ours under target/<triple>/<profile>/build/.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
         let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
         let build_dir = out_dir.ancestors().nth(2).expect("OUT_DIR under target/.../build/<pkg>/out");
@@ -39,22 +38,41 @@ fn main() {
                 if newest.as_ref().map_or(true, |(nt, _)| t > *nt) { newest = Some((t, out)); }
             }
         }
+        // Backend module names are baked into the app (ZB_ANDROID_BACKENDS) because the APK
+        // keeps its libraries inside base.apk: there is no folder to scan at run time, so
+        // local_models.rs loads them by name.
+        let mut module_names: Vec<String> = Vec::new();
         if let Some((_, out)) = newest {
+            // Drop engine files from an earlier build first; a module that no longer exists
+            // must not ride along, and libllama-common.so (65 MB, nothing links it) never does.
+            if let Ok(entries) = std::fs::read_dir(&jni) {
+                for e in entries.flatten() {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if (name.starts_with("libggml") || name.starts_with("libllama")) && e.file_type().map_or(false, |t| t.is_file()) {
+                        let _ = std::fs::remove_file(e.path());
+                    }
+                }
+            }
             let mut copied = 0;
             for sub in ["lib", "backends", "lib64", "bin"] {
                 if let Ok(entries) = std::fs::read_dir(out.join(sub)) {
                     for e in entries.flatten() {
                         let p = e.path();
-                        if p.extension().map_or(false, |x| x == "so") {
-                            if std::fs::copy(&p, jni.join(p.file_name().unwrap())).is_ok() { copied += 1; }
+                        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                        if !name.ends_with(".so") || name == "libllama-common.so" { continue; }
+                        if std::fs::copy(&p, jni.join(&name)).is_ok() {
+                            copied += 1;
+                            if sub == "backends" { module_names.push(name); }
                         }
                     }
                 }
             }
-            println!("cargo:warning=android: copied {} engine .so file(s) from {} into jniLibs", copied, out.display());
+            module_names.sort();
+            println!("cargo:warning=android: copied {} engine .so file(s) from {} into jniLibs; modules: {}", copied, out.display(), module_names.join(","));
         } else {
             println!("cargo:warning=android: no llama-cpp-sys-2 output with a backends/ folder found under {}", build_dir.display());
         }
+        println!("cargo:rustc-env=ZB_ANDROID_BACKENDS={}", module_names.join(","));
     }
 
     // Desktop-only: point the linker at bundled libvosk.so for offline dictation.

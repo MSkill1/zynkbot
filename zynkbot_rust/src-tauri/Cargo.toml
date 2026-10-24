@@ -116,8 +116,8 @@ ndarray = "0.16"
 # local-model): llama-cpp-sys-2's build script compiles llama.cpp for aarch64-linux-android
 # with the NDK's CMake toolchain when ANDROID_NDK (or NDK_HOME via the SDK) is set.
 # Pinned at the version whose llama.cpp knows Gemma 4 and Qwen3.5 (0.1.160, 2026-10-15).
-# Declared per platform below: Android adds the OpenCL backend (Adreno GPUs on Snapdragon
-# phones, PowerVR on the Pixel 10; headers and import library in android-opencl/).
+# Declared per platform below: Android builds the engine's backends as loadable modules
+# (the OpenCL GPU backend was tried on 2026-10-23/24 and dropped; see the Android section).
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 llama-cpp-2 = "0.1.160"
@@ -190,13 +190,14 @@ opt-level = 3
 opt-level = 3
 
 [target.'cfg(target_os = "android")'.dependencies]
-# OpenCL GPU backend for the local model (2026-10-23). The engine offloads layers when the
-# phone's OpenCL driver reports a device and runs on the CPU otherwise.
-# `dynamic-backends`: the engine's backends (CPU variants, OpenCL) are separate .so files
-# loaded at start-up from the app's native library folder (local_models.rs); a phone whose
-# OpenCL driver is missing or hidden simply runs on the CPU instead of refusing to start
-# (the OnePlus did refuse, 2026-10-23, with the backend linked in directly).
-llama-cpp-2 = { version = "0.1.160", features = ["opencl", "dynamic-backends"] }
+# `dynamic-backends`: the engine's CPU variants are separate .so files loaded at start-up by
+# name (local_models.rs). The OpenCL GPU backend was built and measured on 2026-10-23/24 and
+# dropped: on the Adreno 740 it read prompts at a third of the CPU's speed, and the engine
+# refuses the Pixel's PowerVR outright. The Hexagon NPU is the next Snapdragon path.
+llama-cpp-2 = { version = "0.1.160", features = ["dynamic-backends"] }
+# Same crate llama-cpp-2 builds on; declared here so local_models.rs can call
+# ggml_backend_load by module name (llama-cpp-2 only offers loading by folder).
+llama-cpp-sys-2 = "0.1.160"
 openssl = { version = "0.10", features = ["vendored"] }
 # Matches the version Tauri's Android layer already pulls in (see Cargo.lock) so
 # there is a single jni in the tree. Used by android_jni.rs for the ZynkCore door.

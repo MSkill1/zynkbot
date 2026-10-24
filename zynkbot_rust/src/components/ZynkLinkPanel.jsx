@@ -725,26 +725,34 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             color: '#9aa5c4',
             lineHeight: '1.6'
           }}>
-            Zynkbot is a folder on this phone. Anything you put in it can be seen by your linked devices: use the Share button in any app and pick Zynkbot, or move a file into the Zynkbot folder. Files you save from a linked device land here too. Each linked device's folder is listed below under Shared With Me, named after the device.
+            Zynkbot is a folder on this phone. Anything you put in it can be seen by your linked devices: use the Share button in any app and pick Zynkbot, or Browse files → Add Files. Files you save from a linked device land here too. Each linked device's folder is listed below under Shared With Me, named after the device.
 
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button
-              onClick={() => window.AndroidPaths?.openShareFolder()}
-              style={{
-                flex: 1,
-                padding: '10px',
-                background: '#8be9fd',
-                border: 'none',
-                borderRadius: '4px',
-                color: '#282a36',
-                fontSize: '0.9rem',
-                fontWeight: 'bold',
-                cursor: 'pointer'
-              }}
-            >
-              📂 Open folder
-            </button>
+            {/* The in-app list, with "→ Models" on .gguf files. The old "Open folder" button
+                handed off to the phone's Files app, which has no such button; removed
+                (Matt, 2026-10-24). */}
+            {sharedDirs.length > 0 && (
+              <button
+                onClick={() => {
+                  const own = sharedDirs.find(d => d.share_name === 'ZynkbotShare') || sharedDirs[0];
+                  setBrowserShare({ shareId: own.id, deviceId: own.device_id, shareName: 'My shared folder' });
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  background: '#44475a',
+                  border: 'none',
+                  borderRadius: '4px',
+                  color: '#f8f8f2',
+                  fontSize: '0.9rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                📋 Browse files
+              </button>
+            )}
           </div>
         </div>
       )}
