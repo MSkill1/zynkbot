@@ -85,7 +85,10 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode, onOpen
     close: () => setShowModal(false),
   }));
 
-  if (isLoading) {
+  // Only the first load shows the placeholder. Every background store refreshes this
+  // list, and returning the placeholder here unmounted the Memory Manager window too:
+  // it reopened at the top with a flash each time a memory landed (Matt, 2026-10-24).
+  if (isLoading && memories.length === 0) {
     return (
       <div className="memory-manager">
         <h3>Recent Memories</h3>

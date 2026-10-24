@@ -99,6 +99,9 @@ pub fn ensure_worker(sink: Arc<dyn crate::response_sink::ResponseSink>) {
 /// The worker loop: one job at a time, oldest first, waking on `enqueue`.
 async fn run_worker(sink: Arc<dyn crate::response_sink::ResponseSink>) {
     println!("[Memory jobs] worker started");
+    // The app runs its migrations on its own first connection; the worker starts beside it
+    // and asked for the table before it existed (Pixel, 17:19). Let the app go first.
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     loop {
         let pool = match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
             Ok(p) => p,

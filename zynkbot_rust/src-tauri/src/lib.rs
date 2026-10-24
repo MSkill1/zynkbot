@@ -999,6 +999,9 @@ pub struct RelationshipClassification {
     #[serde(deserialize_with = "deserialize_memory_id")]
     memory_id: i32,
     relationship_type: String,  // "contradicts", "updates", "related", "none" (migration 0022)
+    // The phone's links-only call gives no reason (2026-10-24); every phone link failed to
+    // parse for an hour because this was required.
+    #[serde(default)]
     reason: String,
     confidence: Option<f32>,  // 0.0-1.0 confidence score
 }
