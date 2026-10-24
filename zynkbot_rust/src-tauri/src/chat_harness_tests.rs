@@ -54,18 +54,21 @@ struct FakeModel {
     base_url: String,
     replies: Arc<Mutex<VecDeque<String>>>,
     decision: Arc<Mutex<String>>,
+    /// Call 2's answer (the facts JSON); told apart from call 3 by the prompt's "facts" shape.
+    facts: Arc<Mutex<String>>,
     requests: Arc<Mutex<Vec<serde_json::Value>>>,
 }
 
 impl FakeModel {
     async fn start() -> FakeModel {
         let replies: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
-        let decision = Arc::new(Mutex::new(r#"{"should_remember": true, "title": "Fact"}"#.to_string()));
+        let decision = Arc::new(Mutex::new(r#"{"title": "Fact", "relationships": []}"#.to_string()));
+        let facts = Arc::new(Mutex::new(r#"{"facts": []}"#.to_string()));
         let requests: Arc<Mutex<Vec<serde_json::Value>>> = Arc::new(Mutex::new(Vec::new()));
 
-        let (r, d, q) = (replies.clone(), decision.clone(), requests.clone());
+        let (r, d, f, q) = (replies.clone(), decision.clone(), facts.clone(), requests.clone());
         let handler = move |axum::Json(body): axum::Json<serde_json::Value>| {
-            let (r, d, q) = (r.clone(), d.clone(), q.clone());
+            let (r, d, f, q) = (r.clone(), d.clone(), f.clone(), q.clone());
             async move {
                 q.lock().unwrap().push(body.clone());
                 let streaming = body.get("stream").and_then(|s| s.as_bool()).unwrap_or(false);
@@ -83,9 +86,11 @@ impl FakeModel {
                     sse.push_str("data: [DONE]\n\n");
                     ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], sse).into_response()
                 } else {
-                    // The follow-up decision request ("should I remember this?"), which
-                    // the app makes without streaming and parses as JSON in the content.
-                    let content = d.lock().unwrap().clone();
+                    // The background calls, made without streaming and parsed as JSON in the
+                    // content: call 2 (the facts; its prompt shows the {"facts": [...]} shape)
+                    // and call 3 (title and relationships).
+                    let prompt = FakeModel::prompt_of(&body);
+                    let content = if prompt.contains("\"facts\"") { f.lock().unwrap().clone() } else { d.lock().unwrap().clone() };
                     axum::Json(serde_json::json!({
                         "id": "fake", "model": "fake-model",
                         "choices": [{ "message": { "role": "assistant", "content": content }, "finish_reason": "stop" }],
@@ -100,11 +105,16 @@ impl FakeModel {
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, app).await.expect("fake model server"); });
 
-        FakeModel { base_url: format!("http://127.0.0.1:{}", port), replies, decision, requests }
+        FakeModel { base_url: format!("http://127.0.0.1:{}", port), replies, decision, facts, requests }
     }
 
     fn will_say(&self, reply: &str) {
         self.replies.lock().unwrap().push_back(reply.to_string());
+    }
+
+    /// What call 2 answers next: the facts JSON (memory_prompts.rs shape).
+    fn will_extract(&self, json: &str) {
+        *self.facts.lock().unwrap() = json.to_string();
     }
 
     /// Every chat (streaming) request the app has made, in order.
@@ -179,7 +189,9 @@ impl Bench {
 
     /// Memory storage runs in the background after the reply; wait for it.
     async fn wait_for_memory_containing(&self, needle: &str) -> Vec<String> {
-        for _ in 0..80 {
+        // 60 s: under the full suite the first background job waits for the embedding
+        // model to load, and 20 s expired once on 2026-10-24.
+        for _ in 0..240 {
             let all = self.memory_contents().await;
             if all.iter().any(|m| m.contains(needle)) { return all; }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -319,18 +331,53 @@ fn c05_a_reply_carrying_a_memory_marker_becomes_a_memory() {
     rt_test(async {
         let model = FakeModel::start().await;
         let bench = Bench::new(&model).await;
-        model.will_say("Burlington is a great town, glad it suits you.\nMEMORY_EXTRACT: The user lives in Burlington");
-        model.will_decide(r#"{"should_remember": true, "title": "Lives in Burlington"}"#);
+        model.will_say("Burlington is a great town, glad it suits you.\nMEMORY: yes");
+        model.will_extract(r#"{"facts": [{"fact": "The user lives in Burlington.", "title": "Lives in Burlington", "tags": ["home"]}]}"#);
 
         let sink = Arc::new(RecordingSink::default());
         let reply = bench.ask(sink, "custom",
             "I moved to Burlington last spring and I really like it here so far", true).await;
 
-        assert!(!reply_text(&reply).contains("MEMORY_EXTRACT"),
+        assert!(!reply_text(&reply).contains("MEMORY:"),
             "the marker line was shown to the user: {}", reply_text(&reply));
         let stored = bench.wait_for_memory_containing("Burlington").await;
         assert!(stored.iter().any(|m| m.contains("Burlington")),
             "the marked fact was not stored; memories: {:?}", stored);
+    });
+}
+
+/// Call 1 of the memory pipeline (2026-10-24): a reply with no MEMORY line stores nothing.
+/// Until today the app then asked a second time on the raw message and stored it verbatim
+/// (the translation requests of 10-20/21).
+#[test]
+fn c07_a_reply_without_a_memory_line_stores_nothing() {
+    let _env = hold_env();
+    rt_test(async {
+        let model = FakeModel::start().await;
+        let bench = Bench::new(&model).await;
+        model.will_say("Here is the translation: Buenas noches, señora.");
+        model.will_extract(r#"{"facts": [{"fact": "The user wishes someone a good night.", "title": "Good night"}]}"#);
+        bench.ask(Arc::new(RecordingSink::default()), "custom", "Please translate: good night, ma'am, sleep well", true).await;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let stored = bench.memory_contents().await;
+        assert!(stored.is_empty(), "nothing should be stored without a MEMORY line; memories: {:?}", stored);
+    });
+}
+
+/// "MEMORY: yes" sends the message to call 2; when call 2 finds no fact, nothing is stored
+/// and the user's message is never the memory.
+#[test]
+fn c08_a_yes_with_no_facts_stores_nothing() {
+    let _env = hold_env();
+    rt_test(async {
+        let model = FakeModel::start().await;
+        let bench = Bench::new(&model).await;
+        model.will_say("Glad to hear it.\nMEMORY: yes");
+        model.will_extract(r#"{"facts": []}"#);
+        bench.ask(Arc::new(RecordingSink::default()), "custom", "I'm doing a test to see if the local model works today", true).await;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let stored = bench.memory_contents().await;
+        assert!(stored.is_empty(), "the raw message must not become a memory; memories: {:?}", stored);
     });
 }
 
@@ -343,15 +390,16 @@ fn c06_an_update_replaces_the_older_memory_and_keeps_it_as_history() {
     rt_test(async {
         let model = FakeModel::start().await;
         let bench = Bench::new(&model).await;
-        model.will_say("Rutland is a nice town.\nMEMORY_EXTRACT: The user lives in Rutland");
-        model.will_decide(r#"{"should_remember": true, "title": "Lives in Rutland"}"#);
+        model.will_say("Rutland is a nice town.\nMEMORY: yes");
+        model.will_extract(r#"{"facts": [{"fact": "The user lives in Rutland.", "title": "Lives in Rutland"}]}"#);
         bench.ask(Arc::new(RecordingSink::default()), "custom", "I live in Rutland", true).await;
         bench.wait_for_memory_containing("Rutland").await;
         let old_id: i64 = sqlx::query_scalar("SELECT id FROM memories WHERE content LIKE '%Rutland%'")
             .fetch_one(&bench.pool).await.unwrap();
 
-        model.will_say("Congratulations on the move.\nMEMORY_EXTRACT: The user moved to Burlington");
-        model.will_decide(&format!(r#"{{"should_remember": true, "title": "Moved to Burlington", "relationships": [{{"memory_id": {}, "relationship_type": "updates", "reason": "moved house", "confidence": 0.95}}]}}"#, old_id));
+        model.will_say("Congratulations on the move.\nMEMORY: yes");
+        model.will_extract(r#"{"facts": [{"fact": "The user moved to Burlington.", "title": "Moved to Burlington"}]}"#);
+        model.will_decide(&format!(r#"{{"title": "Moved to Burlington", "relationships": [{{"memory_id": {}, "relationship_type": "updates", "reason": "moved house", "confidence": 0.95}}]}}"#, old_id));
         bench.ask(Arc::new(RecordingSink::default()), "custom", "I moved to Burlington last month", true).await;
         bench.wait_for_memory_containing("Burlington").await;
 
@@ -367,8 +415,7 @@ fn c06_an_update_replaces_the_older_memory_and_keeps_it_as_history() {
         assert_eq!(link, ("updates".to_string(), "llm".to_string()));
 
         // The replaced memory stays out of the prompt; the new one reaches it.
-        model.will_say("You live in Burlington.");
-        model.will_decide(r#"{"should_remember": false}"#);
+        model.will_say("You live in Burlington.\nMEMORY: no");
         bench.ask(Arc::new(RecordingSink::default()), "custom", "Where do I live these days?", true).await;
         let requests = model.chat_requests();
         let prompt = FakeModel::prompt_of(requests.last().unwrap());

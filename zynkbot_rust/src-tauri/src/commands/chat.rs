@@ -981,8 +981,6 @@ pub async fn generate_reply(
 
     // Parse MEMORY_EXTRACT facts from the LLM response — fires for any message type,
     // no is_question gate. Both API and local models use the same MEMORY_EXTRACT marker.
-    let msg_lower = message.to_lowercase();
-    let is_api = ConversationEngine::is_api_model(&forced_backend);
 
     let mut extracted_facts: Vec<String> = Vec::new();
 
@@ -992,22 +990,23 @@ pub async fn generate_reply(
     // parser and display stay in step.
     let reply_lines: Vec<&str> = reply_text.lines().collect();
     let mut consumed_extract_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    // Local models end the reply with "REMEMBER: yes|no" (conversation_engine, 2026-10-22):
-    // the flag that decides whether the background extraction call runs. Taken from the
-    // last such line, hidden from the display. None when the model forgot it.
-    let mut local_remember: Option<bool> = None;
-    if !is_api {
-        for (idx, line) in reply_lines.iter().enumerate().rev() {
-            let t = line.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
-            if let Some(rest) = t.strip_prefix("remember") {
-                let rest = rest.trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—'));
-                if rest.starts_with("yes") { local_remember = Some(true); consumed_extract_lines.insert(idx); break; }
-                if rest.starts_with("no") { local_remember = Some(false); consumed_extract_lines.insert(idx); break; }
-            }
+    // Call 1 of the memory pipeline (2026-10-24): cloud and custom replies end with
+    // "MEMORY: yes|no" (conversation_engine); "REMEMBER:" is the older spelling. Taken from
+    // the last such line, hidden from the display, and only when the word stands alone
+    // ("Remember no matter what..." is prose). None when the model wrote none: on the cloud
+    // that means nothing is stored, logged below; the on-device model is not asked for a
+    // marker and its call 2 decides.
+    let mut memory_flag: Option<bool> = None;
+    for (idx, line) in reply_lines.iter().enumerate().rev() {
+        let t = line.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
+        if let Some(rest) = t.strip_prefix("memory").or_else(|| t.strip_prefix("remember")) {
+            let word = rest.trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—'))
+                .trim_end_matches(|c: char| matches!(c, '.' | '!' | ' '));
+            if word == "yes" { memory_flag = Some(true); consumed_extract_lines.insert(idx); break; }
+            if word == "no" { memory_flag = Some(false); consumed_extract_lines.insert(idx); break; }
         }
-        if let Some(flag) = local_remember { println!("[RUST] Local model's REMEMBER flag: {}", if flag { "yes" } else { "no" }); }
-        else { println!("[RUST] Local model gave no REMEMBER flag; the background extraction call decides"); }
     }
+    if let Some(flag) = memory_flag { println!("[RUST] MEMORY line: {}", if flag { "yes" } else { "no" }); }
     let mut heading_without_fact = false;
     let mut li = 0;
     while li < reply_lines.len() {
@@ -1040,95 +1039,10 @@ pub async fn generate_reply(
         println!("[RUST] ⚠️ Reply had a fact-extraction heading but no fact after it — nothing stored (model formatting, KI-049)");
     }
 
-    // Stopwords excluded from both safety filters — too common to serve as grounding evidence.
-    let filter_stopwords: std::collections::HashSet<&str> = [
-        "about", "some", "what", "your", "their", "that", "this", "with", "from",
-        "have", "been", "they", "them", "will", "would", "could", "should", "does",
-        "just", "more", "also", "when", "where", "there", "here", "very", "much",
-        "good", "well", "like", "make", "time", "know", "want", "need", "back",
-        "into", "over", "then", "than", "even", "only", "such", "each", "both",
-    ].iter().copied().collect();
-
-    // Build a shared set of content words from the user's message (>3 chars, not stopwords).
-    // Used by both safety filters below.
-    let msg_content_words: std::collections::HashSet<&str> = msg_lower
-        .split(|c: char| !c.is_alphabetic())
-        .filter(|w| w.len() > 3 && !filter_stopwords.contains(w))
-        .collect();
-
-    if !extracted_facts.is_empty() {
-        // Safety filter 1 — rephrasing guard: only applied to longer messages (≥8 content
-        // words) where the heuristic is reliable. On shorter messages it produces false
-        // rejections — "I've been feeling burnt out lately" → "Albert has been feeling burnt
-        // out lately" shares 80% of words yet is a correct extraction. Threshold raised to
-        // 75% (was 50%) for the same reason.
-        if msg_content_words.len() >= 8 {
-            extracted_facts.retain(|fact| {
-                let fact_lower = fact.to_lowercase();
-                let overlap = msg_content_words.iter()
-                    .filter(|w| fact_lower.contains(*w))
-                    .count();
-                let keep = (overlap as f32 / msg_content_words.len() as f32) < 0.75;
-                if !keep {
-                    println!("[RUST] ⚠️ Discarding MEMORY_EXTRACT that rephrases the message: {}", fact.chars().take(80).collect::<String>());
-                }
-                keep
-            });
-        }
-
-        // Safety filter 2 — hallucination guard: the extracted fact must share at least one
-        // content word with the user's message. A model that emits MEMORY_EXTRACT for
-        // "How are you today?" and returns "Albert has been thinking about educational
-        // pursuits" is hallucinating — nothing in the message grounds that claim.
-        // This catches weak local models that fire on chitchat and invent the content.
-        if !msg_content_words.is_empty() {
-            extracted_facts.retain(|fact| {
-                let fact_lower = fact.to_lowercase();
-                let grounded = msg_content_words.iter().any(|w| fact_lower.contains(*w));
-                if !grounded {
-                    println!("[RUST] ⚠️ Discarding MEMORY_EXTRACT: fact shares no words with message — likely hallucination: {}", fact.chars().take(80).collect::<String>());
-                }
-                grounded
-            });
-        }
-
-        // Safety filter 3 — meta-question guard: local models (especially Qwen) sometimes
-        // emit MEMORY_EXTRACT for questions, e.g. "Albert asked about the capital of France."
-        // The rephrasing guard misses this on short questions (<8 content words) because the
-        // threshold requires a longer message to be reliable. Explicitly reject facts that
-        // describe the user asking rather than stating a personal fact.
-        let meta_question_patterns = [
-            "asked about", "asked what", "asked how", "asked why",
-            "asked when", "asked where", "asked if", "asked whether",
-            "wants to know", "inquired about", "is wondering",
-            "wondered about", "is curious about", "was asking",
-        ];
-        extracted_facts.retain(|fact| {
-            let fact_lower = fact.to_lowercase();
-            let is_meta = meta_question_patterns.iter().any(|p| fact_lower.contains(p));
-            if is_meta {
-                println!("[RUST] ⚠️ Discarding meta-question MEMORY_EXTRACT: {}", fact.chars().take(80).collect::<String>());
-            }
-            !is_meta
-        });
-    }
-
-    if !extracted_facts.is_empty() {
-        println!("[RUST] 💡 LLM extracted {} fact(s) from message", extracted_facts.len());
-    }
-
-    // Replace the generic "User" placeholder with the person's actual name.
-    // Post-processing is more reliable than prompting — the LLM consistently
-    // writes "User has a dog" as a placeholder regardless of prompt instructions.
-    if let Some(ref name) = user_display_name {
-        extracted_facts = extracted_facts
-            .into_iter()
-            .map(|fact| {
-                fact.replace("User's ", &format!("{}'s ", name))
-                    .replace("User ", &format!("{} ", name))
-            })
-            .collect();
-    }
+    // An old-style MEMORY_EXTRACT line (a model keeping the June habit) counts as a yes;
+    // its text is not stored, call 2 extracts the facts like for any other message.
+    let legacy_fact_line = !extracted_facts.is_empty();
+    if legacy_fact_line { println!("[RUST] Reply carried a MEMORY_EXTRACT line (older prompt habit); treated as MEMORY: yes"); }
 
     // STEP 8: Convert memory::Memory to lib.rs Memory for response
     // Include linked memories in UI display so user can see what was pulled in via graph traversal
@@ -1371,33 +1285,21 @@ pub async fn generate_reply(
         println!("[KB RAG] memory extraction skipped: the knowledge base had no real match for this question");
     }
 
-    // Explicit "Remember:" commands always store verbatim — override any LLM MEMORY_EXTRACT.
-    if let Some(remember_content) = explicit_remember_content {
-        if !remember_content.is_empty() {
-            println!("[RUST] 📌 Explicit Remember: command — storing verbatim content");
-            extracted_facts = vec![remember_content];
-        }
-    }
-
-    // Gate 1: Reject pure trivial content (single-word acks, filler phrases, <3 words).
-    // Everything else goes to the LLM — it decides what's actually worth storing.
-    // Explicit "Remember:" commands always bypass this check.
+    // Gate 1: pure trivia (single-word acks, filler phrases) never reaches a model.
+    // Explicit "Remember:" bypasses it.
     let memory_gate_passed = is_explicit_remember || engine.is_memory_worthy(&query);
-
-    // MEMORY_EXTRACT text (if any) is carried into the background task — NOT stored immediately.
-    // Storage happens only after contradiction detection completes.
-    let bg_extracted_text: Option<String> = extracted_facts.into_iter().next();
-
-    // Local-model flow (2026-10-22): the reply carried no MEMORY_EXTRACT; a background
-    // extraction call lists the facts, each its own memory. Skipped outright when the
-    // model said REMEMBER: no, unless the user said "Remember:".
-    // Only the on-device GGUF model: a "custom" endpoint is another server's model and
-    // keeps the MEMORY_EXTRACT path (the chat harness runs through one).
-    let local_flow = (forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local")) && !is_explicit_remember;
-    let local_said_no = local_flow && local_remember == Some(false);
-    if local_said_no { println!("[RUST] Local model: nothing to remember in this message; no background memory call"); }
-    if !effective_skip_memory && !local_said_no && (memory_gate_passed || bg_extracted_text.is_some()) {
-        // Clone data needed for background task
+    let on_device_flow = forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local");
+    // Call 1's answer. Cloud and custom: the MEMORY line, or an old-style fact line, says
+    // yes; no line at all means no memory. On-device: no marker is asked for, so every
+    // non-trivial message goes to call 2, which decides (an explicit "no" is honoured).
+    let remember_content: Option<String> = explicit_remember_content.filter(|t| !t.is_empty());
+    let call1_yes = if is_explicit_remember { true }
+        else if on_device_flow { memory_flag != Some(false) }
+        else { memory_flag == Some(true) || legacy_fact_line };
+    if !is_explicit_remember && !on_device_flow && memory_flag.is_none() && !legacy_fact_line && memory_gate_passed {
+        println!("[RUST] Reply carried no MEMORY line; nothing stored (call 1 of the memory pipeline)");
+    }
+    if !effective_skip_memory && memory_gate_passed && call1_yes {
         let bg_message = query.clone();  // Store clean question in memories, not file dump
         let bg_user_id = user_id.clone();
         let bg_session_id = session_id.clone();
@@ -1408,34 +1310,38 @@ pub async fn generate_reply(
         let bg_source_type: &'static str = if hands_free { "hands_free" } else { "conversation" };
         let bg_containment_mode = containment_mode.clone();
         let bg_sink = sink.clone();
-        let bg_is_api = is_api;
         let bg_is_explicit_remember = is_explicit_remember;
-
         let bg_user_name = user_display_name.clone();
+        // The last exchange, so call 2 can resolve "she" and "it"; facts come from the message only.
+        let bg_recent_turns = recent_turns_text(conversation_history.as_deref());
         let bg = MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
-            bg_sink, bg_is_api, bg_is_explicit_remember, bg_user_name, query_entities: query_entities.clone() };
-        // Spawn background task for memory processing
+            bg_sink, bg_is_explicit_remember, bg_user_name, bg_recent_turns, query_entities: query_entities.clone() };
         tokio::spawn(async move {
-            if local_flow {
-                // A separate call on the local model lists the facts (at most three), and each
-                // one goes through the same storage path as a MEMORY_EXTRACT fact did.
-                let facts = local_memory_facts(&bg.bg_message, &bg.bg_forced_backend, bg.bg_user_name.as_deref()).await;
-                if facts.is_empty() {
-                    println!("[RUST BACKGROUND] Local extraction found nothing to remember");
-                    return;
+            if let Some(text) = remember_content {
+                // "Remember:" stores the words as said; call 2 is skipped, call 3 titles and links it.
+                run_memory_background(bg, crate::memory_prompts::ExtractedFact { fact: text, title: None, extras: Default::default() }).await;
+                return;
+            }
+            // Call 2: the facts in the message, each with title, date, tags, tone and named
+            // things, one memory per fact (at most three).
+            let facts = extract_facts(&bg).await;
+            if facts.is_empty() {
+                println!("[RUST BACKGROUND] Call 2 found nothing to remember");
+                if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                    crate::conversation_history::set_extraction_outcome(&pool, &bg.bg_session_id, "model_declined").await;
+                    pool.close().await;
                 }
-                for fact in facts {
-                    run_memory_background(bg.clone(), Some(fact)).await;
-                }
-            } else {
-                run_memory_background(bg, bg_extracted_text).await;
+                return;
+            }
+            for fact in facts {
+                run_memory_background(bg.clone(), fact).await;
             }
         });
     }
  else {
         // Nothing was extracted for this exchange. Record why, so "103 sessions with no
         // memories" can be told apart into gate-refused vs. deliberately skipped.
-        let reason = if effective_skip_memory { "skipped" } else { "gate_skipped" };
+        let reason = if effective_skip_memory { "skipped" } else if !memory_gate_passed { "gate_skipped" } else { "model_declined" };
         let sid = session_id.clone();
         tokio::spawn(async move {
             if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
@@ -2194,22 +2100,63 @@ struct MemoryBg {
     bg_source_type: &'static str,
     bg_containment_mode: String,
     bg_sink: std::sync::Arc<dyn crate::response_sink::ResponseSink>,
-    bg_is_api: bool,
     bg_is_explicit_remember: bool,
     bg_user_name: Option<String>,
+    /// The last exchange or two, for call 2's pronouns (2026-10-24).
+    bg_recent_turns: Option<String>,
     query_entities: Vec<String>,
+}
+
+/// The last two turns as "User: … / Zynkbot: …", each cut to 300 characters.
+fn recent_turns_text(history: Option<&[ConversationTurn]>) -> Option<String> {
+    let h = history?;
+    let start = h.len().saturating_sub(2);
+    let lines: Vec<String> = h[start..].iter().map(|t| {
+        let who = if t.role.eq_ignore_ascii_case("user") { "User" } else { "Zynkbot" };
+        format!("{}: {}", who, crate::conversation_engine::cut_chars(&t.content, 300))
+    }).collect();
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
+}
+
+/// Call 2 of the memory pipeline for one message: the facts, each with title, date, tags,
+/// tone and named things (memory_prompts.rs). A local model is held to the JSON schema;
+/// a cloud model answers free-form and is parsed leniently. Empty means nothing to store.
+async fn extract_facts(bg: &MemoryBg) -> Vec<crate::memory_prompts::ExtractedFact> {
+    let subject = bg.bg_user_name.clone().unwrap_or_else(|| "User".to_string());
+    let today = chrono::Local::now().date_naive();
+    let prompt = crate::memory_prompts::extraction_prompt(&bg.bg_message, &subject, bg.bg_recent_turns.as_deref(), today);
+    match crate::call_backend_with_schema(&prompt, &bg.bg_forced_backend, crate::memory_prompts::EXTRACTION_SCHEMA).await {
+        Ok(text) => {
+            let facts = crate::memory_prompts::parse_extraction(&text, &bg.bg_message);
+            println!("[RUST BACKGROUND] Call 2: {} fact(s)", facts.len());
+            facts
+        }
+        Err(e) => { println!("[RUST BACKGROUND] Call 2 failed: {}", e); Vec::new() }
+    }
+}
+
+/// Call 2's fields where it gave them, call 3's otherwise.
+fn merge_extras(a: crate::memory_extras::MemoryExtras, b: crate::memory_extras::MemoryExtras) -> crate::memory_extras::MemoryExtras {
+    crate::memory_extras::MemoryExtras {
+        event_date: a.event_date.or(b.event_date),
+        namespace: a.namespace.or(b.namespace),
+        tags: a.tags.or(b.tags),
+        tone: a.tone.or(b.tone),
+        entities: a.entities.or(b.entities),
+    }
 }
 
 /// The background memory pipeline for one candidate fact (or, with None, for the raw
 /// message): embedding, duplicate and contradiction checks, the memory decision,
 /// relationships, storage. Was the body of the spawned task in send_message_with_memory
 /// until 2026-10-22; lifted out so the local-model flow can run it once per fact.
-async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) {
+async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::ExtractedFact) {
     let MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
-        bg_sink, bg_is_api, bg_is_explicit_remember, bg_user_name: _, query_entities } = bg;
-            // Use extracted fact as content when MEMORY_EXTRACT fired; raw message otherwise.
-            // The extracted fact is a clean, focused statement — better for storage and search.
-            let factual_content = bg_extracted_text.clone().unwrap_or_else(|| bg_message.clone());
+        bg_sink, bg_is_explicit_remember, bg_user_name: _, bg_recent_turns: _, query_entities } = bg;
+            // The stored text is the fact from call 2 (or the words after "Remember:"), never
+            // the raw message: until 2026-10-24 a cloud reply with no fact line stored the
+            // user's message verbatim (219 of them in September).
+            let factual_content = fact.fact.clone();
 
             // Generate embedding FIRST (needed for duplicate check and storage)
             let factual_clone = factual_content.clone();
@@ -2228,10 +2175,8 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
                 }
             };
 
-            // Emit pending indicator for Memory Manager spinner.
-            // Only fires when there is actually a memory candidate to potentially store.
-            // Local models without MEMORY_EXTRACT have no candidate and run silently.
-            let has_memory_candidate = bg_extracted_text.is_some() || bg_is_api || bg_is_explicit_remember;
+            // Pending indicator for the Memory Manager spinner: every call here has a fact.
+            let has_memory_candidate = true;
             let pending_id: u64 = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -2285,7 +2230,7 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
             similar_memories.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
 
             // API models handle larger candidate sets well; local 7B models degrade with more context
-            let relationship_candidate_limit = if bg_is_api { 10 } else { 6 };
+            let relationship_candidate_limit = if crate::conversation_engine::ConversationEngine::is_api_model(&bg_forced_backend) { 10 } else { 6 };
             similar_memories.truncate(relationship_candidate_limit);
 
             if !similar_memories.is_empty() {
@@ -2335,69 +2280,31 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
                 return;
             }
 
-            // Local models: only proceed when MEMORY_EXTRACT fired — that's the storage
-            // decision for local. No extracted text means nothing to store.
-            // API models: always proceed to Call 2, which makes the should_remember decision.
-            if bg_extracted_text.is_none() && !bg_is_api {
-                if has_memory_candidate {
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
-                }
-                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
-                db_pool.close().await;
-                return;
-            }
-
             println!("[RUST BACKGROUND] ✅ Proceeding with relationship classification");
 
-            // Local: MEMORY_EXTRACT fired → relationships + title only (should_remember=true).
-            // API: full should_remember + relationship classification.
-            // On-device model: its links go through the floor and the dropped-types list
-            // (lib.rs LOCAL_LINK_CONFIDENCE_FLOOR / LOCAL_DROPPED_LINK_TYPES, memory bench
-            // 2026-10-22/23) and are tagged "local_llm" so they can be found and reviewed later.
+            // Call 3: how the fact relates to the similar memories. Title, date, tags, tone and
+            // named things come from call 2 when it gave them; call 3's own are the fallback
+            // ("Remember:" skips call 2, so its title comes from here). On-device links go
+            // through the floor and the dropped-types list (lib.rs LOCAL_LINK_CONFIDENCE_FLOOR /
+            // LOCAL_DROPPED_LINK_TYPES, memory bench 2026-10-22/23) and are tagged "local_llm".
             let bg_on_device = bg_forced_backend.ends_with(".gguf") || bg_forced_backend.to_lowercase().contains("local");
             let link_created_by = if bg_on_device { "local_llm" } else { "llm" };
-            let (should_remember, llm_title, llm_relationships, llm_extras) = if !bg_is_api {
+            let (should_remember, llm_title, llm_relationships, llm_extras) = if similar_memories.is_empty() && fact.title.is_some() {
+                println!("[RUST BACKGROUND] No similar memories; call 3 skipped");
+                (true, fact.title.clone(), Vec::new(), fact.extras.clone())
+            } else {
                 match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
-                    Ok((title, rels, extras)) => {
+                    Ok((title3, rels, extras3)) => {
                         let before = rels.len();
                         let rels = if bg_on_device { crate::filter_local_links(rels) } else { rels };
                         if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} link(s) from the local model (floor / dropped types)", before - rels.len()); }
                         println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
-                        (true, title, rels, extras)
+                        (true, fact.title.clone().or(title3), rels, merge_extras(fact.extras.clone(), extras3))
                     }
                     Err(e) => {
                         println!("[RUST BACKGROUND] ⚠️ Relationship classifier failed: {} — storing without links", e);
-                        let fallback = crate::generate_title_from_content(&factual_content);
-                        (true, Some(fallback), Vec::new(), crate::memory_extras::MemoryExtras::default())
-                    }
-                }
-            } else {
-                // API: ask_llm_about_memory_with_relationships (should_remember + relationships)
-                match crate::ask_llm_about_memory_with_relationships(
-                    &bg_message,
-                    "Background memory processing",
-                    &similar_memories,
-                    &bg_forced_backend,
-                ).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        println!("[RUST BACKGROUND] ⚠️ LLM call failed: {}", e);
-                        if !bg_forced_backend.contains("local") && !bg_forced_backend.ends_with(".gguf") {
-                            match crate::ask_llm_about_memory_with_relationships(
-                                &bg_message,
-                                "Background memory processing",
-                                &similar_memories,
-                                "local",
-                            ).await {
-                                Ok(result) => result,
-                                Err(e2) => {
-                                    println!("[RUST BACKGROUND] ⚠️ Fallback also failed: {}", e2);
-                                    (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
-                                }
-                            }
-                        } else {
-                            (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
-                        }
+                        let fallback = fact.title.clone().unwrap_or_else(|| crate::generate_title_from_content(&factual_content));
+                        (true, Some(fallback), Vec::new(), fact.extras.clone())
                     }
                 }
             };
@@ -2715,106 +2622,4 @@ async fn run_memory_background(bg: MemoryBg, bg_extracted_text: Option<String>) 
             println!("[RUST BACKGROUND] 🏁 Memory processing complete");
 }
 
-/// Local-model flow, step 2 (labs/local_model/PLAN.md): ask the local model, in the
-/// background and yielding to the user's turns, which personal facts the message holds.
-/// One fact per line, third person, at most three; NONE when there is nothing. Lines
-/// that share no content word with the message are dropped, as the MEMORY_EXTRACT
-/// filter does.
-/// The extraction call's prompt (shared with the memory bench).
-pub(crate) fn local_facts_prompt(message: &str, subject: &str) -> String {
-    format!(
-        "List the personal facts about {subject} in this message that are worth remembering later: name, age, family, pets, work, home, health, feelings, likes and dislikes, plans, events.\n\
-Rules: one fact per line, in the third person, starting with \"{subject}\". At most 3 lines. Only facts the message states; nothing guessed. If there is nothing worth remembering, write NONE.\n\n\
-Message: \"{message}\"",
-        subject = subject, message = message.replace('"', "'")
-    )
-}
 
-async fn local_memory_facts(message: &str, backend: &str, user_name: Option<&str>) -> Vec<String> {
-    let subject = user_name.unwrap_or("User").to_string();
-    let prompt = local_facts_prompt(message, &subject);
-    let model_path = if backend.ends_with(".gguf") { backend.to_string() } else {
-        match crate::llm::local_models::resolve_default_model_path() { Ok(p) => p, Err(e) => { println!("[RUST BACKGROUND] Local extraction: no model: {}", e); return Vec::new(); } }
-    };
-    let messages = vec![crate::llm::Message { role: "user".to_string(), content: prompt }];
-    let result = tokio::task::spawn_blocking(move || {
-        crate::llm::local_models::background_retry("Memory extraction", 3, || {
-            crate::llm::local_models::generate_with_local_model(&model_path, messages.clone(), Some(200), Some(0.1))
-        })
-    }).await;
-    let text = match result {
-        Ok(Ok(r)) => r.content,
-        Ok(Err(e)) => { println!("[RUST BACKGROUND] Local extraction failed: {}", e); return Vec::new(); }
-        Err(e) => { println!("[RUST BACKGROUND] Local extraction task failed: {}", e); return Vec::new(); }
-    };
-    let facts = parse_local_facts(&text, message);
-    println!("[RUST BACKGROUND] Local extraction: {} fact(s)", facts.len());
-    facts
-}
-
-/// The facts in the extraction call's reply: one per line, bullets and numbering
-/// stripped, NONE and stray REMEMBER lines ignored, at most three, and only lines that
-/// share a content word (longer than three letters) with the message, the same guard
-/// the MEMORY_EXTRACT path uses against invention.
-pub(crate) fn parse_local_facts(text: &str, message: &str) -> Vec<String> {
-    // A content word: four letters or more, or a number of two digits or more ("I'm 52" —
-    // the bench on 2026-10-22 showed every model's "Matt is 52 years old." being dropped
-    // because 52 was too short to count).
-    let content = |w: &str| w.len() > 3 || (w.len() > 1 && w.chars().all(|c| c.is_ascii_digit()));
-    let msg_words: std::collections::HashSet<String> = message.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric()).filter(|w| content(w)).map(|w| w.to_string()).collect();
-    let mut facts = Vec::new();
-    for line in text.lines() {
-        // Numbering like "1." or "2)" is stripped only when followed by a dot or bracket;
-        // a fact that begins with a number ("52 is Matt's age") keeps it.
-        let mut t = line.trim().trim_start_matches(|c: char| matches!(c, '-' | '*' | '•' | ' '));
-        let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
-        if digits > 0 && digits <= 2 && t[digits..].starts_with(['.', ')']) { t = t[digits + 1..].trim_start(); }
-        let t = t.trim();
-        if t.is_empty() || t.eq_ignore_ascii_case("none") || t.to_uppercase().starts_with("REMEMBER") { continue; }
-        if t.split_whitespace().count() < 3 { continue; }
-        let shares = t.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| content(w) && msg_words.contains(w));
-        if !shares { println!("[RUST BACKGROUND] Local extraction: dropped a fact that shares no words with the message: {}", t); continue; }
-        facts.push(t.trim_end_matches('.').to_string() + ".");
-        if facts.len() == 3 { break; }
-    }
-    facts
-}
-
-#[cfg(test)]
-mod local_facts_tests {
-    use super::parse_local_facts;
-    const MSG: &str = "I have a cat named Louie, and I'm planning a trip to Indiana in April.";
-
-    #[test]
-    fn one_fact_per_line_with_decoration_stripped() {
-        let out = parse_local_facts("1. Matt has a cat named Louie.\n- Matt plans a trip to Indiana in April", MSG);
-        assert_eq!(out, vec!["Matt has a cat named Louie.".to_string(), "Matt plans a trip to Indiana in April.".to_string()]);
-    }
-    #[test]
-    fn none_means_nothing() {
-        assert!(parse_local_facts("NONE", MSG).is_empty());
-        assert!(parse_local_facts("none\n", MSG).is_empty());
-    }
-    #[test]
-    fn at_most_three_facts() {
-        let text = "Matt has a cat named Louie.\nMatt plans a trip to Indiana.\nMatt likes April trips.\nMatt has another cat named Louie too.";
-        assert_eq!(parse_local_facts(text, MSG).len(), 3);
-    }
-    #[test]
-    fn a_line_sharing_no_words_with_the_message_is_dropped() {
-        let out = parse_local_facts("Matt has a cat named Louie.\nMatt enjoys skiing every winter.", MSG);
-        assert_eq!(out, vec!["Matt has a cat named Louie.".to_string()]);
-    }
-    #[test]
-    fn a_number_counts_as_a_shared_word() {
-        let out = parse_local_facts("Matt is 52 years old.\nMatt works as a software developer.", "I'm 52 and I work as a software developer.");
-        assert_eq!(out.len(), 2, "{out:?}");
-        assert_eq!(out[0], "Matt is 52 years old.");
-    }
-    #[test]
-    fn stray_flag_lines_and_fragments_are_ignored() {
-        let out = parse_local_facts("REMEMBER: yes\nLouie cat\nMatt has a cat named Louie.", MSG);
-        assert_eq!(out, vec!["Matt has a cat named Louie.".to_string()]);
-    }
-}

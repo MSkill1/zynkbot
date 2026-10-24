@@ -203,9 +203,10 @@ impl ConversationEngine {
         // Adaptive context limits
         // Local: 4 (was 7, 2026-10-22). The recalled memories are the part of the prompt a
         // local model has to read anew every turn, at ~40 tokens/s.
-        // On-device 3 (4 until 2026-10-24), and the fact only: the "you said" text doubled
-        // each line and the fact is what the model needs.
-        let max_memories = if is_api_model { 20 } else if self.on_device { 3 } else { 7 };
+        // On-device 4, the fact only: the "you said" text doubled each line and the fact is
+        // what the model needs. (3 for an afternoon on 2026-10-24: the fourth memory held
+        // the answer to the second test question, and 100 tokens more is fine; Matt.)
+        let max_memories = if is_api_model { 20 } else if self.on_device { 4 } else { 7 };
 
         // Limit based on model type
         let limited_memories: Vec<&Memory> = if useful_memories.len() > max_memories {
@@ -268,7 +269,7 @@ impl ConversationEngine {
         let opening = if self.on_device {
             "Answer the user. Keep it short: a few sentences, unless they ask for more.\n\n".to_string()
         } else {
-            format!("Today's date is {today}.\n\nYour output has two parts, always in this order:\nPART 1 — if the user stated personal facts: a MEMORY_EXTRACT line (see instructions below)\nPART 2 — your response as Zynkbot\n\n")
+            format!("Today's date is {today}.\n\n")
         };
         let mut system_prompt = if is_api_model {
             format!("Today's date is {today}.\n\nYou are Zynkbot, a personal AI companion.
@@ -331,66 +332,24 @@ After you indicate a web search is needed, the user will be shown your suggested
         if let Some(name) = user_name {
             system_prompt.push_str(&format!(
                 "The user's name is {name}. Use their name occasionally and naturally — not at the start of every reply. Do not address them by name as the first word of your response. Use it mid-sentence or when it adds warmth, the same way a friend would.{extract_note}\n\n",
-                extract_note = if self.on_device { "" } else { " Always use it in MEMORY_EXTRACT lines." }
+                extract_note = ""
             ));
         }
 
-        if is_api_model {
-            system_prompt.push_str(&format!(r#"HOW TO SAVE PERSONAL FACTS
-Examine every clause in the user's message — whether phrased as a statement, question, or aside — for personal facts the user is stating or implying. A question can contain a fact just as clearly as a statement.
+        // Call 1 of the memory pipeline (2026-10-24, Matt's design): the reply says only
+        // whether the message holds anything to store. On yes, a separate call lists the
+        // facts (memory_prompts.rs); on no, nothing runs. Until today the cloud reply carried
+        // the fact itself as a MEMORY_EXTRACT line and a second call decided again on the
+        // raw message, storing it verbatim when the line was missing. The on-device model
+        // gets no marker (it stops answering when asked for one); its call 2 decides.
+        if !self.on_device {
+            system_prompt.push_str(&format!(r#"MEMORY LINE
+End every reply with one final line, exactly "MEMORY: yes" or "MEMORY: no", and nothing else on that line.
+- yes: the user's message states a personal fact about {subject_label}: their life, people, pets, work, home, health, feelings, plans, possessions, likes or dislikes. A fact stated inside a question counts ("Raspberry pie is my favorite. What's a good recipe?" is yes).
+- no: a question alone, chit-chat, general knowledge, a request about their stored memories, text they ask you to translate or that they quote from someone else, or a message only about Zynkbot itself.
+Do not write the fact in your reply; the line is only yes or no.
 
-To save a fact, include this line at the end of your response:
-MEMORY_EXTRACT: [all personal facts combined into one third-person statement starting with "{subject_label}"]
-
-Rules:
-- At most ONE MEMORY_EXTRACT line per message. Combine all facts into a single statement.
-- That line must begin with the exact text MEMORY_EXTRACT: — never write any other label or heading (such as "FACT EXTRACTION" or "PART 1") in your reply.
-- Omit MEMORY_EXTRACT entirely if no personal facts are present — this is the expected outcome for most messages.
-- Do NOT emit for: general knowledge, chitchat, current events, or messages that are only asking about the user's existing memories with no new fact stated.
-
-When to extract:
-- Direct statement: "I have a golden retriever named Max who's 3." → MEMORY_EXTRACT: {subject_label} has a 3-year-old golden retriever named Max.
-- Implied by question: "Raspberry pie is my favorite. What's a good recipe?" → MEMORY_EXTRACT: {subject_label} likes raspberry pie.
-- Family/people: "My nephews John and Jack are 8 and 9 — coming to my sister Janet's birthday Tuesday." → MEMORY_EXTRACT: {subject_label} has nephews John (8) and Jack (9) coming to sister Janet's birthday.
-- Emotional state: "I've been feeling really down lately." → MEMORY_EXTRACT: {subject_label} has been feeling down lately. (Tracking emotional patterns over time is valuable — always extract clear emotional states.)
-- Goals/plans: "I'm going to start a book series." → MEMORY_EXTRACT: {subject_label} plans to start a book series.
-
-When NOT to extract:
-- Recall question: "What theories have I come up with?" — answer from stored memories instead.
-- Chitchat: "How are you?" / "Good morning."
-- General knowledge: "What's the capital of France?"
-- Current events: "What's in the news today?"
-
-"#
-            ));
-        } else {
-            // On-device model (2026-10-22, branch local-model): the reply is one job, the
-            // answer. Memory work is separate background calls (chat.rs local_memory_facts).
-            // Two things were tried in the reply first and both failed on a 4B model the same
-            // way: a MEMORY_EXTRACT line (the model wrote the line and stopped) and a closing
-            // "REMEMBER: yes/no" flag (the model wrote the flag and stopped, even on "I have a
-            // cat named Louie"). The small model does the last instruction it was given.
-            // A "custom" endpoint keeps the two-part format below, which its larger models follow.
-            if !self.on_device {
-                system_prompt.push_str(&format!(r#"PART 1 — MEMORY_EXTRACT
-    Scan the user's message for personal facts (name, age, job, location, family, pets, feelings, preferences, plans, health). If ANY personal facts are present, the VERY FIRST LINE of your output MUST be:
-    MEMORY_EXTRACT: [one third-person statement combining all facts, starting with "{subject_label}"]
-
-    Output MEMORY_EXTRACT before your conversational response. If no personal facts exist, omit it entirely and go straight to PART 2. Write that line exactly as shown, beginning with MEMORY_EXTRACT: — do not write any other label or heading (such as "FACT EXTRACTION") in your reply.
-
-    Examples (first line of output when facts are present):
-    - "I have a dog named Rex." → MEMORY_EXTRACT: {subject_label} has a dog named Rex.
-    - "I'm 34 and work as a physical therapist." → MEMORY_EXTRACT: {subject_label} is 34 years old and works as a physical therapist.
-    - "I've been feeling down lately." → MEMORY_EXTRACT: {subject_label} has been feeling down lately.
-    - "I'm starting a book series." → MEMORY_EXTRACT: {subject_label} plans to start a book series.
-
-    Do NOT extract for: chitchat, general knowledge, recall questions about stored memories, or current events.
-
-    PART 2 — your Zynkbot response follows on the next line.
-
-    "#
-                ));
-            }
+"#, subject_label = subject_label));
         }
 
         // Build conversation history context
@@ -637,18 +596,23 @@ mod on_device_prompt_tests {
         assert!(date > history, "the date comes after the conversation so the kept context survives the clock");
     }
     #[test]
-    fn custom_endpoint_keeps_the_two_part_prompt() {
+    fn custom_and_cloud_prompts_ask_for_the_memory_line_only() {
         let e = ConversationEngine::new();
         let p = e.build_prompt("I have a dog named Rex.", None, None, false, Some("Matt"));
-        assert!(p.contains("PART 1 — MEMORY_EXTRACT"));
+        assert!(p.contains("MEMORY: yes"), "the yes/no marker instruction is missing");
+        assert!(!p.contains("MEMORY_EXTRACT"), "the fact line must not be asked for any more");
         assert!(p.starts_with("Today's date is"));
+        let api = e.build_prompt("I have a dog named Rex.", None, None, true, Some("Matt"));
+        assert!(api.contains("MEMORY: yes") && !api.contains("MEMORY_EXTRACT"));
+        let on = ConversationEngine::new().with_on_device(true).build_prompt("hi", None, None, false, None);
+        assert!(!on.contains("MEMORY:"), "the on-device model is not asked for a marker");
     }
     #[test]
-    fn on_device_recalls_three_memories() {
+    fn on_device_recalls_four_memories() {
         let e = ConversationEngine::new().with_on_device(true);
         let mems: Vec<Memory> = (0..7).map(|i| Memory { id: i, content: format!("fact number {i}"), original_text: None, title: None, similarity: Some(0.9), created_at: chrono::Utc::now() }).collect();
         let ctx = e.build_memory_context(&mems, "question", false);
-        assert_eq!(ctx.matches("fact number").count(), 3);
+        assert_eq!(ctx.matches("fact number").count(), 4);
         assert_eq!(ConversationEngine::new().build_memory_context(&mems, "question", false).matches("fact number").count(), 7);
     }
 }
