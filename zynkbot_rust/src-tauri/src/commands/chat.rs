@@ -1314,29 +1314,26 @@ pub async fn generate_reply(
         let bg_user_name = user_display_name.clone();
         // The last exchange, so call 2 can resolve "she" and "it"; facts come from the message only.
         let bg_recent_turns = recent_turns_text(conversation_history.as_deref());
-        let bg = MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
-            bg_sink, bg_is_explicit_remember, bg_user_name, bg_recent_turns, query_entities: query_entities.clone() };
-        tokio::spawn(async move {
-            if let Some(text) = remember_content {
-                // "Remember:" stores the words as said; call 2 is skipped, call 3 titles and links it.
-                run_memory_background(bg, crate::memory_prompts::ExtractedFact { fact: text, title: None, extras: Default::default() }).await;
-                return;
-            }
-            // Call 2: the facts in the message, each with title, date, tags, tone and named
-            // things, one memory per fact (at most three).
-            let facts = extract_facts(&bg).await;
-            if facts.is_empty() {
-                println!("[RUST BACKGROUND] Call 2 found nothing to remember");
-                if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
-                    crate::conversation_history::set_extraction_outcome(&pool, &bg.bg_session_id, "model_declined").await;
-                    pool.close().await;
+        // The memory job queue (memory_jobs.rs, 2026-10-24): one row per message, one
+        // worker, oldest first. A spawned task per message raced the next question for the
+        // phone's one model and gave up after three interruptions.
+        let job = crate::memory_jobs::Job {
+            id: 0, session_id: bg_session_id, user_id: bg_user_id, message: bg_message, backend: bg_forced_backend,
+            source_type: bg_source_type.to_string(), containment_mode: bg_containment_mode,
+            explicit_remember: bg_is_explicit_remember, remember_text: remember_content, user_name: bg_user_name,
+            recent_turns: bg_recent_turns, query_entities: query_entities.clone(), attempts: 0,
+        };
+        crate::memory_jobs::ensure_worker(bg_sink.clone());
+        match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+            Ok(pool) => {
+                match crate::memory_jobs::enqueue(&pool, &job).await {
+                    Ok(id) => println!("[RUST] Memory job {} queued", id),
+                    Err(e) => println!("[RUST] ⚠️ Could not queue the memory job: {}", e),
                 }
-                return;
+                pool.close().await;
             }
-            for fact in facts {
-                run_memory_background(bg.clone(), fact).await;
-            }
-        });
+            Err(e) => println!("[RUST] ⚠️ Could not open the database for the memory job: {}", e),
+        }
     }
  else {
         // Nothing was extracted for this exchange. Record why, so "103 sessions with no
@@ -2092,19 +2089,19 @@ fn extract_marker_remainder(line: &str) -> Option<String> {
 
 /// Everything the background memory task needs from the turn that spawned it.
 #[derive(Clone)]
-struct MemoryBg {
-    bg_message: String,
-    bg_user_id: String,
-    bg_session_id: String,
-    bg_forced_backend: String,
-    bg_source_type: &'static str,
-    bg_containment_mode: String,
-    bg_sink: std::sync::Arc<dyn crate::response_sink::ResponseSink>,
-    bg_is_explicit_remember: bool,
-    bg_user_name: Option<String>,
+pub(crate) struct MemoryBg {
+    pub(crate) bg_message: String,
+    pub(crate) bg_user_id: String,
+    pub(crate) bg_session_id: String,
+    pub(crate) bg_forced_backend: String,
+    pub(crate) bg_source_type: &'static str,
+    pub(crate) bg_containment_mode: String,
+    pub(crate) bg_sink: std::sync::Arc<dyn crate::response_sink::ResponseSink>,
+    pub(crate) bg_is_explicit_remember: bool,
+    pub(crate) bg_user_name: Option<String>,
     /// The last exchange or two, for call 2's pronouns (2026-10-24).
-    bg_recent_turns: Option<String>,
-    query_entities: Vec<String>,
+    pub(crate) bg_recent_turns: Option<String>,
+    pub(crate) query_entities: Vec<String>,
 }
 
 /// The last two turns as "User: … / Zynkbot: …", each cut to 300 characters.
@@ -2118,21 +2115,22 @@ fn recent_turns_text(history: Option<&[ConversationTurn]>) -> Option<String> {
     if lines.is_empty() { None } else { Some(lines.join("\n")) }
 }
 
-/// Call 2 of the memory pipeline for one message: the facts, each with title, date, tags,
-/// tone and named things (memory_prompts.rs). A local model is held to the JSON schema;
-/// a cloud model answers free-form and is parsed leniently. Empty means nothing to store.
-async fn extract_facts(bg: &MemoryBg) -> Vec<crate::memory_prompts::ExtractedFact> {
+/// Call 2 of the memory pipeline for one message: the facts, each with title and date, and
+/// on the cloud also tags, tone and named things (memory_prompts.rs). A local model is held
+/// to the JSON schema and gets the slim form; a cloud model answers free-form and is parsed
+/// leniently. Ok(empty) means nothing to store; Err carries "interrupted" when the user's
+/// next message took the model, so the job queue can wait instead of giving up.
+pub(crate) async fn extract_facts(bg: &MemoryBg) -> Result<Vec<crate::memory_prompts::ExtractedFact>, String> {
     let subject = bg.bg_user_name.clone().unwrap_or_else(|| "User".to_string());
     let today = chrono::Local::now().date_naive();
-    let prompt = crate::memory_prompts::extraction_prompt(&bg.bg_message, &subject, bg.bg_recent_turns.as_deref(), today);
-    match crate::call_backend_with_schema(&prompt, &bg.bg_forced_backend, crate::memory_prompts::EXTRACTION_SCHEMA).await {
-        Ok(text) => {
-            let facts = crate::memory_prompts::parse_extraction(&text, &bg.bg_message);
-            println!("[RUST BACKGROUND] Call 2: {} fact(s)", facts.len());
-            facts
-        }
-        Err(e) => { println!("[RUST BACKGROUND] Call 2 failed: {}", e); Vec::new() }
-    }
+    let on_device = bg.bg_forced_backend.ends_with(".gguf") || bg.bg_forced_backend.to_lowercase().contains("local");
+    let prompt = crate::memory_prompts::extraction_prompt_with(&bg.bg_message, &subject, bg.bg_recent_turns.as_deref(), today, on_device);
+    let schema = if on_device { crate::memory_prompts::EXTRACTION_SCHEMA_SLIM } else { crate::memory_prompts::EXTRACTION_SCHEMA };
+    let text = crate::call_backend_with_schema(&prompt, &bg.bg_forced_backend, schema).await
+        .map_err(|e| { println!("[RUST BACKGROUND] Call 2 failed: {}", e); e })?;
+    let facts = crate::memory_prompts::parse_extraction(&text, &bg.bg_message);
+    println!("[RUST BACKGROUND] Call 2: {} fact(s)", facts.len());
+    Ok(facts)
 }
 
 /// Call 2's fields where it gave them, call 3's otherwise.
@@ -2150,7 +2148,7 @@ fn merge_extras(a: crate::memory_extras::MemoryExtras, b: crate::memory_extras::
 /// message): embedding, duplicate and contradiction checks, the memory decision,
 /// relationships, storage. Was the body of the spawned task in send_message_with_memory
 /// until 2026-10-22; lifted out so the local-model flow can run it once per fact.
-async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::ExtractedFact) {
+pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::ExtractedFact) {
     let MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
         bg_sink, bg_is_explicit_remember, bg_user_name: _, bg_recent_turns: _, query_entities } = bg;
             // The stored text is the fact from call 2 (or the words after "Remember:"), never
@@ -2230,7 +2228,9 @@ async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::Extrac
             similar_memories.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
 
             // API models handle larger candidate sets well; local 7B models degrade with more context
-            let relationship_candidate_limit = if crate::conversation_engine::ConversationEngine::is_api_model(&bg_forced_backend) { 10 } else { 6 };
+            // Cloud 10; the phone 4 (6 until 2026-10-24), the same number as its recall, since
+            // every candidate is prompt the phone reads at ~40 tokens/s.
+            let relationship_candidate_limit = if crate::conversation_engine::ConversationEngine::is_api_model(&bg_forced_backend) { 10 } else { 4 };
             similar_memories.truncate(relationship_candidate_limit);
 
             if !similar_memories.is_empty() {
@@ -2292,6 +2292,22 @@ async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::Extrac
             let (should_remember, llm_title, llm_relationships, llm_extras) = if similar_memories.is_empty() && fact.title.is_some() {
                 println!("[RUST BACKGROUND] No similar memories; call 3 skipped");
                 (true, fact.title.clone(), Vec::new(), fact.extras.clone())
+            } else if bg_on_device && fact.title.is_some() {
+                // The phone: relationships only (ask_llm_for_links_only); title and date came
+                // from call 2, tags/tone/entities from the name finder below.
+                match crate::ask_llm_for_links_only(&factual_content, &similar_memories, &bg_forced_backend).await {
+                    Ok(rels) => {
+                        let before = rels.len();
+                        let rels = crate::filter_local_links(rels);
+                        if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} link(s) from the local model (floor / dropped types)", before - rels.len()); }
+                        println!("[RUST BACKGROUND] ✅ Links (phone): {} relationships", rels.len());
+                        (true, fact.title.clone(), rels, fact.extras.clone())
+                    }
+                    Err(e) => {
+                        println!("[RUST BACKGROUND] ⚠️ Link call failed: {} — storing without links", e);
+                        (true, fact.title.clone(), Vec::new(), fact.extras.clone())
+                    }
+                }
             } else {
                 match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
                     Ok((title3, rels, extras3)) => {

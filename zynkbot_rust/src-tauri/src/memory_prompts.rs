@@ -17,6 +17,13 @@ pub const MAX_FACTS: usize = 3;
 /// Call 2: the facts in `message` about `subject`, as JSON. `recent_turns` is the last
 /// exchange or two, so "she" and "it" resolve; facts are taken from the message only.
 pub fn extraction_prompt(message: &str, subject: &str, recent_turns: Option<&str>, today: NaiveDate) -> String {
+    extraction_prompt_with(message, subject, recent_turns, today, false)
+}
+
+/// `slim` (the phone, 2026-10-24): fact, title and date only. The 4B writes JSON at about
+/// three tokens a second under the grammar, and tags, tone and named things cost it sixty
+/// tokens a fact; the on-device name finder (nlp_enhancer) fills those instead.
+pub fn extraction_prompt_with(message: &str, subject: &str, recent_turns: Option<&str>, today: NaiveDate, slim: bool) -> String {
     let namespaces = memory_extras::CANONICAL_NAMESPACES.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ");
     let context = match recent_turns.map(str::trim).filter(|t| !t.is_empty()) {
         Some(t) => format!("The conversation just before this message, so you know who or what the message refers to. List only facts the message itself states.\n{t}\n\n"),
@@ -33,20 +40,38 @@ For each fact give:
 - \"fact\": one sentence in the third person, starting with \"{subject}\"
 - \"title\": up to 50 characters
 - \"event_date\": when it happened, as \"YYYY-MM-DD\", only if the message says or clearly implies it (\"yesterday\", \"last Tuesday\", \"in 2019\"), resolved against today's date; otherwise null. Never guess a year.
-- \"namespace\": one of {namespaces}; \"personal\" only when nothing more specific fits
-- \"tags\": 1 to 3 short lowercase topic words
-- \"tone\": {subject}'s tone in the message, one of \"positive\", \"neutral\", \"negative\", \"frustrated\", \"anxious\", \"excited\"
-- \"entities\": the people, places, organisations and named things in the fact, each as {{\"name\": \"...\", \"kind\": \"person|place|org|thing\"}}; [] if none
-
+{extra_fields}
 Answer with JSON only, in this shape:
-{{\"facts\": [{{\"fact\": \"...\", \"title\": \"...\", \"event_date\": null, \"namespace\": \"personal\", \"tags\": [\"...\"], \"tone\": \"neutral\", \"entities\": []}}]}}
+{shape}
 
 {subject}'s message: \"{message}\"",
         today = today.format("%Y-%m-%d"),
         max = MAX_FACTS,
         message = message.replace('"', "'"),
+        extra_fields = if slim { String::new() } else { format!("- \"namespace\": one of {namespaces}; \"personal\" only when nothing more specific fits\n- \"tags\": 1 to 3 short lowercase topic words\n- \"tone\": {subject}'s tone in the message, one of \"positive\", \"neutral\", \"negative\", \"frustrated\", \"anxious\", \"excited\"\n- \"entities\": the people, places, organisations and named things in the fact, each as {{\"name\": \"...\", \"kind\": \"person|place|org|thing\"}}; [] if none\n") },
+        shape = if slim { "{\"facts\": [{\"fact\": \"...\", \"title\": \"...\", \"event_date\": null}]}" } else { "{\"facts\": [{\"fact\": \"...\", \"title\": \"...\", \"event_date\": null, \"namespace\": \"personal\", \"tags\": [\"...\"], \"tone\": \"neutral\", \"entities\": []}]}" },
     )
 }
+
+/// The slim schema: fact, title, date.
+pub const EXTRACTION_SCHEMA_SLIM: &str = r#"{
+  "type": "object",
+  "properties": {
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fact": {"type": "string"},
+          "title": {"type": "string"},
+          "event_date": {"type": ["string", "null"]}
+        },
+        "required": ["fact", "title"]
+      }
+    }
+  },
+  "required": ["facts"]
+}"#;
 
 /// JSON schema for the phone's constrained decoder: the model cannot answer outside it.
 pub const EXTRACTION_SCHEMA: &str = r#"{
@@ -215,6 +240,15 @@ mod tests {
         let text = r#"{"facts": [{"fact": "Matt has a son named Tom.", "title": "Son Tom"}]}"#;
         assert_eq!(parse_extraction(text, "My son Tom is turning 16 next month. Any gift ideas?").len(), 1);
         assert!(!shares_content_word("Matt has a cat.", "The and his are not it."));
+    }
+
+    #[test]
+    fn slim_prompt_asks_for_fact_title_and_date_only() {
+        let full = extraction_prompt("I'm 52.", "Matt", None, NaiveDate::from_ymd_opt(2026, 10, 24).unwrap());
+        let slim = extraction_prompt_with("I'm 52.", "Matt", None, NaiveDate::from_ymd_opt(2026, 10, 24).unwrap(), true);
+        assert!(full.contains("\"tags\"") && full.contains("\"entities\""));
+        assert!(!slim.contains("\"tags\"") && !slim.contains("\"entities\"") && slim.contains("\"event_date\""));
+        assert!(slim.len() < full.len());
     }
 
     #[test]

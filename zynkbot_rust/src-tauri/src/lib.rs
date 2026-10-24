@@ -23,6 +23,7 @@ mod chat_harness_tests; // the chat path end to end against a pretend model
 #[cfg(test)]
 mod memory_bench; // which model makes the right memories: labs/memory_bench
 pub mod memory_prompts; // the memory pipeline's prompts in one place (2026-10-24)
+pub mod memory_jobs;    // the memory job queue: one worker, oldest first, nothing lost (2026-10-24)
 #[cfg(test)]
 mod sync_outbox_tests; // the outbox triggers (migration 0013)
 pub mod memory_extras;      // event date / namespace / tags / tone / entities from the decision call
@@ -459,6 +460,65 @@ pub(crate) fn generate_title_from_content(content: &str) -> String {
 /// Local Call 2: classify relationships between an extracted fact and similar existing memories.
 /// Fires in the background only when MEMORY_EXTRACT produced a fact.
 /// Returns (optional_title, relationship_classifications)
+/// Call 3 on the phone (2026-10-24): relationships only. The full call writes a title and
+/// the extras too, sixty-odd tokens the 4B produces at three a second under the grammar,
+/// and since call 2 now gives the title those tokens bought nothing. Same four definitions.
+pub(crate) async fn ask_llm_for_links_only(
+    extracted_fact: &str,
+    similar_memories: &[(i32, String, Option<String>, f32)],
+    backend: &str,
+) -> Result<Vec<RelationshipClassification>, String> {
+    if similar_memories.is_empty() { return Ok(Vec::new()); }
+    let similar_memories_text = similar_memories.iter()
+        .map(|(id, content, title, _)| format!("Memory #{}{}: {}", id, title.as_ref().map(|t| format!(" ({})", t)).unwrap_or_default(), content))
+        .collect::<Vec<_>>().join("\n");
+    let prompt = format!(
+        r#"A new fact about the user and some existing memories. For each memory, say how the new fact relates to it.
+
+NEW FACT: {}
+
+EXISTING MEMORIES:
+{}
+
+Types, pick the first that fits:
+- "updates": the new fact replaces an older state of the same thing and the wording signals the change ("moved", "now", "switched to", "no longer"). The old memory is kept as history.
+- "contradicts": same attribute, different values, with no sign that one came after the other; or opposite claims on the same topic.
+- "related": the same specific person, pet, place, thing or habit, adding to it or confirming it.
+- "none": different things. Two facts about the same user are not related just because they are both about the user; a shared broad topic is not enough.
+
+Answer with JSON only: {{"relationships": [{{"memory_id": 123, "relationship_type": "updates|contradicts|related|none", "confidence": 0.9}}]}}"#,
+        extracted_fact, similar_memories_text);
+    let response = if backend.ends_with(".gguf") || backend == "local" {
+        call_local_for_memory_decision(&prompt, backend, Some(LINKS_SCHEMA)).await?
+    } else {
+        call_backend_with_prompt(&prompt, backend).await?
+    };
+    let body = match (response.find('{'), response.rfind('}')) { (Some(a), Some(b)) if b > a => &response[a..=b], _ => response.trim() };
+    #[derive(serde::Deserialize)]
+    struct Links { #[serde(default)] relationships: Vec<RelationshipClassification> }
+    let links: Links = serde_json::from_str(body).map_err(|e| format!("Failed to parse links JSON: {}", e))?;
+    Ok(links.relationships.into_iter().filter(|r| r.relationship_type != "none" && r.memory_id > 0).collect())
+}
+
+const LINKS_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "memory_id": {"type": "integer"},
+          "relationship_type": {"type": "string", "enum": ["updates", "contradicts", "related", "none"]},
+          "confidence": {"type": "number"}
+        },
+        "required": ["memory_id", "relationship_type"]
+      }
+    }
+  },
+  "required": ["relationships"]
+}"#;
+
 pub(crate) async fn ask_llm_for_relationships(
     extracted_fact: &str,
     similar_memories: &[(i32, String, Option<String>, f32)],
@@ -2053,6 +2113,10 @@ pub fn run() {
                 let mut global_app_handle = APP_HANDLE.lock()
                     .map_err(|e| format!("APP_HANDLE mutex poisoned: {}", e))?;
                 *global_app_handle = Some(app.handle().clone());
+                // The memory job queue's worker (memory_jobs.rs): one per process, started
+                // once the window can be told about progress; pending rows from the last
+                // run are picked up here too (2026-10-24).
+                crate::memory_jobs::ensure_worker(std::sync::Arc::new(crate::response_sink::TauriSink::new(app.handle().clone())));
                 println!("[Tauri] ✅ App handle stored globally for event emission");
             }
 

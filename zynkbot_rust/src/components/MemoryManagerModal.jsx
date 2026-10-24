@@ -27,6 +27,10 @@ const CANONICAL_NAMESPACES = [
 ];
 
 export default function MemoryManagerModal({ isOpen, onClose, userId, onMemoriesChanged, onOpenConversation }) {
+  // On the on-device model, memories arrive minutes after the reply (the phone's queue,
+  // 2026-10-24); the header says so. Read when the window opens.
+  const onDeviceModel = (() => { try { return (localStorage.getItem('zynkbot_preferred_model') || '').endsWith('.gguf'); } catch (_) { return false; } })();
+  const onDeviceNote = 'With the on-device model, new memories can take a few minutes to appear.';
   const [memories, setMemories] = useState([]);
   const [selectedMemory, setSelectedMemory] = useState(null);
   const [relationships, setRelationships] = useState([]);
@@ -730,6 +734,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
           ) : (
             <>
               <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: '1 1 100%' }}>Memory Manager</h2>
+              {onDeviceModel && <div style={{ flex: '1 1 100%', fontSize: '0.8rem', color: '#9aa5c4', margin: '2px 0 4px' }}>{onDeviceNote}</div>}
               {/* One tidy grid of equal buttons under the title; the old right-aligned
                   wrap left a ragged two-row cluster beside the heading (2026-09-08). */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', width: '100%' }}>
@@ -1109,6 +1114,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         {/* Header */}
         <div className="modal-header">
           <h2>Memory Manager</h2>
+          {onDeviceModel && <div style={{ fontSize: '0.85rem', color: '#9aa5c4', flex: '1 1 100%' }}>{onDeviceNote}</div>}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
               style={{ background: '#bd93f9', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
