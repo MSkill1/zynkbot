@@ -428,6 +428,18 @@ thread_local! { static IN_BACKGROUND: std::cell::Cell<bool> = const { std::cell:
 
 const INTERRUPTED: &str = "interrupted: a user message is waiting for the model";
 
+/// The window's meter while the prompt is read (Matt, 2026-10-24: "can we get a meter of
+/// some kind moving?"). `done` of `total` new tokens; the page shows the bar until the
+/// first streamed token arrives. Foreground calls only; nothing when there is no window.
+fn emit_prompt_progress(done: usize, total: usize) {
+    use tauri::Emitter;
+    if let Ok(guard) = crate::APP_HANDLE.lock() {
+        if let Some(app) = guard.as_ref() {
+            let _ = app.emit("local-prompt-progress", serde_json::json!({ "done": done, "total": total }));
+        }
+    }
+}
+
 /// True when `e` is the interruption `generate` raises for a background call.
 pub fn is_interrupted(e: &LLMError) -> bool {
     matches!(e, LLMError::RequestFailed(m) if m == INTERRUPTED)
@@ -687,9 +699,11 @@ impl LocalModelSession {
         // A background call reads in small pieces so it can step aside within a few
         // seconds (a 512-token piece took 22 s on a warm phone, 2026-10-22).
         let piece = if background { (self.n_batch as usize).min(128) } else { self.n_batch as usize };
+        if !background { emit_prompt_progress(0, tokens.len() - common); }
         for chunk_start in (common..tokens.len()).step_by(piece) {
             if background && foreground_waiting() { return Err(interrupted()); }
             let chunk = &tokens[chunk_start..(chunk_start + piece).min(tokens.len())];
+            if !background { emit_prompt_progress(chunk_start - common, tokens.len() - common); }
             let mut batch = LlamaBatch::new(chunk.len(), 1);
             for (i, &token) in chunk.iter().enumerate() {
                 let pos = chunk_start + i;
@@ -699,6 +713,7 @@ impl LocalModelSession {
             ctx.decode(&mut batch)
                 .map_err(|e| LLMError::RequestFailed(format!("Failed to decode prompt ({} tokens): {}", tokens.len(), e)))?;
         }
+        if !background { emit_prompt_progress(tokens.len() - common, tokens.len() - common); }
         let new_tokens = tokens.len() - common;
         println!("[Rust Local Models] Prompt read in {:.1}s ({:.0} tokens/s): {} new tokens, {} kept from the previous turn",
             t_prompt.elapsed().as_secs_f32(), new_tokens as f32 / t_prompt.elapsed().as_secs_f32().max(0.001), new_tokens, common);

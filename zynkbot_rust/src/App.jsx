@@ -221,6 +221,15 @@ export default function App() {
   const [input, setInput] = useState("");
   const [inputCopied, setInputCopied] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  // The local model's meter: tokens of the prompt read so far (engine event), cleared when
+  // the first word streams in or the request ends (Matt, 2026-10-24).
+  const [localProgress, setLocalProgress] = useState(null);
+  useEffect(() => {
+    let unlisten;
+    listen('local-prompt-progress', (e) => { setLocalProgress(e.payload || null); }).then(fn => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
+  }, []);
+  useEffect(() => { if (!isLoading) setLocalProgress(null); }, [isLoading]);
   const TIPS = [
     <>Tip: start with "<strong>Remember:</strong>" to save exactly what follows into your memories, typed or spoken. Any case works, and by voice just say "remember colon" before the fact.</>,
     <>Tap <strong>Memory Manager</strong> to see everything Zynkbot knows about you. You can edit, delete, or add memories at any time.</>,
@@ -2355,9 +2364,20 @@ export default function App() {
                 {isLoading && (
                   <div className="message bot-message">
                     <div className="message-content">
-                      {modelType && modelType.endsWith('.gguf')
-                        ? '⏳ Local model is thinking. On a phone this takes half a minute or more; the words appear as they come.'
-                        : 'Thinking...'}
+                      {modelType && modelType.endsWith('.gguf') ? (() => {
+                        const total = localProgress?.total || 0;
+                        const done = Math.min(localProgress?.done || 0, total);
+                        const reading = total > 0 && done < total;
+                        const pct = total > 0 ? Math.round(done / total * 100) : 0;
+                        return (
+                          <div>
+                            <div>{reading ? `⏳ Reading your conversation and memories… ${pct}%` : (total > 0 ? '✍️ Writing the answer…' : '⏳ Local model is starting…')}</div>
+                            <div style={{ marginTop: '6px', height: '6px', borderRadius: '3px', background: '#44475a', overflow: 'hidden' }}>
+                              <div className={reading ? '' : 'zb-pulse'} style={{ height: '100%', width: reading ? `${pct}%` : '100%', background: '#8be9fd', transition: 'width 0.3s' }} />
+                            </div>
+                          </div>
+                        );
+                      })() : 'Thinking...'}
                     </div>
                   </div>
                 )}

@@ -160,11 +160,11 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
 
               {selectedOption === "keep_both" && (
                 <div className="contradiction-warning">
-                  <strong>⚠️ Heads up</strong>
+                  <strong>{isUpdate ? 'ℹ️ What happens' : '⚠️ Heads up'}</strong>
                   <p>
-                    Both memories will be kept with a contradiction edge (red arrow) in your memory graph.
-                    This may cause hallucinations in future responses when both memories are recalled together.
-                    You can return to resolve this conflict at any time in the Memory Manager.
+                    {isUpdate
+                      ? 'Both memories stay current and are linked as related. Nothing is recorded as a contradiction.'
+                      : 'Both memories will be kept, linked as a contradiction (the red arrow in your memory graph). When both are recalled together the model may be confused by them. You can resolve the pair later in the Memory Manager.'}
                   </p>
                 </div>
               )}

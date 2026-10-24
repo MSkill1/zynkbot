@@ -524,3 +524,7 @@ body.modal-open .conversation-history {
     padding: 6px !important;
   }
 }
+
+/* The local model's meter while the first word is being written (2026-10-24). */
+.zb-pulse { animation: zb-pulse 1.2s ease-in-out infinite; }
+@keyframes zb-pulse { 0% { opacity: 0.35; } 50% { opacity: 1; } 100% { opacity: 0.35; } }

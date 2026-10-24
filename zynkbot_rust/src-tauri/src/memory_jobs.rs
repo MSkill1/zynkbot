@@ -159,6 +159,7 @@ async fn process(pool: &SqlitePool, job: Job, sink: Arc<dyn crate::response_sink
         bg_user_name: job.user_name.clone(),
         bg_recent_turns: job.recent_turns.clone(),
         query_entities: job.query_entities.clone(),
+        bg_sibling_ids: Vec::new(),
     };
     if let Some(text) = job.remember_text.clone().filter(|t| !t.trim().is_empty()) {
         crate::commands::chat::run_memory_background(bg, crate::memory_prompts::ExtractedFact { fact: text, title: None, extras: Default::default() }).await;
@@ -175,7 +176,9 @@ async fn process(pool: &SqlitePool, job: Job, sink: Arc<dyn crate::response_sink
     }
     let mut stored: Vec<i32> = Vec::new();
     for fact in facts {
-        if let Some(id) = crate::commands::chat::run_memory_background(bg.clone(), fact).await { stored.push(id); }
+        let mut this = bg.clone();
+        this.bg_sibling_ids = stored.clone();
+        if let Some(id) = crate::commands::chat::run_memory_background(this, fact).await { stored.push(id); }
     }
     // Facts from one message are linked "related" to each other, no model call (Matt,
     // 2026-10-24): the flight, the wedding and the cat came from one breath, and three
