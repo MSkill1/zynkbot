@@ -45,6 +45,9 @@ class ZynkAssistantService : VoiceInteractionService() {
         super.onReady()
         instance = this
         Log.i(TAG, "Zynkbot assistant service ready")
+        // The system binds this at boot while Zynkbot is the assistant: the first chance
+        // to bring the Hey Zynk listener back (WakeBoot, 2026-10-25).
+        try { WakeBoot.tryStart(this, "assistant onReady") } catch (e: Exception) { Log.w(TAG, "WakeBoot: ${e.message}") }
     }
 
     override fun onShutdown() {

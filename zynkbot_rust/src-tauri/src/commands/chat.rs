@@ -1006,6 +1006,18 @@ pub async fn generate_reply(
             if word == "no" { memory_flag = Some(false); consumed_extract_lines.insert(idx); break; }
         }
     }
+    // The marker glued to the end of the last sentence instead of on its own line
+    // ("...enjoy the game. MEMORY: no"): a Pixel hands-free reply showed and spoke it
+    // (Matt, 2026-10-25). Taken from the last non-empty line and cut off it for display.
+    let mut inline_marker_line: Option<(usize, String)> = None;
+    if memory_flag.is_none() {
+        if let Some((idx, line)) = reply_lines.iter().enumerate().rev().find(|(_, l)| !l.trim().is_empty()) {
+            if let Some((flag, rest)) = split_inline_memory_marker(line) {
+                memory_flag = Some(flag);
+                inline_marker_line = Some((idx, rest));
+            }
+        }
+    }
     if let Some(flag) = memory_flag { println!("[RUST] MEMORY line: {}", if flag { "yes" } else { "no" }); }
     let mut heading_without_fact = false;
     let mut li = 0;
@@ -1137,6 +1149,7 @@ pub async fn generate_reply(
                 // Lines the tolerant parser consumed (marker, echoed heading, or the fact
                 // line under a bare label) never reach the display (KI-049).
                 if consumed_extract_lines.contains(&idx) { return None; }
+                if let Some((mi, ref rest)) = inline_marker_line { if mi == idx { return Some(rest.clone()); } }
                 let t = line.trim_start();
                 if t.contains("MEMORY_EXTRACT:") { return None; }
                 // Handle "PART N — ..." lines from local models following the two-part format.
@@ -1950,8 +1963,43 @@ pub fn explicit_remember(query: &str) -> Option<String> {
     None
 }
 
+/// "…enjoy the game. MEMORY: no" → (false, "…enjoy the game."). The marker must be the
+/// last thing on the line, preceded by real text; a line that is only the marker is the
+/// own-line case handled before this. Case-insensitive; markdown and end punctuation
+/// around the marker are ignored.
+pub(crate) fn split_inline_memory_marker(line: &str) -> Option<(bool, String)> {
+    let lower = line.to_lowercase();
+    let key_pos = ["memory", "remember"].iter()
+        .filter_map(|k| lower.rfind(k).map(|p| (p, k.len())))
+        .max_by_key(|(p, _)| *p)?;
+    let (pos, klen) = key_pos;
+    // A separator is required: "I remember no such thing" is prose, "MEMORY: no" is the marker.
+    let tail = lower[pos + klen..].trim_start_matches(|c: char| matches!(c, ' ' | '*' | '_' | '`'));
+    if !tail.starts_with(|c: char| matches!(c, ':' | '-' | '—')) { return None; }
+    let after = tail
+        .trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—' | '*' | '_' | '`'))
+        .trim_end_matches(|c: char| matches!(c, '.' | '!' | ' ' | '*' | '_' | '`' | ')' | ']'));
+    let flag = match after { "yes" => true, "no" => false, _ => return None };
+    let before = line[..pos].trim_end_matches(|c: char| matches!(c, '*' | '_' | '`' | '(' | '[' | ' ' | '-' | '—' | '|'));
+    let before = before.trim_end();
+    if before.is_empty() { return None; }
+    Some((flag, before.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inline_memory_marker_is_cut_off_the_last_line() {
+        use super::split_inline_memory_marker as s;
+        assert_eq!(s("Enjoy the game tonight. MEMORY: no"), Some((false, "Enjoy the game tonight.".to_string())));
+        assert_eq!(s("Got it, I'll keep that in mind. **MEMORY: yes**"), Some((true, "Got it, I'll keep that in mind.".to_string())));
+        assert_eq!(s("Sure thing — Memory: No."), Some((false, "Sure thing".to_string())));
+        assert_eq!(s("MEMORY: no"), None, "the own-line case is not this helper's");
+        assert_eq!(s("I remember no such thing."), None);
+        assert_eq!(s("I remember no."), None);
+        assert_eq!(s("Working memory: yesterday's list is gone."), None);
+    }
+
     #[test]
     fn web_search_marker_keeps_text_on_both_sides() {
         use super::strip_web_search_marker as strip;

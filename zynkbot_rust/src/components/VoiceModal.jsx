@@ -200,6 +200,7 @@ export default function VoiceModal({
 }) {
   const [showCommands, setShowCommands] = useState(false);
   const [exactAllowed, setExactAllowed] = useState(true);
+  const [startOnBoot, setStartOnBoot] = useState(() => { try { return window.WakeWordBridge?.startOnBoot ? !!window.WakeWordBridge.startOnBoot() : true; } catch (_) { return true; } });
   useEffect(() => {
     if (!isOpen) return;
     try { if (window.VoiceCommandBridge?.canScheduleExact) setExactAllowed(!!window.VoiceCommandBridge.canScheduleExact()); } catch (_) {}
@@ -263,6 +264,22 @@ export default function VoiceModal({
                 : ['#ffb86c', '⏳ Starting up. Give it a few seconds: the microphone turns green, then shrinks to a dot. Then say "Hey Zynk".'];
               return <p style={{ color: line[0], fontSize: '0.82rem', lineHeight: 1.45, margin: '6px 0 0 0' }}>{line[1]}</p>;
             })()}
+
+            {/* After a restart (2026-10-25): the assistant service tries to bring the
+                listener back at boot; if Android refuses, a notification offers a tap. */}
+            {!!window.WakeWordBridge?.startOnBoot && (
+              <div style={rowStyle}>
+                <div>
+                  <div style={labelStyle}>Start listening when the phone starts</div>
+                  <div style={mutedStyle}>If Hey Zynk was on, it comes back after a restart. If the phone does not allow it, a notification offers a tap instead.</div>
+                </div>
+                <Toggle
+                  id="start-on-boot-toggle"
+                  checked={startOnBoot}
+                  onChange={(val) => { setStartOnBoot(val); try { window.WakeWordBridge.setStartOnBoot(!!val); } catch (_) {} }}
+                />
+              </div>
+            )}
 
             {/* How it works, right under the switch (Matt, 2026-10-25). */}
               <div style={{

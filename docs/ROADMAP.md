@@ -374,6 +374,10 @@ The existing containment modes (HIPAA, Guardian, Sovereign, Child) are proofs of
 
 ---
 
+### Timer ring that "Hey Zynk" can be heard over (after v1.0; Matt 2026-10-25)
+
+The ring plays at full alarm volume and the phone's generic software echo canceller does not remove it well enough for the wake detector to hear "Hey Zynk" over it (Pixel 10 Pro XL, 2026-10-25; Siri manages it with a hardware canceller fed the speaker signal, plus ducking). Try pulsing the ring, about 0.8 s on and 0.8 s off, so the detector gets clean gaps; "Hey Zynk" takes about a second to say. Half an hour; measured on both phones before it stays.
+
 ### Web Search Quality (after v1.0)
 
 The current web search (DuckDuckGo, top 3 pages fetched for content) is a first pass, not a finished feature — real work is planned here to bring it closer to what Claude and OpenAI's own search does (better result ranking, more reliable content extraction, maybe a better search backend). Fold this question into that work rather than deciding it in isolation:

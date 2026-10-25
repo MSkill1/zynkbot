@@ -13,7 +13,10 @@ class TimerReceiver : BroadcastReceiver() {
         when (intent.action) {
             ZynkTimer.ACTION_FIRE -> ZynkTimer.onFired(context, kind, id)
             ZynkTimer.ACTION_CANCEL -> ZynkTimer.cancelById(context, kind, id)
-            Intent.ACTION_BOOT_COMPLETED, "android.intent.action.LOCKED_BOOT_COMPLETED" -> ZynkTimer.rescheduleAfterBoot(context)
+            Intent.ACTION_BOOT_COMPLETED, "android.intent.action.LOCKED_BOOT_COMPLETED" -> {
+                ZynkTimer.rescheduleAfterBoot(context)
+                WakeBoot.tryStart(context, "boot receiver")
+            }
         }
     }
 }

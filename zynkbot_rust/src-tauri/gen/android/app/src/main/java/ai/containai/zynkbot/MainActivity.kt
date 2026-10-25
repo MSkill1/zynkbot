@@ -764,6 +764,8 @@ class MainActivity : TauriActivity() {
             // The listener's state, pushed on every change (2026-10-20 rebuild).
             WakeWordService.onStateChanged = { s -> fire("window.__wakeWordState&&window.__wakeWordState('$s');") }
             ZynkTimer.onChanged = { fire("window.__timerChanged&&window.__timerChanged();") }
+            WakeBoot.setHeyZynkEnabled(this@MainActivity, true, threshold)
+            WakeBoot.cancelNotice(this@MainActivity)
             val intent = Intent(this@MainActivity, WakeWordService::class.java).apply {
                 putExtra("threshold", threshold)
                 putExtra("modelDir", modelDir.absolutePath)
@@ -782,8 +784,13 @@ class MainActivity : TauriActivity() {
 
         @JavascriptInterface
         fun stop() {
+            WakeBoot.setHeyZynkEnabled(this@MainActivity, false, 0.72f)
             stopService(Intent(this@MainActivity, WakeWordService::class.java))
         }
+
+        /** "Start listening when the phone starts" (Voice page). */
+        @JavascriptInterface fun startOnBoot(): Boolean = WakeBoot.startOnBoot(this@MainActivity)
+        @JavascriptInterface fun setStartOnBoot(on: Boolean) { WakeBoot.setStartOnBoot(this@MainActivity, on) }
 
         // Kept under its original name because App.jsx calls WakeWordBridge.downloadModels().
         // Nothing is downloaded in the normal path any more — the models are unpacked from
