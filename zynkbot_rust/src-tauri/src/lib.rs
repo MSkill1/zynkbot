@@ -24,6 +24,41 @@ mod chat_harness_tests; // the chat path end to end against a pretend model
 mod memory_bench; // which model makes the right memories: labs/memory_bench
 #[cfg(test)]
 mod recall_bench; // does recall find the right memory: labs/recall_bench
+
+/// Seconds and RMS level (0..1) of a 16-bit mono 16 kHz WAV as the page encodes it.
+fn wav_duration_and_rms(wav: &[u8]) -> (f32, f32) {
+    if wav.len() <= 44 { return (0.0, 0.0); }
+    let pcm = &wav[44..];
+    let n = pcm.len() / 2;
+    if n == 0 { return (0.0, 0.0); }
+    let mut sum = 0f64;
+    for s in pcm.chunks_exact(2) {
+        let v = i16::from_le_bytes([s[0], s[1]]) as f64 / 32768.0;
+        sum += v * v;
+    }
+    (n as f32 / 16000.0, (sum / n as f64).sqrt() as f32)
+}
+
+/// What Whisper says when it hears nothing.
+fn whisper_silence_phrase(t: &str) -> bool {
+    let w: String = t.to_lowercase().chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect();
+    let w = w.split_whitespace().collect::<Vec<_>>().join(" ");
+    matches!(w.as_str(), "thank you" | "thanks" | "thank you for watching" | "thanks for watching" | "bye" | "bye bye" | "goodbye" | "you" | "okay" | "ok" | "hmm" | "mm" | "uh" | "so" | "the" | "yeah" | "subtitles by the amaraorg community" | "thank you very much")
+}
+
+#[cfg(test)]
+mod dictation_guard_tests {
+    #[test]
+    fn silence_phrases_and_short_wavs() {
+        assert!(super::whisper_silence_phrase("Thank you."));
+        assert!(super::whisper_silence_phrase("Bye!"));
+        assert!(!super::whisper_silence_phrase("Thank you for the recipe, it worked."));
+        let mut wav = vec![0u8; 44];
+        wav.extend(std::iter::repeat(0u8).take(16000 * 2 / 2)); // 0.5 s of silence
+        let (s, r) = super::wav_duration_and_rms(&wav);
+        assert!((s - 0.5).abs() < 0.01 && r == 0.0);
+    }
+}
 pub mod memory_prompts; // the memory pipeline's prompts in one place (2026-10-24)
 pub mod memory_jobs;    // the memory job queue: one worker, oldest first, nothing lost (2026-10-24)
 #[cfg(test)]
@@ -1178,6 +1213,14 @@ pub(crate) fn is_query_about_zynkbot(query: &str) -> bool {
 /// Requires OPENAI_API_KEY in environment (loaded via dotenv at startup).
 #[tauri::command]
 async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
+    // Tapping dictation and stopping without a word sent Whisper a near-empty WAV, and
+    // Whisper answers silence with stock phrases ("Thank you.", "Bye.") (Matt, 2026-10-25).
+    // Under 0.7 s, or no sound to speak of: nothing was said, nothing is sent.
+    let (secs, rms) = wav_duration_and_rms(&audio_data);
+    if secs < 0.7 || rms < 0.004 {
+        println!("[Dictation] {:.2}s of audio, rms {:.4}: nothing said", secs, rms);
+        return Ok(String::new());
+    }
     let api_key = std::env::var("OPENAI_API_KEY")
         .map_err(|_| "OPENAI_API_KEY not set — add it to your .env file".to_string())?;
 
@@ -1210,9 +1253,14 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to parse OpenAI response: {e}"))?;
 
-    json["text"]
-        .as_str()
-        .map(|s| s.trim().to_string())
+    let text = json["text"].as_str().map(|s| s.trim().to_string());
+    if let Some(t) = &text {
+        if secs < 2.5 && whisper_silence_phrase(t) {
+            println!("[Dictation] dropped Whisper's silence phrase {:?} ({:.2}s)", t, secs);
+            return Ok(String::new());
+        }
+    }
+    text
         .ok_or_else(|| "No text field in OpenAI response".to_string())
 }
 

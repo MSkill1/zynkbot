@@ -118,6 +118,23 @@ function AccessGate() {
 
 
 // Shown under "Containment Mode" in the System Controls list (same names as the selector).
+// How many tokens the selected model can take in one request. Published windows
+// as of 2026-10-25, conservative where a provider's models differ; a model file on
+// the phone runs in a 4,096-token context (local_models.rs), 8,192 on the desktop.
+function modelWindowTokens(modelId, models) {
+  const id = String(modelId || '').toLowerCase();
+  const kind = String(models?.find(m => m.id === modelId)?.type || models?.find(m => m.id === modelId)?.model_type || '').toLowerCase();
+  if (kind === 'local' || id.endsWith('.gguf') || id.startsWith('local')) return window.AndroidPaths ? 4096 : 8192;
+  if (id.includes('anthropic') || id.includes('claude')) return 200000;
+  if (id.includes('gpt-4.1')) return 1000000;
+  if (id.includes('gpt-5')) return 400000;
+  if (id.includes('openai') || id.includes('gpt') || id.startsWith('o')) return 128000;
+  if (id.includes('grok-4')) return 256000;
+  if (id.includes('xai') || id.includes('grok')) return 131072;
+  if (id.includes('mistral')) return 128000;
+  return 8192; // custom / Ollama: unknown, assume small
+}
+
 export default function App() {
   // Persistent user ID from backend (shared across all YOUR devices)
   const [userId, setUserId] = useState(null);
@@ -1283,6 +1300,22 @@ export default function App() {
       const imageFiles = attachedFiles.filter(f => f.isImage);
       if (textFiles.length > 0) {
         const textBlock = textFiles.map(f => `[Attached file: ${f.name}]\n\`\`\`\n${f.content}\n\`\`\``).join('\n\n');
+        // The cap is the model's window, not a character count (Matt, 2026-10-25):
+        // roughly four characters to a token, a quarter of the window kept for the
+        // conversation and the reply. Over it, the user decides; nothing is cut silently.
+        const windowTokens = modelWindowTokens(modelType, availableModels);
+        const fileTokens = Math.ceil(textBlock.length / 4);
+        const roomTokens = windowTokens - Math.max(2000, Math.floor(windowTokens / 4));
+        if (fileTokens > roomTokens) {
+          const modelName = (availableModels.find(m => m.id === modelType)?.name || 'this model').replace(/\.gguf$/i, '');
+          const k = (n) => `${Math.round(n / 1000)},000`;
+          const ok = await confirmDialog(
+            `These files are about ${k(fileTokens)} tokens of text, and ${modelName} can read about ${k(roomTokens)} in one message with room left to answer.\n\n` +
+            `The reply may fail or ignore the end of the file. For something this long, add it to the Knowledge Base instead: it is indexed there and searched when you ask.\n\n` +
+            `Send anyway?`
+          );
+          if (!ok) { isSendingRef.current = false; return; }
+        }
         messageToSend = `${textBlock}\n\nUser question: ${message}`;
         userQuery = message;
       }

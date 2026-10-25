@@ -153,7 +153,19 @@ object OpenAiDictation {
     }
 
     /** Blocking upload. The trimmed `text` field, or null on any HTTP / parse failure. The key is never logged. */
-    fun transcribe(key: String, wav: ByteArray): String? {
+    /** What Whisper says when it hears nothing (a short clip with no speech). */
+    private val SILENCE_PHRASES = setOf("thank you", "thanks", "thank you for watching", "thanks for watching", "bye", "bye bye", "goodbye", "you", "okay", "ok", "hmm", "mm", "uh", "so", "the", "yeah", "thank you very much")
+    fun isSilencePhrase(text: String): Boolean {
+        val w = text.lowercase().filter { it.isLetterOrDigit() || it.isWhitespace() }.trim().split(Regex("\\s+")).joinToString(" ")
+        return w in SILENCE_PHRASES
+    }
+
+    fun transcribe(key: String, wav: ByteArray): String? = transcribeRaw(key, wav)?.let { t ->
+        val secs = (wav.size - 44).coerceAtLeast(0) / (SAMPLE_RATE * 2.0)
+        if (secs < 2.5 && isSilencePhrase(t)) { Log.i(TAG, "dropped Whisper's silence phrase (${"%.1f".format(secs)}s)"); "" } else t
+    }
+
+    private fun transcribeRaw(key: String, wav: ByteArray): String? {
         val boundary = "----ZynkbotDictation" + System.currentTimeMillis()
         val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
