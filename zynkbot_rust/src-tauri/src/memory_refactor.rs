@@ -129,13 +129,15 @@ async fn memory_refactor() {
                 let emb = tokio::task::spawn_blocking(move || crate::llm::local_embeddings::generate_local_embedding(&etext)).await.unwrap().expect("embed");
                 let blob: Vec<u8> = emb.iter().flat_map(|x| x.to_le_bytes()).collect();
                 let tags = f.extras.tags.as_ref().map(|t| serde_json::to_string(t).unwrap()).or_else(|| o.tags.clone());
+                // Only a full date the app can read; "2019" or "2026-02" broke the sync reader.
+                let event_date = crate::memory_extras::validate_event_date(f.extras.event_date.as_deref(), &content, date).map(|d| d.format("%Y-%m-%d").to_string());
                 let ns = f.extras.namespace.clone().or_else(|| o.namespace.clone()).unwrap_or_else(|| "general".into());
                 let id: i32 = sqlx::query_scalar(
                     "INSERT INTO memories (title, content, original_text, source_type, session_id, created_at, updated_at, user_id, namespace, is_syncable, is_shareable, embedding, entities_detected, event_date, tags) \
                      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
                     .bind(&title).bind(&content).bind(apply_renames(o.original_text.as_deref().filter(|t| !t.trim().is_empty()).unwrap_or(&o.content), &renames)).bind(o.source_type.clone().unwrap_or_else(|| "conversation".into())).bind(&o.session_id)
                     .bind(&o.created_at).bind(&user).bind(&ns).bind(o.is_syncable.unwrap_or(true)).bind(o.is_shareable.unwrap_or(false))
-                    .bind(blob).bind(entities.to_string()).bind(&f.extras.event_date).bind(tags)
+                    .bind(blob).bind(entities.to_string()).bind(&event_date).bind(tags)
                     .fetch_one(&pool).await.expect("insert");
                 new_ids.push(id);
             }

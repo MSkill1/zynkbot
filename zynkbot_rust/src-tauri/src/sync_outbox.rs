@@ -195,7 +195,9 @@ async fn load_memories(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
             sentiment_score: row.get("sentiment_score"),
             sentiment_label: row.get("sentiment_label"),
             event_type: row.get("event_type"),
-            event_date: row.get("event_date"),
+            // A date that does not parse ("2019", "2026-02") must never kill the sync worker:
+            // two such rows from the 2026-10-25 refactor panicked it four times a minute.
+            event_date: row.try_get("event_date").unwrap_or(None),
             entities_detected: row.get("entities_detected"),
             original_text: row.get("original_text"),
             collection_id: row.get("collection_id"),
