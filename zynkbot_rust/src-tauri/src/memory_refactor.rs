@@ -90,9 +90,15 @@ async fn memory_refactor() {
     writeln!(report, "| old id | old title | old text (start) | new facts |\n|---|---|---|---|").unwrap();
     let (mut converted, mut kept, mut facts_made, mut inserted_total) = (0usize, 0usize, 0usize, 0usize);
     let mut kept_list: Vec<String> = Vec::new();
+    let mut mapping: std::collections::BTreeMap<i32, Vec<i32>> = std::collections::BTreeMap::new();
 
     for o in &candidates {
-        let source = o.original_text.clone().filter(|s| !s.trim().is_empty() && s.trim() != o.content.trim()).unwrap_or_else(|| o.content.clone());
+        // The memory's own text is the source (MEMORY_REFACTOR_SOURCE=original for the raw
+        // message instead): the old pipeline's summary is the distilled version, while the
+        // raw message was often a pasted conversation or a translation and re-extracted
+        // into junk (dry run 2026-10-25 18:09).
+        let use_original = std::env::var("MEMORY_REFACTOR_SOURCE").map(|v| v == "original").unwrap_or(false);
+        let source = if use_original { o.original_text.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| o.content.clone()) } else { o.content.clone() };
         let source = apply_renames(&source, &renames);
         let date = chrono::NaiveDate::parse_from_str(&o.created_at[..10], "%Y-%m-%d").unwrap_or_else(|_| chrono::Local::now().date_naive());
         let prompt = crate::memory_prompts::extraction_prompt_with(&source, "User", None, date, false);
@@ -127,7 +133,7 @@ async fn memory_refactor() {
                 let id: i32 = sqlx::query_scalar(
                     "INSERT INTO memories (title, content, original_text, source_type, session_id, created_at, updated_at, user_id, namespace, is_syncable, is_shareable, embedding, entities_detected, event_date, tags) \
                      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
-                    .bind(&title).bind(&content).bind(&source).bind(o.source_type.clone().unwrap_or_else(|| "conversation".into())).bind(&o.session_id)
+                    .bind(&title).bind(&content).bind(apply_renames(o.original_text.as_deref().filter(|t| !t.trim().is_empty()).unwrap_or(&o.content), &renames)).bind(o.source_type.clone().unwrap_or_else(|| "conversation".into())).bind(&o.session_id)
                     .bind(&o.created_at).bind(&user).bind(&ns).bind(o.is_syncable.unwrap_or(true)).bind(o.is_shareable.unwrap_or(false))
                     .bind(blob).bind(entities.to_string()).bind(&f.extras.event_date).bind(tags)
                     .fetch_one(&pool).await.expect("insert");
@@ -143,12 +149,18 @@ async fn memory_refactor() {
             }
             inserted_total += new_ids.len();
             println!("[refactor] {} -> {:?}", o.id, new_ids);
+            mapping.insert(o.id, new_ids.clone());
         }
     }
     writeln!(report, "\n## Totals\n\n- candidates: {}\n- converted: {}\n- kept as is (no facts came back): {}\n- facts {}: {}\n", candidates.len(), converted, kept, if apply { "inserted" } else { "that would be made" }, if apply { inserted_total } else { facts_made }).unwrap();
     if !kept_list.is_empty() { writeln!(report, "Kept as is: {}\n", kept_list.join("; ")).unwrap(); }
     let path = out_dir.join(format!("{}_{}.md", if apply { "APPLIED" } else { "DRY_RUN" }, chrono::Local::now().format("%Y-%m-%d_%H%M")));
     std::fs::write(&path, &report).unwrap();
+    if apply {
+        let mp = out_dir.join(format!("MAPPING_{}.json", chrono::Local::now().format("%Y-%m-%d_%H%M")));
+        std::fs::write(&mp, serde_json::to_string_pretty(&mapping).unwrap()).unwrap();
+        println!("mapping written {}", mp.display());
+    }
     println!("\nwritten {}\n", path.display());
     println!("{}", report.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n"));
 }

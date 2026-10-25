@@ -46,7 +46,13 @@ async fn recall_bench() {
     let out_dir = std::env::var("RECALL_BENCH_OUT").map(std::path::PathBuf::from)
         .unwrap_or_else(|_| dirs::home_dir().unwrap().join("Documents/Zynk_related/recall_bench"));
     std::fs::create_dir_all(&out_dir).unwrap();
-    let set: Set = serde_json::from_str(&std::fs::read_to_string(&set_path).expect("case file")).expect("case json");
+    let mut set: Set = serde_json::from_str(&std::fs::read_to_string(&set_path).expect("case file")).expect("case json");
+    // RECALL_BENCH_MAP: old memory id -> the ids of the facts that replaced it (memory_refactor
+    // apply mode writes it); an expected old id then counts any of its replacements as a hit.
+    if let Ok(mp) = std::env::var("RECALL_BENCH_MAP") {
+        let map: std::collections::BTreeMap<i32, Vec<i32>> = serde_json::from_str(&std::fs::read_to_string(&mp).expect("map file")).expect("map json");
+        for c in &mut set.cases { let extra: Vec<i32> = c.expect.iter().filter_map(|id| map.get(id)).flatten().copied().collect(); c.expect.extend(extra); }
+    }
 
     let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}?mode=ro", db)).await.expect("db");
     let raw: Vec<(i32, Option<String>, String, Option<String>, Option<String>, Option<Vec<u8>>)> = sqlx::query_as(
