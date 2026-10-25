@@ -154,7 +154,7 @@ zynkbot/
 │   │   │   ├── db.rs                    # Database connection helpers
 │   │   │   ├── user_identity.rs         # User & device identity (required for ZynkSync/ZynkLink)
 │   │   │   ├── nlp_enhancer.rs          # NLP utilities
-│   │   │   ├── llm_fact_extractor.rs    # Fact extraction helpers
+│   │   │   ├── llm_fact_extractor.rs    # Older fact extractor, unused since 2026-10-24 (memory_prompts.rs replaced it)
 │   │   │   ├── question_extractor.rs    # Question detection
 │   │   │   ├── sync_codes.rs            # ZynkSync pairing codes
 │   │   │   ├── zchat.rs                 # Device-to-device messaging

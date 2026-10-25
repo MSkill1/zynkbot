@@ -112,7 +112,8 @@ pub async fn update_memory(
 
     let embedding_vec = if let Some(ref new_content) = content {
         println!("[Rust] Content updated, regenerating embedding...");
-        let content_clone = new_content.clone();
+        let existing_title: Option<String> = sqlx::query_scalar("SELECT title FROM memories WHERE id = ?").bind(memory_id).fetch_optional(&pool).await.ok().flatten();
+        let content_clone = crate::memory::embedding_text(title.as_deref().or(existing_title.as_deref()), new_content);
         let embedding = tokio::task::spawn_blocking(move || {
             crate::llm::local_embeddings::generate_local_embedding(&content_clone)
         })

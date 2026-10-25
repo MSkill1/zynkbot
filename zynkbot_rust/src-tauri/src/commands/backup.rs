@@ -661,7 +661,7 @@ pub async fn restore_memories_into(pool: &sqlx::SqlitePool, user_id: &str, memor
             .as_str()
             .and_then(|s| BASE64.decode(s).ok())
             .or_else(|| {
-                match crate::llm::local_embeddings::generate_local_embedding(&content) {
+                match crate::llm::local_embeddings::generate_local_embedding(&crate::memory::embedding_text(mem["title"].as_str(), &content)) {
                     Ok(vec) => Some(vec.iter().flat_map(|f| f.to_le_bytes()).collect()),
                     Err(e) => {
                         eprintln!("[Backup] Embedding regen failed for restored memory: {}", e);

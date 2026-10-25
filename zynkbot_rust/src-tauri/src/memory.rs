@@ -99,6 +99,59 @@ pub fn blob_to_f32_pub(blob: &[u8]) -> Vec<f32> {
     blob_to_f32(blob)
 }
 
+/// The text a memory's embedding is made from: the title and the fact together
+/// ("Weight 305 this morning. User's weight was exactly 305 this morning.") since
+/// 2026-10-25. The recall bench on a real database found the right memory in the
+/// phone's top four for 21/29 questions this way against 19/29 for the fact alone
+/// (labs/recall_bench). A title the content already starts with is not repeated.
+pub const EMBEDDING_SCHEME: &str = "title_fact_v1";
+pub fn embedding_text(title: Option<&str>, content: &str) -> String {
+    match title.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) if !content.trim().to_lowercase().starts_with(&t.to_lowercase()) => format!("{}. {}", t.trim_end_matches('.'), content.trim()),
+        _ => content.trim().to_string(),
+    }
+}
+
+/// Once per database: when the embedding scheme changed, every memory with a title is
+/// re-embedded in the background so recall and the new memories agree. The scheme in
+/// use is kept in app_settings; nothing runs when it already matches.
+pub async fn reembed_if_scheme_changed(pool: &SqlitePool) -> Result<usize, String> {
+    let current: Option<String> = sqlx::query_scalar("SELECT value FROM app_settings WHERE key = 'memory_embedding_scheme'")
+        .fetch_optional(pool).await.map_err(|e| e.to_string())?;
+    if current.as_deref() == Some(EMBEDDING_SCHEME) { return Ok(0); }
+    let rows: Vec<(i32, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, title, content FROM memories WHERE embedding IS NOT NULL AND title IS NOT NULL AND title != ''")
+        .fetch_all(pool).await.map_err(|e| e.to_string())?;
+    println!("[Memory] Embedding scheme {} -> {}: re-embedding {} memories", current.unwrap_or_else(|| "none".into()), EMBEDDING_SCHEME, rows.len());
+    let mut done = 0usize;
+    for chunk in rows.chunks(32) {
+        let texts: Vec<String> = chunk.iter().map(|(_, t, c)| embedding_text(t.as_deref(), c)).collect();
+        let embs = tokio::task::spawn_blocking(move || crate::llm::local_embeddings::generate_local_embeddings_batch(texts, Some(32)))
+            .await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+        for ((id, _, _), e) in chunk.iter().zip(embs) {
+            let blob: Vec<u8> = e.iter().flat_map(|f| f.to_le_bytes()).collect();
+            sqlx::query("UPDATE memories SET embedding = ? WHERE id = ?").bind(blob).bind(id).execute(pool).await.map_err(|e| e.to_string())?;
+            done += 1;
+        }
+    }
+    sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES ('memory_embedding_scheme', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .bind(EMBEDDING_SCHEME).execute(pool).await.map_err(|e| e.to_string())?;
+    println!("[Memory] Re-embedded {} memories", done);
+    Ok(done)
+}
+
+#[cfg(test)]
+mod embedding_text_tests {
+    #[test]
+    fn title_joins_the_fact_once() {
+        use super::embedding_text as e;
+        assert_eq!(e(Some("Weight 305 this morning"), "User's weight was exactly 305 this morning."), "Weight 305 this morning. User's weight was exactly 305 this morning.");
+        assert_eq!(e(Some("Keto bread: 1g carb per slice"), "Keto bread: 1g carb per slice of the brand I use."), "Keto bread: 1g carb per slice of the brand I use.");
+        assert_eq!(e(None, "I park on level 3"), "I park on level 3");
+        assert_eq!(e(Some("  "), "x"), "x");
+    }
+}
+
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;

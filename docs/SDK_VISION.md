@@ -75,7 +75,7 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 
 **NLP / Entity Extraction** (`nlp_enhancer.rs`, `question_extractor.rs`) — BERT NER with rule-based fallback, tag/namespace/event detection, fact extraction from natural language queries (possession, family, events, travel, occupation).
 
-**LLM Fact Extractor** (`llm_fact_extractor.rs`) — LLM-delegated fact extraction from Q&A pairs via Claude/GPT-4o/Grok. Currently experimental; designed as a higher-accuracy alternative to pattern-based extraction.
+**LLM Fact Extractor** (`llm_fact_extractor.rs`) — an older LLM-delegated extractor, unused since 2026-10-24; extraction is `memory_prompts.rs` (call 2 of the memory pipeline) now.
 
 ---
 

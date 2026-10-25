@@ -461,7 +461,7 @@ pub(crate) fn generate_title_from_content(content: &str) -> String {
 // ============================================================================
 
 /// Local Call 2: classify relationships between an extracted fact and similar existing memories.
-/// Fires in the background only when MEMORY_EXTRACT produced a fact.
+/// Call 3 of the memory pipeline on the phone, after call 2 produced a fact (2026-10-24).
 /// Returns (optional_title, relationship_classifications)
 /// Call 3 on the phone (2026-10-24): relationships only. The full call writes a title and
 /// the extras too, sixty-odd tokens the 4B produces at three a second under the grammar,
@@ -1092,9 +1092,9 @@ pub(crate) async fn insert_memory(
         }
     };
 
-    // Generate embedding using local candle model
+    // Generate embedding using local candle model (title + content, 2026-10-25)
     println!("[Rust] Generating local embedding...");
-    let content_clone = content.clone();
+    let content_clone = crate::memory::embedding_text(title.as_deref(), &content);
     let embedding = tokio::task::spawn_blocking(move || {
         llm::local_embeddings::generate_local_embedding(&content_clone)
     })
@@ -1448,7 +1448,7 @@ async fn load_einstein_demo_legacy(user_id: String) -> Result<serde_json::Value,
     // For demo: both content and original_text are first-person (simulates standalone conversation turns)
     let all_first_person: Vec<String> = einstein_memories
         .iter()
-        .map(|(_, content, _, _)| content.to_string())
+        .map(|(title, content, _, _)| crate::memory::embedding_text(Some(title), content))
         .collect();
 
     println!("[Rust] Generating embeddings for all {} memories from first-person text...", total_memories);
@@ -2123,6 +2123,14 @@ pub fn run() {
                 // once the window can be told about progress; pending rows from the last
                 // run are picked up here too (2026-10-24).
                 crate::memory_jobs::ensure_worker(std::sync::Arc::new(crate::response_sink::TauriSink::new(app.handle().clone())));
+                // Embedding scheme change (title + fact, 2026-10-25): re-embed once, in the background.
+                tauri::async_runtime::spawn(async {
+                    tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+                    match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        Ok(pool) => { if let Err(e) = crate::memory::reembed_if_scheme_changed(&pool).await { eprintln!("[Memory] re-embed: {}", e); } }
+                        Err(e) => eprintln!("[Memory] re-embed: db: {}", e),
+                    }
+                });
                 println!("[Tauri] ✅ App handle stored globally for event emission");
             }
 
