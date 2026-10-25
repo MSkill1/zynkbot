@@ -425,9 +425,15 @@ Do not write the fact in your reply; the line is only yes or no.
                 system_prompt, history_context, memory_context, user_input
             )
         } else {
+            // Phone order (Matt, 2026-10-25): memories before the conversation, so what the
+            // model reads last before the question is the thread, not a recalled fact. A
+            // recalled France memory next to "his most notable achievement" had won over the
+            // Obama turns. The engine's prompt cache now keeps only the instructions between
+            // turns (the memories change with every question); measured on the test phones
+            // before this stays.
             format!(
-                "{}{}Today's date is {today}.\n\n{}USER'S QUESTION: {}\n\nYOUR RESPONSE:",
-                system_prompt, history_context, memory_context, user_input
+                "{}{}{}Today's date is {today}.\n\nUSER'S QUESTION: {}\n\nYOUR RESPONSE:",
+                system_prompt, memory_context, history_context, user_input
             )
         };
 
