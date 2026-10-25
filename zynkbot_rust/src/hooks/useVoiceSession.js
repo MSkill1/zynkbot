@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import * as desktopTimer from '../utils/zynkTimer';
 
 function normalizeNumbers(text) {
   const words = {
@@ -91,8 +92,57 @@ export function normalizeFractions(t) {
     .replace(/\ban?\s+(hour|minute|second)\b/g, '1 $1');
 }
 
+function toSeconds(value, unit) {
+  const v = parseFloat(value);
+  if (!(v >= 0)) return 0;
+  if (unit.startsWith('hour') || unit.startsWith('hr')) return Math.round(v * 3600);
+  if (unit.startsWith('min')) return Math.round(v * 60);
+  return Math.round(v);
+}
+// "1026" -> 10:26, "730" -> 7:30, "7" + "30" + "pm" -> 19:30; null when not a clock time.
+function clockFrom(d, m, ampm) {
+  let digits = d; let minuteText = m || '';
+  if (digits.length >= 3 && !minuteText) { minuteText = digits.slice(-2); digits = digits.slice(0, -2); }
+  let hour = parseInt(digits, 10);
+  const minute = parseInt(minuteText || '0', 10);
+  if (!(hour >= 0) || hour > 23 || minute > 59) return null;
+  const ap = (ampm || '').toLowerCase();
+  if (ap === 'pm' && hour !== 12) hour += 12;
+  if (ap === 'am' && hour === 12) hour = 0;
+  return [hour, minute];
+}
+
 export function parseVoiceCommand(text) {
-  const t = normalizeFractions(normalizeNumbers(text.toLowerCase().trim()));
+  // Dictation with punctuation gives "Stop, stopwatch." and "stop watch" (Pixel,
+  // 2026-10-25): punctuation becomes spaces, "stop watch" one word.
+  // "7.30 a.m." (Pixel dictation, 2026-10-25): a.m./p.m. become am/pm, 7.30 becomes 7:30.
+  const cleaned = text.toLowerCase()
+    .replace(/\ba\.m\.?/g, 'am').replace(/\bp\.m\.?/g, 'pm')
+    .replace(/\b(\d{1,2})\.(\d{2})(?!\d)/g, '$1:$2')
+    .replace(/[,.!?;:](?!\d)/g, ' ').replace(/\bstop\s+watch\b/g, 'stopwatch').replace(/\s+/g, ' ').trim();
+  const t = normalizeFractions(normalizeNumbers(cleaned));
+  if (/\bcheck\s+(?:the\s+|my\s+)?alarms?\b|what\s+alarms/.test(t)) return { type: 'check_alarm' };
+  const cancelAlarmAt = t.match(/\b(?:cancel|stop|delete)\s+(?:the\s+|my\s+)?(\d{1,4})(?:[:\s](\d{1,2}))?\s*(am|pm)?\s+alarm\b/);
+  if (cancelAlarmAt) { const hm = clockFrom(cancelAlarmAt[1], cancelAlarmAt[2], cancelAlarmAt[3]); if (hm) return { type: 'cancel_alarm', hour: hm[0], minute: hm[1] }; }
+  if (/\b(?:cancel|stop|delete)\s+(?:the\s+|my\s+)?alarm\b/.test(t)) return { type: 'cancel_alarm' };
+  const cancelTimerLen = t.match(/\b(?:stop|cancel)\s+(?:the\s+|my\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)\s+timer\b/);
+  if (cancelTimerLen) return { type: 'cancel_timer', seconds: toSeconds(cancelTimerLen[1], cancelTimerLen[2]) };
+
+  // Control words first: "stop timer" must never read as a timer request. Words fixed
+  // by Matt (2026-10-25): "stop timer" / "cancel timer", "check timer", "check stopwatch [time]".
+  if (/\b(?:stop|cancel)\s+(?:the\s+|my\s+)?timer\b/.test(t)) return { type: 'cancel_timer' };
+  if (/\bcheck\s+(?:the\s+|my\s+)?timer\b|how\s+much\s+time\s+is\s+left|how\s+long\s+(?:is\s+)?left/.test(t)) return { type: 'check_timer' };
+  if (/\b(?:stop|pause)\s+(?:the\s+)?stopwatch\b/.test(t)) return { type: 'stopwatch_stop' };
+  if (/\b(?:reset|clear)\s+(?:the\s+)?stopwatch\b/.test(t)) return { type: 'stopwatch_reset' };
+  if (/\bcheck\s+(?:the\s+)?stopwatch(?:\s+time)?\b/.test(t)) return { type: 'check_stopwatch' };
+
+  // "set a timer for 7:30 am": dictation hears "alarm" as "timer"; a clock time after
+  // "timer" (a colon, or am/pm) is an alarm, never a duration.
+  const timerAsAlarm = t.match(/time(?:r)?\s+(?:for|at)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s+tomorrow)?\b/);
+  if (timerAsAlarm && (timerAsAlarm[2] || timerAsAlarm[3])) {
+    const hm = clockFrom(timerAsAlarm[1], timerAsAlarm[2], timerAsAlarm[3]);
+    if (hm) return { type: 'alarm', hour: hm[0], minute: hm[1] };
+  }
 
   const timerRes = [
     // "time" too: dictation drops the r (tester, #29). One misheard word may sit
@@ -105,26 +155,19 @@ export function parseVoiceCommand(text) {
   for (const re of timerRes) {
     const m = t.match(re);
     if (m) {
-      const val = parseFloat(m[1]);
-      const unit = m[2];
-      let seconds;
-      if (unit.startsWith('hour') || unit.startsWith('hr')) seconds = Math.round(val * 3600);
-      else if (unit.startsWith('min')) seconds = Math.round(val * 60);
-      else seconds = Math.round(val);
-      return { type: 'timer', seconds };
+      const seconds = toSeconds(m[1], m[2]);
+      if (seconds > 0) return { type: 'timer', seconds };
     }
   }
 
+  // (\d{1,4}): dictation gives "1026" for ten twenty-six; split below.
   const alarmM = t.match(
-    /(?:set\s+(?:an?\s+)?alarm\s+(?:for|at)|alarm\s+(?:for|at)|wake\s+me\s+up\s+at)\s+(\d{1,2})(?:[:\s](\d{1,2}))?\s*(am|pm)?/
+    /(?:set\s+(?:an?\s+)?alarm\s+(?:for|at)|alarm\s+(?:for|at)|wake\s+me\s+up\s+at)\s+(\d{1,4})(?:[:\s](\d{1,2}))?\s*(am|pm)?/
   );
   if (alarmM) {
-    let hour = parseInt(alarmM[1]);
-    const minute = parseInt(alarmM[2] || '0');
-    const ampm = (alarmM[3] || '').toLowerCase();
-    if (ampm === 'pm' && hour !== 12) hour += 12;
-    if (ampm === 'am' && hour === 12) hour = 0;
-    return { type: 'alarm', hour, minute };
+    const hm = clockFrom(alarmM[1], alarmM[2], alarmM[3]);
+    if (!hm) return null;
+    return { type: 'alarm', hour: hm[0], minute: hm[1] };
   }
 
   if (/(?:start|begin)\s+(?:the\s+|a\s+)?stopwatch|^stopwatch$/.test(t)) {
@@ -299,35 +342,96 @@ export function useVoiceSession({ setMessages }) {
     }
   };
 
+  // Android: VoiceCommandBridge runs the command through VoiceCommands/ZynkTimer and
+  // returns the line to show. Desktop: the in-app timer module (utils/zynkTimer.js).
+  const runClockCommand = (cmd) => {
+    const b = window.VoiceCommandBridge;
+    if (b) {
+      switch (cmd.type) {
+        case 'timer': return b.setTimer(cmd.seconds);
+        case 'alarm': return b.setAlarm(cmd.hour, cmd.minute, 'Zynkbot');
+        case 'stopwatch': return b.startStopwatch();
+        case 'cancel_timer': return b.cancelTimer(cmd.seconds || 0);
+        case 'cancel_alarm': return b.cancelAlarm(cmd.hour ?? -1, cmd.minute ?? 0);
+        case 'check_alarm': return b.checkAlarm();
+        case 'check_timer': return b.checkTimer();
+        case 'stopwatch_stop': return b.stopStopwatch();
+        case 'stopwatch_reset': return b.resetStopwatch();
+        case 'check_stopwatch': return b.checkStopwatch();
+        default: return '';
+      }
+    }
+    switch (cmd.type) {
+      case 'timer': return desktopTimer.setTimer(cmd.seconds);
+      case 'alarm': return 'Alarms are on the phone only for now.';
+      case 'stopwatch': return desktopTimer.startStopwatch();
+      case 'cancel_timer': return desktopTimer.cancelTimer(cmd.seconds || 0);
+      case 'cancel_alarm': return 'Alarms are on the phone only for now.';
+      case 'check_alarm': return 'Alarms are on the phone only for now.';
+      case 'check_timer': return desktopTimer.checkTimer();
+      case 'stopwatch_stop': return desktopTimer.stopStopwatch();
+      case 'stopwatch_reset': return desktopTimer.resetStopwatch();
+      case 'check_stopwatch': return desktopTimer.checkStopwatch();
+      default: return '';
+    }
+  };
+
   const executeVoiceCommand = (cmd, originalText) => {
     const now = new Date().toISOString();
     let confirmation = '';
-    if (cmd.type === 'timer') {
-      window.VoiceCommandBridge.setTimer(cmd.seconds);
-      const h = Math.floor(cmd.seconds / 3600);
-      const m = Math.floor((cmd.seconds % 3600) / 60);
-      const s = cmd.seconds % 60;
-      const parts = [];
-      if (h) parts.push(`${h} hour${h > 1 ? 's' : ''}`);
-      if (m) parts.push(`${m} minute${m > 1 ? 's' : ''}`);
-      if (s && !h) parts.push(`${s} second${s > 1 ? 's' : ''}`);
-      confirmation = `⏱️ Timer set for ${parts.join(' and ')}.`;
-    } else if (cmd.type === 'alarm') {
-      window.VoiceCommandBridge.setAlarm(cmd.hour, cmd.minute, 'Zynkbot');
-      const h12 = cmd.hour % 12 || 12;
-      const ampm = cmd.hour < 12 ? 'AM' : 'PM';
-      const min = cmd.minute.toString().padStart(2, '0');
-      confirmation = `⏰ Alarm set for ${h12}:${min} ${ampm}.`;
-    } else if (cmd.type === 'stopwatch') {
-      window.VoiceCommandBridge.startStopwatch();
-      confirmation = '⏱️ Stopwatch started.';
-    }
+    try { confirmation = String(runClockCommand(cmd) || ''); } catch (e) { confirmation = "I couldn't do that."; console.warn('[voice command]', e); }
+    const icon = (cmd.type === 'alarm' || cmd.type === 'cancel_alarm' || cmd.type === 'check_alarm') ? '⏰' : '⏱️';
     setMessages(prev => [
       ...prev,
       { id: Date.now(), role: 'user', content: originalText, timestamp: now, recalled_memories: [] },
-      { id: Date.now() + 1, role: 'assistant', content: confirmation, timestamp: now, recalled_memories: [], metadata: { model_backend: 'voice command' } },
+      { id: Date.now() + 1, role: 'assistant', content: `${icon} ${confirmation}`, timestamp: now, recalled_memories: [], metadata: { model_backend: 'voice command' } },
     ]);
+    refreshTimerState();
   };
+
+  // Timer / stopwatch state for the chip above the message box. Android pushes a
+  // change through window.__timerChanged; a 1 s tick keeps the countdown moving.
+  const readTimerState = () => {
+    try {
+      if (window.VoiceCommandBridge?.timerState) return JSON.parse(window.VoiceCommandBridge.timerState());
+      return desktopTimer.getState();
+    } catch (_) { return null; }
+  };
+  const [timerState, setTimerState] = useState(() => readTimerState());
+  const refreshTimerState = () => setTimerState(readTimerState());
+  useEffect(() => {
+    window.__timerChanged = refreshTimerState;
+    const unsub = desktopTimer.subscribe(() => refreshTimerState());
+    return () => { window.__timerChanged = null; unsub(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const timerActive = !!(timerState && ((timerState.timers || []).length > 0 || timerState.sw_running || timerState.ringing));
+  const cancelAlarmById = (id) => { try { window.VoiceCommandBridge?.cancelAlarmById?.(id); } catch (_) {} refreshTimerState(); };
+  // Desktop: when the in-app timer fires, put the line in the chat and speak it if
+  // spoken replies are on (the phone's ring service speaks on its own).
+  useEffect(() => {
+    desktopTimer.setOnDone((line) => {
+      const now = new Date().toISOString();
+      setMessages(prev => [...prev, { id: Date.now(), role: 'assistant', content: `🔔 ${line}`, timestamp: now, recalled_memories: [], metadata: { model_backend: 'timer' } }]);
+      if (ttsEnabled) speakResponse(line);
+    });
+    return () => desktopTimer.setOnDone(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsEnabled]);
+  useEffect(() => {
+    if (!timerActive) return;
+    const h = setInterval(refreshTimerState, 1000);
+    return () => clearInterval(h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timerActive]);
+  const stopRinging = () => {
+    try { window.VoiceCommandBridge?.stopRinging?.(); } catch (_) {}
+    desktopTimer.stopRing();
+    refreshTimerState();
+  };
+  const cancelTimerById = (id) => { try { if (window.VoiceCommandBridge?.cancelTimerById) window.VoiceCommandBridge.cancelTimerById(id); else desktopTimer.cancelTimerById(id); } catch (_) {} refreshTimerState(); };
+  const stopStopwatch = () => { try { runClockCommand({ type: 'stopwatch_stop' }); } catch (_) {} refreshTimerState(); };
+  const resetStopwatch = () => { try { runClockCommand({ type: 'stopwatch_reset' }); } catch (_) {} refreshTimerState(); };
 
   // Wake word service lifecycle — starts/stops with the Hey Zynk toggle on Android.
   useEffect(() => {
@@ -458,6 +562,13 @@ export function useVoiceSession({ setMessages }) {
     stopTts,
     speakResponse,
     executeVoiceCommand,
+    // Timer / stopwatch chip
+    timerState,
+    stopRinging,
+    cancelTimerById,
+    cancelAlarmById,
+    stopStopwatch,
+    resetStopwatch,
     // Refs exposed to App.jsx:
     // - handleSendMessageRef: App.jsx updates this every render so callbacks stay current
     // - wakeTriggeredRef: handleSendMessage reads this for wake-only behaviour (web search auto-run)

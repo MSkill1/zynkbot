@@ -430,15 +430,22 @@ object NativeVoiceAnswerer {
             while (true) {
                 val idx = sentenceEnd(buffer)
                 if (idx < 0) break
-                val sentence = buffer.substring(0, idx + 1).trim()
+                val sentence = withoutMarker(buffer.substring(0, idx + 1).trim())
                 buffer.delete(0, idx + 1)
                 if (sentence.isNotEmpty()) enqueue(sentence, flush = utterances == 0)
             }
             if (force && buffer.isNotBlank()) {
-                enqueue(buffer.toString().trim(), flush = utterances == 0)
+                val rest = withoutMarker(buffer.toString().trim())
+                if (rest.isNotEmpty()) enqueue(rest, flush = utterances == 0)
                 buffer.setLength(0)
             }
         }
+
+        /** The cloud reply ends with a hidden "MEMORY: yes|no" line for the memory
+         *  pipeline (conversation_engine). The page strips it; the streamed speech did
+         *  not, and a Pixel reply said "memory no" out loud (Matt, 2026-10-25). */
+        private fun withoutMarker(s: String): String =
+            s.replace(Regex("(?i)[\\s*_`(\\[-]*(memory|remember)\\s*[*_`]*\\s*[:\\-—]\\s*(yes|no)[.!)\\]*_`\\s]*$"), "").trim()
 
         /** Index of a sentence terminator followed by whitespace/end, else -1. Requires a
          *  few words first so "e.g." / "1." don't trigger a one-word utterance. */

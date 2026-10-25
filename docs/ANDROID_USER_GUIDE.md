@@ -62,17 +62,27 @@ Without the assistant role, "Hey Zynk" still works, but there is no Z on screen,
 Other apps' recordings: if another app is using the microphone (a call, a voice memo, another assistant), Zynkbot pauses its listening and resumes when that app is done.
 
 
+After a restart. If Hey Zynk was on, it comes back on its own about a minute after the phone boots, without opening the app (the Voice page switch "Start listening when the phone starts", on by default). If the phone refuses, a notification "Hey Zynk is off since the restart" offers a tap that starts it. Measured working on a Pixel 10 Pro XL and a OnePlus 12R, 2026-10-25.
+
 ## 4. What it does without asking a model
 
 Some requests are handled on the phone and never sent to a model. Numbers can be spoken as words ("ten minutes") or digits.
 
-Timers. Say "set a timer for ten minutes", "timer for ninety seconds", or "five minute timer". Seconds, minutes and hours all work. Zynkbot hands the timer to the phone's clock app and says "Timer set for 10 minutes" only after the clock app accepted it. The timer is labelled "Zynkbot" in the clock app.
+Timers, alarms and the stopwatch are Zynkbot's own (since 2026-10-25). Nothing is handed to the phone's clock app: Zynkbot sets an exact alarm with Android, so a timer rings with the screen off, with the app closed, and after the phone has been asleep for an hour. When it goes off it says what it is ("Your ten-minute timer is done", "It's 7 30 AM. Your alarm.") and rings for 30 seconds unless you stop it. Each timer and alarm shows as a small chip above the message box with a Cancel button, and as a notification in the shade with a Cancel button. You can have several at once.
 
-Alarms. Say "set an alarm for 7 30 AM", "alarm at 6", or "wake me up at 7 15". Without AM or PM the hour is taken as given (6 means 06:00, 18 means 18:00).
+One-time permission. Android 12 and later let an app ring at an exact time only with your say-so, and Android 14 and later leave it off by default. The Voice page shows a row "Let Zynkbot run its own timers and alarms" with an Allow button until the switch is on; Allow opens Android's "Alarms & reminders" page for Zynkbot. Until it is on, timers and alarms go to the phone's clock app as they did before, and the spoken confirmation says so.
 
-Stopwatch. Say "start the stopwatch". Android has no standard stopwatch command, so this only works on some phones. If the clock app ignores it, Zynkbot opens the clock app instead and says: "This phone's clock app has no stopwatch shortcut, so I opened it for you. The stopwatch is one tap away."
+Timers. "Set a timer for ten minutes", "timer for ninety seconds", "five minute timer", "two and a half minutes". "Stop timer" or "cancel timer" cancels it; with several running Zynkbot names them and you say "cancel the ten minute timer". "Check timer" says how much is left on each.
 
-If the clock app cannot be reached at all, Zynkbot says "I couldn't reach the clock app to do that."
+Alarms. "Set an alarm for 7 30 AM", "alarm at 6", "wake me up at 7 15". Without AM or PM the hour is taken as given (6 means 06:00, 18 means 18:00); the alarm is for the next time that clock time comes round. "Cancel alarm", "cancel the 7 30 alarm", "check alarms". If dictation hears "timer" for "alarm" ("set a timer for 7 30 AM"), a clock time after "timer" is still taken as an alarm.
+
+Stopwatch. "Start stopwatch", "stop stopwatch" (keeps the time; "start stopwatch" again continues), "reset stopwatch", "check stopwatch" or "check stopwatch time".
+
+When it rings. Say "Hey Zynk" (any wake stops the ring; whether the phone hears you over its own alarm tone depends on its echo cancelling), tap the big orange Stop button that appears above the message box, or tap Stop on the notification. Left alone it stops after 30 seconds.
+
+Punctuation from the cloud dictation ("Stop, stopwatch.", "7.30 a.m.") is handled.
+
+With the permission off, and the clock app unable to take the command either, Zynkbot says "I couldn't reach the clock app to do that."
 
 Using the Remember function ("Remember:"). Start a message with the word remember and a colon, then the fact, and Zynkbot saves exactly those words as a memory, with no rewording. This works spoken (hands-free or the mic button) and typed in the chat as "Remember: ...". Because the offline dictation engine often mishears the word "colon", these spellings are all accepted at the start of a message:
 

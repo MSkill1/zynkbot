@@ -8,6 +8,14 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ## [0.9.6-beta5] — unreleased <!-- branch beta5 -->
 
+### Timer, alarm and stopwatch (Android; branch `timer`, 2026-10-25)
+- Zynkbot runs its own timers and alarms instead of handing them to the phone's clock app. They ring with the screen off or the app closed (the fix for a timer that was confirmed but never rang, #29), say what they are, and ring for 30 seconds unless stopped by "Hey Zynk", the Stop button in the app, or Stop on the notification. Several at once, each with a chip above the message box and a notification, both with Cancel. New commands: "check timer", "stop timer" / "cancel timer" / "cancel the ten minute timer", "cancel alarm" / "cancel the 7 30 alarm", "check alarms", "stop stopwatch", "reset stopwatch", "check stopwatch". Needs Android's "Alarms & reminders" switch for Zynkbot, offered on the Voice page.
+- The desktop app has the same timer and stopwatch inside the app (rings while the app is open); alarms are phone-only.
+- Hey Zynk comes back on its own after a restart when it was on (Voice page: "Start listening when the phone starts"); if the phone refuses, a notification offers a tap.
+- The hidden MEMORY marker at the end of a cloud reply is never shown or spoken, even when the model glues it to the last sentence.
+- Coming back to the app from another app no longer brings the keyboard up.
+- System Controls has a "Help and documentation" row.
+
 ### Chat prompt
 - Zynkbot may now ask first: if one or two missing details would change the answer, it asks for them briefly instead of guessing; otherwise it answers and says what it assumed. In testing before 1.0.
 

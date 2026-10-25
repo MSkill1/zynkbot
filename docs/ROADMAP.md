@@ -40,6 +40,8 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ### Part 2 — Timer/alarm (the first wake-word action)
 
+**Status 2026-10-25 (branch `timer`):** Zynkbot's own timer, alarm and stopwatch shipped: exact alarms (`setAlarmClock`) with the user-granted "Alarms & reminders" permission, a 30 s ring with the spoken line, several at once, chips above the message box and notifications with Cancel, check/cancel by voice, reboot-safe; clock app only as the fallback. Item 8a and KI-061 (#29) closed. Items 5 and 6 below were done without a model call: the parser is regular expressions in both the Kotlin and the page.
+
 5. Add a lightweight intent-check step: after wake-word capture (or from any typed/dictated input), ask the model whether the message is a timer/alarm request and extract the duration as structured output (e.g. `{"is_timer": true, "duration_seconds": 600}`).
 
 6. Android: implement via `AlarmManager` (`setExactAndAllowWhileIdle` or `setAlarmClock`) + completion notification with sound, fires even when backgrounded. Requires `SCHEDULE_EXACT_ALARM` permission (Android 12+) — add explicit grant request flow.
@@ -371,6 +373,10 @@ A broader, separate idea also worth naming explicitly rather than defaulting int
 The existing containment modes (HIPAA, Guardian, Sovereign, Child) are proofs of concept demonstrating the safety-filter architecture. They are not production-grade for their respective domains. Elder Mode is the first mode that will be developed to a production standard, with Parenting Mode following; both are paid offerings. The others follow in subsequent releases as their use cases are validated.
 
 ---
+
+### Timer ring that "Hey Zynk" can be heard over (after v1.0; Matt 2026-10-25)
+
+The ring plays at full alarm volume and the phone's generic software echo canceller does not remove it well enough for the wake detector to hear "Hey Zynk" over it (Pixel 10 Pro XL, 2026-10-25; Siri manages it with a hardware canceller fed the speaker signal, plus ducking). Try pulsing the ring, about 0.8 s on and 0.8 s off, so the detector gets clean gaps; "Hey Zynk" takes about a second to say. Half an hour; measured on both phones before it stays.
 
 ### Web Search Quality (after v1.0)
 
