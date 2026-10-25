@@ -2010,7 +2010,7 @@ export default function App() {
       )}
 
       {controlsPage === 'link' && (
-        <ControlsPage icon="🔗" title="ZynkLink" subtitle="Other people's Zynkbots: files and chat" accent="#f1fa8c" introKey="link" intro={<>ZynkLink connects your Zynkbot with someone else's: files through the shared drive and a private chat, device to device. You exchange a code once. Either of you can unlink at any time; the other device is told and drops the link too. <b>Try this:</b> share a photo to the Zynkbot drive; the linked device sees it under Shared With Me.</>} onClose={() => setControlsPage(null)}>
+        <ControlsPage icon="🔗" title="ZynkLink" subtitle="Other people's Zynkbots: files and chat" accent="#f1fa8c" introKey="link" intro={<>ZynkLink connects your Zynkbot with someone else's: files through the shared drive and a private chat, device to device. You exchange a code once. Either of you can unlink at any time; the other device is told and drops the link too. You can link your own devices as well, to move files easily between your phone and your computer or tablet. <b>Try this:</b> share a photo to the Zynkbot drive; the linked device sees it under Shared With Me.</>} onClose={() => setControlsPage(null)}>
         <ZynkLinkPanel
           apiBaseUrl={API_BASE_URL}
           onOpenUserIdentity={() => setShowUserIdentity(true)}

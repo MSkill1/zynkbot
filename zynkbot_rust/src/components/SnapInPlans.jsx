@@ -20,7 +20,7 @@ const PLANS = [
   {
     key: 'journalist', icon: '📰', name: 'Journalist', color: '#8be9fd',
     what: 'Sources, interview notes and documents organised by story, with a timeline to check claims against. Ask what a source said in March, or which documents mention a name.',
-    why: 'A reporter\'s notes protect the people in them. Kept on your device, no third-party account holds them.',
+    why: 'A reporter\'s notes protect the people in them. Kept on your device, no third-party account holds them. In a hostile environment or country, an AI assistant that runs on your own device and keeps no account anywhere may be the only one you can use.',
   },
 ];
 

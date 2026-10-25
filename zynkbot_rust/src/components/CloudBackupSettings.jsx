@@ -13,7 +13,7 @@ const labelStyle = { fontSize: '0.8rem', color: '#8be9fd' };
  * Backup and Restore, where the backup itself is (Matt). The values are API keys to
  * the app (set_api_key / get_api_keys) so the existing push-to-devices path carries them.
  */
-export default function CloudBackupSettings() {
+export default function CloudBackupSettings({ onShowKey, onClearAll }) {
   const [endpoint, setEndpoint] = useState("");
   const [accessKey, setAccessKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
@@ -89,11 +89,14 @@ export default function CloudBackupSettings() {
         <span style={{ fontSize: '0.72rem', background: '#1a3a1a', color: '#50fa7b', border: '1px solid #50fa7b44', padding: '2px 7px', borderRadius: '10px' }}>Free Beta</span>
       </div>
       <div style={{ fontSize: '0.82rem', color: '#9aa5c4', lineHeight: 1.5 }}>
+        <b style={{ color: '#f8f8f2' }}>Backup</b> copies every memory on this device to the cloud. <b style={{ color: '#f8f8f2' }}>Restore</b> brings a backup back onto this device, or onto a new one; memories already here are kept. You can also clear everything on the device and restore from the backup later.
+      </div>
+      <div style={{ fontSize: '0.82rem', color: '#9aa5c4', lineHeight: 1.5 }}>
         Backups are encrypted before they leave this device, with a key that stays on your own devices.
         They are stored in a Cloudflare R2 bucket of your own.{' '}
         <button onClick={() => openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens')}
           style={{ background: 'none', border: 'none', color: '#8be9fd', cursor: 'pointer', padding: 0, font: 'inherit', textDecoration: 'underline' }}>
-          Get the details from Cloudflare
+          Get your free Cloudflare account
         </button>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -120,6 +123,28 @@ export default function CloudBackupSettings() {
           {status.type === 'saving' ? 'Saving…' : status.type === 'ok' ? '✓ Saved' : 'Save'}
         </button>
       </div>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', borderTop: '1px solid #44475a', paddingTop: '10px' }}>
+        <div style={{ flex: 1, fontSize: '0.8rem', color: '#9aa5c4', lineHeight: 1.5 }}>
+          <b style={{ color: '#ffb86c' }}>The key.</b> Every backup is locked with one key that your paired devices share among themselves, so day to day you never touch it. Save it somewhere safe anyway: if you lose every device, or set up a new one without pairing it to an old one, that key is the only way to open the backup.
+        </div>
+        {onShowKey && (
+          <button onClick={onShowKey} title="Show the encryption key so you can store it somewhere safe"
+            style={{ background: '#ffb86c', border: 'none', color: '#282a36', fontSize: '0.8rem', fontWeight: 'bold', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', minHeight: '40px', flexShrink: 0 }}>
+            🔑 Key
+          </button>
+        )}
+      </div>
+      {onClearAll && (
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', borderTop: '1px solid #44475a', paddingTop: '10px' }}>
+          <div style={{ flex: 1, fontSize: '0.8rem', color: '#9aa5c4', lineHeight: 1.5 }}>
+            Delete every memory on this device. It asks twice first.
+          </div>
+          <button onClick={onClearAll}
+            style={{ background: 'none', border: '1px solid #ff5555', color: '#ff5555', fontSize: '0.8rem', padding: '8px 12px', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', minHeight: '40px', flexShrink: 0 }}>
+            Clear All
+          </button>
+        </div>
+      )}
       {status.message && status.type !== 'ok' && (
         <div style={{ fontSize: '0.8rem', color: status.type === 'error' ? '#ff5555' : '#6272a4' }}>{status.message}</div>
       )}
