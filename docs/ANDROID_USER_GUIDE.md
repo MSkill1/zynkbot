@@ -62,6 +62,8 @@ Without the assistant role, "Hey Zynk" still works, but there is no Z on screen,
 Other apps' recordings: if another app is using the microphone (a call, a voice memo, another assistant), Zynkbot pauses its listening and resumes when that app is done.
 
 
+After a restart. If Hey Zynk was on, it comes back on its own about a minute after the phone boots, without opening the app (the Voice page switch "Start listening when the phone starts", on by default). If the phone refuses, a notification "Hey Zynk is off since the restart" offers a tap that starts it. Measured working on a Pixel 10 Pro XL and a OnePlus 12R, 2026-10-25.
+
 ## 4. What it does without asking a model
 
 Some requests are handled on the phone and never sent to a model. Numbers can be spoken as words ("ten minutes") or digits.
