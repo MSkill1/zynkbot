@@ -197,6 +197,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         ZynkAssistantService.sessionActive = true
         current = this
         cancelled = false
+        if (ZynkTimer.ringing) ZynkTimer.stopRinging(context)
         // The session window draws over the lock screen but nothing turns the display
         // ON — with the phone asleep the Z was never seen (OnePlus, 2026-09-04: session
         // shown 13:22:03, screen dark until the power button at 13:22:32). Light it,
@@ -424,7 +425,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
                 val ok = VoiceCommands.execute(context, cmd)
                 WakeWordService.reportOutcome(true)
                 Log.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
-                if (!cancelled) NativeVoiceAnswerer.say(context, if (ok) VoiceCommands.confirmation(cmd) else VoiceCommands.FAILED_LINE)
+                if (!cancelled) NativeVoiceAnswerer.say(context, if (ok) VoiceCommands.confirmation(context, cmd) else VoiceCommands.FAILED_LINE)
                 main.post { hide() }
             }.start()
             return

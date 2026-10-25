@@ -841,7 +841,9 @@ class WakeWordService : Service() {
                     // Playback gate: the phone itself was making sound (a notification tone,
                     // an app's "boing", a video) in the last second — the model heard the
                     // speaker. Kept as a labelled false clip for the verifier's training.
-                    if (playbackRecently()) {
+                    // Our own timer ringing is not foreign audio: the whole point is to
+                    // say "Hey Zynk" over it (the echo canceller carries the rest).
+                    if (playbackRecently() && !ZynkTimer.ringing) {
                         WakeLog.i(TAG, "Detection ignored: this phone was playing audio (score=%.3f)".format(score))
                         saveTriggerClip(score, pooled, label = false)
                         consecutiveHighScores = 0
@@ -1033,6 +1035,7 @@ class WakeWordService : Service() {
      *  the assistant session if the system has bound it, else the in-service copy. */
     private fun onWake() {
         WakeLog.i(TAG, "Wake word — starting a turn")
+        if (ZynkTimer.ringing) ZynkTimer.stopRinging(this)   // any wake silences a ringing timer
         // Release the indefinite audio-loop wake lock; detection lock covers the next 25s.
         releaseAudioWakeLock()
         val pm = getSystemService(PowerManager::class.java)
@@ -1124,7 +1127,7 @@ class WakeWordService : Service() {
                 playTone(R.raw.wake_chime_close)
                 val ok = VoiceCommands.execute(this, cmd)
                 WakeLog.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
-                NativeVoiceAnswerer.say(this, if (ok) VoiceCommands.confirmation(cmd) else VoiceCommands.FAILED_LINE)
+                NativeVoiceAnswerer.say(this, if (ok) VoiceCommands.confirmation(this, cmd) else VoiceCommands.FAILED_LINE)
                 releaseWakeLock()
                 endTurn()
             }.start()

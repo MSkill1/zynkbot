@@ -357,6 +357,10 @@ See [NETWORKING_FEATURES.md](NETWORKING_FEATURES.md) for detailed documentation:
 
 ---
 
+### ⏱️ Timer, alarm and stopwatch
+
+Zynkbot's own, on Android since 2026-10-25: "set a timer for ten minutes", "set an alarm for 7 30 AM", "start stopwatch", typed or hands-free after "Hey Zynk". A timer rings with the screen off or the app closed, says what it is, and rings for 30 seconds unless stopped (say "Hey Zynk", tap the Stop button, or Stop on the notification). Several at once; each shows as a chip above the message box and a notification, both with Cancel. "Check timer", "cancel timer" (or "cancel the ten minute timer"), "check alarms", "cancel the 7 30 alarm", "stop stopwatch", "reset stopwatch", "check stopwatch". Needs Android's "Alarms & reminders" switch for Zynkbot, offered on the Voice page; without it the phone's clock app takes the command. On the desktop, timers run inside the app and ring only while it is open; alarms are phone-only. Details: `docs/ANDROID_USER_GUIDE.md` section 4, `docs/architecture_and_development/ANDROID_ARCHITECTURE.md` section 6a.
+
 ### 🤝 Ensemble Mode
 
 Query multiple AI models simultaneously and synthesize their responses into a consensus answer. Works with any combination of local and API models — no network required.

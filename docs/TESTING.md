@@ -96,7 +96,7 @@ These cannot be automated. Run before a release; record results in the release n
 
 **Android voice**
 - Assistant-role setup on stock Android and GrapheneOS; the app is drawn normally on return (KI-040, KI-051).
-- "Hey Zynk" with the screen off: chime, spoken answer; timer / alarm / stopwatch commands; the timer must actually fire with the app hidden and with the phone asleep (KI-061).
+- "Hey Zynk" with the screen off: chime, spoken answer; timer / alarm / stopwatch commands (Zynkbot's own since 2026-10-25): a timer must ring with the app hidden, with the phone asleep, and after a reboot; several at once; "check timer", "cancel the N minute timer", "check alarms"; the ring stops on "Hey Zynk", the orange Stop button and the notification's Stop, and on its own after 30 s. Full list: `~/Documents/Zynk_related/timer_test_protocol_2026-10-25.md` (not in the repo).
 - A hands-free exchange on a blank conversation appears on screen and in History.
 - With a personal voice profile enforcing: the owner is accepted, another voice is not.
 - Leave the phone alone for several hours: no crash dialogs (KI-064).

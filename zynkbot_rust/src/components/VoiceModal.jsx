@@ -122,9 +122,16 @@ const FLAT_COMMANDS = [
   { cmd: '"Hey Zynk"', desc: 'One question per wake. Wait for the tone, then speak. Zynkbot answers, then waits for the next "Hey Zynk" — it never listens on its own.' },
   { cmd: 'Tap the Z', desc: 'If you woke it by accident: tapping the green Z cancels listening or stops the reply without sending anything.' },
   { cmd: '"Stop"', desc: 'Typed or dictated in the app, stops a spoken reply. Hands-free, the microphone is off while Zynkbot speaks, so use the Stop button or tap the Z instead.' },
-  { cmd: '"Set a timer for 10 minutes"', desc: 'Works with any duration — seconds, minutes, or hours.' },
-  { cmd: '"Set an alarm for 7:30 AM"', desc: 'Sets a system alarm.' },
-  { cmd: '"Start stopwatch"', desc: 'Starts the stopwatch where the clock app allows it; otherwise it opens the clock app for you.' },
+  { cmd: '"Set a timer for 10 minutes"', desc: 'Zynkbot\'s own timer: it rings and tells you with the phone asleep or the app closed. Any duration in seconds, minutes or hours. Set as many as you like; each shows above the message box.' },
+  { cmd: '"Stop timer" / "Cancel timer"', desc: 'Cancels the timer. With several running it names them; say "cancel the 10 minute timer".' },
+  { cmd: '"Check timer"', desc: 'Says how much time is left on each.' },
+  { cmd: 'When it rings', desc: 'Say "Hey Zynk", tap Stop on the notification, or tap Stop in the app. It rings for 30 seconds, then stops on its own.' },
+  { cmd: '"Set an alarm for 7:30 AM"', desc: 'Zynkbot\'s own alarm, same as the timer. If Zynkbot is not allowed exact alarms on this phone, the clock app takes it instead.' },
+  { cmd: '"Cancel alarm"', desc: 'Removes the alarm. With several set it names them; say "cancel the 7 30 alarm".' },
+  { cmd: '"Check alarms"', desc: 'Says which alarms are set.' },
+  { cmd: '"Start stopwatch"', desc: 'Starts Zynkbot\'s stopwatch.' },
+  { cmd: '"Stop stopwatch" / "Reset stopwatch"', desc: 'Stops it, keeping the time; reset clears it.' },
+  { cmd: '"Check stopwatch" / "Check stopwatch time"', desc: 'Says the time on the stopwatch.' },
 ];
 
 function VoiceCommandsModal({ onClose }) {
@@ -192,6 +199,11 @@ export default function VoiceModal({
   onKeepScreenAwakeChange,
 }) {
   const [showCommands, setShowCommands] = useState(false);
+  const [exactAllowed, setExactAllowed] = useState(true);
+  useEffect(() => {
+    if (!isOpen) return;
+    try { if (window.VoiceCommandBridge?.canScheduleExact) setExactAllowed(!!window.VoiceCommandBridge.canScheduleExact()); } catch (_) {}
+  }, [isOpen]);
 
   // Voice enrollment card (Android): the wake service's status, re-read while the
   // modal is open so the count moves as the clips come in.
@@ -522,6 +534,21 @@ export default function VoiceModal({
             onChange={onKeepScreenAwakeChange}
           />
         </div>
+
+        {/* Zynkbot's own timers and alarms need the "Alarms & reminders" switch on
+            Android 12+ (denied by default on 14+); without it the clock app takes them. */}
+        {!!window.VoiceCommandBridge?.canScheduleExact && !exactAllowed && (
+          <div style={{ ...rowStyle, alignItems: 'center', gap: '12px' }}>
+            <div style={{ flex: 1 }}>
+              <div style={labelStyle}>Let Zynkbot run its own timers and alarms</div>
+              <div style={mutedStyle}>Android needs your permission for an app to ring at an exact time. Until then timers and alarms go to the clock app, which cannot ring from the lock screen or say how long is left.</div>
+            </div>
+            <button onClick={() => { try { window.VoiceCommandBridge.openExactAlarmSettings(); } catch (_) {} }}
+              style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#50fa7b', color: '#282a36', cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600 }}>
+              Allow
+            </button>
+          </div>
+        )}
 
         {/* Voice Commands reference */}
         <div style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #44475a', textAlign: 'center' }}>

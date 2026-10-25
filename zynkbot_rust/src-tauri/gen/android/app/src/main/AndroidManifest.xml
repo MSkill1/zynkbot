@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Zynkbot's own timer and alarm (ZynkTimer, 2026-10-25): exact alarms so they ring
+         with the phone asleep; a short foreground service rings for 30 s; put back after a reboot. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SHORT_SERVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Asked once from the second start: without it ColorOS freezes the app in the background and sync stops (KI-087). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
@@ -127,7 +132,7 @@
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
-            android:windowSoftInputMode="adjustResize"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -146,6 +151,19 @@
             android:name=".WakeWordService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Zynkbot's own timer/alarm: the exact-alarm receiver and the 30 s ring service. -->
+        <receiver
+            android:name=".TimerReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name=".TimerRingService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
 
         <!-- Digital-assistant role (Settings -> Apps -> Default apps -> Digital
              assistant app). Both services must be exported and guarded by

@@ -40,6 +40,8 @@ This roadmap outlines planned features and enhancements. Timelines are estimates
 
 ### Part 2 — Timer/alarm (the first wake-word action)
 
+**Status 2026-10-25 (branch `timer`):** Zynkbot's own timer, alarm and stopwatch shipped: exact alarms (`setAlarmClock`) with the user-granted "Alarms & reminders" permission, a 30 s ring with the spoken line, several at once, chips above the message box and notifications with Cancel, check/cancel by voice, reboot-safe; clock app only as the fallback. Item 8a and KI-061 (#29) closed. Items 5 and 6 below were done without a model call: the parser is regular expressions in both the Kotlin and the page.
+
 5. Add a lightweight intent-check step: after wake-word capture (or from any typed/dictated input), ask the model whether the message is a timer/alarm request and extract the duration as structured output (e.g. `{"is_timer": true, "duration_seconds": 600}`).
 
 6. Android: implement via `AlarmManager` (`setExactAndAllowWhileIdle` or `setAlarmClock`) + completion notification with sound, fires even when backgrounded. Requires `SCHEDULE_EXACT_ALARM` permission (Android 12+) — add explicit grant request flow.

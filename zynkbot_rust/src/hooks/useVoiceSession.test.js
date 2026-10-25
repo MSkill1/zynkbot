@@ -133,3 +133,67 @@ describe('cleanForSpeech — what the speech engine is handed', () => {
     expect(cleanForSpeech('The capital of Colorado is Denver.')).toBe('The capital of Colorado is Denver.');
   });
 });
+
+describe('own timer and stopwatch commands (2026-10-25)', () => {
+  test('"stop timer" and "cancel timer" cancel, never set', () => {
+    expect(parseVoiceCommand('stop timer')).toEqual({ type: 'cancel_timer' });
+    expect(parseVoiceCommand('cancel the timer')).toEqual({ type: 'cancel_timer' });
+    expect(parseVoiceCommand('hey zynk cancel my timer')).toEqual({ type: 'cancel_timer' });
+  });
+  test('"check timer" and "how much time is left"', () => {
+    expect(parseVoiceCommand('check timer')).toEqual({ type: 'check_timer' });
+    expect(parseVoiceCommand('how much time is left')).toEqual({ type: 'check_timer' });
+  });
+  test('stopwatch stop, reset, check', () => {
+    expect(parseVoiceCommand('stop stopwatch')).toEqual({ type: 'stopwatch_stop' });
+    expect(parseVoiceCommand('reset the stopwatch')).toEqual({ type: 'stopwatch_reset' });
+    expect(parseVoiceCommand('check stopwatch')).toEqual({ type: 'check_stopwatch' });
+    expect(parseVoiceCommand('check stopwatch time')).toEqual({ type: 'check_stopwatch' });
+    expect(parseVoiceCommand('start stopwatch')).toEqual({ type: 'stopwatch' });
+  });
+  test('a plain "stop" still stops speech, not the timer', () => {
+    expect(parseVoiceCommand('stop')).toEqual({ type: 'stop_tts' });
+  });
+});
+
+describe('dictation shapes from the 2026-10-25 phone test', () => {
+  test('"Stop, stopwatch." and "stop, stop, watch" stop the stopwatch', () => {
+    expect(parseVoiceCommand('Stop, stopwatch.')).toEqual({ type: 'stopwatch_stop' });
+    expect(parseVoiceCommand('Stop, stop, watch.')).toEqual({ type: 'stopwatch_stop' });
+  });
+  test('"Set an alarm for 1026." is 10:26, "730 pm" is 19:30', () => {
+    expect(parseVoiceCommand('Set an alarm for 1026.')).toEqual({ type: 'alarm', hour: 10, minute: 26 });
+    expect(parseVoiceCommand('set an alarm for 730 pm')).toEqual({ type: 'alarm', hour: 19, minute: 30 });
+    expect(parseVoiceCommand('set an alarm for 7:30 am')).toEqual({ type: 'alarm', hour: 7, minute: 30 });
+  });
+  test('cancel alarm', () => {
+    expect(parseVoiceCommand('cancel alarm')).toEqual({ type: 'cancel_alarm' });
+    expect(parseVoiceCommand('stop the alarm')).toEqual({ type: 'cancel_alarm' });
+  });
+});
+
+describe('several timers and alarms (2026-10-25)', () => {
+  test('cancel a named timer', () => {
+    expect(parseVoiceCommand('cancel the 10 minute timer')).toEqual({ type: 'cancel_timer', seconds: 600 });
+    expect(parseVoiceCommand('stop the ten minute timer')).toEqual({ type: 'cancel_timer', seconds: 600 });
+    expect(parseVoiceCommand('cancel timer')).toEqual({ type: 'cancel_timer' });
+  });
+  test('cancel a named alarm, check alarms', () => {
+    expect(parseVoiceCommand('cancel the 730 alarm')).toEqual({ type: 'cancel_alarm', hour: 7, minute: 30 });
+    expect(parseVoiceCommand('cancel the 7:30 pm alarm')).toEqual({ type: 'cancel_alarm', hour: 19, minute: 30 });
+    expect(parseVoiceCommand('check alarms')).toEqual({ type: 'check_alarm' });
+    expect(parseVoiceCommand('check my alarm')).toEqual({ type: 'check_alarm' });
+  });
+});
+
+describe('"timer" heard for "alarm" with a clock time (Pixel, 2026-10-25)', () => {
+  test('"Set a timer for 7.30 a.m. tomorrow." is the 7:30 alarm', () => {
+    expect(parseVoiceCommand('Set a timer for 7.30 a.m. tomorrow.')).toEqual({ type: 'alarm', hour: 7, minute: 30 });
+    expect(parseVoiceCommand('set a timer for 7 pm')).toEqual({ type: 'alarm', hour: 19, minute: 0 });
+    expect(parseVoiceCommand('set an alarm for 7.30 p.m.')).toEqual({ type: 'alarm', hour: 19, minute: 30 });
+  });
+  test('a duration is still a timer', () => {
+    expect(parseVoiceCommand('set a timer for 7 minutes')).toEqual({ type: 'timer', seconds: 420 });
+    expect(parseVoiceCommand('set a timer for 2.5 minutes')).toEqual({ type: 'timer', seconds: 150 });
+  });
+});

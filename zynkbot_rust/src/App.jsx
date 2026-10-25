@@ -18,6 +18,7 @@ import ZynkLinkPanel from "./components/ZynkLinkPanel";
 import CollapsibleSidebar from "./components/CollapsibleSidebar";
 import ControlsPage from "./components/ControlsPage";
 import ControlsMenuButton from "./components/ControlsMenuButton";
+import { openUrl } from '@tauri-apps/plugin-opener';
 import PageIntro, { introSeen } from "./components/PageIntro";
 import SnapInPlans from "./components/SnapInPlans";
 import UserIdentityModal from "./components/UserIdentityModal";
@@ -1214,8 +1215,9 @@ export default function App() {
     const cmd = parseVoiceCommand(message);
     if (cmd?.type === 'stop_tts') { voice.stopTts(); setInput(''); return; }
 
-    // Other voice commands require VoiceCommandBridge (Android)
-    if (window.VoiceCommandBridge && cmd) {
+    // Clock commands run here, never through the model: ZynkTimer on the phone, the
+    // in-app timer on the desktop (2026-10-25).
+    if (cmd) {
       voice.executeVoiceCommand(cmd, message); setInput(''); return;
     }
 
@@ -1799,6 +1801,12 @@ export default function App() {
           onClick={() => setControlsPage('cluster')}
         />}
         {!gettingStartedOnTop && gettingStartedButton}
+        <ControlsMenuButton
+          icon="📖"
+          title="Help and documentation"
+          subtitle="The Zynkbot guides, on the web"
+          onClick={() => openUrl('https://github.com/MSkill1/zynkbot#readme')}
+        />
         <div style={{ height: '60px' }} />
 
       </CollapsibleSidebar>
@@ -2294,6 +2302,32 @@ export default function App() {
             </div>
 
             {/* Rotating tip — only shown before first message and while input is empty */}
+            {/* Timer / alarm / stopwatch chips: one each, only while something is set, running or ringing. */}
+            {voice.timerState && (() => {
+              const ts = voice.timerState;
+              const timers = ts.timers || [];
+              const alarms = ts.alarms || [];
+              if (!(ts.ringing || timers.length || alarms.length || ts.sw_running || ts.sw_elapsed_ms > 0)) return null;
+              const fmt = (secs) => { const s = Math.max(0, Math.floor(secs)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60; return (h ? `${h}:${String(m).padStart(2, '0')}` : `${m}`) + ':' + String(r).padStart(2, '0'); };
+              const chip = { display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '4px 10px', borderRadius: '14px', background: '#1e1f29', border: '1px solid #44475a', fontSize: '0.8rem', color: '#f8f8f2', whiteSpace: 'nowrap' };
+              const btn = { background: 'none', border: 'none', color: '#8be9fd', cursor: 'pointer', font: 'inherit', padding: 0 };
+              return (
+                <div style={{ marginBottom: '6px', padding: '0 4px' }}>
+                  {ts.ringing && (
+                    <button onClick={voice.stopRinging}
+                      style={{ width: '100%', padding: '18px', borderRadius: '12px', border: 'none', background: '#ffb86c', color: '#282a36', fontSize: '1.15rem', fontWeight: 'bold', cursor: 'pointer', marginBottom: '6px' }}>
+                      🔔 Stop
+                    </button>
+                  )}
+                  <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '2px' }}>
+                    {timers.map((t) => <span key={`t${t.id}`} style={chip}>⏱ {fmt((t.end - Date.now()) / 1000)} <button style={btn} onClick={() => voice.cancelTimerById(t.id)}>Cancel</button></span>)}
+                    {alarms.map((al) => <span key={`a${al.id}`} style={chip}>⏰ {new Date(al.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} <button style={btn} onClick={() => voice.cancelAlarmById(al.id)}>Cancel</button></span>)}
+                    {ts.sw_running && <span style={chip}>⏱ Stopwatch {fmt(ts.sw_elapsed_ms / 1000)} <button style={btn} onClick={voice.stopStopwatch}>Stop</button></span>}
+                    {!ts.sw_running && ts.sw_elapsed_ms > 0 && <span style={chip}>⏱ Stopped at {fmt(ts.sw_elapsed_ms / 1000)} <button style={btn} onClick={voice.resetStopwatch}>Reset</button></span>}
+                  </div>
+                </div>
+              );
+            })()}
             {messages.length === 0 && !input && (
               <div style={{ textAlign: 'center', marginBottom: '6px', padding: '0 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.65)', fontStyle: 'italic', lineHeight: '1.6' }}>

@@ -763,6 +763,7 @@ class MainActivity : TauriActivity() {
             NativeVoiceAnswerer.onTurnCompleted = { fire("window.__nativeTurns&&window.__nativeTurns();") }
             // The listener's state, pushed on every change (2026-10-20 rebuild).
             WakeWordService.onStateChanged = { s -> fire("window.__wakeWordState&&window.__wakeWordState('$s');") }
+            ZynkTimer.onChanged = { fire("window.__timerChanged&&window.__timerChanged();") }
             val intent = Intent(this@MainActivity, WakeWordService::class.java).apply {
                 putExtra("threshold", threshold)
                 putExtra("modelDir", modelDir.absolutePath)
@@ -844,62 +845,38 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    /** Typed or dictated clock commands from the page. Since 2026-10-25 they run through
+     *  VoiceCommands/ZynkTimer, the same code as hands-free, and each call returns the
+     *  line to show (and speak) in the chat. */
     inner class VoiceCommandBridge {
+        private fun run(cmd: VoiceCommands.Cmd): String {
+            val ok = VoiceCommands.execute(this@MainActivity, cmd)
+            return if (ok) VoiceCommands.confirmation(this@MainActivity, cmd) else VoiceCommands.FAILED_LINE
+        }
+        @JavascriptInterface fun setTimer(seconds: Int): String = run(VoiceCommands.Cmd.Timer(seconds))
+        @JavascriptInterface fun setAlarm(hour: Int, minute: Int, label: String): String = run(VoiceCommands.Cmd.Alarm(hour, minute))
+        @JavascriptInterface fun startStopwatch(): String = run(VoiceCommands.Cmd.Stopwatch)
+        @JavascriptInterface fun cancelTimer(seconds: Int): String = run(VoiceCommands.Cmd.CancelTimer(seconds))
+        @JavascriptInterface fun cancelTimerById(id: Int) { ZynkTimer.cancelById(this@MainActivity, "timer", id) }
+        @JavascriptInterface fun cancelAlarm(hour: Int, minute: Int): String = run(VoiceCommands.Cmd.CancelAlarm(hour, minute))
+        @JavascriptInterface fun cancelAlarmById(id: Int) { ZynkTimer.cancelById(this@MainActivity, "alarm", id) }
+        @JavascriptInterface fun checkAlarm(): String = run(VoiceCommands.Cmd.CheckAlarm)
+        @JavascriptInterface fun checkTimer(): String = run(VoiceCommands.Cmd.CheckTimer)
+        @JavascriptInterface fun stopStopwatch(): String = run(VoiceCommands.Cmd.StopwatchStop)
+        @JavascriptInterface fun resetStopwatch(): String = run(VoiceCommands.Cmd.StopwatchReset)
+        @JavascriptInterface fun checkStopwatch(): String = run(VoiceCommands.Cmd.CheckStopwatch)
+        @JavascriptInterface fun stopRinging() { ZynkTimer.stopRinging(this@MainActivity) }
+        @JavascriptInterface fun timerState(): String = ZynkTimer.stateJson(this@MainActivity)
+        @JavascriptInterface fun canScheduleExact(): Boolean = ZynkTimer.canScheduleExact(this@MainActivity)
+        /** The "Alarms & reminders" switch for this app (Android 12+). */
         @JavascriptInterface
-        fun setTimer(seconds: Int) {
+        fun openExactAlarmSettings() {
             runOnUiThread {
                 try {
-                    val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
-                        putExtra(AlarmClock.EXTRA_LENGTH, seconds)
-                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-                        putExtra(AlarmClock.EXTRA_MESSAGE, "Zynkbot")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        startActivity(Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, android.net.Uri.parse("package:$packageName")))
                     }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    android.util.Log.e("VoiceCmd", "setTimer failed: ${e.message}")
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun setAlarm(hour: Int, minute: Int, label: String) {
-            runOnUiThread {
-                try {
-                    val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                        putExtra(AlarmClock.EXTRA_HOUR, hour)
-                        putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                        putExtra(AlarmClock.EXTRA_MESSAGE, label)
-                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    android.util.Log.e("VoiceCmd", "setAlarm failed: ${e.message}")
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun startStopwatch() {
-            runOnUiThread {
-                var launched = false
-                // ACTION_START_STOPWATCH string literal (added API 33; use literal to avoid SDK floor issue)
-                if (!launched) try {
-                    val i = Intent("android.intent.action.START_STOPWATCH").apply {
-                        putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    startActivity(i); launched = true
-                } catch (_: Exception) {}
-                // Fallback: open Google Clock or system clock
-                if (!launched) try {
-                    val i = packageManager.getLaunchIntentForPackage("com.google.android.deskclock")
-                        ?: packageManager.getLaunchIntentForPackage("com.android.deskclock")
-                        ?: Intent(Intent.ACTION_MAIN).apply { addCategory("android.intent.category.APP_CLOCK") }
-                    i.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    startActivity(i)
-                } catch (_: Exception) {}
+                } catch (e: Exception) { android.util.Log.w("VoiceCmd", "exact alarm settings: ${e.message}") }
             }
         }
     }
@@ -1060,6 +1037,9 @@ class MainActivity : TauriActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        // Coming back from another app the keyboard was up over the settings (Matt,
+        // 2026-10-25): drop focus so it stays down until the message box is tapped.
+        try { webViewRef?.get()?.evaluateJavascript("document.activeElement&&document.activeElement.blur&&document.activeElement.blur();", null) } catch (_: Exception) {}
         Log.i(TAG_LIFECYCLE, "onResume — isInForeground=true")
         maybeAskBatteryExemption()
         // A file arrived through the Files app or the Share button while we were away.
@@ -1175,6 +1155,7 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(VoskBridge(), "VoskBridge")
         webView.addJavascriptInterface(WakeWordBridge(), "WakeWordBridge")
         webView.addJavascriptInterface(VoiceCommandBridge(), "VoiceCommandBridge")
+        ZynkTimer.onChanged = { val wv = webView; wv.post { wv.evaluateJavascript("window.__timerChanged&&window.__timerChanged();", null) } }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
