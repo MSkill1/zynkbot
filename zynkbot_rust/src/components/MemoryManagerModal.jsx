@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import MemoryReportModal from './MemoryReportModal';
 import MemoryGraphModal from "./MemoryGraphModal";
+import CloudBackupSettings from "./CloudBackupSettings";
 import "../styles/MemoryManagerModal.css";
 import { confirmDialog } from '../utils/confirmDialog';
 
@@ -46,6 +47,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [dateToDisplay, setDateToDisplay] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null); // null | 'busy' | 'ok' | 'error'
+  const [showStorage, setShowStorage] = useState(false); // backup storage details, folded under the header
   const [backupMsg, setBackupMsg] = useState('');
   const [keyStatus, setKeyStatus] = useState(null); // null | { key: string, acknowledged: boolean }
   const [showKeySaveModal, setShowKeySaveModal] = useState(false);
@@ -145,7 +147,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
       const r2 = await invoke('get_r2_config_status');
       if (!r2?.configured) {
         setBackupStatus('error');
-        setBackupMsg('Cloud backup is not set up on this device. Add the Cloudflare R2 details in Settings → API Keys, or pair this device with one that has your memories.');
+        setBackupMsg('Cloud backup is not set up on this device. Tap Storage above and add the storage details, or pair this device with one that has your memories.');
         setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 8000);
         return;
       }
@@ -756,7 +758,13 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                   🔑 Key
                 </button>
                 <button onClick={handleClearAllMemories} style={{ background: 'none', border: '1px solid #ff5555', color: '#ff5555', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>Clear All</button>
+                <button onClick={() => setShowStorage(v => !v)}
+                  style={{ background: showStorage ? '#8be9fd' : '#44475a', border: 'none', color: showStorage ? '#282a36' : '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}
+                  title="Where the cloud backup is stored">
+                  ☁ Storage
+                </button>
               </div>
+              {showStorage && <div style={{ flex: '1 1 100%', marginTop: '8px' }}><CloudBackupSettings /></div>}
             </>
           )}
         </div>

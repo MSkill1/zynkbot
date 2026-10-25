@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import '../styles/KnowledgeBaseManager.css';
 import { confirmDialog } from '../utils/confirmDialog';
 
-export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
+export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded = false }) {
   const [documents, setDocuments] = useState([]);
   const [availableFiles, setAvailableFiles] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -85,11 +85,11 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
   };
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen || embedded) {
       loadData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, userId]);
+  }, [isOpen, embedded, userId]);
 
   useEffect(() => {
     let unlisten;
@@ -458,15 +458,18 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  if (!isOpen) return null;
+  if (!isOpen && !embedded) return null;
 
+  // Embedded (ui-redo, 2026-10-25): the manager is the Knowledge Base page itself,
+  // so no overlay, heading or close button; the page's shell provides those.
   return (
-    <div className="kb-manager-overlay" onClick={onClose}>
-      <div className="kb-manager-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
+    <div className={embedded ? 'kb-manager-embedded' : 'kb-manager-overlay'} onClick={embedded ? undefined : onClose}>
+      <div className={embedded ? 'kb-manager-embedded-body' : 'kb-manager-modal'} onClick={(e) => e.stopPropagation()}>
+        {!embedded && (
         <div className="kb-manager-header">
           <h2>Knowledge Base Document Manager</h2>
         </div>
+        )}
 
         {/* Loading State */}
         {isLoading ? (
@@ -648,6 +651,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
       </div>
 
       {/* Floating close button - bottom right, like settings panel */}
+      {!embedded && (
       <button
         onClick={onClose}
         style={{
@@ -659,6 +663,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
           zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}
       >✕</button>
+      )}
     </div>
   );
 }

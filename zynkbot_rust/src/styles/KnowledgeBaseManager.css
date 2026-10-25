@@ -467,3 +467,13 @@
     width: 100%;
   }
 }
+
+/* Embedded in the Knowledge Base page (ui-redo, 2026-10-25): no overlay, flows with the page. */
+.kb-manager-embedded { margin-top: 14px; }
+.kb-manager-embedded-body {
+  background: #1e1f29;
+  border: 1px solid #44475a;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.kb-manager-embedded-body .kb-body { overflow: visible; }
