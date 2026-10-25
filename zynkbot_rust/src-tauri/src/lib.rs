@@ -24,6 +24,8 @@ mod chat_harness_tests; // the chat path end to end against a pretend model
 mod memory_bench; // which model makes the right memories: labs/memory_bench
 #[cfg(test)]
 mod recall_bench; // does recall find the right memory: labs/recall_bench
+#[cfg(test)]
+mod memory_refactor; // one-off: old composite memories into facts (2026-10-25)
 
 /// Seconds and RMS level (0..1) of a 16-bit mono 16 kHz WAV as the page encodes it.
 fn wav_duration_and_rms(wav: &[u8]) -> (f32, f32) {

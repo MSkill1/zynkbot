@@ -203,6 +203,38 @@ pub fn restated_question(fact: &str) -> bool {
         .iter().any(|v| rest.starts_with(v))
 }
 
+/// "You have a spelling error. Maria is Marta." / "it's Marta, not Maria" / "the correct
+/// name is Marta" (Matt, 2026-10-25): a correction of a name, as (wrong, right). The
+/// pipeline turns it into a fact of its own and puts every memory that holds the wrong
+/// name in front of the relationship classifier, so the conflict card can appear. Needs
+/// two capitalised names and a correction cue; "Marta is Alexandra's friend" is not one.
+pub fn detect_name_correction(message: &str) -> Option<(String, String)> {
+    let lower = message.to_lowercase();
+    let cue = ["spelling", "misspell", "correct name", "same person", "should be", "should have been", "typo", "mistake", "wrong name", "you have", "not "].iter().any(|c| lower.contains(c));
+    if !cue { return None; }
+    let name = r"([A-Z][a-z]{1,19})";
+    let skip = ["The", "This", "That", "It", "You", "Your", "They", "He", "She", "We", "User", "Zynkbot", "Please", "Also", "And", "But", "No", "Yes"];
+    let ok = |w: &str| !skip.contains(&w);
+    if let Some(c) = regex::Regex::new(&format!(r"{}\s*,?\s+not\s+{}", name, name)).ok()?.captures(message) {
+        let (right, wrong) = (c[1].to_string(), c[2].to_string());
+        if ok(&right) && ok(&wrong) && right != wrong { return Some((wrong, right)); }
+    }
+    if let Some(c) = regex::Regex::new(&format!(r"{}\s+(?:is|was|is actually|should be|should have been|means)\s+{}\b", name, name)).ok()?.captures(message) {
+        let (wrong, right) = (c[1].to_string(), c[2].to_string());
+        if ok(&wrong) && ok(&right) && wrong != right { return Some((wrong, right)); }
+    }
+    if let Some(c) = regex::Regex::new(&format!(r"(?i)the correct name is\s+{}", name)).ok()?.captures(message) {
+        let right = c[1].to_string();
+        // The wrong name must be a name mid-sentence, not a capitalised first word.
+        let re = regex::Regex::new(name).ok()?;
+        let wrong = re.captures_iter(message)
+            .filter(|w| { let st = w.get(1).unwrap().start(); st > 0 && !message[..st].trim_end().ends_with(['.', '!', '?', ':']) })
+            .map(|w| w[1].to_string()).find(|w| w != &right && ok(w))?;
+        return Some((wrong, right));
+    }
+    None
+}
+
 pub fn restates(later: &str, earlier: &str) -> bool {
     let words = |t: &str| -> Vec<String> { t.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| is_content_word(w)).map(str::to_string).collect() };
     let l = words(later);
@@ -220,6 +252,15 @@ pub fn clean_title(title: Option<&str>, fact: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn name_corrections_are_recognised() {
+        use super::detect_name_correction as d;
+        assert_eq!(d("You have a spelling error. Maria is Marta. The correct name is Marta. They're the same person."), Some(("Maria".into(), "Marta".into())));
+        assert_eq!(d("It's Marta, not Maria."), Some(("Maria".into(), "Marta".into())));
+        assert_eq!(d("Small mistake: the correct name is Marta."), None, "no wrong name to replace");
+        assert_eq!(d("Marta is Alexandra's friend."), None, "no correction cue");
+        assert_eq!(d("I should be home by Thursday."), None);
+    }
     #[test]
     fn a_restated_question_is_not_a_fact() {
         use super::restated_question as q;

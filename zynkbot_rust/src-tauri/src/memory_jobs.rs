@@ -159,13 +159,25 @@ async fn process(pool: &SqlitePool, job: Job, sink: Arc<dyn crate::response_sink
         bg_user_name: job.user_name.clone(),
         bg_recent_turns: job.recent_turns.clone(),
         query_entities: job.query_entities.clone(),
+        bg_correction: crate::memory_prompts::detect_name_correction(&job.message),
         bg_sibling_ids: Vec::new(),
     };
     if let Some(text) = job.remember_text.clone().filter(|t| !t.trim().is_empty()) {
         crate::commands::chat::run_memory_background(bg, crate::memory_prompts::ExtractedFact { fact: text, title: None, extras: Default::default() }).await;
         return Ok(());
     }
-    let facts = crate::commands::chat::extract_facts(&bg).await?;
+    let mut facts = crate::commands::chat::extract_facts(&bg).await?;
+    // A name correction is a fact of its own, whatever call 2 kept (2026-10-25): it is
+    // what the classifier compares against the memories that hold the wrong name.
+    if let Some((wrong, right)) = &bg.bg_correction {
+        if !facts.iter().any(|f| f.fact.contains(right.as_str()) && f.fact.contains(wrong.as_str())) {
+            facts.insert(0, crate::memory_prompts::ExtractedFact {
+                fact: format!("{} and {} are the same person; the correct name is {}. Earlier memories that say {} mean {}.", wrong, right, right, wrong, right),
+                title: Some(format!("Name correction: {} is {}", wrong, right)),
+                extras: Default::default(),
+            });
+        }
+    }
     if facts.is_empty() {
         println!("[Memory jobs] job {}: call 2 found nothing to remember", job.id);
         if let Ok(p) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {

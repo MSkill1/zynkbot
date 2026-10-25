@@ -2200,6 +2200,9 @@ pub(crate) struct MemoryBg {
     /// linked to each other by the worker; the phone called a sibling "updates" and raised
     /// a card about it, 2026-10-24).
     pub(crate) bg_sibling_ids: Vec<i32>,
+    /// A name correction in the message (wrong, right): memories holding the wrong name
+    /// are put in front of the relationship classifier (2026-10-25).
+    pub(crate) bg_correction: Option<(String, String)>,
 }
 
 /// The last two turns as "User: … / Zynkbot: …", each cut to 300 characters.
@@ -2271,7 +2274,7 @@ fn merge_extras(a: crate::memory_extras::MemoryExtras, b: crate::memory_extras::
 /// contradiction card, or an error), so the caller can link the facts of one message.
 pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::ExtractedFact) -> Option<i32> {
     let MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
-        bg_sink, bg_is_explicit_remember, bg_user_name: _, bg_recent_turns: _, query_entities, bg_sibling_ids } = bg;
+        bg_sink, bg_is_explicit_remember, bg_user_name: _, bg_recent_turns: _, query_entities, bg_sibling_ids, bg_correction } = bg;
             // The stored text is the fact from call 2 (or the words after "Remember:"), never
             // the raw message: until 2026-10-24 a cloud reply with no fact line stored the
             // user's message verbatim (219 of them in September).
@@ -2353,6 +2356,18 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             // every candidate is prompt the phone reads at ~40 tokens/s.
             let relationship_candidate_limit = if crate::conversation_engine::ConversationEngine::is_api_model(&bg_forced_backend) { 10 } else { 4 };
             similar_memories.retain(|(id, _, _, _)| !bg_sibling_ids.contains(id));
+            // A name correction: every memory that holds the wrong name goes first, whatever
+            // its similarity, so the classifier sees the pair that conflicts (2026-10-25).
+            if let Some((wrong, _)) = &bg_correction {
+                let held: Vec<(i32, String, Option<String>)> = sqlx::query_as(
+                    "SELECT id, content, title FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status != 'superseded') AND content LIKE ? ORDER BY created_at DESC LIMIT 10")
+                    .bind(&bg_user_id).bind(format!("%{}%", wrong)).fetch_all(&db_pool).await.unwrap_or_default();
+                let mut forced: Vec<(i32, String, Option<String>, f32)> = held.into_iter().filter(|(id, _, _)| !bg_sibling_ids.contains(id)).map(|(id, content, title)| (id, content, title, 1.0)).collect();
+                println!("[RUST BACKGROUND] Name correction {} -> {}: {} memories hold the old name", wrong, bg_correction.as_ref().map(|c| c.1.as_str()).unwrap_or(""), forced.len());
+                similar_memories.retain(|(id, _, _, _)| !forced.iter().any(|(f, _, _, _)| f == id));
+                forced.extend(similar_memories.drain(..));
+                similar_memories = forced;
+            }
             similar_memories.truncate(relationship_candidate_limit);
 
             if !similar_memories.is_empty() {
