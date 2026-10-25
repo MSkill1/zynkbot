@@ -163,6 +163,10 @@ pub fn parse_extraction(text: &str, message: &str) -> Vec<ExtractedFact> {
     for mut f in parsed {
         let fact = f.fact.trim().trim_end_matches('.').trim().to_string();
         if fact.split_whitespace().count() < 3 { continue; }
+        if restated_question(&fact) {
+            println!("[Memory] call 2: dropped a restated question: {}", fact);
+            continue;
+        }
         if !shares_content_word(&fact, message) {
             println!("[Memory] call 2: dropped a fact that shares no words with the message: {}", fact);
             continue;
@@ -186,6 +190,19 @@ pub fn parse_extraction(text: &str, message: &str) -> Vec<ExtractedFact> {
 /// Does `later` only restate `earlier`? True when at least four fifths of `later`'s content
 /// words (at least two of them) appear in `earlier`. "Flying to Denver on Thursday" after
 /// "going to Denver for the wedding" shares one word of three and is kept: a different fact.
+/// "User is asking for examples of the greatest accomplishments of France": the prompt
+/// says a question is not a fact, and a cloud model still wrote one on 2026-10-25; the
+/// phone's model then took it for the topic of the next question. The subject and a
+/// verb of asking at the start mark it.
+pub fn restated_question(fact: &str) -> bool {
+    let t = fact.to_lowercase();
+    let t = t.trim_start();
+    let rest = match t.split_once(' ') { Some((_, r)) => r.trim_start(), None => return false };
+    let rest = rest.strip_prefix("is ").or_else(|| rest.strip_prefix("was ")).unwrap_or(rest);
+    ["asking", "asks", "asked", "wants to know", "wanted to know", "wondering", "wonders", "wondered", "requests", "requesting", "requested", "curious", "inquires", "inquiring", "questions whether", "wants an example", "wants examples", "wants to be told", "wants suggestions", "wants a suggestion", "wants advice", "wants help", "wants to find", "wants recommendations", "wants a recommendation"]
+        .iter().any(|v| rest.starts_with(v))
+}
+
 pub fn restates(later: &str, earlier: &str) -> bool {
     let words = |t: &str| -> Vec<String> { t.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| is_content_word(w)).map(str::to_string).collect() };
     let l = words(later);
@@ -203,6 +220,16 @@ pub fn clean_title(title: Option<&str>, fact: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_restated_question_is_not_a_fact() {
+        use super::restated_question as q;
+        assert!(q("User is asking for examples of the greatest accomplishments of France"));
+        assert!(q("Matt asks what to make for dinner"));
+        assert!(q("User wants to know how long the flight is"));
+        assert!(!q("User is trying to go as low-carb as possible for dinner tonight"));
+        assert!(!q("User wants to be reminded at 7.30 a.m. tomorrow"));
+        assert!(!q("User bought a Keto-Mojo blood meter"));
+    }
     use super::*;
     const MSG: &str = "I have a cat named Louie, and I'm planning a trip to Indiana in April.";
 

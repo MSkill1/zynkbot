@@ -59,6 +59,20 @@ pub const ON_DEVICE_HISTORY_BLOCK: usize = 4;
 
 /// The first `max` characters of `text`, with an ellipsis when something was cut.
 /// Character-based, never a byte slice (a multi-byte character would panic).
+/// A stored reply without its memory marker: own-line "MEMORY: no" lines dropped, a
+/// marker glued to the last sentence cut off.
+pub fn strip_memory_marker(text: &str) -> String {
+    let mut lines: Vec<String> = text.lines().filter(|l| {
+        let t = l.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
+        let rest = t.strip_prefix("memory").or_else(|| t.strip_prefix("remember")).map(|r| r.trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—')).trim_end_matches(|c: char| matches!(c, '.' | '!' | ' ')));
+        !matches!(rest, Some("yes") | Some("no"))
+    }).map(str::to_string).collect();
+    if let Some(last) = lines.iter().rposition(|l| !l.trim().is_empty()) {
+        if let Some((_, rest)) = crate::commands::chat::split_inline_memory_marker(&lines[last]) { lines[last] = rest; }
+    }
+    lines.join("\n").trim_end().to_string()
+}
+
 pub fn cut_chars(text: &str, max: usize) -> String {
     let t = text.trim();
     if t.chars().count() <= max { return t.to_string(); }
@@ -174,7 +188,10 @@ impl ConversationEngine {
         let mut context = String::from("RECENT CONVERSATION:\n");
         for turn in recent_history {
             let role = turn.role.to_uppercase();
-            let content = if self.on_device { cut_chars(&turn.content, ON_DEVICE_MESSAGE_CHARS) } else { turn.content.clone() };
+            // A reply that kept its hidden "MEMORY: yes|no" (stored before the inline
+            // fix of 2026-10-25) must not teach the next model to write one.
+            let content = if turn.role.eq_ignore_ascii_case("assistant") { strip_memory_marker(&turn.content) } else { turn.content.clone() };
+            let content = if self.on_device { cut_chars(&content, ON_DEVICE_MESSAGE_CHARS) } else { content };
             context.push_str(&format!("{}: {}\n", role, content));
         }
         context.push('\n');
@@ -614,6 +631,13 @@ mod on_device_prompt_tests {
             assert!(ctx.contains("Matt's dentist is Dr. Patel."), "the single fact stays a line: {}", ctx);
             assert!(ctx.contains("1. ") && ctx.contains("2. ") && !ctx.contains("3. "), "two items, not three: {}", ctx);
         }
+    }
+
+    #[test]
+    fn history_never_carries_the_marker() {
+        assert_eq!(strip_memory_marker("Fine answer.\n\nMEMORY: no"), "Fine answer.");
+        assert_eq!(strip_memory_marker("It can take you places. MEMORY: no"), "It can take you places.");
+        assert_eq!(strip_memory_marker("Plain reply with no marker."), "Plain reply with no marker.");
     }
 
     #[test]

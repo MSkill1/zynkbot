@@ -2175,7 +2175,19 @@ pub fn run() {
                 tauri::async_runtime::spawn(async {
                     tokio::time::sleep(std::time::Duration::from_secs(12)).await;
                     match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
-                        Ok(pool) => { if let Err(e) = crate::memory::reembed_if_scheme_changed(&pool).await { eprintln!("[Memory] re-embed: {}", e); } }
+                        Ok(pool) => {
+                            if let Err(e) = crate::memory::reembed_if_scheme_changed(&pool).await { eprintln!("[Memory] re-embed: {}", e); }
+                            // Replies stored with a glued "MEMORY: yes|no" before 2026-10-25: cut it off once.
+                            for marker in ["MEMORY: no", "MEMORY: yes"] {
+                                let n = marker.len() as i64;
+                                match sqlx::query("UPDATE conversation_messages SET content = rtrim(substr(content, 1, length(content) - ?)) WHERE role = 'assistant' AND content LIKE ?")
+                                    .bind(n).bind(format!("%{}", marker)).execute(&pool).await {
+                                    Ok(r) if r.rows_affected() > 0 => println!("[ConvHistory] removed a stored {} from {} replies", marker, r.rows_affected()),
+                                    Ok(_) => {}
+                                    Err(e) => eprintln!("[ConvHistory] marker cleanup: {}", e),
+                                }
+                            }
+                        }
                         Err(e) => eprintln!("[Memory] re-embed: db: {}", e),
                     }
                 });
