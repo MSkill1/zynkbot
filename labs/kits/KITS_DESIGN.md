@@ -66,7 +66,7 @@ Zero-trust is unchanged: a kit never routes anything through ContainAI; purchase
 ## What the mechanism needs from the code
 
 1. Standing-instructions tier: inject a kit's instruction block into the system prompt while the kit is on (`conversation_engine.rs::build_prompt`). The block is per-kit, short, and shown to the user in the Kits section so nothing is hidden.
-2. Namespace on write: memories extracted while a kit is on are tagged with the kit's namespace when the model says the fact belongs to it (the MEMORY_EXTRACT line gains an optional namespace hint).
+2. Namespace on write: memories extracted while a kit is on are tagged with the kit's namespace when the model says the fact belongs to it. (Status 2026-10-25: the extraction call, call 2 in `memory_prompts.rs`, already returns a `namespace` per fact on cloud backends from the canonical list; a kit would add its namespace to that list or map onto one. The MEMORY_EXTRACT line this item named no longer exists.)
 3. Opening questions: a small dialog; answers stored through the normal "Remember:" path with the kit namespace.
 4. Quick prompts: chips above the input, from the kit JSON.
 5. Kits section in System Controls; onboarding card; "forget this kit" (delete-by-namespace, which exists in the Memory Manager code path).

@@ -1126,14 +1126,34 @@ export default function App() {
         // Zynkbot location can carry a bare id for a name (2026-09-20).
         let providerType = '';
         try { providerType = window.AndroidPaths?.getMimeType?.(path) || ''; } catch (_) {}
-        console.log('[Attach] picked', path, 'name:', name, 'type:', providerType);
-        if (IMAGE_EXTENSIONS.includes(ext) || providerType.startsWith('image/')) {
-          const base64 = window.AndroidPaths
-            ? window.AndroidPaths.readFileBase64(path)
-            : await invoke('read_file_base64', { path });
+        // Android looks at the file's own first bytes (2026-10-25): a gallery photo with
+        // no usable name or type was read as text and sent as megabytes of garbage.
+        let kind = '';
+        if (window.AndroidPaths?.probeFile) { try { kind = JSON.parse(window.AndroidPaths.probeFile(path)).kind || ''; } catch (_) {} }
+        console.log('[Attach] picked', path, 'name:', name, 'type:', providerType, 'kind:', kind);
+        if (IMAGE_EXTENSIONS.includes(ext) || providerType.startsWith('image/') || kind === 'image') {
+          // Android decodes and scales the picture itself (any format the phone opens,
+          // HEIC included) to a JPEG no wider than 1568 px; the raw bytes are the fallback.
+          let base64 = '';
+          let mimeType = '';
+          if (window.AndroidPaths?.readImageJpegBase64) {
+            base64 = window.AndroidPaths.readImageJpegBase64(path, 1568);
+            if (base64) mimeType = 'image/jpeg';
+          }
+          if (!base64) {
+            base64 = window.AndroidPaths ? window.AndroidPaths.readFileBase64(path) : await invoke('read_file_base64', { path });
+            mimeType = MIME_TYPES[ext] || (providerType.startsWith('image/') ? providerType : 'image/jpeg');
+          }
           if (!base64) throw new Error(`Could not read image ${name}`);
-          const mimeType = MIME_TYPES[ext] || (providerType.startsWith('image/') ? providerType : 'image/jpeg');
           newFiles.push({ name, base64, mimeType, size: base64.length, isImage: true });
+        } else if (kind === 'pdf' || ext === 'pdf') {
+          // A PDF goes through the same text extractor the knowledge base uses.
+          const filePath = window.AndroidPaths?.copyToCache ? window.AndroidPaths.copyToCache(path) : path;
+          if (!filePath) throw new Error(`Could not read ${name}`);
+          const content = await invoke('read_attachment_text', { path: filePath });
+          newFiles.push({ name, content, size: content.length, isImage: false });
+        } else if (kind === 'binary') {
+          alert(`${name} can't be attached: it is not a picture, a PDF or a text file.`);
         } else {
           // Neither the name nor Android's own answer said what this is — Android
           // reports nothing for a file with no extension, and has no other way to

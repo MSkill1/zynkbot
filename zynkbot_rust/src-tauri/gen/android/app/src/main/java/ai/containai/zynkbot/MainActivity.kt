@@ -407,6 +407,92 @@ class MainActivity : TauriActivity() {
             } catch (e: Exception) { "" }
         }
 
+        /** What a picked file is, from its own first bytes: image / pdf / text / binary.
+         *  A gallery photo Android could not name was read as text and sent as megabytes
+         *  of garbage (2026-10-25); the name and the provider's type are not enough. */
+        @JavascriptInterface
+        fun probeFile(uriStr: String): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                val head = contentResolver.openInputStream(uri)?.use { s -> val b = ByteArray(4096); val n = s.read(b); if (n <= 0) ByteArray(0) else b.copyOf(n) } ?: return "{\"kind\":\"binary\"}"
+                fun ascii(off: Int, len: Int) = if (head.size >= off + len) String(head, off, len, Charsets.US_ASCII) else ""
+                val kind = when {
+                    head.size >= 3 && head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte() -> "image"
+                    head.size >= 4 && head[0] == 0x89.toByte() && ascii(1, 3) == "PNG" -> "image"
+                    ascii(0, 4) == "GIF8" -> "image"
+                    ascii(0, 4) == "RIFF" && ascii(8, 4) == "WEBP" -> "image"
+                    ascii(0, 2) == "BM" -> "image"
+                    ascii(4, 4) == "ftyp" -> "image"   // HEIC / HEIF / AVIF containers
+                    ascii(0, 4) == "%PDF" -> "pdf"
+                    else -> {
+                        val decodable = try {
+                            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
+                            o.outWidth > 0
+                        } catch (_: Exception) { false }
+                        if (decodable) "image" else {
+                            val nul = head.any { it == 0.toByte() }
+                            val text = String(head, Charsets.UTF_8)
+                            val bad = text.count { it == '\uFFFD' }
+                            if (nul || bad * 10 > text.length.coerceAtLeast(1)) "binary" else "text"
+                        }
+                    }
+                }
+                "{\"kind\":\"$kind\"}"
+            } catch (e: Exception) { "{\"kind\":\"binary\"}" }
+        }
+
+        /** The picture decoded by Android itself (JPEG, PNG, HEIC, whatever the phone can
+         *  open), turned the right way up, scaled so the long side is at most maxSide, and
+         *  returned as a JPEG in base64. "" if Android cannot decode it. */
+        @JavascriptInterface
+        fun readImageJpegBase64(uriStr: String, maxSide: Int): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return ""
+                var sample = 1
+                while ((bounds.outWidth / sample) > maxSide * 2 || (bounds.outHeight / sample) > maxSide * 2) sample *= 2
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                var bmp = contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) } ?: return ""
+                val longSide = maxOf(bmp.width, bmp.height)
+                if (longSide > maxSide) {
+                    val scale = maxSide.toFloat() / longSide
+                    bmp = android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt().coerceAtLeast(1), (bmp.height * scale).toInt().coerceAtLeast(1), true)
+                }
+                val rotation = try {
+                    contentResolver.openInputStream(uri)?.use { stream ->
+                        when (android.media.ExifInterface(stream).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL)) {
+                            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                            else -> 0
+                        }
+                    } ?: 0
+                } catch (_: Exception) { 0 }
+                if (rotation != 0) {
+                    val mx = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
+                    bmp = android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, mx, true)
+                }
+                val out = java.io.ByteArrayOutputStream()
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+            } catch (e: Exception) { android.util.Log.w("AndroidPaths", "readImageJpegBase64: ${e.message}"); "" }
+        }
+
+        /** Copy a picked file into the app cache so Rust can read it by path (PDF text). */
+        @JavascriptInterface
+        fun copyToCache(uriStr: String): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                val name = getFileName(uriStr).ifBlank { "attachment" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val f = File(cacheDir, "attach_${System.currentTimeMillis()}_$name")
+                contentResolver.openInputStream(uri)?.use { i -> FileOutputStream(f).use { o -> i.copyTo(o) } } ?: return ""
+                f.absolutePath
+            } catch (e: Exception) { "" }
+        }
+
         /** MIME type the file's provider reports (e.g. "image/jpeg"), or "" if unknown. */
         @JavascriptInterface
         fun getMimeType(uriStr: String): String {

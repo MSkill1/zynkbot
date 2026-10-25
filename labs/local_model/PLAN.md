@@ -54,7 +54,7 @@ pipeline running on the same model after every message.
    the answer in one reply; a 4B model did the first and stopped (empty bubble), or
    repeats the question. Proposal: the reply prompt asks only for the answer, with a
    length instruction for local models; memory work moves to step 7. Wording for Matt.
-7. **Memory pipeline for a slow model** — built 2026-10-22 (local models only): after
+7. **Memory pipeline for a slow model** — built 2026-10-22 (local models only); **status 2026-10-25: shipped for every backend on `memory-types` (2026-10-24) as the three-call pipeline: call 1 the cloud reply's hidden `MEMORY: yes|no` line (the 4B is not asked), call 2 `memory_prompts.rs` with up to three facts, titles and dates under a JSON grammar, call 3 links only on the phone (`ask_llm_for_links_only`, 4 candidates), one memory per fact, siblings linked, a job queue (`memory_jobs.rs`) instead of a task per message, and an on-device prompt budget (8 messages of 400 characters in blocks of four, 4 memories of 300 characters, 85-word instructions). Wording rounds and numbers in `~/Documents/Zynk_related/memory_bench/RESULTS_2026-10-24.md`.** Original text: after
    every reply a background extraction call lists up to three facts (or NONE); each fact
    runs the existing storage path (duplicates, contradictions, relationships) as its own
    memory; all of it yields to the user's next message. Still open: Android slows the app

@@ -22,6 +22,8 @@ mod sync_harness_tests; // two-peer ZynkSync harness (docs/TESTING.md)
 mod chat_harness_tests; // the chat path end to end against a pretend model
 #[cfg(test)]
 mod memory_bench; // which model makes the right memories: labs/memory_bench
+#[cfg(test)]
+mod recall_bench; // does recall find the right memory: labs/recall_bench
 pub mod memory_prompts; // the memory pipeline's prompts in one place (2026-10-24)
 pub mod memory_jobs;    // the memory job queue: one worker, oldest first, nothing lost (2026-10-24)
 #[cfg(test)]
@@ -42,6 +44,7 @@ mod sync_codes;  // One-time sync codes for device pairing
 mod zchat;  // Device-to-device messaging
 mod zynklink;  // Device-to-device file sharing
 mod web_search;  // DuckDuckGo web search
+mod weather;     // weather questions answered from Open-Meteo before any model call (2026-10-25)
 mod knowledge_base;  // External reference document system
 mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod kb_prompt;  // Wording of the KB prompt block by search outcome (found / weak / nothing)
@@ -2317,6 +2320,7 @@ pub fn run() {
             commands::zynksync::clear_all_memories,
             commands::conversation::clear_conversation_history,
             commands::utils::read_text_file,
+            commands::utils::read_attachment_text,
             commands::utils::read_file_base64,
             // User identity
             commands::user_identity::get_user_identity,

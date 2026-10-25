@@ -31,6 +31,8 @@ pub async fn build_problem_report(
     let logs: Vec<String> = lines
         .into_iter()
         .map(|l| crate::app_log::redact(&l))
+        // A line of binary read as text (a photo, 2026-10-25) is dropped, not pasted.
+        .map(drop_binary_looking)
         // Without the conversation box ticked, the log tail must not carry the
         // user's words or memory titles either.
         .map(|l| if include_conversation { l } else { crate::app_log::scrub_user_text(&l) })
@@ -99,4 +101,13 @@ mod wake_mask_tests {
         let kept = "10-24 12:00:00.000 I/WakeWordService: Detection ignored: verifier says not the owner (0.012 <= 0.50)";
         assert_eq!(mask_wake_transcript(kept), kept);
     }
+}
+
+/// Very long lines, or lines full of replacement characters, are not log text.
+fn drop_binary_looking(line: String) -> String {
+    let n = line.chars().count();
+    let bad = line.matches('\u{FFFD}').count();
+    if n > 4000 || (n > 40 && bad * 10 > n) {
+        format!("[line dropped: {} characters of binary-looking text]", n)
+    } else { line }
 }

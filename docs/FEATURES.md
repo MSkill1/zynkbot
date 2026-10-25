@@ -10,11 +10,12 @@
 
 Zynkbot uses a local SQLite database for persistent, semantic memory that learns and grows over time.
 
-**How it works:**
-1. Every conversation is embedded as a 384-dimensional vector
-2. Stored in a local database on your machine
-3. Retrieved via semantic similarity and entities when relevant
-4. Transparent recall: see exactly which memories influenced each response
+**How it works (since 2026-10-24):**
+1. After each reply, Zynkbot decides whether your message held a personal fact: a cloud model says yes or no in a hidden line at the end of its reply; a local model is asked directly in the next step
+2. On yes, a separate background call lists the facts in the message, up to three, each with a title and the date it happened when you said one. Each fact becomes its own memory, written in the third person in your own words; your message is kept with it as what you said, never stored as a memory by itself
+3. Each memory is embedded as a 384-dimensional vector and stored in a local database on your machine; a third call links it to the memories it updates, contradicts or relates to, and facts from one message are linked to each other
+4. Retrieved via semantic similarity and entities when relevant; facts that came from one message are shown to the model together with what you said
+5. Transparent recall: see exactly which memories influenced each response
 
 **Memory Types:**
 - **User Memories**: Your personal conversations and preferences
@@ -262,9 +263,9 @@ Tap **About me** in Memory Manager for a report of what Zynkbot knows about you.
 
 ---
 
-### 🗓️ What the decision call records about each memory
+### 🗓️ What the extraction call records about each memory
 
-The same model call that decides whether a message is worth remembering also returns, with no extra request: the **event date** (when the thing happened, only if the message states or implies it; the value is kept only if it parses, is not before 1900 or more than about two years ahead, and is not a January 1 placeholder), a **category** from the fixed namespace list above, up to five lowercase **tags**, the user's **tone** (positive, neutral, negative, frustrated, anxious or excited, stored as a sentiment label and score) and the **named entities** mentioned, each as a person, place, organisation or thing. Values the model omits or gets wrong fall back to the local NLP guess. Memories from hands-free turns are marked with source type `hands_free`. <!-- added by Claude 2026-09-09, review -->
+The call that lists the facts in a message (call 2 of the memory pipeline, since 2026-10-24; before that, the single decision call) also returns, with no extra request: the **event date** (when the thing happened, only if the message states or implies it; the value is kept only if it parses, is not before 1900 or more than about two years ahead, and is not a January 1 placeholder), a **category** from the fixed namespace list above, up to five lowercase **tags**, the user's **tone** (positive, neutral, negative, frustrated, anxious or excited, stored as a sentiment label and score) and the **named entities** mentioned, each as a person, place, organisation or thing. Values the model omits or gets wrong fall back to the local NLP guess. Memories from hands-free turns are marked with source type `hands_free`. <!-- added by Claude 2026-09-09, review -->
 
 **Older memories** stored before these fields existed are filled in by a background pass that starts automatically after launch: one memory every 1.5 seconds, up to 2000 per run, content and title untouched, each stamped so it is never revisited. If the model backend is unusable it stops after a run of failures and tries again on a later launch. About me shows how many are still pending. <!-- added by Claude 2026-09-09, review -->
 
@@ -415,26 +416,27 @@ Zynkbot uses parallel entity-based + semantic search for optimal memory retrieva
 
 ### Fact Extraction
 
-Automatically extracts personal facts from conversations for memory storage.
+Personal facts are taken from your messages by a separate model call after the reply, not by the reply itself (since 2026-10-24).
 
 **Extraction pipeline:**
-1. Conversation analyzed after each exchange
-2. Personal facts identified using LLM-based extraction
-3. Each fact stored with:
-   - Content (third-person): "User studied abroad in Tokyo in 2019"
-   - First-person form: "I studied abroad in Tokyo in 2019"
-   - Title: "Studied abroad in Tokyo"
-   - Namespace: personal, work, travel, etc.
-   - Tags: ["travel", "japan", "education"]
-   - Confidence: 0.0-1.0
+1. The reply says whether the message held anything to store (cloud models: a hidden `MEMORY: yes|no` line; local models: the next step decides)
+2. A background call lists the personal facts in the message, up to three, one sentence each in the third person, keeping your words and every detail (names, places, dates, numbers); `NONE` when there is nothing
+3. Each fact is stored as its own memory with:
+   - Content (third-person): "Matt studied abroad in Tokyo in 2019"
+   - Your message, kept as `original_text` (what you said)
+   - Title: up to 50 characters
+   - Event date, when the message says or clearly implies one
+   - Namespace, tags, tone and the named things in it (from the same call on a cloud model; from the on-device name finder on a local model)
+4. A third call classifies how the fact relates to similar memories already stored; facts from one message are linked to each other
 
-**Extraction rules:**
-- Only extracts facts stated BY THE USER
-- Focuses on facts that are personal to the user
-- Each fact is a complete, standalone statement
-- Questions are processed — personal facts embedded in questions are extracted (e.g., "my sister in Portland" from "What should I get my sister in Portland?")
-- Each message is split into clauses at contrasting conjunctions (but, however) and each clause is checked independently
-- Empty array if no personal facts present
+**Extraction rules (as the prompt states them):**
+- Only what the message states, nothing guessed
+- One thing with its details is one fact: "I'm flying to Denver Thursday for my nephew's wedding" is one fact, not three
+- What you ask is not a fact, but what you state while asking is ("Raspberry pie is my favorite. What's a good recipe?" holds one fact)
+- Nothing from text you quote, paste or ask to translate; greetings and thanks are not facts
+- Feelings count ("I've been feeling worn out this week" is stored)
+
+**Guards against invention (small local models):** a fact that shares no content word with your message is dropped, as is a restatement of a fact already taken from the same message or a near-duplicate of one; a message produces at most three memories. Measured on the project's memory bench (2026-10-24): the on-device model found 66 of 69 expected facts with no junk memory from 26 no-fact messages; Claude found all 69.
 
 ---
 

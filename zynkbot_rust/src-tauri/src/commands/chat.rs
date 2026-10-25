@@ -177,7 +177,12 @@ pub async fn generate_reply(
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  💬 NEW CHAT REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
-    println!("▶ {}", message);
+    {
+        // A picked photo once arrived as megabytes of text and went into the log whole
+        // (2026-10-25): show the first 1,500 characters and the size.
+        let n = message.chars().count();
+        if n > 1500 { println!("▶ {} … ({} characters)", message.chars().take(1500).collect::<String>(), n); } else { println!("▶ {}", message); }
+    }
     println!();
     println!("[RUST] Backend: {}", backend);
 
@@ -247,6 +252,42 @@ pub async fn generate_reply(
                 }
             }
             Err(e) => eprintln!("[ConvHistory] ⚠️ DB pool error: {}", e),
+        }
+    }
+
+    // Weather (2026-10-25, Matt): a weather question is answered from Open-Meteo here,
+    // before containment and before any model call. If the lookup fails (offline,
+    // unknown place) the question goes on to the model as usual.
+    if image_data.is_none() && explicit_remember(&query).is_none() && !skip_containment.unwrap_or(false) {
+        if let Some(ask) = crate::weather::detect(&query) {
+            match crate::weather::answer(&ask, &user_id).await {
+                Ok(text) => {
+                    println!("[Weather] answered from Open-Meteo ({:?}, place {:?})", ask.when, ask.place);
+                    sink.token(&text);
+                    if containment_mode.to_lowercase() != "hipaa" {
+                        if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                            if let Err(e) = crate::conversation_history::log_exchange(&pool, &session_id, &user_id, &query, &text, "weather", &containment_mode, !hands_free, if hands_free { "hands_free" } else { "typed" }).await {
+                                eprintln!("[ConvHistory] ⚠️ Failed to log weather exchange: {}", e);
+                            }
+                        }
+                    }
+                    return Ok(ReplyResponse {
+                        reply_text: text,
+                        recalled_memories: None,
+                        model_backend: Some("weather".to_string()),
+                        containment_mode: Some(containment_mode),
+                        schema: None,
+                        blocked: None,
+                        web_search_needed: None,
+                        web_search_query: None,
+                        original_query: None,
+                        pre_search_reply: None,
+                        kb_note: None,
+                        web_search_results: None,
+                    });
+                }
+                Err(e) => println!("[Weather] {} — asking the model instead", e),
+            }
         }
     }
 
@@ -1387,7 +1428,12 @@ pub async fn run_ensemble(
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  🔀 ENSEMBLE REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
-    println!("▶ {}", message);
+    {
+        // A picked photo once arrived as megabytes of text and went into the log whole
+        // (2026-10-25): show the first 1,500 characters and the size.
+        let n = message.chars().count();
+        if n > 1500 { println!("▶ {} … ({} characters)", message.chars().take(1500).collect::<String>(), n); } else { println!("▶ {}", message); }
+    }
     println!("  Models: {}", models.join(", "));
     println!();
     println!("[Ensemble] Running multi-model ensemble with {} models", models.len());

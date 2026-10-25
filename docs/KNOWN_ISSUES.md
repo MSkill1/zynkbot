@@ -25,8 +25,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ### KI-001 — Double memory on contradiction resolution (edge case)
 **Status:** Partially fixed  
 **Affected:** All local models  
-**Description:** Memory is only stored after the user resolves the contradiction modal — never before. However, in rare cases the background duplicate check may still produce a second copy if the embedding distance between the raw user message and the MEMORY_EXTRACT fact falls between the 0.65 and 0.93 similarity thresholds, causing both to pass the near-duplicate filter.  
-**Workaround:** If you see duplicate memories after a contradiction resolution, delete the lower-numbered one — the MEMORY_EXTRACT version is the cleaner fact.  
+**Description:** Memory is only stored after the user resolves the contradiction modal — never before (cloud models; a local model stores first and asks after, since 2026-10-23). The original form of this issue, a second copy made from the raw user message beside the extracted fact, cannot happen since 2026-10-24: the raw message is no longer stored as a memory at all, only the facts call 2 lists.  
+**Workaround:** If you see duplicate memories after a contradiction resolution, delete the lower-numbered one.  
 **Fix target:** Improve near-duplicate search to prefer most-recently-inserted match.
 
 ### KI-002 — Contradiction false positive: intention vs. current state
@@ -257,7 +257,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ### KI-057 — A false wake-word trigger produced a memory: Whisper hallucinated "Aum. Namaste. Thank you." from fan noise, the model answered it, and the extractor stored "gratitude greeting" (open)
-**Status:** Open, seen 2026-09-13 14:15 on the Pixel (Whisper engine, air conditioner running, verifier log-only). Not a sync bug; the junk memory then synced correctly to all four devices.
+**Status:** Open, seen 2026-09-13 14:15 on the Pixel (Whisper engine, air conditioner running, verifier log-only). Not a sync bug; the junk memory then synced correctly to all four devices. **2026-10-25:** the extraction side is narrower since the pipeline rewrite: "greetings and thanks are not facts" is in call 2's rules, a fact under three words is dropped, and the raw transcript is never stored as a memory (until 2026-10-24 a cloud reply with no fact line stored the user's message verbatim, which is how most hands-free junk, television lines included, reached the Memory Manager; those rows were deleted from the developer's own database on 2026-10-24). The wake-side causes (false trigger, Whisper on a hum, verifier log-only) are unchanged. Hands-free memories are still stored and still marked `hands_free` so they can be reviewed as a group; Matt's decision 2026-10-24: hands-free turns are not to be blocked from memory.
 **Affected:** Hands-free turns on the OpenAI Whisper engine in steady noise (Vosk produces no words from a hum, so it does not do this); any small model that extracts eagerly.
 **Description:** Three things lined up: the wake word fired on the air conditioner; Whisper turned the hum into words (KI-029); the turn was answered and the extractor decided the "greeting" was a personal fact. Strict mode only began after the third misfire, a minute later. Related: the same session produced a second "favourite pie is cherry" memory (id 2, namespace personal, 14:12) from a turn that merely *mentioned* the earlier one (id 1, kitchen, 13:58) — the write-time consolidation item on the roadmap, not a sync fault.
 **Fix candidates:** skip memory extraction for a hands-free turn whose transcript came from Whisper with no speech-energy evidence (the endpointer knows whether speech ever crossed the onset); treat a transcript of ≤3 words as not extractable; and the roadmap's write-time consolidation for the near-duplicate.
@@ -341,8 +341,16 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-099 — Facts from a message were lost when the next questions came quickly (fixed 2026-10-24)
+**Status:** Fixed on `memory-types` by the memory job queue (`memory_jobs.rs`, migration 0023).  
+**Affected:** Any backend; worst on a phone, where a message's background work takes minutes.  
+**Description:** The background memory work ran as a spawned task per message that stepped aside for the user's next message and gave up after three interruptions. Four quick questions in a row lost the first one's facts outright (the dentist appointment, Pixel, 2026-10-24).  
+**Fix:** each message becomes a row in `memory_jobs`; one worker runs the rows in order when the model is idle; an interruption leaves the row pending; a real failure retries up to four times; rows survive an app restart.
+
+---
+
 ### KI-016 — Memory extraction produces "kitchen sink" summaries
-**Status:** Open  
+**Status:** Addressed by the 2026-10-24 pipeline rewrite (branch `memory-types`), to be confirmed in use. Call 2 (`memory_prompts.rs`) lists up to three facts per message, one sentence each, "only what the message states, nothing guessed"; the last exchange is given to it only to resolve pronouns; a fact that shares no content word with the message is dropped. The compound one-line-per-message memory this entry describes is no longer produced.  
 **Affected:** Memory quality overall  
 **Description:** When the user says something focused and short (e.g., "I am using a VPN but I want to use a VPN with X, I don't trust it"), the extraction LLM sometimes pulls in unrelated context from earlier in the conversation and produces a single memory containing many unrelated facts (dictation habits, gaming usernames, device names, and the actual new fact all in one memory). This dilutes the memory's embedding across topics, weakens semantic search accuracy, and — as a downstream effect — prevents the relationship-detection pipeline from finding thematic links because low similarity scores filter the memory out of candidate pairs before the LLM classifier ever sees them.  
 **Example:** Memory 346 (mentions dictation, iPhone 13, OnePlus 12R, Clash of Clans, VPN) had cosine similarity 0.22 with memory 347 (focused on ProtonVPN configuration) — well below the candidate-pair threshold. The two obviously belong linked but never got classified.  
@@ -351,7 +359,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ---
 
 ### KI-017 — Memory extraction duplicates already-stored facts
-**Status:** Open  
+**Status:** Partly addressed by the 2026-10-24 pipeline rewrite. Within one message, a restatement of a fact already taken (`restates`, four fifths of its content words) and a near-duplicate by embedding (cosine ≥ 0.86) are dropped before storage. Across messages the storage path's duplicate check (>93% cosine or >98% hybrid) is unchanged, so a re-stated old fact in a new message can still be stored as a second memory; the conflict and `updates` links are the tools for that case.  
 **Affected:** Memory quality; contributes to KI-016  
 **Description:** The extraction step includes previously stored facts in the output of a new memory rather than treating them as already-known context. Example: memory 346's nearest neighbor is memory 341 at cosine similarity 0.81 — because 346 re-states most of 341 (dictation, iPhone 13, Clash of Clans) alongside the new VPN fact. Near-duplicate memories inflate the DB, weaken retrieval precision, and cause link-detection to waste time on redundant candidates.  
 **Fix target:** Extraction prompt should treat retrieved memories as "already known, do not restate — only capture what's new in this turn."

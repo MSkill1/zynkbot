@@ -16,6 +16,15 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - Coming back to the app from another app no longer brings the keyboard up.
 - System Controls has a "Help and documentation" row.
 
+### Memory (pipeline rewrite, 2026-10-24, branch `memory-types`)
+- Your message is no longer stored as a memory. Zynkbot now takes the personal facts out of it, up to three per message, each as its own memory in the third person with a title and, when you said one, the date it happened. What you actually said is kept with each fact and shown in the Memory Manager and to the model.
+- How it decides: a cloud model ends each reply with a hidden yes or no on whether the message held anything to keep; on yes a separate background call lists the facts. The on-device model is not asked for the yes/no (a small model answers that and nothing else) and goes straight to the fact call, which answers "none" when there is nothing. "Remember:" still stores your words exactly as typed.
+- Facts from one message are linked to each other, and when they are recalled together the model sees the message once with its facts underneath, instead of the same quote repeated.
+- Quick follow-up questions no longer lose the previous message's memories: the background work is a queue that runs in order when the model is idle, waits when you are talking, and survives a restart.
+- Guards against invention by small models: a fact that shares no word with your message, a restatement of a fact already taken from it, or a near-duplicate of one is dropped; at most three memories per message.
+- On the phone with the device model: the prompt it reads is cut down (8 recent messages of 400 characters, 4 memories of 300, 85 words of instructions), so the first answer in a thread takes 10–20 seconds and later ones under 10; the Memory Manager says that memories from the device model take minutes to appear.
+- Junk memories that the old pipeline had stored from raw messages and hands-free turns are gone from the developer's database; nothing in the app deletes yours. The Memory Manager is the place to review them.
+
 ### Chat prompt
 - Zynkbot may now ask first: if one or two missing details would change the answer, it asks for them briefly instead of guessing; otherwise it answers and says what it assumed. In testing before 1.0.
 
