@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import MemoryReportModal from './MemoryReportModal';
 import MemoryGraphModal from "./MemoryGraphModal";
+import CloudBackupSettings from "./CloudBackupSettings";
 import "../styles/MemoryManagerModal.css";
 import { confirmDialog } from '../utils/confirmDialog';
 
@@ -46,6 +47,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [dateToDisplay, setDateToDisplay] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null); // null | 'busy' | 'ok' | 'error'
+  const [showStorage, setShowStorage] = useState(false); // backup storage details, folded under the header
   const [backupMsg, setBackupMsg] = useState('');
   const [keyStatus, setKeyStatus] = useState(null); // null | { key: string, acknowledged: boolean }
   const [showKeySaveModal, setShowKeySaveModal] = useState(false);
@@ -145,7 +147,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
       const r2 = await invoke('get_r2_config_status');
       if (!r2?.configured) {
         setBackupStatus('error');
-        setBackupMsg('Cloud backup is not set up on this device. Add the Cloudflare R2 details in Settings → API Keys, or pair this device with one that has your memories.');
+        setBackupMsg('Cloud backup is not set up on this device. Tap Storage above and add the storage details, or pair this device with one that has your memories.');
         setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 8000);
         return;
       }
@@ -735,28 +737,33 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             <>
               <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: '1 1 100%' }}>Memory Manager</h2>
               {onDeviceModel && <div style={{ flex: '1 1 100%', fontSize: '0.8rem', color: '#9aa5c4', margin: '2px 0 4px' }}>{onDeviceNote}</div>}
-              {/* One tidy grid of equal buttons under the title; the old right-aligned
-                  wrap left a ragged two-row cluster beside the heading (2026-09-08). */}
+              {/* About me across the top; Backup, Restore and Storage on one row under it.
+                  The key and Clear All live inside the Storage panel, out of the way of a
+                  stray tap (Matt, 2026-10-25). */}
+              <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
+                style={{ width: '100%', background: '#bd93f9', border: 'none', color: '#282a36', fontSize: '0.9rem', fontWeight: 'bold', padding: '10px', borderRadius: '6px', cursor: 'pointer', minHeight: '44px' }}>
+                🧠 About me
+              </button>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', width: '100%' }}>
-                <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
-                  style={{ background: '#bd93f9', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>
-                  🧠 About me
-                </button>
                 <button onClick={handleBackup} disabled={backupStatus === 'busy'}
-                  style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', fontSize: '0.8rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
                   {backupStatus === 'busy' ? '…' : '☁ Backup'}
                 </button>
                 <button onClick={handleRestore} disabled={backupStatus === 'busy'}
-                  style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.8rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
                   Restore
                 </button>
-                <button onClick={handleCopyKey}
-                  style={{ background: '#ffb86c', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}
-                  title="Copy encryption key — store it somewhere safe">
-                  🔑 Key
+                <button onClick={() => setShowStorage(v => !v)}
+                  style={{ background: showStorage ? '#8be9fd' : '#44475a', border: 'none', color: showStorage ? '#282a36' : '#fff', fontSize: '0.8rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}
+                  title="Where the cloud backup is stored, the key, and clearing memories">
+                  Storage {showStorage ? '▴' : '▾'}
                 </button>
-                <button onClick={handleClearAllMemories} style={{ background: 'none', border: '1px solid #ff5555', color: '#ff5555', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>Clear All</button>
               </div>
+              {showStorage && (
+                <div style={{ flex: '1 1 100%', marginTop: '8px' }}>
+                  <CloudBackupSettings onShowKey={handleCopyKey} onClearAll={handleClearAllMemories} />
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1130,18 +1137,10 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               style={{ background: '#44475a', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
               Restore
             </button>
-            <button onClick={handleCopyKey}
-              title="Copy your encryption key — store it somewhere safe. Without it, backups cannot be recovered."
-              style={{ background: '#ffb86c', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
-              🔑 Key
-            </button>
-            <button
-              onClick={handleClearAllMemories}
-              className="delete-button"
-              style={{ backgroundColor: '#ff5555', padding: '8px 16px', fontSize: '14px' }}
-              title="Clear all memories for this user"
-            >
-              🗑️ Clear All
+            <button onClick={() => setShowStorage(v => !v)}
+              title="Where the cloud backup is stored, the key, and clearing memories"
+              style={{ background: showStorage ? '#8be9fd' : '#44475a', border: 'none', color: showStorage ? '#282a36' : '#fff', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              Storage {showStorage ? '▴' : '▾'}
             </button>
             {backupMsg && (
               <span style={{ fontSize: '0.8rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b' }}>
@@ -1150,6 +1149,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             )}
             <button onClick={onClose} className="close-button">✕</button>
           </div>
+          {showStorage && (
+            <div style={{ flex: '1 1 100%', marginTop: '10px' }}>
+              <CloudBackupSettings onShowKey={handleCopyKey} onClearAll={handleClearAllMemories} />
+            </div>
+          )}
         </div>
 
         {/* Controls */}

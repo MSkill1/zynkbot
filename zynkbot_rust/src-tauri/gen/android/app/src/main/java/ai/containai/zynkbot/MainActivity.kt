@@ -665,6 +665,11 @@ class MainActivity : TauriActivity() {
     inner class WakeWordBridge {
         private val modelDir get() = File(filesDir, "wake-word-models")
 
+        /** Current mic state (see MicState): the page shows "starting up" while the models
+         *  load, so nobody says "Hey Zynk" into a detector that is not up yet (2026-10-25). */
+        @JavascriptInterface
+        fun wakeState(): String = WakeWordService.instance?.stateName() ?: "off"
+
         /** The page answered a "Hey Zynk" question: label the trigger clip real, as the
          *  screen-off path does, so the clip count grows from ordinary use (2026-09-20). */
         @JavascriptInterface

@@ -111,7 +111,9 @@ const PROVIDERS = [
   },
 ];
 
-export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
+/** `embedded`: rendered inside the Current Model page (ui-redo, 2026-10-24) without its own
+ *  overlay, title or close button; `isOpen` is then ignored. */
+export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded = false }) {
   const [apiKeys, setApiKeys] = useState({});
   const [editingKey, setEditingKey] = useState(null);
   const [tempValue, setTempValue] = useState("");
@@ -129,6 +131,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     'MISTRAL_API_KEY',   'MISTRAL_MODEL',
     // No CUSTOM_* here: the custom endpoint is machine-local. A phone reaches Ollama
     // through the desktop's proxy, which substitutes the desktop's selected model.
+    // Backup storage (set in Memory Manager → Storage) rides along too.
     'R2_ENDPOINT',       'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET',
   ];
 
@@ -157,15 +160,8 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
     }
   };
 
-  // R2 backup state
-  const [r2Endpoint, setR2Endpoint] = useState("");
-  const [r2AccessKey, setR2AccessKey] = useState("");
-  const [r2SecretKey, setR2SecretKey] = useState("");
-  const [r2Bucket, setR2Bucket] = useState("zynkbot-backups");
-  const [r2SaveStatus, setR2SaveStatus] = useState({ type: "idle", message: "" });
   const [showOllama, setShowOllama] = useState(false);
   const [ollamaLive, setOllamaLive] = useState(null); // {state, models} desktop-only live probe
-  const [showR2, setShowR2] = useState(false);
 
   // Custom endpoint state
   const [customUrl, setCustomUrl] = useState("");
@@ -191,14 +187,14 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
   const [stopMsg, setStopMsg] = useState("");
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen || embedded) {
       loadAPIKeys();
       if (!isAndroid) {
         invoke('ollama_status').then(setOllamaLive).catch(() => setOllamaLive(null));
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);
+  }, [isOpen, embedded]);
 
   // Refresh keys when a peer pushes one to this device
   useEffect(() => {
@@ -217,10 +213,6 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
       if (keys.CUSTOM_API_URL) setCustomUrl(keys.CUSTOM_API_URL);
       if (keys.CUSTOM_API_KEY) setCustomApiKey(keys.CUSTOM_API_KEY);
       if (keys.CUSTOM_MODEL) setCustomModel(keys.CUSTOM_MODEL);
-      if (keys.R2_ENDPOINT) setR2Endpoint(keys.R2_ENDPOINT);
-      if (keys.R2_ACCESS_KEY_ID) setR2AccessKey(keys.R2_ACCESS_KEY_ID);
-      if (keys.R2_SECRET_ACCESS_KEY) setR2SecretKey(keys.R2_SECRET_ACCESS_KEY);
-      if (keys.R2_BUCKET) setR2Bucket(keys.R2_BUCKET || "zynkbot-backups");
 
       const selections = {};
       for (const p of PROVIDERS) {
@@ -536,15 +528,15 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
 
   const isCustomConfigured = () => apiKeys.CUSTOM_API_URL && apiKeys.CUSTOM_MODEL;
 
-  if (!isOpen) return null;
+  if (!isOpen && !embedded) return null;
 
   return (
     <>
     <CostGuideModal isOpen={showCostGuide} onClose={() => setShowCostGuide(false)} />
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="api-key-modal-container" onClick={(e) => e.stopPropagation()}>
+    <div className={embedded ? 'api-keys-embedded' : 'modal-overlay'} onClick={embedded ? undefined : onClose}>
+      <div className={embedded ? 'api-keys-embedded-body' : 'api-key-modal-container'} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '4px' }}>
-          <h2 style={{ margin: 0 }}>API Key Management</h2>
+          {embedded ? <b style={{ fontSize: '1rem' }}>🔑 Keys and servers</b> : <h2 style={{ margin: 0 }}>API Key Management</h2>}
           <button
             onClick={handlePushAllKeys}
             disabled={pushingKeys}
@@ -559,8 +551,8 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
           Configure your AI provider API keys to enable cloud models.{' '}
           <button
             onClick={() => setShowCostGuide(true)}
-            style={{ background: 'none', border: 'none', color: '#50fa7b', cursor: 'pointer', textDecoration: 'underline', fontSize: 'inherit', padding: 0 }}
-          >💰 What will this cost?</button>
+            style={{ background: 'none', border: 'none', color: '#50fa7b', cursor: 'pointer', fontSize: 'inherit', padding: 0 }}
+          >💰 <span style={{ textDecoration: 'underline' }}>What will this cost?</span></button>
         </p>
 
         <div className="api-keys-list">
@@ -655,7 +647,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
                           className="btn-get-key"
                           title="Open your account at the provider: plan, usage, credits"
                         >
-                          💳 View plan
+                          💳 Open website
                         </button>
                       </div>
                     </>
@@ -959,141 +951,12 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
           </div>
         </div>
 
-        {/* Cloud Backup (Cloudflare R2) */}
-        <div className="api-section" style={{ marginTop: '20px' }}>
-          <div className="api-section-header" onClick={() => setShowR2(v => !v)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', margin: 0 }}>
-              ☁ Cloud Backup
-              <span style={{ fontSize: '0.72rem', background: '#1a3a1a', color: '#50fa7b', border: '1px solid #50fa7b44', padding: '2px 7px', borderRadius: '10px', fontWeight: 'normal', letterSpacing: '0.02em' }}>Free Beta</span>
-            </h3>
-            <span style={{ background: '#44475a', color: '#f8f8f2', fontSize: '0.75rem', padding: '3px 8px', borderRadius: '4px', fontWeight: 'bold', whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {showR2 ? 'Hide ▴' : 'Show ▾'}
-            </span>
-          </div>
-          <div style={{ marginTop: '6px' }}>
-            <span className="api-section-desc">
-              Zero-knowledge encrypted backup. The key stays on your own devices: it is shared only with phones and computers you have paired, over their direct encrypted connection, and never with any server.{' '}
-              <span style={{ color: '#bd93f9' }}>Free during beta. Early users get founder pricing when paid tiers launch.</span>
-            </span>
-            <div style={{ marginTop: '10px' }}>
-              <button
-                onClick={(e) => { e.stopPropagation(); openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens'); }}
-                className="btn-get-key"
-                title="Open Cloudflare R2 API tokens page"
-              >
-                🔗 Get credentials
-              </button>
-            </div>
-          </div>
-          {showR2 && <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Endpoint URL</label>
-              <input
-                type="text"
-                value={r2Endpoint}
-                onChange={e => setR2Endpoint(e.target.value)}
-                placeholder="https://<account-id>.r2.cloudflarestorage.com"
-                style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem' }}
-              />
-            </div>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Access Key ID</label>
-                <input
-                  type="text"
-                  value={r2AccessKey}
-                  onChange={e => setR2AccessKey(e.target.value)}
-                  placeholder="Access Key ID"
-                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem', width: '100%' }}
-                />
-              </div>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Secret Access Key</label>
-                <input
-                  type="password"
-                  value={r2SecretKey}
-                  onChange={e => setR2SecretKey(e.target.value)}
-                  placeholder="Secret Access Key"
-                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem', width: '100%' }}
-                />
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px' }}>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <label style={{ fontSize: '0.8rem', color: '#8be9fd' }}>Bucket Name</label>
-                <input
-                  type="text"
-                  value={r2Bucket}
-                  onChange={e => setR2Bucket(e.target.value)}
-                  placeholder="zynkbot-backups"
-                  style={{ padding: '8px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', fontSize: '0.85rem' }}
-                />
-              </div>
-              <button
-                onClick={async () => {
-                  if (!r2Endpoint.trim() || !r2AccessKey.trim() || !r2SecretKey.trim()) {
-                    setR2SaveStatus({ type: 'error', message: 'Endpoint, Access Key ID, and Secret Key are required.' });
-                    return;
-                  }
-                  setR2SaveStatus({ type: 'saving', message: 'Saving…' });
-                  try {
-                    const vals = {
-                      R2_ENDPOINT: r2Endpoint.trim(),
-                      R2_ACCESS_KEY_ID: r2AccessKey.trim(),
-                      R2_SECRET_ACCESS_KEY: r2SecretKey.trim(),
-                      R2_BUCKET: r2Bucket.trim() || 'zynkbot-backups',
-                    };
-                    for (const [k, v] of Object.entries(vals)) {
-                      await invoke('set_api_key', { key: k, value: v });
-                    }
-                    setR2SaveStatus({ type: 'ok', message: 'Saved!' });
-                    setTimeout(() => setR2SaveStatus({ type: 'idle', message: '' }), 3000);
-                    // Offer to push to paired devices
-                    try {
-                      const peers = await invoke('get_zynksync_peers');
-                      const onlinePeers = (peers || []).filter(p => p.is_online);
-                      if (onlinePeers.length > 0) {
-                        const confirmed = await confirmDialog(
-                          `Send R2 backup credentials to your ${onlinePeers.length} other device${onlinePeers.length > 1 ? 's' : ''}?\n\n` +
-                          `Credentials travel encrypted, peer-to-peer — they don't touch the internet.`
-                        );
-                        if (confirmed) {
-                          for (const [k, v] of Object.entries(vals)) {
-                            await invoke('propagate_api_key', { key: k, value: v });
-                          }
-                        }
-                      }
-                    } catch (e) {
-                      console.debug('[R2] Propagation skipped:', e);
-                    }
-                  } catch (err) {
-                    setR2SaveStatus({ type: 'error', message: String(err) });
-                  }
-                }}
-                style={{
-                  padding: '8px 20px', borderRadius: '4px', border: 'none',
-                  background: r2SaveStatus.type === 'ok' ? '#50fa7b' : '#6272a4',
-                  color: r2SaveStatus.type === 'ok' ? '#282a36' : '#fff',
-                  cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap',
-                }}
-              >
-                {r2SaveStatus.type === 'saving' ? 'Saving…' : r2SaveStatus.type === 'ok' ? '✓ Saved' : 'Save'}
-              </button>
-            </div>
-            {r2SaveStatus.message && r2SaveStatus.type !== 'ok' && (
-              <div style={{ fontSize: '0.8rem', color: r2SaveStatus.type === 'error' ? '#ff5555' : '#6272a4' }}>
-                {r2SaveStatus.message}
-              </div>
-            )}
-          </div>}
-        </div>
-
         <div className="api-key-note">
           <strong>Privacy Note:</strong> API keys are stored locally in your .env file.
           They are never sent to any server except the respective AI provider when you use that model.
-          Custom endpoint traffic goes directly to your server — no cloud involved.
         </div>
 
+        {!embedded && (<>
         {/* Close button - sticky inside the scrolling panel, so it hugs the
             panel's own bottom-right corner at every window size. The previous
             position:fixed pinned it to the VIEWPORT bottom-right, which looked
@@ -1116,6 +979,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged }) {
             }}
           >✕</button>
         </div>
+        </>)}
       </div>
     </div>
     </>

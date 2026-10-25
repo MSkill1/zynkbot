@@ -1,5 +1,6 @@
 import React from 'react';
 import '../styles/ControlsPage.css';
+import PageIntro from './PageIntro';
 
 /**
  * One System Controls section, shown on a page of its own on top of the sidebar.
@@ -7,7 +8,7 @@ import '../styles/ControlsPage.css';
  * System Controls list. Introduced in 0.9.6-beta5 to replace the stack of
  * fold-out sections, which had grown too tall to scan on a phone.
  */
-export default function ControlsPage({ icon, title, subtitle, accent = '#44475a', onClose, children }) {
+export default function ControlsPage({ icon, title, subtitle, accent = '#44475a', onClose, intro, introKey, children }) {
   return (
     <div className="controls-page-overlay" onClick={onClose}>
       <div
@@ -26,6 +27,7 @@ export default function ControlsPage({ icon, title, subtitle, accent = '#44475a'
           <button className="controls-page-close" onClick={onClose} title="Back to System Controls" aria-label="Close">✕</button>
         </div>
         <div className="controls-page-body">
+          {intro && <PageIntro introKey={introKey || title} accent={accent === '#44475a' ? '#6272a4' : accent}>{intro}</PageIntro>}
           {children}
         </div>
       </div>

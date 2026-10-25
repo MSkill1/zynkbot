@@ -725,7 +725,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             color: '#9aa5c4',
             lineHeight: '1.6'
           }}>
-            Zynkbot is a folder on this phone. Anything you put in it can be seen by your linked devices: use the Share button in any app and pick Zynkbot, or Browse files → Add Files. Files you save from a linked device land here too. Each linked device's folder is listed below under Shared With Me, named after the device.
+            This phone now has a shared drive named Zynkbot. You can see it in your file manager, and anything you put in it can be seen by your linked devices: use the Share button in any app and pick Zynkbot, or Browse shared files on this device → Add Files. Files you save from a linked device land here too.
 
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -750,7 +750,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                   cursor: 'pointer'
                 }}
               >
-                📋 Browse files
+                📋 Browse shared files on this device
               </button>
             )}
           </div>

@@ -667,6 +667,9 @@ class WakeWordService : Service() {
      *  page question). True if this call opened it; the caller then calls [endTurn]. */
     fun beginTurn(): Boolean = apply(MicState.Event.TurnBegun)
 
+    /** off / loading / listening / dictating / turn / paused, for the Voice page's status line. */
+    fun stateName(): String = mic.state.name.lowercase()
+
     /** The turn is over: back to listening (or paused, if another app records). */
     fun endTurn() { apply(MicState.Event.TurnEnded) }
 

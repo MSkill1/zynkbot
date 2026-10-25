@@ -15,6 +15,7 @@
   cursor: pointer;
   font: inherit;
   transition: filter 0.15s;
+  box-sizing: border-box; /* the class is used on divs too (rows with a control); without this they overflowed the page (Matt, 2026-10-25) */
 }
 .controls-menu-btn:hover { filter: brightness(1.12); }
 .controls-menu-btn.dim { opacity: 0.7; }
@@ -30,6 +31,20 @@
   text-overflow: ellipsis;
 }
 .controls-menu-chevron { color: #9aa5c4; font-size: 1.3rem; flex-shrink: 0; }
+/* A row that holds a control (Containment Mode's drop-down) instead of opening a page. */
+.controls-menu-row { cursor: default; }
+.controls-menu-row:hover { filter: none; }
+.controls-menu-select {
+  flex-shrink: 0;
+  max-width: 45%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #6272a4;
+  background: #1e1f29;
+  color: #f8f8f2;
+  font: inherit;
+  font-size: 0.95rem;
+}
 
 /* Same layer as the sidebar (1000) and placed after it in the DOM, so it covers
    the sidebar but stays under every modal that can open from a page (API Keys,
@@ -94,5 +109,68 @@
     border-radius: 0;
     border-width: 0 0 0 0;
   }
-  .controls-page-head { padding-top: calc(14px + env(safe-area-inset-top, 0px)); }
+  /* No safe-area padding: MainActivity reserves the status bar natively; env() here
+     added it a second time and left a gray band above every page (Matt, 2026-10-25). */
+}
+
+/* Current Model page (ui-redo, 2026-10-24): one row per model, keys and servers below. */
+.model-rows { margin-bottom: 10px; }
+.model-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 14px; margin-bottom: 8px;
+  border-radius: 12px; border: 2px solid #44475a; background: #2d2f3f; color: #f8f8f2; cursor: pointer; box-sizing: border-box;
+}
+.model-row:hover { filter: brightness(1.12); }
+.model-row.selected { border-color: #50fa7b; }
+.model-row-check { width: 22px; text-align: center; color: #50fa7b; font-weight: bold; font-size: 1.1rem; flex-shrink: 0; }
+.model-row-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.model-row-actions button {
+  padding: 4px 8px; border-radius: 6px; border: 1px solid #6272a4; background: transparent; color: #f8f8f2; cursor: pointer; font-size: 0.8rem;
+}
+.model-row-actions button.danger { border-color: #ff5555; color: #ff5555; }
+.model-add-btn {
+  display: block; width: 100%; padding: 10px 14px; margin: 2px 0 16px; border-radius: 12px; border: 2px dashed #44475a;
+  background: transparent; color: #9aa5c4; cursor: pointer; font: inherit;
+}
+.model-add-btn:hover { color: #f8f8f2; border-color: #9aa5c4; }
+.api-keys-embedded { border-top: 2px solid #44475a; padding-top: 12px; }
+.api-keys-embedded .api-keys-list { gap: 10px; }
+.api-keys-embedded .api-key-item { background: #2d2f3f; border: 2px solid #44475a; border-radius: 12px; padding: 12px 14px; }
+.api-keys-embedded .modal-subtitle { margin-bottom: 12px; }
+.api-keys-embedded .api-key-note { margin-top: 10px; }
+
+/* First-open explanation at the top of a section (PageIntro, 2026-10-25). */
+.page-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #6272a4;
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: #1e1f29;
+}
+.page-intro-text { color: #e6e6e6; font-size: 0.9rem; line-height: 1.55; }
+.page-intro-text b { color: #f8f8f2; }
+.page-intro-ok {
+  align-self: flex-end;
+  padding: 7px 16px;
+  border: none;
+  border-radius: 8px;
+  background: #50fa7b;
+  color: #282a36;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.page-intro-link { text-align: right; margin: -4px 0 8px; }
+.page-intro-link button {
+  background: none;
+  border: none;
+  color: #8be9fd;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 2px 0;
+  text-decoration: underline;
 }

@@ -18,6 +18,8 @@ import ZynkLinkPanel from "./components/ZynkLinkPanel";
 import CollapsibleSidebar from "./components/CollapsibleSidebar";
 import ControlsPage from "./components/ControlsPage";
 import ControlsMenuButton from "./components/ControlsMenuButton";
+import PageIntro, { introSeen } from "./components/PageIntro";
+import SnapInPlans from "./components/SnapInPlans";
 import UserIdentityModal from "./components/UserIdentityModal";
 import EnsembleModal from "./components/EnsembleModal";
 import ConflictResolutionModal from "./components/ConflictResolutionModal";
@@ -115,7 +117,6 @@ function AccessGate() {
 
 
 // Shown under "Containment Mode" in the System Controls list (same names as the selector).
-const CONTAINMENT_LABELS = { witness: 'Witness', sovereign: 'Sovereign', guardian: 'Guardian', child: 'Child', hipaa: 'HIPAA' };
 export default function App() {
   // Persistent user ID from backend (shared across all YOUR devices)
   const [userId, setUserId] = useState(null);
@@ -351,7 +352,6 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false);
   const [showDemoGuide, setShowDemoGuide] = useState(false);
   const [showWhyZynkbot, setShowWhyZynkbot] = useState(false);
-  const [showAPIKeys, setShowAPIKeys] = useState(false);
   const [showUserIdentity, setShowUserIdentity] = useState(false);
   const [showEnsemble, setShowEnsemble] = useState(false);
   const [showConflictResolution, setShowConflictResolution] = useState(false);
@@ -360,7 +360,6 @@ export default function App() {
   const [currentConflict, setCurrentConflict] = useState(null);
   const [chatDevice, setChatDevice] = useState(null);
   const [currentDeviceId, setCurrentDeviceId] = useState(null);
-  const [showKBManager, setShowKBManager] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [searchKBEnabled, setSearchKBEnabled] = useState(false);
   const [kbLocked, setKbLocked] = useState(false);
@@ -382,7 +381,6 @@ export default function App() {
       icon="🚀"
       title="Getting Started"
       subtitle="Kitchen tip, Einstein demo, guided setup"
-      accent="#8be9fd"
       onClick={() => setControlsPage('start')}
     />
   );
@@ -509,9 +507,9 @@ export default function App() {
 
 
   // Lock body scroll when any modal is open to prevent scrollbar ghost artifact
-  const anyModalOpen = showAbout || showDemoGuide || showWhyZynkbot || showAPIKeys ||
+  const anyModalOpen = showAbout || showDemoGuide || showWhyZynkbot ||
     showUserIdentity || showEnsemble || showConflictResolution || showZynkCluster ||
-    showConversationHistory || showKBManager || showOnboarding ||
+    showConversationHistory || showOnboarding ||
     showSnapInModal;
   useLayoutEffect(() => {
     if (anyModalOpen) {
@@ -633,21 +631,21 @@ export default function App() {
       if (!stored) {
         // Priority: local (privacy) → custom/Ollama → first available API model.
         // Android has no local models, so it naturally falls through to custom or API.
-        const firstLocal = models.find(m => m.model_type === 'local');
+        const firstLocal = models.find(m => (m.type || m.model_type) === 'local');
         const custom = models.find(m => m.id === 'custom');
-        const firstApi = models.find(m => m.model_type === 'api' && m.id !== 'custom');
+        const firstApi = models.find(m => (m.type || m.model_type) === 'api' && m.id !== 'custom');
         const defaultModel = firstLocal || custom || firstApi;
         if (defaultModel) {
           setModelType(defaultModel.id);
           localStorage.setItem('zynkbot_preferred_model', defaultModel.id);
           console.log('[Models] First run — defaulting to:', defaultModel.id);
         }
-      } else if (stored === 'local' && !models.find(m => m.id === 'local' || m.model_type === 'local')) {
+      } else if (stored === 'local' && !models.find(m => m.id === 'local' || (m.type || m.model_type) === 'local')) {
         // Stale 'local' stored value but no local models available (e.g. Android after a
         // desktop-only install migrated over). Fall through to custom/API instead of leaving
         // the user stuck on a backend that will error out.
         const custom = models.find(m => m.id === 'custom');
-        const firstApi = models.find(m => m.model_type === 'api' && m.id !== 'custom');
+        const firstApi = models.find(m => (m.type || m.model_type) === 'api' && m.id !== 'custom');
         const fallback = custom || firstApi;
         if (fallback) {
           setModelType(fallback.id);
@@ -999,7 +997,7 @@ export default function App() {
     if (voice.isTtsSpeaking && speakingMessageId === msg.id) { voice.stopTts(); setSpeakingMessageId(null); return; }
     setSpeakingMessageId(msg.id);
     const ok = await voice.speakResponse(msg.content);
-    if (ok === false) { setSpeakingMessageId(null); notify('Read aloud needs an OpenAI key (Settings → API Keys)', 6000); }
+    if (ok === false) { setSpeakingMessageId(null); notify('Read aloud needs an OpenAI key (System Controls → Current Model)', 6000); }
   };
 
   // Conflict Resolution Handlers. The dialog closes the moment the user confirms;
@@ -1725,19 +1723,17 @@ export default function App() {
         // close button exists at that corner. Otherwise the two overlap and the first
         // tap toggles the sidebar instead of closing the modal (reported on API Keys,
         // then on the User Identity modal opened from the sidebar's info button).
-        hideToggle={showConversationHistory || showAPIKeys || showKBManager || showEnsemble || voice.showVoiceModal
+        hideToggle={showConversationHistory || showEnsemble || voice.showVoiceModal
           || showUserIdentity || showAbout || showDemoGuide || showWhyZynkbot || showConflictResolution || showZynkCluster || showReport
           || controlsPage !== null}
         onOpen={() => {
           setShowAbout(false);
           setShowDemoGuide(false);
           setShowWhyZynkbot(false);
-          setShowAPIKeys(false);
           setShowUserIdentity(false);
           setShowEnsemble(false);
           setShowConflictResolution(false);
           setShowZynkCluster(false);
-          setShowKBManager(false);
           setShowOnboarding(false);
           setShowSnapInModal(false);
           setControlsPage(null);
@@ -1748,22 +1744,22 @@ export default function App() {
             Getting Started leads the list until onboarding has been completed on this
             device or the user unticks "keep at top" on its page; then it sits last. */}
         {gettingStartedOnTop && gettingStartedButton}
-        <ControlsMenuButton
-          icon="🛡"
-          title="Containment Mode"
-          subtitle={CONTAINMENT_LABELS[containmentMode] || containmentMode}
-          onClick={() => setControlsPage('contain')}
+        <ContainmentModeSelector
+          currentMode={containmentMode}
+          onModeChange={setContainmentMode}
         />
         <ControlsMenuButton
           icon="🤖"
           title="Current Model"
           subtitle={availableModels.find(m => m.id === modelType)?.name || 'Loading models…'}
+          accent="#bd93f9"
           onClick={() => setControlsPage('model')}
         />
         <ControlsMenuButton
           icon="🎙"
           title="Voice"
           subtitle="Dictation, wake word, spoken replies"
+          accent="#8be9fd"
           onClick={() => voice.setShowVoiceModal(true)}
         />
         <ControlsMenuButton
@@ -1790,7 +1786,7 @@ export default function App() {
         <ControlsMenuButton
           icon="🧩"
           title="Snap-ins"
-          subtitle="Experimental"
+          subtitle="Planned: therapist, legal, journalist"
           accent="#ff79c6"
           dim
           onClick={() => setControlsPage('snap')}
@@ -1799,7 +1795,6 @@ export default function App() {
           icon="🔬"
           title="ZynkCluster"
           subtitle="Upcoming"
-          accent="#bd93f9"
           dim
           onClick={() => setControlsPage('cluster')}
         />}
@@ -1809,139 +1804,52 @@ export default function App() {
       </CollapsibleSidebar>
 
       {/* System Controls pages: one at a time, on top of the sidebar. */}
-      {controlsPage === 'contain' && (
-        <ControlsPage icon="🛡" title="Containment Mode" subtitle="Limits what Zynkbot will discuss and what leaves the device" onClose={() => setControlsPage(null)}>
-        <ContainmentModeSelector
-          currentMode={containmentMode}
-          onModeChange={setContainmentMode}
-        />
-        </ControlsPage>
-      )}
-
       {controlsPage === 'model' && (
-        <ControlsPage icon="🤖" title="Current Model" subtitle="Which model answers you" onClose={() => setControlsPage(null)}>
-        <div className="model-selector">
-          {/* The page header already names the section, so only the two buttons remain here. */}
-          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '10px'}}>
-            <div style={{display: 'flex', gap: '8px'}}>
-              {!isMobile && (
-              <button
-                onClick={async () => {
-                  try {
-                    await invoke('open_models_folder');
-                  } catch (error) {
-                    console.error('Failed to open models folder:', error);
-                    alert('Failed to open models folder: ' + error);
-                  }
-                }}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: '#50fa7b',
-                  color: '#282a36',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  fontSize: '0.85rem',
-                  transition: 'background 0.2s'
-                }}
-                onMouseOver={(e) => e.target.style.background = '#70ffab'}
-                onMouseOut={(e) => e.target.style.background = '#50fa7b'}
-                title="Open models folder to add/manage local .gguf model files"
-              >
-                📁 Add Models
-              </button>
-              )}
-              <button
-                onClick={() => setShowAPIKeys(true)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: '#bd93f9',
-                  color: '#282a36',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  fontSize: '0.85rem',
-                  transition: 'background 0.2s'
-                }}
-                onMouseOver={(e) => e.target.style.background = '#cda3f9'}
-                onMouseOut={(e) => e.target.style.background = '#bd93f9'}
-                title="Configure API keys for Anthropic Claude and other cloud services"
-              >
-                🔑 API Keys
-              </button>
-            </div>
-          </div>
-          <select
-            value={modelType}
-            onChange={(e) => setModelType(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '8px',
-              marginBottom: '10px',
-              borderRadius: '4px',
-              border: '1px solid #44475a',
-              background: '#ffffff',
-              color: '#000000',
-              fontSize: '0.95rem'
-            }}
-          >
-            {availableModels.length === 0 ? (
-              <option>Loading models...</option>
-            ) : (
-              availableModels.map(model => (
-                <option key={model.id} value={model.id}>
-                  {model.model_type === 'local' ? `${model.name} — local, offline, slower` : model.name}
-                </option>
-              ))
-            )}
-          </select>
-          <p style={{fontSize: '0.85em', color: '#9aa5c4', marginTop: '10px'}}>
-            {modelType && modelType.endsWith('.gguf') ? (
-              <>
-                <strong>Local Model:</strong> Runs on your device for complete privacy.
-                Performance depends on hardware. Add a .gguf file through the Zynkbot folder or from a linked device.
-              </>
-            ) : (
-              <>
-                <strong>API Model:</strong> Fast responses via cloud API.
-                Local models offer complete privacy and run on your device.
-              </>
-            )}
-          </p>
-          {localModelFiles.length > 0 && (
-            <div style={{ marginTop: '14px' }}>
-              <div style={{ fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '6px' }}>Local models on this device</div>
-              {localModelFiles.map(f => (
-                <div key={f.path} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderTop: '1px solid #44475a', fontSize: '0.85rem' }}>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.path}>{f.filename.replace(/\.gguf$/i, '')}</span>
-                  <span style={{ color: '#6272a4', flexShrink: 0 }}>{formatModelSize(f.size_bytes)}</span>
-                  <button
-                    onClick={() => handleMoveModelFile(f)}
-                    disabled={modelMoveBusy === f.path}
-                    title="Move this model file somewhere else on this device"
-                    style={{ padding: '4px 8px', borderRadius: '6px', border: '1px solid #6272a4', background: 'transparent', color: '#f8f8f2', cursor: 'pointer', fontSize: '0.8rem' }}
-                  >
-                    {modelMoveBusy === f.path ? 'Moving…' : 'Move to…'}
-                  </button>
-                  <button
-                    onClick={() => handleRemoveModelFile(f)}
-                    title="Remove this model file from this device"
-                    style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', background: '#ff5555', color: '#282a36', cursor: 'pointer', fontSize: '0.8rem' }}
-                  >
-                    Remove
-                  </button>
+        <ControlsPage icon="🤖" title="Current Model" accent="#bd93f9" introKey="model" intro={<>Zynkbot answers with the model marked here. A cloud model needs a key from that company, entered below, and your messages go to it; under its API terms they are not used to train on or to profile you, which is why Zynkbot uses keys and not a subscription. A model file on this device works offline and nothing leaves the device. <b>Try this:</b> switch models and ask the same question twice.</>}
+          subtitle={(availableModels.find(m => m.id === modelType)?.name || 'No model selected').replace(/\.gguf$/i, '')}
+          onClose={() => setControlsPage(null)}>
+          {/* ui-redo (2026-10-24): one page for the choice and the keys. Rows instead of a
+              drop-down; the keys and servers section that was its own window sits below. */}
+          <div className="model-rows">
+            {availableModels.length === 0 && <div style={{ color: '#9aa5c4', marginBottom: '10px' }}>Loading models…</div>}
+            {availableModels.map(m => {
+              const isLocal = (m.type || m.model_type) === 'local' || m.id.endsWith('.gguf');
+              const file = isLocal ? localModelFiles.find(f => f.path === m.id || m.id.endsWith(f.filename)) : null;
+              const selected = modelType === m.id;
+              return (
+                <div key={m.id} className={`model-row${selected ? ' selected' : ''}`} role="button" tabIndex={0}
+                  onClick={() => setModelType(m.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setModelType(m.id); }}>
+                  <span className="controls-menu-icon">{isLocal ? '📱' : '☁️'}</span>
+                  <div className="controls-menu-text">
+                    <b>{isLocal ? m.name.replace(/\.gguf$/i, '') : m.name}</b>
+                    <small>{isLocal ? `On this device, offline, slower${file ? ' · ' + formatModelSize(file.size_bytes) : ''}` : 'Cloud model, uses its key below'}</small>
+                  </div>
+                  {file && (
+                    <span className="model-row-actions" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => handleMoveModelFile(file)} disabled={modelMoveBusy === file.path} title="Move this model file somewhere else on this device">{modelMoveBusy === file.path ? 'Moving…' : 'Move to…'}</button>
+                      <button className="danger" onClick={() => handleRemoveModelFile(file)} title="Remove this model file from this device">Remove</button>
+                    </span>
+                  )}
+                  <span className="model-row-check">{selected ? '✓' : ''}</span>
                 </div>
-              ))}
-            </div>
+              );
+            })}
+          </div>
+          {!isMobile ? (
+            <button className="model-add-btn" title="Open the models folder to add .gguf files"
+              onClick={async () => { try { await invoke('open_models_folder'); } catch (error) { alert('Failed to open models folder: ' + error); } }}>
+              📁 Add a model file
+            </button>
+          ) : (
+            <div style={{ fontSize: '0.85rem', color: '#9aa5c4', margin: '6px 0 14px' }}>To add a model file on this phone: the ZynkLink menu, Browse files, pick the file, then "→ Models".</div>
           )}
-        </div>
+          <APIKeyModal embedded isOpen={false} onClose={() => {}} onKeysChanged={async () => { await fetchModels(); }} />
         </ControlsPage>
       )}
 
       {controlsPage === 'start' && (
-        <ControlsPage icon="🚀" title="Getting Started" subtitle="Kitchen tip, Einstein demo, guided setup" accent="#8be9fd" onClose={() => setControlsPage(null)}>
+        <ControlsPage icon="🚀" title="Getting Started" subtitle="Kitchen tip, Einstein demo, guided setup" onClose={() => setControlsPage(null)}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '14px', cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -2086,7 +1994,7 @@ export default function App() {
       )}
 
       {controlsPage === 'sync' && (
-        <ControlsPage icon="🔄" title="ZynkSync" subtitle="Your own devices: shared memory, notes between them" accent="#50fa7b" onClose={() => setControlsPage(null)}>
+        <ControlsPage icon="🔄" title="ZynkSync" subtitle="Your own devices: shared memory, notes between them" accent="#50fa7b" introKey="sync" intro={<>ZynkSync joins your own phones and computers into one memory: what you tell one, the others know. Devices pair once with a code and sync over your network. Need a password, a note or a message on your other device? The Chat button here sends it from your phone to your computer; for a file, link the two in ZynkLink. <b>Try this:</b> generate a code on the device that has your memories and enter it on the other.</>} onClose={() => setControlsPage(null)}>
         <ZynkSyncPanel
           apiBaseUrl={API_BASE_URL}
           userId={userId}
@@ -2102,7 +2010,7 @@ export default function App() {
       )}
 
       {controlsPage === 'link' && (
-        <ControlsPage icon="🔗" title="ZynkLink" subtitle="Other people's Zynkbots: files and chat" accent="#f1fa8c" onClose={() => setControlsPage(null)}>
+        <ControlsPage icon="🔗" title="ZynkLink" subtitle="Other people's Zynkbots: files and chat" accent="#f1fa8c" introKey="link" intro={<>ZynkLink connects your Zynkbot with someone else's: files through the shared drive and a private chat, device to device. You exchange a code once. Either of you can unlink at any time; the other device is told and drops the link too. You can link your own devices as well, to move files easily between your phone and your computer or tablet. <b>Try this:</b> share a photo to the Zynkbot drive; the linked device sees it under Shared With Me.</>} onClose={() => setControlsPage(null)}>
         <ZynkLinkPanel
           apiBaseUrl={API_BASE_URL}
           onOpenUserIdentity={() => setShowUserIdentity(true)}
@@ -2112,49 +2020,20 @@ export default function App() {
       )}
 
       {controlsPage === 'kb' && (
-        <ControlsPage icon="📚" title="Knowledge Base" subtitle="Your documents, searched when you ask" accent="#ffb86c" onClose={() => setControlsPage(null)}>
-        <KnowledgeBasePanel
-          userId={userId}
-          onManageDocuments={() => setShowKBManager(true)}
-        />
+        <ControlsPage icon="📚" title="Knowledge Base" subtitle="Your documents, searched when you ask" accent="#ffb86c" introKey="kb" intro={<>The knowledge base is where you put files that matter to you or to a project: notes, manuals, papers, contracts. Index them and Zynkbot knows what is in them. Turn KB on in chat and it reads the parts that match your question before it answers, so you can discuss your own documents in plain conversation. <b>Try this:</b> add a text file, index it, turn on KB and ask about it.</>} onClose={() => setControlsPage(null)}>
+        <KnowledgeBasePanel userId={userId} />
+        <KnowledgeBaseManager embedded isOpen={false} onClose={() => {}} userId={userId} />
         </ControlsPage>
       )}
 
       {controlsPage === 'snap' && (
-        <ControlsPage icon="🧩" title="Snap-ins" subtitle="Experimental" accent="#ff79c6" onClose={() => setControlsPage(null)}>
-          <p style={{fontSize: '0.9rem', color: '#ff79c6', lineHeight: '1.6', marginBottom: '15px'}}>
-            <strong>Snap-ins</strong> are domain-specific workspaces for professional and personal use.
-            They integrate with Zynkbot's memory system while maintaining strict privacy boundaries.
-          </p>
-          <button
-            onClick={() => setShowSnapInModal(true)}
-            style={{
-              width: '100%',
-              padding: '12px',
-              background: 'linear-gradient(135deg, #ff79c6 0%, #e869b3 100%)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              transition: 'transform 0.2s',
-              marginBottom: '10px'
-            }}
-            onMouseOver={(e) => e.target.style.transform = 'translateY(-2px)'}
-            onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
-          >
-            📝 Try Sample: Therapist Journal
-          </button>
-          <p style={{fontSize: '0.85rem', color: '#ff79c6', lineHeight: '1.4', margin: '0'}}>
-            <strong>Concept demo:</strong> See how a professional workspace could organize notes, maintain privacy, and integrate with RAG search.
-            <br /><em style={{fontSize: '0.8rem', color: '#9aa5c4'}}>Proof-of-concept | Architecture foundation for professional snap-ins</em>
-          </p>
+        <ControlsPage icon="🧩" title="Snap-ins" subtitle="Planned: therapist, legal, journalist" accent="#ff79c6" onClose={() => setControlsPage(null)}>
+          <SnapInPlans onTrySample={() => setShowSnapInModal(true)} />
         </ControlsPage>
       )}
 
       {controlsPage === 'cluster' && (
-        <ControlsPage icon="🔬" title="ZynkCluster" subtitle="Upcoming" accent="#bd93f9" onClose={() => setControlsPage(null)}>
+        <ControlsPage icon="🔬" title="ZynkCluster" subtitle="Upcoming" onClose={() => setControlsPage(null)}>
           <button
             onClick={() => setShowZynkCluster(true)}
             style={{
@@ -2281,7 +2160,7 @@ export default function App() {
                   ⚠️ No AI model configured — add an API key to start chatting.
                 </span>
                 <button
-                  onClick={() => setShowAPIKeys(true)}
+                  onClick={() => setControlsPage('model')}
                   style={{
                     padding: '6px 14px',
                     background: '#f1c40f',
@@ -2294,7 +2173,7 @@ export default function App() {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  🔑 Set Up API Keys
+                  🔑 Set up a model
                 </button>
               </div>
             )}
@@ -2330,7 +2209,9 @@ export default function App() {
               </div>
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
-                  <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
+                  introSeen('chat')
+                    ? <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
+                    : <PageIntro introKey="chat" accent="#8be9fd" noLink>Type or dictate a message. Under the box, <b>KB</b> searches your documents and the paper clip attaches files and photos. Zynkbot remembers what you tell it about yourself, here on this device; Memory Manager shows what it kept, and you can edit or delete any of it. With your own API key, the model company answers each question and bills you for it; under its API terms it does not use your messages to train on or to build a profile of you, the way a chat subscription can. <b>Try this:</b> tell it what you cooked tonight and how it went.</PageIntro>
                 ) : (
                   (() => {
                     // Find indices of the last user message and last assistant message
@@ -2955,16 +2836,7 @@ export default function App() {
         backend={modelType}
         threadText={messages.map(m => `${m.role === 'user' ? 'You' : 'Zynkbot'}: ${m.content}`).join('\n\n')}
       />
-      <GettingStartedModal isOpen={showDemoGuide} onClose={() => setShowDemoGuide(false)} onOpenAPIKeys={() => setShowAPIKeys(true)} />
-      <APIKeyModal
-        isOpen={showAPIKeys}
-        onClose={() => setShowAPIKeys(false)}
-        onKeysChanged={async () => {
-          console.log('🔄 API keys changed, refreshing models...');
-          await fetchModels();
-          console.log('✅ Models refreshed');
-        }}
-      />
+      <GettingStartedModal isOpen={showDemoGuide} onClose={() => setShowDemoGuide(false)} onOpenAPIKeys={() => setControlsPage('model')} />
       <UserIdentityModal isOpen={showUserIdentity} onClose={() => setShowUserIdentity(false)} apiBaseUrl={API_BASE_URL} sessionId={sessionId} />
       <ConversationHistoryPanel
         currentSessionId={sessionId}
@@ -2973,11 +2845,6 @@ export default function App() {
         userId={userId}
         containmentMode={containmentMode}
         onResume={handleResumeSession}
-      />
-      <KnowledgeBaseManager
-        isOpen={showKBManager}
-        onClose={() => setShowKBManager(false)}
-        userId={userId}
       />
       <ZChatModal
         isOpen={chatDevice !== null}
@@ -3060,6 +2927,7 @@ export default function App() {
         fruitlessTone={voice.fruitlessTone}
         onFruitlessToneChange={voice.setFruitlessTone}
         wakeWordModelReady={voice.wakeWordModelReady}
+        wakeState={voice.wakeState}
         wakeWordDownloadProgress={voice.wakeWordDownloadProgress}
         wakeWordDownloadError={voice.wakeWordDownloadError}
         onDownloadModels={() => window.WakeWordBridge?.downloadModels()}

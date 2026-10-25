@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import PageIntro from './PageIntro';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 // Offline Vosk dictation ships for Android, Linux desktop and Windows desktop.
 // macOS is still excluded: libvosk.dylib is not bundled, so the offline option is
@@ -122,7 +124,7 @@ const FLAT_COMMANDS = [
   { cmd: '"Stop"', desc: 'Typed or dictated in the app, stops a spoken reply. Hands-free, the microphone is off while Zynkbot speaks, so use the Stop button or tap the Z instead.' },
   { cmd: '"Set a timer for 10 minutes"', desc: 'Works with any duration — seconds, minutes, or hours.' },
   { cmd: '"Set an alarm for 7:30 AM"', desc: 'Sets a system alarm.' },
-  { cmd: '"Start stopwatch"', desc: 'Starts the device stopwatch.' },
+  { cmd: '"Start stopwatch"', desc: 'Starts the stopwatch where the clock app allows it; otherwise it opens the clock app for you.' },
 ];
 
 function VoiceCommandsModal({ onClose }) {
@@ -180,6 +182,7 @@ export default function VoiceModal({
   fruitlessTone,
   onFruitlessToneChange,
   wakeWordModelReady,
+  wakeState = '',
   wakeWordDownloadProgress,
   wakeWordDownloadError,
   onDownloadModels,
@@ -189,17 +192,6 @@ export default function VoiceModal({
   onKeepScreenAwakeChange,
 }) {
   const [showCommands, setShowCommands] = useState(false);
-  // Wake-clip counts for the export button (Android only; null elsewhere).
-  const [wakeClipStats, setWakeClipStats] = useState(null);
-  // Re-read every time the modal opens: it stays mounted while hidden, so a
-  // mount-only read showed "0 of 30" forever (OnePlus, 2026-09-13).
-  useEffect(() => {
-    if (!isOpen) return;
-    try {
-      const raw = window.AndroidPaths?.getWakeClipStats?.();
-      if (raw) setWakeClipStats(JSON.parse(raw));
-    } catch (_) {}
-  }, [isOpen]);
 
   // Voice enrollment card (Android): the wake service's status, re-read while the
   // modal is open so the count moves as the clips come in.
@@ -232,6 +224,7 @@ export default function VoiceModal({
         <div style={{ marginBottom: '8px' }}>
           <h2 style={{ margin: 0, color: '#8be9fd', fontSize: '1.2rem' }}>🎙️ Voice Settings</h2>
         </div>
+        <PageIntro introKey="voice" accent="#8be9fd">Dictation types what you say into the message box. "Hey Zynk" asks a question hands-free: one question per wake, and it never listens on its own. Spoken replies read the answers aloud. <b>Try this:</b> turn on Hey Zynk and wait a few seconds for the microphone to turn green and shrink to a dot. Then say it, wait for the tone, and ask something short.</PageIntro>
 
         {/* Hey Zynk first: the switch people open this screen for was below the fold,
             behind the close button (Matt, 2026-09-20). */}
@@ -248,23 +241,34 @@ export default function VoiceModal({
               />
             </div>
 
-            {/* Detection framing, not "listening": the loop checks audio on-device
-                for one phrase and discards it — nothing is transcribed, stored, or
-                transmitted (a short clip is kept locally only when the word fires,
-                as verifier training data). Two facts a user should have before
-                switching this on: the detector loop costs battery, and without a
-                trained personal verifier the classifier alone fires on television
-                and other speech. Off by default for the same reasons. */}
-            <p style={{
-              color: '#9aa5c4',
-              fontSize: '0.8rem',
-              lineHeight: 1.45,
-              margin: '4px 0 0 0',
-            }}>
-              When the wake word is on, saying "Hey Zynk" lets you ask a question by voice and hear the answer.
-              Your voice data is respected: see the documentation for what is kept and what is not.
-              If it fires often on background noise or a television, turn it off.
-            </p>
+            {/* Status line: the models take a few seconds to load after the switch; people
+                said "Hey Zynk" at once and thought it was broken (Matt, 2026-10-25). */}
+            {heyZynkEnabled && (() => {
+              const s = wakeState;
+              const line = s === 'listening' ? ['#50fa7b', '● Listening for "Hey Zynk".']
+                : (s === 'dictating' || s === 'turn') ? ['#50fa7b', '● Hearing you.']
+                : s === 'paused' ? ['#ffb86c', 'Paused: another app is using the microphone.']
+                : ['#ffb86c', '⏳ Starting up. Give it a few seconds: the microphone turns green, then shrinks to a dot. Then say "Hey Zynk".'];
+              return <p style={{ color: line[0], fontSize: '0.82rem', lineHeight: 1.45, margin: '6px 0 0 0' }}>{line[1]}</p>;
+            })()}
+
+            {/* How it works, right under the switch (Matt, 2026-10-25). */}
+              <div style={{
+                background: '#1e1f29',
+                border: '1px solid #44475a',
+                borderRadius: '8px',
+                padding: '12px 14px',
+                marginTop: '12px',
+                marginBottom: '4px',
+              }}>
+                <p style={{ ...sectionHeadingStyle, margin: '0 0 8px 0' }}>How It Works</p>
+                <ol style={{ margin: 0, paddingLeft: '18px', color: '#9aa5c4', fontSize: '0.84rem', lineHeight: '1.6' }}>
+                  <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> and wait for the tone before speaking.</li>
+                  <li>Speak your question or command.</li>
+                  <li>Stop talking. After 1.5 seconds of silence you'll hear a second tone confirming your message was sent.</li>
+                  <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> again after each response to continue the conversation.</li>
+                </ol>
+              </div>
 
             <div style={rowStyle}>
               <span style={labelStyle}>Play a tone when a trigger hears nothing</span>
@@ -275,8 +279,8 @@ export default function VoiceModal({
               />
             </div>
             <p style={{ color: '#9aa5c4', fontSize: '0.8rem', lineHeight: 1.45, margin: '4px 0 0 0' }}>
-              Off: a false trigger costs one chime and then goes quiet. On: a second,
-              closing tone tells you it fired and shut down without sending anything.
+              If "Hey Zynk" fires but hears nothing, nothing is sent. With this on, a second
+              tone tells you it closed; with it off, you only hear the first chime.
             </p>
 
             {/* Teach Zynkbot your voice (2026-10-22): Start, then say "Hey Zynk" 20 times;
@@ -353,32 +357,6 @@ export default function VoiceModal({
                 </div>
               </div>
             )}
-
-            {wakeClipStats && (() => {
-              const ready = wakeClipStats.real >= wakeClipStats.needed;
-              return (
-                <div style={{ ...rowStyle, alignItems: 'center', gap: '12px' }}>
-                  <div style={{ flex: 1 }}>
-                    <span style={labelStyle}>Send my wake-word clips</span>
-                    <div style={mutedStyle}>
-                      {ready ? `${wakeClipStats.real} clips of your voice, ready to send.` : `Lights up once you have taught it your voice (${wakeClipStats.real} of ${wakeClipStats.needed}).`}
-                      {' '}Only if asked; clips stay on this phone until you send them.
-                    </div>
-                  </div>
-                  <button
-                    disabled={!ready}
-                    onClick={() => { try { window.AndroidPaths?.shareWakeClips?.(); } catch (_) {} }}
-                    style={{
-                      padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', whiteSpace: 'nowrap',
-                      background: ready ? '#50fa7b' : '#44475a', color: ready ? '#282a36' : '#9aa5c4',
-                      cursor: ready ? 'pointer' : 'not-allowed',
-                    }}
-                  >
-                    Send
-                  </button>
-                </div>
-              );
-            })()}
 
             {heyZynkEnabled && !wakeWordModelReady && (
               <div style={{
@@ -496,30 +474,14 @@ export default function VoiceModal({
             />
             <div>
               <div style={{ ...labelStyle, fontWeight: '500' }}>OpenAI Whisper</div>
-              <div style={mutedStyle}>Cloud transcription with punctuation. Requires OPENAI_API_KEY. Audio is sent to OpenAI; its API policy says it is not used for training and the transcription service keeps no audio for abuse monitoring (policy read 2026-09-09).</div>
+              <div style={mutedStyle}>Cloud transcription with punctuation. Requires OPENAI_API_KEY. Audio is sent to OpenAI; its API policy says it is not used for training and the transcription service keeps no audio for abuse monitoring (policy read 2026-10-25).</div>
+              <button
+                onClick={(e) => { e.preventDefault(); openUrl('https://developers.openai.com/api/docs/guides/your-data'); }}
+                style={{ marginTop: '6px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #6272a4', background: 'rgba(98,114,164,0.2)', color: '#8be9fd', fontSize: '0.8rem', cursor: 'pointer' }}
+              >Read OpenAI's data retention policy</button>
             </div>
           </label>
         </div>
-
-        {/* How It Works */}
-        {!!window.WakeWordBridge && (
-          <div style={{
-            background: '#1e1f29',
-            border: '1px solid #44475a',
-            borderRadius: '8px',
-            padding: '12px 14px',
-            marginTop: '12px',
-            marginBottom: '4px',
-          }}>
-            <p style={{ ...sectionHeadingStyle, margin: '0 0 8px 0' }}>How It Works</p>
-            <ol style={{ margin: 0, paddingLeft: '18px', color: '#9aa5c4', fontSize: '0.84rem', lineHeight: '1.6' }}>
-              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> and wait for the tone before speaking.</li>
-              <li>Speak your question or command.</li>
-              <li>Stop talking. After 1.5 seconds of silence you'll hear a second tone confirming your message was sent.</li>
-              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> again after each response to continue the conversation.</li>
-            </ol>
-          </div>
-        )}
 
         {/* Voice Response */}
         <p style={sectionHeadingStyle}>Voice Response</p>

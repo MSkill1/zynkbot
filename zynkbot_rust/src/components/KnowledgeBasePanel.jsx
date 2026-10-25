@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { invoke } from '@tauri-apps/api/core';
 import "../styles/KnowledgeBasePanel.css";
 
-export default function KnowledgeBasePanel({ userId, onManageDocuments }) {
+export default function KnowledgeBasePanel({ userId }) {
   const [kbFolderPath, setKbFolderPath] = useState("");
   const [isLoading, setIsLoading] = useState(true);
 
@@ -52,7 +52,10 @@ export default function KnowledgeBasePanel({ userId, onManageDocuments }) {
   return (
     <div className="knowledge-base-panel">
       <div className="panel-content">
-        {/* KB Folder Path (Read-only) */}
+        {/* KB Folder Path (Read-only). Not on the phone: the folder is inside the app's
+            storage and nothing else can open it, so the path told the user nothing
+            (Matt, 2026-10-25). The desktop keeps it, since folders are chosen there. */}
+        {!window.AndroidFolderPicker && (
         <div className="setting-row">
           <label className="setting-label">KB Folder:</label>
           <div className="directory-selector">
@@ -74,34 +77,16 @@ export default function KnowledgeBasePanel({ userId, onManageDocuments }) {
             )}
           </div>
         </div>
-
-        {/* Action Buttons */}
-        <div className="setting-row button-row">
-          <button
-            onClick={onManageDocuments}
-            style={{
-              width: '100%',
-              padding: '10px',
-              background: '#ffb86c',
-              color: '#282a36',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-              fontSize: '0.9rem'
-            }}
-          >
-            Knowledge Base Manager
-          </button>
-        </div>
+        )}
 
         {/* Help Text */}
         <div className="help-text">
           <p>
-            <strong>How it works:</strong> Place plain text files in your KB folder, then click "Knowledge Base Manager" to index them.
-            To search your documents, click the 📚 KB button in the message input area, then send your question.
-            Zynkbot will search for relevant content using semantic similarity.
-            (DOCX support coming soon)
+            <strong>How it works:</strong>{' '}
+            {window.AndroidFolderPicker
+              ? 'Share a file to the Zynkbot drive, open it under ZynkLink → Browse shared files on this device, and tap "→ KB". Then index it below.'
+              : 'Put documents in the folder above, then index them below.'}
+            To search them, turn on the 📚 KB button under the message box in chat and ask your question; Zynkbot answers from your documents.
           </p>
           <p className="help-examples">
             <strong>Examples:</strong> Tourist guides, API documentation, research papers, course materials, technical specifications

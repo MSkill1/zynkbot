@@ -178,6 +178,10 @@ export function useVoiceSession({ setMessages }) {
     () => window.WakeWordBridge ? window.WakeWordBridge.isModelReady() : false
   );
   const [wakeWordDownloadProgress, setWakeWordDownloadProgress] = useState(0);
+  // off / loading / listening / dictating / turn / paused, pushed by WakeWordService.
+  const [wakeState, setWakeState] = useState(() => {
+    try { return window.WakeWordBridge?.wakeState?.() || ''; } catch (_) { return ''; }
+  });
   const [wakeWordDownloadError, setWakeWordDownloadError] = useState('');
 
   // localStorage-persisting setters
@@ -340,6 +344,7 @@ export function useVoiceSession({ setMessages }) {
     // commands, spoken reply, Stop, tap-Z-to-cancel). The finished exchange reaches
     // this thread through window.__nativeTurns. Retired 2026-09-07.
     window.__wakeWordModelReady = () => setWakeWordModelReady(true);
+    window.__wakeWordState = (s) => setWakeState(String(s || ''));
     window.__wakeWordDownloadProgress = (n) => setWakeWordDownloadProgress(n);
     window.__wakeWordDownloadError = (msg) => {
       setWakeWordDownloadError(msg);
@@ -371,6 +376,7 @@ export function useVoiceSession({ setMessages }) {
 
     return () => {
       window.__wakeWordModelReady = null;
+      window.__wakeWordState = null;
       window.__wakeWordDownloadProgress = null;
       window.__wakeWordDownloadError = null;
       window.__handleScreenOffTranscript = null;
@@ -445,6 +451,7 @@ export function useVoiceSession({ setMessages }) {
     isNativeSpeaking,
     isDictating,
     wakeWordModelReady,
+    wakeState,
     wakeWordDownloadProgress,
     wakeWordDownloadError,
     // Functions
