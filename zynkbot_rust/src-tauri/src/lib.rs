@@ -2334,6 +2334,7 @@ pub fn run() {
             commands::memory::find_memory_source,
             commands::memory::update_memory,
             commands::memory::update_memory_original_text,
+            commands::memory::keep_memory,
             commands::memory::list_pending_memory_cards,
             commands::memory::answer_memory_card,
             commands::memory::delete_memory,

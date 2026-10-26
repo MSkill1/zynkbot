@@ -384,6 +384,10 @@ The ring plays at full alarm volume and the phone's generic software echo cancel
 
 Relationship candidates are chosen by embedding similarity and entities alone; the only use of time today is the stored date printed on each memory line in the prompt. Parked until the fact-per-message pipeline has run for a while: if related facts go unlinked, add time as a candidate source, not a score. Facts from the same conversation session as candidates regardless of similarity; facts whose event dates fall within a few days of each other; and the two dates in the classifier prompt so it can tell an update (weeks apart) from siblings (same afternoon). Not for recall ranking: a recency weight is a decay on exactly the old facts the recall bench wants back, and its misses were semantic.
 
+### Periodic memory review (planned; Matt 2026-10-26)
+
+"What have you learned about me in the last day / week / month?" Zynkbot lists it from the memories of that span, grouped the way Memory Manager groups them, says what it is unsure of, and a typed or dictated reply corrects the record: edit, delete, keep (a passing fact that should last) or expire. Builds on the day grouping in Memory Manager and the passing-fact expiry added 2026-10-26; the correction step is the memory-correction card applied to a whole reply rather than one message.
+
 ### Web Search Quality (after v1.0)
 
 The current web search (DuckDuckGo, top 3 pages fetched for content) is a first pass, not a finished feature — real work is planned here to bring it closer to what Claude and OpenAI's own search does (better result ranking, more reliable content extraction, maybe a better search backend). Fold this question into that work rather than deciding it in isolation:

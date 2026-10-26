@@ -39,6 +39,19 @@ pub struct MemoryExtras {
     pub tone: Option<String>,
     #[serde(default)]
     pub entities: Option<Vec<EntityOut>>,
+    /// true for something over in days or weeks (an errand, a parking level, a trip,
+    /// this week's mood); false or absent for what stays true about the user (2026-10-26).
+    #[serde(default)]
+    pub passing: Option<bool>,
+}
+
+/// How long a passing fact stays in recall after its day: two weeks after the event
+/// (or after it was said, when the event day is unknown or already past).
+pub const PASSING_DAYS: i64 = 14;
+
+pub fn passing_expiry(event_date: Option<chrono::DateTime<chrono::Utc>>, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    let base = match event_date { Some(d) if d > now => d, _ => now };
+    base + chrono::Duration::days(PASSING_DAYS)
 }
 
 /// Prompt text describing the extra fields. Shared by every backend.
@@ -49,7 +62,8 @@ pub fn prompt_instructions(today: NaiveDate) -> String {
 - "namespace": one of {namespaces}. Pick the one a person would file this under; "personal" only when nothing more specific fits.
 - "tags": 1 to 3 short lowercase topic words (e.g. ["keto", "chili"], ["elden ring"]).
 - "tone": the user's tone in this message, one of "positive", "neutral", "negative", "frustrated", "anxious", "excited".
-- "entities": the people, places, organisations and named things mentioned, each as {{"name": "...", "kind": "person|place|org|thing"}}; an empty list if none."#,
+- "entities": the people, places, organisations and named things mentioned, each as {{"name": "...", "kind": "person|place|org|thing"}}; an empty list if none.
+- "passing": true when the fact is over in days or weeks (an errand, where something is parked, an appointment, a trip, how the user feels this week); false when it stays true about the user (who they are, what they own, the people in their life, habits, health, likes)."#,
         today = today.format("%Y-%m-%d"),
         namespaces = CANONICAL_NAMESPACES.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", "),
     )
@@ -61,7 +75,8 @@ pub const SCHEMA_PROPERTIES: &str = r#"
     "namespace": {"type": "string"},
     "tags": {"type": "array", "items": {"type": "string"}},
     "tone": {"type": "string"},
-    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}}"#;
+    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}},
+    "passing": {"type": "boolean"}"#;
 
 /// A model-supplied event date is kept only if it parses, is not absurd, and is
 /// not the Jan-1 placeholder unless the text itself talks about January 1 or New Year.
@@ -193,6 +208,17 @@ pub fn is_rewrite_request(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two weeks after the event when it is ahead, two weeks from now otherwise (2026-10-26).
+    #[test]
+    fn passing_expiry_is_two_weeks_after_the_event_or_now() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-26T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let ahead = chrono::DateTime::parse_from_rfc3339("2026-11-20T00:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let past = chrono::DateTime::parse_from_rfc3339("2026-09-24T00:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert_eq!(passing_expiry(Some(ahead), now), ahead + chrono::Duration::days(PASSING_DAYS));
+        assert_eq!(passing_expiry(Some(past), now), now + chrono::Duration::days(PASSING_DAYS));
+        assert_eq!(passing_expiry(None, now), now + chrono::Duration::days(PASSING_DAYS));
+    }
 
     fn today() -> NaiveDate { NaiveDate::from_ymd_opt(2026, 9, 7).unwrap() }
 

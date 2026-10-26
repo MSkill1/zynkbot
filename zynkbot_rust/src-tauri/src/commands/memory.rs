@@ -283,6 +283,22 @@ pub async fn restore_memory(memory_id: i32) -> Result<bool, String> {
     Ok(true)
 }
 
+/// A passing fact the user wants kept: clears its expiry so it stays in recall, and
+/// bumps updated_at so the change syncs (2026-10-26).
+#[tauri::command]
+pub async fn keep_memory(memory_id: i32) -> Result<bool, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    sqlx::query("UPDATE memories SET is_ephemeral = 0, expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(memory_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to keep memory: {}", e))?;
+    println!("[Rust] keep_memory: memory #{} no longer expires", memory_id);
+    Ok(true)
+}
+
 /// Delete a memory and propagate deletion to synced devices
 #[tauri::command]
 pub async fn delete_memory(memory_id: i32) -> Result<bool, String> {

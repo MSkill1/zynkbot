@@ -25,6 +25,9 @@ pub struct Memory {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f64>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The day the thing happened, when the memory has one (2026-10-26).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_date: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub struct ConversationEngine {
@@ -38,6 +41,17 @@ pub struct ConversationEngine {
 /// What the model is shown for one memory: the stored fact, then "(you said: …)" when
 /// the user's own words differ from it. Capped so a long dictation does not crowd out
 /// the other memories.
+/// The event's day, printed only when it is not the day the memory was stored: the
+/// model read "driving to the funeral on September 24" as a plan when the line carried
+/// only the stored date (Matt, 2026-10-26).
+pub fn event_note(mem: &Memory) -> Option<String> {
+    let ev = mem.event_date?;
+    if ev.date_naive() == mem.created_at.date_naive() {
+        return None;
+    }
+    Some(ev.format("%B %-d, %Y").to_string())
+}
+
 pub fn memory_line(content: &str, original_text: Option<&str>) -> String {
     let normalise = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     match original_text {
@@ -267,7 +281,10 @@ impl ConversationEngine {
                 let said = cut_chars(first.original_text.as_deref().unwrap_or(""), quote_chars);
                 context.push_str(&format!("{}. ({}) You said: \"{}\"\n", idx, date_str, said));
                 for mem in members {
-                    context.push_str(&format!("   - {}\n", cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS)));
+                    match event_note(mem) {
+                        Some(d) => context.push_str(&format!("   - {} (about {})\n", cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS), d)),
+                        None => context.push_str(&format!("   - {}\n", cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS))),
+                    }
                 }
                 println!("[Engine]   Including a group of {} facts from one message", members.len());
                 continue;
@@ -279,7 +296,10 @@ impl ConversationEngine {
             // the content held ("I saved a note but don't know what the item was",
             // 2026-10-08): the fact goes first, the user's words after it when they differ.
             let text_for_llm = if self.on_device { cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS) } else { memory_line(&mem.content, mem.original_text.as_deref()) };
-            let date_str = mem.created_at.format("%B %-d, %Y").to_string();
+            let date_str = match event_note(mem) {
+                Some(d) => format!("{}; about {}", mem.created_at.format("%B %-d, %Y"), d),
+                None => mem.created_at.format("%B %-d, %Y").to_string(),
+            };
             context.push_str(&format!("{}. ({}) {}\n", idx, date_str, text_for_llm));
             // Character-based, not byte-based: a byte slice panics inside a multi-byte
             // character (an em dash at bytes 59..62 killed a Spanish translation
@@ -316,7 +336,7 @@ impl ConversationEngine {
             // "Background, not the topic" (Matt, 2026-10-25): the phone's model answered
             // "his most notable achievement" about France because a recalled memory
             // about France sat in the prompt and it took that for the subject.
-            "Answer the newest message. The recent conversation and the memories below are background; use them only when they bear on the question. If they do not hold the number or date asked for, say you do not have it; never put another figure in its place. Keep it short: a few sentences, unless they ask for more.\n\n".to_string()
+            "Answer the newest message. The recent conversation and the memories below are background; use them only when they bear on the question. If they do not hold the number or date asked for, say you do not have it; never put another figure in its place. A memory dated before today describes something that has already happened; 'about' gives the day it happened. Keep it short: a few sentences, unless they ask for more.\n\n".to_string()
         } else {
             format!("Today's date is {today}.\n\n")
         };
@@ -540,7 +560,7 @@ mod tests {
             original_text: None,
             title: Some("Location".to_string()),
             similarity: Some(0.85),
-            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(), event_date: None,
         };
 
         let linked = Memory {
@@ -549,7 +569,7 @@ mod tests {
             original_text: None,
             title: Some("Previous location".to_string()),
             similarity: Some(0.42),
-            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(), event_date: None,
         };
 
         let entity_matched_only = Memory {
@@ -558,7 +578,7 @@ mod tests {
             original_text: None,
             title: Some("Texas trip".to_string()),
             similarity: Some(0.28),
-            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(), event_date: None,
         };
 
         // Replicate the fixed engine_memories assembly: recalled + linked only
@@ -618,7 +638,7 @@ mod on_device_prompt_tests {
     }
     #[test]
     fn on_device_memory_lines_carry_the_fact_only() {
-        let mems = vec![Memory { id: 1, content: "Matt has a cat named Louie.".into(), original_text: Some("I have a cat named Louie and he is orange".into()), title: None, similarity: Some(0.9), created_at: chrono::Utc::now() }];
+        let mems = vec![Memory { id: 1, content: "Matt has a cat named Louie.".into(), original_text: Some("I have a cat named Louie and he is orange".into()), title: None, similarity: Some(0.9), created_at: chrono::Utc::now(), event_date: None }];
         let on = ConversationEngine::new().with_on_device(true).build_memory_context(&mems, "q", false);
         assert!(on.contains("Matt has a cat named Louie.") && !on.contains("you said"));
         let custom = ConversationEngine::new().build_memory_context(&mems, "q", false);
@@ -627,7 +647,7 @@ mod on_device_prompt_tests {
     #[test]
     fn facts_from_one_message_are_written_as_one_block_with_the_quote_once() {
         let said = "I have a cat named Louie and I'm flying to Denver Thursday for my nephew's wedding.";
-        let m = |id: i32, content: &str, said: Option<&str>| Memory { id, content: content.into(), original_text: said.map(str::to_string), title: None, similarity: Some(0.9), created_at: chrono::Utc::now() };
+        let m = |id: i32, content: &str, said: Option<&str>| Memory { id, content: content.into(), original_text: said.map(str::to_string), title: None, similarity: Some(0.9), created_at: chrono::Utc::now(), event_date: None };
         let mems = vec![
             m(1, "Matt has a cat named Louie.", Some(said)),
             m(2, "Matt's dentist is Dr. Patel.", Some("I switched my dentist to Dr. Patel last week.")),
@@ -640,6 +660,27 @@ mod on_device_prompt_tests {
             assert!(ctx.contains("Matt's dentist is Dr. Patel."), "the single fact stays a line: {}", ctx);
             assert!(ctx.contains("1. ") && ctx.contains("2. ") && !ctx.contains("3. "), "two items, not three: {}", ctx);
         }
+    }
+
+    /// A memory about a day other than the one it was stored on says so, in the group
+    /// and alone; the same day prints nothing extra (2026-10-26, the funeral read as a plan).
+    #[test]
+    fn memory_lines_carry_the_event_day_when_it_differs() {
+        let stored = chrono::DateTime::parse_from_rfc3339("2026-09-20T15:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let event = chrono::DateTime::parse_from_rfc3339("2026-09-24T00:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let said = "I'm driving to my uncle's funeral on the 24th, and my cousin Ann is coming too.";
+        let m = |id: i32, content: &str, said: Option<&str>, ev: Option<chrono::DateTime<chrono::Utc>>| Memory { id, content: content.into(), original_text: said.map(str::to_string), title: None, similarity: Some(0.9), created_at: stored, event_date: ev };
+        let lone = vec![m(1, "Matt is driving to his uncle's funeral.", Some(said), Some(event))];
+        let ctx = ConversationEngine::new().with_on_device(true).build_memory_context(&lone, "q", false);
+        assert!(ctx.contains("1. (September 20, 2026; about September 24, 2026) Matt is driving"), "{}", ctx);
+        let same_day = vec![m(1, "Matt is driving to his uncle's funeral.", Some(said), Some(stored))];
+        let ctx = ConversationEngine::new().build_memory_context(&same_day, "q", false);
+        assert!(ctx.contains("1. (September 20, 2026) Matt is driving"), "{}", ctx);
+        let group = vec![m(1, "Matt is driving to his uncle's funeral.", Some(said), Some(event)), m(2, "Matt's cousin Ann is coming to the funeral.", Some(said), None)];
+        let ctx = ConversationEngine::new().build_memory_context(&group, "q", false);
+        assert!(ctx.contains("   - Matt is driving to his uncle's funeral. (about September 24, 2026)\n   - Matt's cousin Ann is coming to the funeral.\n"), "{}", ctx);
+        let p = ConversationEngine::new().with_on_device(true).build_prompt("q", None, None, false, Some("Matt"));
+        assert!(p.contains("already happened"));
     }
 
     #[test]
@@ -655,8 +696,9 @@ mod on_device_prompt_tests {
         let p = e.build_prompt("hello", Some(&turns(2)), None, false, Some("Matt"));
         let instructions = &p[..p.find("RECENT CONVERSATION").unwrap()];
         // 140 until 2026-10-25; the "background, not the topic" line (Matt) added about twenty words on purpose.
-        // 165 → 190 on 2026-10-26 for the "say you do not have it" line (Matt).
-        assert!(instructions.split_whitespace().count() < 190, "{} words", instructions.split_whitespace().count());
+        // 165 → 190 on 2026-10-26 for the "say you do not have it" line (Matt); 190 → 210 the same day
+        // for the "already happened" line (the funeral read as a plan).
+        assert!(instructions.split_whitespace().count() < 210, "{} words", instructions.split_whitespace().count());
         assert!(p.contains("WEB_SEARCH_NEEDED"));
     }
     #[test]
@@ -692,7 +734,7 @@ mod on_device_prompt_tests {
     #[test]
     fn on_device_recalls_four_memories() {
         let e = ConversationEngine::new().with_on_device(true);
-        let mems: Vec<Memory> = (0..7).map(|i| Memory { id: i, content: format!("fact number {i}"), original_text: None, title: None, similarity: Some(0.9), created_at: chrono::Utc::now() }).collect();
+        let mems: Vec<Memory> = (0..7).map(|i| Memory { id: i, content: format!("fact number {i}"), original_text: None, title: None, similarity: Some(0.9), created_at: chrono::Utc::now(), event_date: None }).collect();
         let ctx = e.build_memory_context(&mems, "question", false);
         assert_eq!(ctx.matches("fact number").count(), 4);
         assert_eq!(ConversationEngine::new().build_memory_context(&mems, "question", false).matches("fact number").count(), 7);

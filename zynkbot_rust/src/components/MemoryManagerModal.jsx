@@ -387,6 +387,37 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     }
   };
 
+  // A passing fact (an errand, a parking level, a trip) expires two weeks after its day
+  // and leaves recall; it stays here with a Keep button (2026-10-26).
+  const expiryDate = (mem) => {
+    if (!mem || !mem.expires_at) return null;
+    const d = new Date(String(mem.expires_at).replace(' UTC', 'Z').replace(' ', 'T'));
+    return isNaN(d.getTime()) ? null : d;
+  };
+  const passingState = (mem) => {
+    const d = expiryDate(mem);
+    if (!d) return null;
+    return d.getTime() < Date.now() ? 'expired' : 'passing';
+  };
+  const passingText = (mem) => {
+    const d = expiryDate(mem);
+    if (!d) return '';
+    return passingState(mem) === 'expired'
+      ? `a passing fact; expired on ${d.toLocaleDateString()} and left out of recall.`
+      : `a passing fact; leaves recall after ${d.toLocaleDateString()}.`;
+  };
+  const handleKeep = async (memoryId) => {
+    try {
+      await invoke('keep_memory', { memoryId });
+      await fetchMemories();
+      setSelectedMemory(prev => (prev && prev.id === memoryId) ? { ...prev, expires_at: null, is_ephemeral: false } : prev);
+      if (onMemoriesChanged) onMemoriesChanged();
+    } catch (error) {
+      console.error('Failed to keep memory:', error);
+      alert(`Error keeping memory: ${error}`);
+    }
+  };
+
   const handleDeleteRelationship = async (linkId) => {
     if (!await confirmDialog('Are you sure you want to delete this relationship?')) {
       return;
@@ -767,6 +798,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             REPLACED
           </span>
         )}
+        {passingState(mem) === 'expired' && (
+          <span title="A passing fact whose time has passed; it is left out of recall" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
+            EXPIRED
+          </span>
+        )}
         <span style={{ color: '#6272a4', fontSize: '0.75rem', flex: 1 }}>
           {inGroup ? '' : new Date(mem.created_at).toLocaleDateString()}
         </span>
@@ -818,6 +854,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               {mem.temporal_status === 'superseded' && (
                 <span className="memory-namespace-badge" title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a' }}>
                   REPLACED
+                </span>
+              )}
+              {passingState(mem) === 'expired' && (
+                <span className="memory-namespace-badge" title="A passing fact whose time has passed; it is left out of recall" style={{ background: '#44475a' }}>
+                  EXPIRED
                 </span>
               )}
             </div>
@@ -1093,6 +1134,16 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         <div style={{ marginTop: '6px' }}>
                           <button type="button" className="edit-button" style={{ height: '36px', padding: '0 14px' }} title="This memory becomes current again; both are kept" onClick={() => handleMakeCurrent(selectedMemory.id)}>
                             Undo replacement
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {selectedMemory.expires_at && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> {passingText(selectedMemory)}
+                        <div style={{ marginTop: '6px' }}>
+                          <button type="button" className="edit-button" style={{ height: '36px', padding: '0 14px' }} title="Keep this memory: it stops expiring and stays in recall" onClick={() => handleKeep(selectedMemory.id)}>
+                            Keep
                           </button>
                         </div>
                       </div>
@@ -1528,6 +1579,14 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         <strong>Status:</strong> replaced by a newer memory. Kept as history and left out of recall.{' '}
                         <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="This memory becomes current again; both are kept">
                           Undo replacement
+                        </button>
+                      </div>
+                    )}
+                    {selectedMemory.expires_at && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> {passingText(selectedMemory)}{' '}
+                        <button type="button" onClick={() => handleKeep(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="Keep this memory: it stops expiring and stays in recall">
+                          Keep
                         </button>
                       </div>
                     )}

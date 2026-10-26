@@ -653,6 +653,7 @@ pub async fn generate_reply(
             title: mem.title.clone(),  // Already Option<String>, no need to wrap in Some()
             similarity: mem.similarity,
             created_at: mem.created_at,
+            event_date: mem.event_date,
         })
         .collect();
 
@@ -2288,6 +2289,7 @@ fn merge_extras(a: crate::memory_extras::MemoryExtras, b: crate::memory_extras::
         tags: a.tags.or(b.tags),
         tone: a.tone.or(b.tone),
         entities: a.entities.or(b.entities),
+        passing: a.passing.or(b.passing),
     }
 }
 
@@ -2385,7 +2387,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             // its similarity, so the classifier sees the pair that conflicts (2026-10-25).
             if let Some((wrong, _)) = &bg_correction {
                 let held: Vec<(i32, String, Option<String>)> = sqlx::query_as(
-                    "SELECT id, content, title FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status != 'superseded') AND content LIKE ? ORDER BY created_at DESC LIMIT 10")
+                    "SELECT id, content, title FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status != 'superseded') AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now')) AND content LIKE ? ORDER BY created_at DESC LIMIT 10")
                     .bind(&bg_user_id).bind(format!("%{}%", wrong)).fetch_all(&db_pool).await.unwrap_or_default();
                 let mut forced: Vec<(i32, String, Option<String>, f32)> = held.into_iter().filter(|(id, _, _)| !bg_sibling_ids.contains(id)).map(|(id, content, title)| (id, content, title, 1.0)).collect();
                 println!("[RUST BACKGROUND] Name correction {} -> {}: {} memories hold the old name", wrong, bg_correction.as_ref().map(|c| c.1.as_str()).unwrap_or(""), forced.len());
@@ -2664,6 +2666,16 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             ).await {
                 Ok(id) => {
                     println!("[RUST BACKGROUND] ✅ Memory stored with ID: {}", id);
+                    // A passing fact (an errand, a parking level, this week's trip) leaves recall
+                    // two weeks after its day and stays in Memory Manager with a Keep button
+                    // (Matt, 2026-10-26). Lasting facts are untouched.
+                    if llm_extras.passing == Some(true) {
+                        let until = crate::memory_extras::passing_expiry(event_date, chrono::Utc::now());
+                        match sqlx::query("UPDATE memories SET is_ephemeral = 1, expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(until).bind(id).execute(&db_pool).await {
+                            Ok(_) => println!("[RUST BACKGROUND] Passing fact: memory #{} leaves recall after {}", id, until.format("%Y-%m-%d")),
+                            Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not mark memory #{} as passing: {}", id, e),
+                        }
+                    }
                     bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
                     crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "stored").await;
                     id

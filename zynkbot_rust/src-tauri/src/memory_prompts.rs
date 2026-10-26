@@ -40,6 +40,7 @@ For each fact give:
 - \"fact\": one sentence in the third person, starting with \"{subject}\"
 - \"title\": up to 50 characters
 - \"event_date\": when it happened, as \"YYYY-MM-DD\", only if the message says or clearly implies it (\"yesterday\", \"last Tuesday\", \"in 2019\"), resolved against today's date; otherwise null. Never guess a year.
+- \"passing\": true when the fact is over in days or weeks (an errand, where something is parked, an appointment, a trip, how {subject} feels this week); false when it stays true about {subject} (who they are, what they own, the people in their life, habits, health, likes)
 {extra_fields}
 Answer with JSON only, in this shape:
 {shape}
@@ -49,7 +50,7 @@ Answer with JSON only, in this shape:
         max = MAX_FACTS,
         message = message.replace('"', "'"),
         extra_fields = if slim { String::new() } else { format!("- \"namespace\": one of {namespaces}; \"personal\" only when nothing more specific fits\n- \"tags\": 1 to 3 short lowercase topic words\n- \"tone\": {subject}'s tone in the message, one of \"positive\", \"neutral\", \"negative\", \"frustrated\", \"anxious\", \"excited\"\n- \"entities\": the people, places, organisations and named things in the fact, each as {{\"name\": \"...\", \"kind\": \"person|place|org|thing\"}}; [] if none\n") },
-        shape = if slim { "{\"facts\": [{\"fact\": \"...\", \"title\": \"...\", \"event_date\": null}]}" } else { "{\"facts\": [{\"fact\": \"...\", \"title\": \"...\", \"event_date\": null, \"namespace\": \"personal\", \"tags\": [\"...\"], \"tone\": \"neutral\", \"entities\": []}]}" },
+        shape = if slim { "{\"facts\": [{\"fact\": \"...\", \"title\": \"...\", \"event_date\": null, \"passing\": false}]}" } else { "{\"facts\": [{\"fact\": \"...\", \"title\": \"...\", \"event_date\": null, \"passing\": false, \"namespace\": \"personal\", \"tags\": [\"...\"], \"tone\": \"neutral\", \"entities\": []}]}" },
     )
 }
 
@@ -64,7 +65,8 @@ pub const EXTRACTION_SCHEMA_SLIM: &str = r#"{
         "properties": {
           "fact": {"type": "string"},
           "title": {"type": "string"},
-          "event_date": {"type": ["string", "null"]}
+          "event_date": {"type": ["string", "null"]},
+          "passing": {"type": "boolean"}
         },
         "required": ["fact", "title"]
       }
@@ -85,6 +87,7 @@ pub const EXTRACTION_SCHEMA: &str = r#"{
           "fact": {"type": "string"},
           "title": {"type": "string"},
           "event_date": {"type": ["string", "null"]},
+          "passing": {"type": "boolean"},
           "namespace": {"type": "string"},
           "tags": {"type": "array", "items": {"type": "string"}},
           "tone": {"type": "string"},
@@ -284,6 +287,22 @@ mod tests {
         assert_eq!(out[0].title.as_deref(), Some("Cat Louie"));
         assert_eq!(out[1].extras.namespace.as_deref(), Some("travel"));
         assert_eq!(out[1].extras.entities.as_ref().unwrap()[0].name, "Indiana");
+        assert_eq!(out[0].extras.passing, None, "absent stays absent");
+    }
+
+    /// The passing flag parses from both shapes and is asked for in both prompts (2026-10-26).
+    #[test]
+    fn passing_facts_parse_and_are_asked_for() {
+        let text = r#"{"facts": [{"fact": "Matt parked on level 3", "title": "Parked on level 3", "event_date": null, "passing": true}]}"#;
+        let out = parse_extraction(text, "I parked on level 3 of the garage.");
+        assert_eq!(out[0].extras.passing, Some(true));
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 26).unwrap();
+        for slim in [true, false] {
+            let p = extraction_prompt_with("hi", "Matt", None, today, slim);
+            assert!(p.contains("\"passing\": true when"), "slim={slim}: {p}");
+            assert!(p.contains("\"passing\": false"), "the shape carries it, slim={slim}");
+        }
+        assert!(EXTRACTION_SCHEMA_SLIM.contains("\"passing\"") && EXTRACTION_SCHEMA.contains("\"passing\""));
     }
 
     #[test]
