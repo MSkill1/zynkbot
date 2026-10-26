@@ -380,6 +380,10 @@ The existing containment modes (HIPAA, Guardian, Sovereign, Child) are proofs of
 
 The ring plays at full alarm volume and the phone's generic software echo canceller does not remove it well enough for the wake detector to hear "Hey Zynk" over it (Pixel 10 Pro XL, 2026-10-25; Siri manages it with a hardware canceller fed the speaker signal, plus ducking). Try pulsing the ring, about 0.8 s on and 0.8 s off, so the detector gets clean gaps; "Hey Zynk" takes about a second to say. Half an hour; measured on both phones before it stays.
 
+### Time as a signal in relationship detection (parked; Matt 2026-10-25)
+
+Relationship candidates are chosen by embedding similarity and entities alone; the only use of time today is the stored date printed on each memory line in the prompt. Parked until the fact-per-message pipeline has run for a while: if related facts go unlinked, add time as a candidate source, not a score. Facts from the same conversation session as candidates regardless of similarity; facts whose event dates fall within a few days of each other; and the two dates in the classifier prompt so it can tell an update (weeks apart) from siblings (same afternoon). Not for recall ranking: a recency weight is a decay on exactly the old facts the recall bench wants back, and its misses were semantic.
+
 ### Web Search Quality (after v1.0)
 
 The current web search (DuckDuckGo, top 3 pages fetched for content) is a first pass, not a finished feature — real work is planned here to bring it closer to what Claude and OpenAI's own search does (better result ranking, more reliable content extraction, maybe a better search backend). Fold this question into that work rather than deciding it in isolation:

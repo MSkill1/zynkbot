@@ -673,3 +673,31 @@
     padding-right: 4px;
   }
 }
+
+/* Facts grouped under the message they came from, under a day header (2026-10-26) */
+.memory-day-label {
+  color: #bd93f9;
+  font-size: 0.8rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 6px 0 8px;
+}
+.memory-day { display: flex; flex-direction: column; gap: 10px; }
+.memory-group {
+  background: #1e1f29;
+  border: 1px solid #44475a;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.memory-group-said-label { color: #6272a4; font-size: 0.75rem; margin-bottom: 2px; }
+.memory-group-said { color: #f8f8f2; font-size: 0.9rem; font-style: italic; line-height: 1.35; margin-bottom: 6px; }
+.memory-list-item.in-group {
+  background: transparent;
+  border: none;
+  border-top: 1px solid #44475a;
+  border-radius: 0;
+  padding: 8px 0 6px;
+}
+.memory-list-item.in-group:hover { background: rgba(139, 233, 253, 0.06); }
+.memory-list-item.in-group.selected { background: rgba(80, 250, 123, 0.1); }

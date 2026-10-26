@@ -735,7 +735,7 @@ pub async fn get_full_memory_graph(
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
 
     let mut sql = String::from(
-        "SELECT id, title, content, namespace FROM memories WHERE TRUE"
+        "SELECT id, title, content, namespace, original_text, created_at, temporal_status FROM memories WHERE TRUE"
     );
     if user_id.is_some() { sql.push_str(" AND user_id = ?"); }
     if namespace.is_some() { sql.push_str(" AND namespace = ?"); }
@@ -746,6 +746,11 @@ pub async fn get_full_memory_graph(
         title: Option<String>,
         content: String,
         namespace: String,
+        /// The message the fact came from; facts from one message share it and the graph
+        /// draws them as one cluster (2026-10-26).
+        original_text: Option<String>,
+        created_at: String,
+        temporal_status: Option<String>,
     }
 
     let mut query = sqlx::query_as::<_, MemoryNode>(&sql);
@@ -789,7 +794,10 @@ pub async fn get_full_memory_graph(
             "id": m.id,
             "title": m.title,
             "content": m.content,
-            "namespace": m.namespace
+            "namespace": m.namespace,
+            "original_text": m.original_text,
+            "created_at": m.created_at,
+            "temporal_status": m.temporal_status
         }))
         .collect();
 

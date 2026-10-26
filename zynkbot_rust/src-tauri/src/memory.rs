@@ -256,7 +256,8 @@ async fn fetch_memories_by_ids(
     let sql = format!(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
-                is_syncable, is_shareable, event_type, event_date,
+                is_syncable, is_shareable, event_type,
+                CASE WHEN length(event_date) = 10 THEN event_date || 'T00:00:00+00:00' ELSE event_date END AS event_date,
                 link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE id IN ({})",
         placeholders
@@ -489,7 +490,8 @@ pub async fn list_memories(
     let mut sql = String::from(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
-                is_syncable, is_shareable, event_type, event_date,
+                is_syncable, is_shareable, event_type,
+                CASE WHEN length(event_date) = 10 THEN event_date || 'T00:00:00+00:00' ELSE event_date END AS event_date,
                 link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE user_id != 'system'",
     );
@@ -527,7 +529,8 @@ pub async fn get_memory(
     sqlx::query_as::<_, Memory>(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
-                is_syncable, is_shareable, event_type, event_date,
+                is_syncable, is_shareable, event_type,
+                CASE WHEN length(event_date) = 10 THEN event_date || 'T00:00:00+00:00' ELSE event_date END AS event_date,
                 link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE id = ?",
     )
