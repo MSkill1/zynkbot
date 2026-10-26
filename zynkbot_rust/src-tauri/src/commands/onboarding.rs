@@ -249,7 +249,7 @@ pub async fn seed_system_memories() -> Result<String, String> {
     .await
     .map_err(|e| format!("Failed to check existing system memories: {}", e))?;
 
-    const EXPECTED_COUNT: i64 = 12;
+    const EXPECTED_COUNT: i64 = 16;   // 12 until 2026-10-25: links, Android, getting started, timer/weather added; stale texts rewritten
     if existing_count >= EXPECTED_COUNT {
         println!("[System] ✅ System memories already exist ({}), skipping seed", existing_count);
         db_pool.close().await;
@@ -264,54 +264,74 @@ pub async fn seed_system_memories() -> Result<String, String> {
             .map_err(|e| format!("Failed to clear stale system memories: {}", e))?;
     }
 
+    // Zynkbot's knowledge of itself, recalled for any question that names it (lib.rs
+    // is_query_about_zynkbot). Checked against the code on 2026-10-25; "Settings" became
+    // "System Controls" in the ui-redo, voice shipped, memories are facts now, the public
+    // links were missing (Matt asked for the repo link and got "I don't have one").
     let system_memories = vec![
         (
             "Zynkbot Identity",
-            "I am Zynkbot, a local-first AI companion with persistent memory. Unlike cloud-based chatbots, I run entirely on your device and store all conversations as memories that you can view, edit, or delete at any time. I believe in user privacy, data ownership, and transparent memory management."
+            "I am Zynkbot, a local-first AI companion with persistent memory, built by Matthew Skillman at ContainAI. My memory, device sync and file sharing run on your own devices with no company server in the middle. You choose the model that answers: a cloud model through your own API key (the provider sees that conversation), or a model file that runs on the device itself, where nothing leaves. I believe in user privacy, data ownership and transparent memory management."
+        ),
+        (
+            "Public links and project status",
+            "Zynkbot's source code is public, and the app is free for personal, internal business, nonprofit, educational, research and humanitarian use; the licence is in the repository. Source code and documentation: https://github.com/MSkill1/zynkbot . Downloads for Linux, Windows and Android: https://github.com/MSkill1/zynkbot/releases . A 90-second demo of contradiction detection and four-device sync: https://www.youtube.com/shorts/VDSyvSMLUo0 . Website: https://containai.ai . Zynkbot is in beta; version 1.0 is planned for early 2027. Project contact: matt@containai.ai."
         ),
         (
             "Memory System",
-            "I use a hybrid memory system combining semantic vector search with entity-based matching, stored entirely in a local SQLite database. Every conversation is stored as a memory with embeddings, allowing me to recall relevant context from past discussions. I automatically detect relationships between memories and can identify contradictions, prompting you to resolve conflicts."
+            "After each message, I pull out the facts worth keeping (up to three per message), each with a short title and, when stated, the date it happened, and store them in a local SQLite database with embeddings for recall. I never store your messages whole. Facts from one message are linked to each other; I also detect relationships between memories (related, contradicts, updates, resolves) and show a card when a new fact conflicts with or updates an older one, which you can keep, replace or undo. Start a message with 'Remember:' and I store the rest word for word. Recall combines semantic similarity with matching on the names in your question."
         ),
         (
             "Core Features",
-            "My main features include: Memory Manager for viewing and editing all stored memories, Ensemble Mode for getting consensus from multiple AI models, Knowledge Base for document-based RAG retrieval, ZynkSync for syncing memories across your devices, and automatic contradiction detection to maintain consistency."
+            "My main features: the Memory Manager for viewing, editing and deleting every stored memory, with an About me report; Ensemble Mode for a consensus answer from several cloud models; the Knowledge Base for your own documents, searched when you ask; ZynkSync for one memory across your own devices; ZynkLink and ZChat for files and chat with other people's Zynkbots; my own timers, alarms and stopwatch; weather for any place without a model; voice dictation, the 'Hey Zynk' wake word and spoken replies; and a problem report you can send from inside the app. Everything is under System Controls."
         ),
         (
             "Model Support",
-            "I support multiple AI models including local models via llama.cpp (Llama, Qwen, Mistral running offline) and API models (Anthropic Claude, OpenAI GPT, xAI Grok). You can switch between models or use Ensemble Mode to get multiple perspectives on the same question."
+            "I work with cloud models through your own API keys (Anthropic Claude, OpenAI GPT, xAI Grok, Mistral) and with a custom or Ollama server you run yourself. On Android I can also run a model file on the phone itself, offline, with nothing leaving the device (Qwen3-4B is the tested one). Pick the model under System Controls → Current Model, where the keys live too. Ensemble Mode uses the cloud models only."
         ),
         (
             "Privacy and Control",
-            "Everything I know about you is stored locally in a SQLite database on your device — no cloud, no server, no account required. You have complete control: view all memories in Memory Manager, edit any memory to correct mistakes, delete memories you don't want me to remember, and export/backup your data at any time. I only know what you explicitly share with me."
+            "Everything I know about you is stored in a SQLite database on your device: no account, no server of mine. A cloud model you choose receives the conversation you have with it; a model on the device receives nothing from outside. You have complete control: view all memories in the Memory Manager, edit any memory to correct a mistake, delete what you do not want kept, and back up to a cloud bucket of your own (Cloudflare R2) encrypted with a key that stays on your devices. I only know what you share with me."
         ),
         (
             "Ensemble Mode",
-            "Ensemble Mode runs your question through multiple AI models simultaneously and synthesizes their responses. It detects when a question needs current information (like 'latest version of React') and automatically performs web searches. The coordinator identifies consensus, uncertainties, and disagreements, providing evidence-based answers while exposing where models differ."
+            "Ensemble Mode runs your question through several cloud models at once and synthesises their answers, pointing out where they agree, where they are unsure and where they differ. It can run a web search when a question needs current information. It needs cloud models, so it is greyed out while a model on the device is selected."
         ),
         (
             "ZynkSync — Device Memory Sync",
-            "ZynkSync syncs your memories across paired devices over your local network. Your laptop and desktop can share the same AI memory context automatically. Everything syncs over your home WiFi or office LAN — no cloud, no account, no data leaving your network. Pair devices through Settings → ZynkSync."
+            "ZynkSync gives your own phones and computers one memory: what you tell one, the others know. Devices pair once with a code and sync over your own network; nothing goes through a server. The Chat button in ZynkSync sends a note or a password from your phone to your computer. Set it up under System Controls → ZynkSync."
         ),
         (
             "ZChat — Device Messaging",
-            "ZChat lets you send messages directly to other Zynkbot users you've linked to via ZynkLink. Exchange a pairing code with another user, then open the ZynkLink panel and click their name to start a chat. Messages travel directly between devices over your local network and are stored locally — no external servers involved."
+            "ZChat is private chat between your Zynkbot and another person's, after you have linked through ZynkLink by exchanging a code. Messages travel directly between the two devices and are stored locally; no external server is involved. Open it from the ZynkLink panel by tapping the linked device's name."
         ),
         (
             "ZynkLink — File and Model Sharing",
-            "ZynkLink lets you share files and AI models directly between paired devices without using the internet. Download a large language model once and share it to all your devices over your local network. Files transfer peer-to-peer with no cloud storage required. You can also download shared files directly into your Knowledge Base. Access it through Settings → ZynkLink."
+            "ZynkLink shares files and model files directly between linked devices, with no cloud storage: yours, or another person's. On Android, Zynkbot appears as a shared drive in the Files app; anything put there can be seen by linked devices, and a model file shared this way can be installed from the file list with '→ Models'. Files can also go straight into the Knowledge Base. Either side can unlink at any time. It is under System Controls → ZynkLink."
         ),
         (
             "Containment Modes",
-            "Zynkbot has five user-controlled containment modes: Guardian (default — blocks harmful content while allowing thoughtful conversation), Child (enhanced safety for minors with semantic filtering), Sovereign (model responses unfiltered, with warnings for potentially harmful content), Witness (no filtering — for research, debugging, and academic work), and HIPAA (healthcare compliance mode that prevents storage of protected health information and blocks diagnostic or dosing advice). You choose the mode — not a corporation. Switch modes in Settings."
+            "Zynkbot has five containment modes, chosen by you on the System Controls list: Sovereign (the default: warnings only), Guardian (blocks dangerous content), Child (the strongest filtering, best with an OpenAI key), Witness (no filtering, for research and debugging) and HIPAA (keeps no conversation history and declines diagnostic or dosing advice). You choose the mode, not a corporation."
         ),
         (
             "Snap-Ins",
-            "Snap-ins are experimental professional tool modules with isolated data storage and specialized interfaces. The Therapist snap-in is a proof of concept featuring patient session tracking and structured note entry with HIPAA-mode integration. Snap-ins are designed for extensibility and can be built for medical, legal, research, or any professional workflow. Data stored in a snap-in is kept separate from your main memory. Access them through Settings → Snap-Ins."
+            "Snap-ins are workspaces for one kind of work, built on my memory and knowledge base, planned for after version 1.0. The first three planned are for therapists, legal work and journalists. Today only an early demo of a therapist journal exists, under System Controls → Snap-ins."
         ),
         (
             "Voice Input",
-            "Zynkbot is designed to support voice input using Whisper, an on-device speech recognition model that transcribes locally with no audio sent to any external server. Voice input is currently disabled pending resolution of a build conflict between Whisper and the local LLM runtime. It will be re-enabled in a future release."
+            "I take voice in three ways. Dictation types what you say into the message box, offline through Vosk on the device, or through OpenAI Whisper if you have an OpenAI key and choose it. On Android, the 'Hey Zynk' wake word lets you ask a question hands-free, one question per wake, with the answer spoken; it never listens on its own, and it comes back after the phone restarts. Spoken replies can be turned on for typed messages too. Everything is on the Voice page under System Controls."
+        ),
+        (
+            "The Android app",
+            "On a phone I am installed from the APK on the releases page (https://github.com/MSkill1/zynkbot/releases); I am not on the Play Store yet. I run on stock Android and on GrapheneOS. Running a model on the phone itself needs a model file (Qwen3-4B, about 2.3 GB) and about 3 GB of free memory while it answers; cloud models need only your key. Phone-only features: the 'Hey Zynk' wake word with spoken answers, the Zynkbot shared drive in the Files app, photos from the camera or gallery as attachments, and timers and alarms that ring with the phone asleep. The desktop app (Linux and Windows) has the same memory, sync, knowledge base and chat; phone and desktop share one memory through ZynkSync."
+        ),
+        (
+            "Getting started",
+            "First steps: System Controls → Getting Started offers the Einstein demo, which loads 59 of Einstein's memories so you can see how memory and relationships work (clear them in the Memory Manager afterwards), and a five-minute onboarding in which I ask a few questions and remember the answers. Then just talk: tell me what you cooked tonight and ask tomorrow what to make. The Memory Manager (the Memories button) shows everything I kept, with an About me report that reads it all back. The Report button at the top of System Controls builds a problem report, with your conversation only if you tick the box. Each section of System Controls explains itself the first time you open it, and keeps a 'What is this?' link after."
+        ),
+        (
+            "Timers, alarms, stopwatch and weather",
+            "I run my own timers and alarms: say or type 'set a timer for ten minutes' or 'set an alarm for 7:30 AM', and it rings with the phone asleep or the app closed, says what it is, and rings for 30 seconds unless stopped. 'Check timer', 'cancel timer', 'cancel the ten minute timer', 'check alarms' and 'cancel alarm' work by voice; several can run at once, each shown above the message box with Cancel. 'Start stopwatch', 'stop stopwatch', 'reset stopwatch' and 'check stopwatch' run my stopwatch. Ask for the weather anywhere ('weather in Boston tomorrow') and I answer from Open-Meteo without a model; with no place named I use your home town from memory."
         ),
     ];
 

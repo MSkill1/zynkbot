@@ -1204,6 +1204,7 @@ pub(crate) fn is_query_about_zynkbot(query: &str) -> bool {
         || q.contains("containment mode") || q.contains("snap-in") || q.contains("snapin")
         || q.contains("memory manager")
         || q.contains("knowledge base")
+        || q.contains("hey zynk") || q.contains("wake word")
 }
 
 // ============================================================================
