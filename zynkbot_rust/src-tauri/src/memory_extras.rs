@@ -159,6 +159,37 @@ pub fn clean_entities(entities: Option<&[EntityOut]>) -> Vec<EntityOut> {
     out
 }
 
+/// True when the message asks for the text to be worked on rather than says something
+/// about the user: translate, reprint, rewrite, reword, rephrase, paraphrase, proofread,
+/// or fix the grammar or spelling. Such messages carry someone else's words (a pasted
+/// conversation, a letter) and the phone's model extracted "facts" about the user from
+/// them (ice cream sales from a translation, 2026-10-25). The verb must be the request
+/// itself: at the start, after a politeness opener, or followed by its object ("translate
+/// this", "rewrite the following"). "I had to translate for my mother" is a fact, not a
+/// request, and passes (Matt, 2026-10-26).
+pub fn is_rewrite_request(message: &str) -> bool {
+    let head: String = message.trim().chars().take(160).collect::<String>().to_lowercase();
+    let head = head.replace(['\n', '\r'], " ");
+    let verbs = ["translate", "reprint", "rewrite", "re-write", "reword", "rephrase", "paraphrase", "proofread", "proof-read", "proof read"];
+    let openers = ["please ", "can you ", "could you ", "would you ", "will you ", "hey zynk, ", "hey zynk ", "zynkbot, ", "zynkbot ", "ok ", "okay ", "now "];
+    let mut start = head.as_str();
+    loop {
+        let mut stripped = false;
+        for o in openers { if let Some(rest) = start.strip_prefix(o) { start = rest.trim_start(); stripped = true; } }
+        if !stripped { break; }
+    }
+    for v in verbs {
+        if start.starts_with(v) { return true; }
+        // The verb with its object anywhere in the first 160 characters.
+        if let Some(i) = head.find(v) {
+            let after = head[i + v.len()..].trim_start();
+            if after.starts_with(':') || ["this", "that", "the following", "it", "these", "my ", "the text", "the message", "what i", "into", "to spanish", "to english", "to french", "to german", "to italian", "to portuguese", "in spanish", "in english", "in french", "in german"].iter().any(|o| after.starts_with(o)) { return true; }
+        }
+    }
+    let grammar = ["fix the grammar", "fix my grammar", "fix the spelling", "fix my spelling", "correct the grammar", "correct my grammar", "check the grammar", "check my grammar", "check the spelling", "correct the spelling", "fix the typos", "fix typos"];
+    grammar.iter().any(|g| head.contains(g))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +249,30 @@ mod tests {
         assert_eq!(out[0], EntityOut { name: "Vermont".into(), kind: "place".into() });
         assert_eq!(out[1].kind, "person");
         assert_eq!(out[2].kind, "thing");
+    }
+
+    #[test]
+    fn rewrite_requests_are_recognised() {
+        for m in [
+            "Translate this to Spanish: how is selling the ice cream going?",
+            "Please translate the following into French.",
+            "Can you rewrite this so it sounds more formal?",
+            "reprint that message with: how is selling the ice cream going",
+            "Proofread: Dear Mr Jones, I am writing to ask...",
+            "Hey Zynk, reword this for me",
+            "Could you fix the grammar in this paragraph?",
+            "Paraphrase the text below in plain English",
+        ] { assert!(is_rewrite_request(m), "{m}"); }
+    }
+
+    #[test]
+    fn statements_about_the_user_pass() {
+        for m in [
+            "I had to translate for my mother at the doctor today.",
+            "My daughter is learning to translate Spanish poetry.",
+            "I rewrote my resume this weekend and sent it to three firms.",
+            "I'm flying to Denver Thursday for my nephew's wedding.",
+            "What's a good recipe for raspberry pie?",
+        ] { assert!(!is_rewrite_request(m), "{m}"); }
     }
 }

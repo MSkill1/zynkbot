@@ -1341,7 +1341,11 @@ pub async fn generate_reply(
 
     // Gate 1: pure trivia (single-word acks, filler phrases) never reaches a model.
     // Explicit "Remember:" bypasses it.
-    let memory_gate_passed = is_explicit_remember || engine.is_memory_worthy(&query);
+    // A request to translate, reprint, rewrite or proofread carries someone else's words;
+    // nothing in it is learned about the user (Matt, 2026-10-26). "Remember:" still stores.
+    let rewrite_request = !is_explicit_remember && crate::memory_extras::is_rewrite_request(&query);
+    if rewrite_request { println!("[RUST] Translate/rewrite request: no memory extraction for this message"); }
+    let memory_gate_passed = is_explicit_remember || (engine.is_memory_worthy(&query) && !rewrite_request);
     let on_device_flow = forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local");
     // Call 1's answer. Cloud and custom: the MEMORY line, or an old-style fact line, says
     // yes; no line at all means no memory. On-device: no marker is asked for, so every
