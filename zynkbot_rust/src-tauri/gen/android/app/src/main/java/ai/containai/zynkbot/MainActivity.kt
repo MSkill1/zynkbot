@@ -1132,8 +1132,9 @@ class MainActivity : TauriActivity() {
         isInForeground = true
         // Coming back from another app the keyboard was up over the settings (Matt,
         // 2026-10-25): drop focus so it stays down until the message box is tapped.
-        try { webViewRef?.get()?.evaluateJavascript("document.activeElement&&document.activeElement.blur&&document.activeElement.blur();", null) } catch (_: Exception) {}
+        try { webViewRef?.get()?.evaluateJavascript("document.activeElement&&document.activeElement.blur&&document.activeElement.blur();window.__zynkResumed&&window.__zynkResumed();", null) } catch (_: Exception) {}
         Log.i(TAG_LIFECYCLE, "onResume — isInForeground=true")
+        ZynkNotify.cancel(this)
         maybeAskBatteryExemption()
         // A file arrived through the Files app or the Share button while we were away.
         if (ZynkShareProvider.takeChanged(this)) {
@@ -1254,6 +1255,8 @@ class MainActivity : TauriActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // Rust posts the memory-card notification through this bridge (2026-10-26).
+        try { ZynkCore.nativeInit(applicationContext) } catch (e: Throwable) { Log.w(TAG_LIFECYCLE, "nativeInit: ${e.message}") }
         // Reserve the status bar and the gesture bar. Edge-to-edge is mandatory on
         // Android 15+ (targetSdk 36), and the page cannot pad for them itself:
         // env(safe-area-inset-top) is 0 on a phone without a display cutout, so

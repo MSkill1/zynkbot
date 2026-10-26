@@ -22,6 +22,13 @@ pub trait ResponseSink: Send + Sync {
     /// progress or a detected contradiction. Default no-op: sinks that don't
     /// surface these (such as a bare voice reply) simply ignore them.
     fn event(&self, _name: &str, _payload: Value) {}
+
+    /// A card was raised and the user may not be looking: on Android, post a
+    /// notification that opens the app (2026-10-26). Default no-op elsewhere.
+    fn card_notice(&self, _title: &str, _text: &str) {
+        #[cfg(target_os = "android")]
+        crate::android_jni::post_notice(_title, _text);
+    }
 }
 
 /// Forwards a response to the Tauri WebView, preserving the event names the

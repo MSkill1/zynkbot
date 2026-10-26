@@ -823,6 +823,23 @@ export default function App() {
   useEffect(() => {
     let unlisten;
 
+    // Cards that keep (2026-10-26): a card raised while the window was away is a row in
+    // memory_cards; show the oldest unanswered one on open and on every return.
+    const checkPendingCards = async () => {
+      if (!userId) return;
+      try {
+        const cards = await invoke('list_pending_memory_cards', { userId });
+        if (cards && cards.length > 0) {
+          setCurrentConflict(prev => prev || cards[0]);
+          setShowConflictResolution(true);
+        }
+      } catch (e) { console.warn('[App] pending cards:', e); }
+    };
+    checkPendingCards();
+    window.__zynkResumed = checkPendingCards;
+    const onVisible = () => { if (document.visibilityState === 'visible') checkPendingCards(); };
+    document.addEventListener('visibilitychange', onVisible);
+
     const setupListener = async () => {
       unlisten = await listen('contradiction-detected', (event) => {
         console.log('[App] ⚠️ CONTRADICTION DETECTED from backend:', event.payload);
@@ -838,11 +855,13 @@ export default function App() {
     setupListener();
 
     return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (window.__zynkResumed === checkPendingCards) window.__zynkResumed = null;
       if (unlisten) {
         unlisten();
       }
     };
-  }, []);
+  }, [userId]);
 
   // (Wake lock, wake word lifecycle, dictation listener, pause/visibility effects
   //  all live in useVoiceSession — see src/hooks/useVoiceSession.js)
@@ -1076,6 +1095,10 @@ export default function App() {
       }
 
       console.log('✅ Conflict resolved successfully:', result);
+      if (conflict.card_id) {
+        try { await invoke('answer_memory_card', { cardId: conflict.card_id, decision }); } catch (e) { console.warn('[App] card answer:', e); }
+        if (window.__zynkResumed) window.__zynkResumed();
+      }
 
       // Show success message
       if (decision === 'keep_old') {

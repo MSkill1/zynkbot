@@ -55,7 +55,7 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
   };
 
   return (
-    <div className="modal-overlay">
+    <div className="modal-overlay" style={{ zIndex: 3000 }}>
       <div className="modal-content conflict-resolution">
         <button className="modal-close" onClick={handleCancel}>×</button>
 

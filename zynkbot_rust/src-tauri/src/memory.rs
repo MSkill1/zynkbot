@@ -824,3 +824,14 @@ pub async fn insert_memory_entities(
     }
     Ok(n)
 }
+
+/// Write a raised card down so it survives the window being gone (migration 0024).
+pub async fn insert_memory_card(pool: &SqlitePool, user_id: &str, session_id: &str, payload: &serde_json::Value) -> Result<i64, sqlx::Error> {
+    let stored = payload.get("stored_memory_id").and_then(|v| v.as_i64());
+    let conflicting = payload.pointer("/memoryA/id").and_then(|v| v.as_i64());
+    let r = sqlx::query(
+        "INSERT INTO memory_cards (user_id, session_id, stored_memory_id, conflicting_memory_id, payload_json) VALUES (?, ?, ?, ?, ?)")
+        .bind(user_id).bind(session_id).bind(stored).bind(conflicting).bind(payload.to_string())
+        .execute(pool).await?;
+    Ok(r.last_insert_rowid())
+}

@@ -316,7 +316,7 @@ impl ConversationEngine {
             // "Background, not the topic" (Matt, 2026-10-25): the phone's model answered
             // "his most notable achievement" about France because a recalled memory
             // about France sat in the prompt and it took that for the subject.
-            "Answer the newest message. The recent conversation and the memories below are background; use them only when they bear on the question. Keep it short: a few sentences, unless they ask for more.\n\n".to_string()
+            "Answer the newest message. The recent conversation and the memories below are background; use them only when they bear on the question. If they do not hold the number or date asked for, say you do not have it; never put another figure in its place. Keep it short: a few sentences, unless they ask for more.\n\n".to_string()
         } else {
             format!("Today's date is {today}.\n\n")
         };
@@ -655,7 +655,8 @@ mod on_device_prompt_tests {
         let p = e.build_prompt("hello", Some(&turns(2)), None, false, Some("Matt"));
         let instructions = &p[..p.find("RECENT CONVERSATION").unwrap()];
         // 140 until 2026-10-25; the "background, not the topic" line (Matt) added about twenty words on purpose.
-        assert!(instructions.split_whitespace().count() < 165, "{} words", instructions.split_whitespace().count());
+        // 165 → 190 on 2026-10-26 for the "say you do not have it" line (Matt).
+        assert!(instructions.split_whitespace().count() < 190, "{} words", instructions.split_whitespace().count());
         assert!(p.contains("WEB_SEARCH_NEEDED"));
     }
     #[test]

@@ -707,6 +707,31 @@ pub async fn update_memory_original_text(memory_id: i32, original_text: String) 
     Ok(result.rows_affected() as i64)
 }
 
+/// Cards raised and not yet answered, oldest first, each as the event payload plus card_id.
+#[tauri::command]
+pub async fn list_pending_memory_cards(user_id: String) -> Result<Vec<serde_json::Value>, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, payload_json FROM memory_cards WHERE user_id = ? AND answered_at IS NULL ORDER BY id LIMIT 20")
+        .bind(&user_id).fetch_all(&pool).await.map_err(|e| format!("Failed to read cards: {}", e))?;
+    pool.close().await;
+    Ok(rows.into_iter().filter_map(|(id, json)| {
+        let mut v: serde_json::Value = serde_json::from_str(&json).ok()?;
+        v["card_id"] = serde_json::json!(id);
+        Some(v)
+    }).collect())
+}
+
+/// The user answered (or deliberately dismissed) a card.
+#[tauri::command]
+pub async fn answer_memory_card(card_id: i64, decision: String) -> Result<bool, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let r = sqlx::query("UPDATE memory_cards SET answered_at = datetime('now'), decision = ? WHERE id = ? AND answered_at IS NULL")
+        .bind(&decision).bind(card_id).execute(&pool).await.map_err(|e| format!("Failed to update card: {}", e))?;
+    pool.close().await;
+    Ok(r.rows_affected() > 0)
+}
+
 #[tauri::command]
 pub async fn update_memory_link(
     link_id: i32,

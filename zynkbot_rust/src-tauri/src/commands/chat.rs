@@ -2577,7 +2577,14 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                         });
 
                         // Emit event to frontend to show modal
+                        // Written down first: the window may be gone by now (migration 0024).
+                        let mut payload = payload;
+                        match crate::memory::insert_memory_card(&db_pool, &bg_user_id, &bg_session_id, &payload).await {
+                            Ok(card_id) => { payload["card_id"] = serde_json::json!(card_id); }
+                            Err(e) => eprintln!("[RUST BACKGROUND] card not saved: {}", e),
+                        }
                         bg_sink.event("contradiction-detected", payload);
+                        bg_sink.card_notice("Zynkbot has a question about a memory", "Tap to answer it.");
                         println!("[RUST BACKGROUND] 🔔 Contradiction event emitted - modal should appear");
 
                         // Don't store memory yet - wait for user decision via resolve_memory_conflict_v2
@@ -2785,7 +2792,14 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                             "user_id": bg_user_id.clone(),
                             "session_id": bg_session_id.clone(),
                         });
+                        // Written down first: the window may be gone by now (migration 0024).
+                        let mut payload = payload;
+                        match crate::memory::insert_memory_card(&db_pool, &bg_user_id, &bg_session_id, &payload).await {
+                            Ok(card_id) => { payload["card_id"] = serde_json::json!(card_id); }
+                            Err(e) => eprintln!("[RUST BACKGROUND] card not saved: {}", e),
+                        }
                         bg_sink.event("contradiction-detected", payload);
+                        bg_sink.card_notice("Zynkbot has a question about a memory", "Tap to answer it.");
                         println!("[RUST BACKGROUND] 🔔 Card raised about stored memory #{} and #{}", memory_id, conflicting_memory.id);
                     }
                 }
