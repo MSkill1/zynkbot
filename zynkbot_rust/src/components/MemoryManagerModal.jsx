@@ -27,6 +27,35 @@ const CANONICAL_NAMESPACES = [
   'achievements', 'biography'
 ];
 
+// Facts that came from one message share its text in original_text (call 2 stores one
+// memory per fact, 2026-10-24). The list shows them as one card per message under a day
+// header, so a couple of hundred facts read as the conversations they came from instead
+// of a pile of fragments (Matt, 2026-10-26). Same key as the prompt builder uses.
+function groupByDay(list) {
+  const normalise = (t) => t.split(/\s+/).join(' ').toLowerCase();
+  const days = [];
+  for (const mem of list) {
+    const d = new Date(mem.created_at);
+    const dayKey = isNaN(d) ? 'unknown' : d.toDateString();
+    let day = days.length && days[days.length - 1].key === dayKey ? days[days.length - 1] : null;
+    if (!day) { day = { key: dayKey, date: d, groups: [] }; days.push(day); }
+    const said = (mem.original_text || '').trim();
+    const gkey = said ? normalise(said) : `id:${mem.id}`;
+    let group = said ? day.groups.find(g => g.key === gkey) : null;
+    if (!group) { group = { key: gkey, said, items: [] }; day.groups.push(group); }
+    group.items.push(mem);
+  }
+  return days;
+}
+function dayLabel(date) {
+  if (isNaN(date)) return '';
+  return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+function oneLine(text, max) {
+  const t = text.split(/\s+/).join(' ');
+  return t.length > max ? t.substring(0, max).trimEnd() + '…' : t;
+}
+
 export default function MemoryManagerModal({ isOpen, onClose, userId, onMemoriesChanged, onOpenConversation }) {
   // On the on-device model, memories arrive minutes after the reply (the phone's queue,
   // 2026-10-24); the header says so. Read when the window opens.
@@ -48,6 +77,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [isEditing, setIsEditing] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null); // null | 'busy' | 'ok' | 'error'
   const [showStorage, setShowStorage] = useState(false); // backup storage details, folded under the header
+  const [openSaid, setOpenSaid] = useState(() => new Set()); // message groups whose full text is shown (tap the quote)
+  const toggleSaid = (key) => setOpenSaid(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const [backupMsg, setBackupMsg] = useState('');
   const [keyStatus, setKeyStatus] = useState(null); // null | { key: string, acknowledged: boolean }
   const [showKeySaveModal, setShowKeySaveModal] = useState(false);
@@ -462,7 +493,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     setEditFormData({
       title: memory.title || '',
       content: memory.content || '',
-      namespace: memory.namespace || 'personal'
+      namespace: memory.namespace || 'personal',
+      original: memory.original_text || ''
     });
     console.log('[MemoryManager] Edit mode enabled, form data set');
   };
@@ -500,12 +532,19 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
       console.log('[Save] Update successful');
 
+      // "What I said" is shared by every fact from that message; the command rewrites all of them.
+      const newOriginal = (editFormData.original || '').trim();
+      if (newOriginal !== (selectedMemory.original_text || '').trim()) {
+        await invoke('update_memory_original_text', { memoryId: selectedMemory.id, originalText: newOriginal });
+      }
+
       // Update the selected memory locally with the new data
       setSelectedMemory({
         ...selectedMemory,
         title: editFormData.title || null,
         content: editFormData.content,
-        namespace: editFormData.namespace
+        namespace: editFormData.namespace,
+        original_text: newOriginal || null
       });
 
       // Exit edit mode
@@ -588,6 +627,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     (mem.title && mem.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
     (mem.tags && searchQuery && mem.tags.toLowerCase().includes(searchQuery.toLowerCase().replace(/^#/, '')))
   ));
+  const groupedDays = groupByDay(filteredMemories);
   const requestedToggle = (
     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#bd93f9', cursor: 'pointer', margin: '0 0 8px 0' }}
       title='Only memories you stored with "Remember: ..." (typed or spoken)'>
@@ -713,6 +753,96 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   ) : null;
 
   // ── Mobile layout ─────────────────────────────────────────────────────────
+  // One fact as a card (alone) or as a row inside its message's card (inGroup).
+  const renderPhoneFact = (mem, inGroup) => (
+    <div key={mem.id} style={inGroup
+      ? { borderTop: '1px solid #44475a', padding: '8px 0 6px' }
+      : { background: '#1e1f29', border: `1px solid ${selectedMemoryIds.includes(mem.id) ? '#ff5555' : '#44475a'}`, borderRadius: '8px', padding: '12px', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px', gap: '8px' }}>
+        <span style={{ background: '#bd93f9', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', flexShrink: 0 }}>
+          {mem.namespace.toUpperCase()}
+        </span>
+        {mem.temporal_status === 'superseded' && (
+          <span title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
+            REPLACED
+          </span>
+        )}
+        <span style={{ color: '#6272a4', fontSize: '0.75rem', flex: 1 }}>
+          {inGroup ? '' : new Date(mem.created_at).toLocaleDateString()}
+        </span>
+        <input
+          type="checkbox"
+          checked={selectedMemoryIds.includes(mem.id)}
+          onChange={() => toggleMemorySelection(mem.id)}
+          onClick={(e) => e.stopPropagation()}
+          style={{ width: '20px', height: '20px', cursor: 'pointer', flexShrink: 0, accentColor: '#ff5555' }}
+        />
+      </div>
+      <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
+        {mem.title && (
+          <div style={{ color: '#8be9fd', fontWeight: '600', fontSize: '0.95rem', marginBottom: '4px' }}>
+            {mem.title}
+          </div>
+        )}
+        <div style={{ color: '#a0a0a0', fontSize: '0.85rem', lineHeight: '1.4' }}>
+          {mem.content.substring(0, 100)}{mem.content.length > 100 ? '…' : ''}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Desktop: the same fact as a list item or as a row inside its message's card.
+  const renderDesktopFact = (mem, inGroup) => (
+    <div
+      key={mem.id}
+      className={`memory-list-item ${inGroup ? 'in-group' : ''} ${selectedMemory?.id === mem.id ? 'selected' : ''}`}
+    >
+      <div className="memory-list-item-header">
+        <label
+          style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', marginRight: '8px' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={selectedMemoryIds.includes(mem.id)}
+            onChange={() => toggleMemorySelection(mem.id)}
+            style={{ cursor: 'pointer', marginRight: '8px' }}
+          />
+        </label>
+        <div style={{ flex: 1 }} onClick={() => setSelectedMemory(mem)}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <span className="memory-namespace-badge">
+                {mem.namespace.toUpperCase()}
+              </span>
+              {mem.temporal_status === 'superseded' && (
+                <span className="memory-namespace-badge" title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a' }}>
+                  REPLACED
+                </span>
+              )}
+            </div>
+            {!inGroup && (
+              <span className="memory-date">
+                {new Date(mem.created_at).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
+        {mem.title && (
+          <div className="memory-list-item-title">
+            {mem.title.length > 60 ? mem.title.substring(0, 60) + '...' : mem.title}
+          </div>
+        )}
+        <div className="memory-list-item-content">
+          {mem.content.substring(0, mem.title ? 80 : 100)}
+          {mem.content.length > (mem.title ? 80 : 100) && '...'}
+        </div>
+      </div>
+    </div>
+  );
+
   if (isMobile) {
     return (
       <div data-modal="" style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -876,40 +1006,18 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                   {searchQuery ? 'No memories match your search' : 'No memories found'}
                 </div>
               ) : (
-                filteredMemories.map((mem) => (
-                  <div key={mem.id} style={{ background: '#1e1f29', border: `1px solid ${selectedMemoryIds.includes(mem.id) ? '#ff5555' : '#44475a'}`, borderRadius: '8px', padding: '12px', marginBottom: '10px' }}>
-                    {/* Badge + date + checkbox */}
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px', gap: '8px' }}>
-                      <span style={{ background: '#bd93f9', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', flexShrink: 0 }}>
-                        {mem.namespace.toUpperCase()}
-                      </span>
-                      {mem.temporal_status === 'superseded' && (
-                        <span title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
-                          REPLACED
-                        </span>
-                      )}
-                      <span style={{ color: '#6272a4', fontSize: '0.75rem', flex: 1 }}>
-                        {new Date(mem.created_at).toLocaleDateString()}
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={selectedMemoryIds.includes(mem.id)}
-                        onChange={() => toggleMemorySelection(mem.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ width: '20px', height: '20px', cursor: 'pointer', flexShrink: 0, accentColor: '#ff5555' }}
-                      />
-                    </div>
-                    {/* Title + preview — tap to open detail */}
-                    <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
-                      {mem.title && (
-                        <div style={{ color: '#8be9fd', fontWeight: '600', fontSize: '0.95rem', marginBottom: '4px' }}>
-                          {mem.title}
-                        </div>
-                      )}
-                      <div style={{ color: '#a0a0a0', fontSize: '0.85rem', lineHeight: '1.4' }}>
-                        {mem.content.substring(0, 100)}{mem.content.length > 100 ? '…' : ''}
+                groupedDays.map((day) => (
+                  <div key={day.key}>
+                    <div style={{ color: '#bd93f9', fontSize: '0.8rem', fontWeight: 'bold', margin: '6px 0 8px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{dayLabel(day.date)}</div>
+                    {day.groups.map((group) => group.items.length < 2 ? (
+                      group.items.map((mem) => renderPhoneFact(mem, false))
+                    ) : (
+                      <div key={group.key} style={{ background: '#1e1f29', border: '1px solid #44475a', borderRadius: '8px', padding: '10px 12px', marginBottom: '10px' }}>
+                        <div style={{ color: '#6272a4', fontSize: '0.75rem', marginBottom: '2px' }}>What I said · {group.items.length} memories</div>
+                        <div onClick={() => toggleSaid(group.key)} title={openSaid.has(group.key) ? 'Tap to shorten' : 'Tap to read the whole message'} style={{ color: '#f8f8f2', fontSize: '0.9rem', fontStyle: 'italic', lineHeight: 1.35, marginBottom: '8px', cursor: 'pointer', whiteSpace: openSaid.has(group.key) ? 'pre-wrap' : 'normal' }}>“{openSaid.has(group.key) ? group.said : oneLine(group.said, 110)}”</div>
+                        {group.items.map((mem) => renderPhoneFact(mem, true))}
                       </div>
-                    </div>
+                    ))}
                   </div>
                 ))
               )}
@@ -963,6 +1071,13 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         onChange={(e) => setEditFormData({ ...editFormData, content: e.target.value })}
                         rows={8} />
                     </div>
+                    <div className="detail-section">
+                      <strong>What I said:</strong>
+                      <div style={{ color: '#6272a4', fontSize: '0.8rem', margin: '2px 0 4px' }}>Shared by every memory from this message; a change applies to all of them.</div>
+                      <textarea className="edit-textarea" value={editFormData.original}
+                        onChange={(e) => setEditFormData({ ...editFormData, original: e.target.value })}
+                        rows={4} />
+                    </div>
                   </div>
                 ) : (
                   <div className="memory-details-content">
@@ -997,6 +1112,14 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       <strong>Content:</strong>
                       <div className="content-box">{selectedMemory.content}</div>
                     </div>
+                    {selectedMemory.original_text && (
+                      <div className="detail-section">
+                        <strong>What I said:</strong>
+                        <div className="content-box" style={{ color: '#9aa5c4', fontStyle: 'italic' }}>
+                          {selectedMemory.original_text}
+                        </div>
+                      </div>
+                    )}
                     {selectedMemory.entities_detected && selectedMemory.entities_detected.length > 0 && (
                       <div className="detail-row">
                         <strong>Entities:</strong>
@@ -1272,52 +1395,18 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               </div>
             ) : (
               <div className="memory-list-scroll">
-                {filteredMemories.map((mem) => (
-                  <div
-                    key={mem.id}
-                    className={`memory-list-item ${selectedMemory?.id === mem.id ? 'selected' : ''}`}
-                  >
-                    <div className="memory-list-item-header">
-                      <label
-                        style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', marginRight: '8px' }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedMemoryIds.includes(mem.id)}
-                          onChange={() => toggleMemorySelection(mem.id)}
-                          style={{ cursor: 'pointer', marginRight: '8px' }}
-                        />
-                      </label>
-                      <div style={{ flex: 1 }} onClick={() => setSelectedMemory(mem)}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <span className="memory-namespace-badge">
-                              {mem.namespace.toUpperCase()}
-                            </span>
-                            {mem.temporal_status === 'superseded' && (
-                              <span className="memory-namespace-badge" title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a' }}>
-                                REPLACED
-                              </span>
-                            )}
-                          </div>
-                          <span className="memory-date">
-                            {new Date(mem.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
+                {groupedDays.map((day) => (
+                  <div key={day.key} className="memory-day">
+                    <div className="memory-day-label">{dayLabel(day.date)}</div>
+                    {day.groups.map((group) => group.items.length < 2 ? (
+                      group.items.map((mem) => renderDesktopFact(mem, false))
+                    ) : (
+                      <div key={group.key} className="memory-group">
+                        <div className="memory-group-said-label">What I said · {group.items.length} memories</div>
+                        <div className={`memory-group-said ${openSaid.has(group.key) ? 'open' : ''}`} onClick={() => toggleSaid(group.key)} title={openSaid.has(group.key) ? 'Click to shorten' : 'Click to read the whole message'}>“{openSaid.has(group.key) ? group.said : oneLine(group.said, 140)}”</div>
+                        {group.items.map((mem) => renderDesktopFact(mem, true))}
                       </div>
-                    </div>
-                    <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
-                      {mem.title && (
-                        <div className="memory-list-item-title">
-                          {mem.title.length > 60 ? mem.title.substring(0, 60) + '...' : mem.title}
-                        </div>
-                      )}
-                      <div className="memory-list-item-content">
-                        {mem.content.substring(0, mem.title ? 80 : 100)}
-                        {mem.content.length > (mem.title ? 80 : 100) && '...'}
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -1403,6 +1492,16 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         rows={8}
                       />
                     </div>
+                    <div className="detail-section">
+                      <strong>What I said:</strong>
+                      <div style={{ color: '#6272a4', fontSize: '0.8rem', margin: '2px 0 4px' }}>Shared by every memory from this message; a change applies to all of them.</div>
+                      <textarea
+                        className="edit-textarea"
+                        value={editFormData.original}
+                        onChange={(e) => setEditFormData({ ...editFormData, original: e.target.value })}
+                        rows={4}
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className="memory-details-content">
@@ -1451,7 +1550,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     </div>
                     {selectedMemory.original_text && (
                       <div className="detail-section">
-                        <strong>Original:</strong>
+                        <strong>What I said:</strong>
                         <div className="content-box" style={{ color: '#9aa5c4', fontStyle: 'italic' }}>
                           {selectedMemory.original_text}
                         </div>

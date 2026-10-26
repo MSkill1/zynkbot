@@ -2176,6 +2176,18 @@ pub fn run() {
                 crate::memory_jobs::ensure_worker(std::sync::Arc::new(crate::response_sink::TauriSink::new(app.handle().clone())));
                 // Embedding scheme change (title + fact, 2026-10-25): re-embed once, in the background.
                 tauri::async_runtime::spawn(async {
+                    // Memories whose event_date is a bare "YYYY-MM-DD" (older builds bound the
+                    // date without a time; seven such rows reached the desktop by sync) fail the
+                    // datetime reader and emptied the Memory Manager (2026-10-26). Give them a
+                    // midnight time, once, before anything reads them.
+                    if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        match sqlx::query("UPDATE memories SET event_date = event_date || 'T00:00:00+00:00' WHERE event_date IS NOT NULL AND length(event_date) = 10").execute(&pool).await {
+                            Ok(r) if r.rows_affected() > 0 => println!("[Memory] gave {} date-only event dates a time", r.rows_affected()),
+                            Ok(_) => {}
+                            Err(e) => eprintln!("[Memory] event_date repair: {}", e),
+                        }
+                        pool.close().await;
+                    }
                     tokio::time::sleep(std::time::Duration::from_secs(12)).await;
                     match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
                         Ok(pool) => {
@@ -2317,6 +2329,7 @@ pub fn run() {
             commands::memory::list_memories,
             commands::memory::find_memory_source,
             commands::memory::update_memory,
+            commands::memory::update_memory_original_text,
             commands::memory::delete_memory,
             commands::memory::restore_memory,
             commands::memory::resolve_stored_conflict,

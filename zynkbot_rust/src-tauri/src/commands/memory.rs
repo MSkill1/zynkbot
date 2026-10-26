@@ -682,6 +682,31 @@ pub async fn get_namespaces(user_id: Option<String>) -> Result<serde_json::Value
 }
 
 /// Update an existing memory link
+/// Change the message a memory came from ("What I said"). Every fact that came from the
+/// same message shares that text and is grouped by it in the Memory Manager, so the new
+/// wording is written to all of them (2026-10-26). Returns how many rows changed.
+#[tauri::command]
+pub async fn update_memory_original_text(memory_id: i32, original_text: String) -> Result<i64, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT user_id, original_text, namespace FROM memories WHERE id = ?")
+        .bind(memory_id).fetch_optional(&pool).await.map_err(|e| format!("Failed to read memory: {}", e))?;
+    let Some((user_id, old_text, namespace)) = row else { pool.close().await; return Err("Memory not found".into()); };
+    if namespace == "_zynkbot" { pool.close().await; return Err("Cannot edit system memories.".into()); }
+    let new_text = original_text.trim().to_string();
+    let stored: Option<String> = if new_text.is_empty() { None } else { Some(new_text) };
+    let result = match (&user_id, old_text.as_deref().map(str::trim).filter(|t| !t.is_empty())) {
+        (Some(uid), Some(old)) => sqlx::query(
+            "UPDATE memories SET original_text = ?, updated_at = datetime('now') WHERE (id = ? OR (user_id = ? AND trim(original_text) = ?)) AND namespace != '_zynkbot'")
+            .bind(&stored).bind(memory_id).bind(uid).bind(old).execute(&pool).await,
+        _ => sqlx::query("UPDATE memories SET original_text = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(&stored).bind(memory_id).execute(&pool).await,
+    }.map_err(|e| format!("Failed to update: {}", e))?;
+    pool.close().await;
+    println!("[Rust] update_memory_original_text: {} memories changed", result.rows_affected());
+    Ok(result.rows_affected() as i64)
+}
+
 #[tauri::command]
 pub async fn update_memory_link(
     link_id: i32,
@@ -735,7 +760,7 @@ pub async fn get_full_memory_graph(
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
 
     let mut sql = String::from(
-        "SELECT id, title, content, namespace FROM memories WHERE TRUE"
+        "SELECT id, title, content, namespace, original_text, created_at, temporal_status FROM memories WHERE TRUE"
     );
     if user_id.is_some() { sql.push_str(" AND user_id = ?"); }
     if namespace.is_some() { sql.push_str(" AND namespace = ?"); }
@@ -746,6 +771,11 @@ pub async fn get_full_memory_graph(
         title: Option<String>,
         content: String,
         namespace: String,
+        /// The message the fact came from; facts from one message share it and the graph
+        /// draws them as one cluster (2026-10-26).
+        original_text: Option<String>,
+        created_at: String,
+        temporal_status: Option<String>,
     }
 
     let mut query = sqlx::query_as::<_, MemoryNode>(&sql);
@@ -789,7 +819,10 @@ pub async fn get_full_memory_graph(
             "id": m.id,
             "title": m.title,
             "content": m.content,
-            "namespace": m.namespace
+            "namespace": m.namespace,
+            "original_text": m.original_text,
+            "created_at": m.created_at,
+            "temporal_status": m.temporal_status
         }))
         .collect();
 
