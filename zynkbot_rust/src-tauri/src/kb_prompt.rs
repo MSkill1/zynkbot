@@ -89,6 +89,28 @@ pub fn build(results: &[KBSearchResult], threshold: f32, weak_limit: usize) -> K
     KbPrompt { context: ctx, outcome: KbOutcome::Nothing, note: Some(NOTE_NOTHING.to_string()) }
 }
 
+/// The prompt block for a question about Zynkbot itself, answered from the built-in user
+/// guides indexed under `_system` (2026-10-26). Automatic, so the bar is higher than the
+/// KB button's and only real matches are shown; `None` when nothing clears it, and the
+/// prompt is then as before.
+pub fn build_guides(results: &[KBSearchResult], threshold: f32, limit: usize) -> Option<String> {
+    let relevant: Vec<&KBSearchResult> = results
+        .iter()
+        .filter(|r| r.similarity_score > threshold)
+        .take(limit)
+        .collect();
+    if relevant.is_empty() {
+        return None;
+    }
+    let mut ctx = String::new();
+    ctx.push_str("\n\n=== ZYNKBOT'S OWN GUIDES ===\n");
+    ctx.push_str("The question is about Zynkbot itself. The passages below come from Zynkbot's built-in user guides and are current.\n");
+    ctx.push_str("Answer from them. If they do not cover the question, say the guides do not cover it rather than guess.\n\n");
+    push_docs(&mut ctx, &relevant, "Guide");
+    ctx.push_str("=== END OF GUIDES ===\n\n");
+    Some(ctx)
+}
+
 fn push_docs(ctx: &mut String, docs: &[&KBSearchResult], label: &str) {
     for (idx, r) in docs.iter().enumerate() {
         ctx.push_str(&format!(
@@ -160,5 +182,16 @@ mod tests {
         assert!(p.context.contains("returned NOTHING"));
         assert!(p.context.contains("Do not invent an answer"));
         assert!(!p.context.contains("📄"));
+    }
+
+    #[test]
+    fn guides_block_only_for_real_matches_and_capped() {
+        assert!(build_guides(&[], 0.3, 3).is_none());
+        assert!(build_guides(&[chunk(0.2, "weak")], 0.3, 3).is_none());
+        let hits = vec![chunk(0.9, "a"), chunk(0.8, "b"), chunk(0.7, "c"), chunk(0.6, "d")];
+        let ctx = build_guides(&hits, 0.3, 3).unwrap();
+        assert!(ctx.contains("ZYNKBOT'S OWN GUIDES"));
+        assert_eq!(ctx.matches("📄 Guide ").count(), 3);
+        assert!(ctx.contains("say the guides do not cover it"));
     }
 }

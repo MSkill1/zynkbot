@@ -2250,11 +2250,15 @@ pub fn run() {
                         Err(e) => eprintln!("[System] ⚠️ System memory seed error: {}", e),
                     }
 
-                    // Index system documentation (idempotent - only indexes if missing)
-                    match commands::onboarding::index_system_documentation().await {
-                        Ok(msg) => println!("[System KB] ✅ {}", msg),
-                        Err(e) => eprintln!("[System KB] ⚠️ System doc indexing error: {}", e),
-                    }
+                    // The built-in guides: copied and indexed once per shipped set, 20 s after
+                    // start so the embedding work never sits in front of the first question.
+                    tauri::async_runtime::spawn(async {
+                        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                        match commands::onboarding::index_system_documentation().await {
+                            Ok(msg) => println!("[System KB] ✅ {}", msg),
+                            Err(e) => eprintln!("[System KB] ⚠️ Built-in guide indexing error: {}", e),
+                        }
+                    });
 
                     println!("[System] 🎉 First-time initialization complete (if needed)");
                 });

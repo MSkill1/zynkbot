@@ -513,6 +513,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded
               <div className="kb-section-header">
                 <h3>Indexed Documents ({documents.length})</h3>
               </div>
+              <p className="kb-hint" style={{ margin: '0 0 10px' }}>Zynkbot's own user guides are indexed too, and are read whenever you ask about Zynkbot itself.</p>
 
               {documents.length === 0 ? (
                 <div className="kb-empty-state">

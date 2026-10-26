@@ -369,107 +369,130 @@ pub async fn seed_system_memories() -> Result<String, String> {
     Ok(format!("Created {} system memories", created_count))
 }
 
-/// Index system documentation into Knowledge Base
+/// The user guides shipped inside the app and indexed under the `_system` knowledge-base
+/// user, so a question about Zynkbot itself can be answered from the actual guides
+/// (Matt, 2026-10-26). Embedded at build time: the same bytes on desktop and Android, no
+/// resource or asset plumbing. Curated: user-facing guides only, no architecture or
+/// developer documents, no roadmap or issue list.
+pub const SHIPPED_GUIDES: &[(&str, &str)] = &[
+    ("ANDROID_USER_GUIDE.md", include_str!("../../../../docs/ANDROID_USER_GUIDE.md")),
+    ("FEATURES.md", include_str!("../../../../docs/FEATURES.md")),
+    ("NETWORKING_FEATURES.md", include_str!("../../../../docs/NETWORKING_FEATURES.md")),
+    ("ENSEMBLE_MODE.md", include_str!("../../../../docs/ENSEMBLE_MODE.md")),
+    ("MODELS.md", include_str!("../../../../docs/MODELS.md")),
+    ("OLLAMA_GUIDE.md", include_str!("../../../../docs/OLLAMA_GUIDE.md")),
+    ("LINUX_INSTALLATION_GUIDE.md", include_str!("../../../../docs/LINUX_INSTALLATION_GUIDE.md")),
+    ("WINDOWS_INSTALLATION_GUIDE.md", include_str!("../../../../docs/WINDOWS_INSTALLATION_GUIDE.md")),
+    ("INSTALLATION_TROUBLESHOOTING.md", include_str!("../../../../docs/INSTALLATION_TROUBLESHOOTING.md")),
+    ("personal_snap_ins.md", include_str!("../../../../docs/snap_ins/personal_snap_ins.md")),
+    ("professional_snap_ins.md", include_str!("../../../../docs/snap_ins/professional_snap_ins.md")),
+];
+
+/// One stamp for the whole shipped set: a SHA-256 over every name and text. Stored in
+/// app_settings as `system_docs_version`; when it matches, nothing is copied or indexed.
+pub fn shipped_guides_stamp() -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for (name, text) in SHIPPED_GUIDES {
+        h.update(name.as_bytes());
+        h.update([0u8]);
+        h.update(text.as_bytes());
+        h.update([0u8]);
+    }
+    format!("{}:{:x}", SHIPPED_GUIDES.len(), h.finalize())
+}
+
+/// Write the shipped guides into `<data>/knowledge_base/_system/` and index them, once per
+/// shipped set. Safe to call at every start: it compares the stamp first. Runs the local
+/// embedding model (not the chat model) over a few hundred chunks, so the caller runs it
+/// off the start-up path.
 #[tauri::command]
 pub async fn index_system_documentation() -> Result<String, String> {
-    println!("[System KB] Starting system documentation indexing...");
-
     let db_url = crate::db::get_db_url();
     let db_pool = sqlx::SqlitePool::connect(&db_url)
         .await
         .map_err(|e| format!("Database connection failed: {}", e))?;
 
-    let existing_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM kb_documents WHERE user_id = '_system'"
-    )
-    .fetch_one(&db_pool)
-    .await
-    .map_err(|e| format!("Failed to check existing system docs: {}", e))?;
-
-    if existing_count > 0 {
-        println!("[System KB] ✅ System documentation already indexed ({}), skipping", existing_count);
+    let stamp = shipped_guides_stamp();
+    let current: Option<String> = sqlx::query_scalar("SELECT value FROM app_settings WHERE key = 'system_docs_version'")
+        .fetch_optional(&db_pool).await.map_err(|e| format!("Failed to read system_docs_version: {}", e))?;
+    let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM kb_documents WHERE user_id = '_system' AND status = 'indexed'")
+        .fetch_one(&db_pool).await.map_err(|e| format!("Failed to count system docs: {}", e))?;
+    if current.as_deref() == Some(stamp.as_str()) && indexed == SHIPPED_GUIDES.len() as i64 {
         db_pool.close().await;
-        return Ok(format!("System documentation already indexed ({} documents)", existing_count));
+        return Ok(format!("Built-in guides already indexed ({} documents)", indexed));
     }
+    println!("[System KB] Built-in guides outdated or missing ({} indexed, stamp {}): copying and indexing {}",
+        indexed, if current.is_some() { "differs" } else { "absent" }, SHIPPED_GUIDES.len());
 
-    let current_exe = std::env::current_exe()
-        .map_err(|e| format!("Failed to get executable path: {}", e))?;
+    let folder = kb_rag::get_kb_folder_path("_system")?;
 
-    let mut kb_path = current_exe
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .ok_or("Failed to determine project root")?
-        .join("system_docs")
-        .join("_system");
-
-    if !kb_path.exists() {
-        println!("[System KB] Dev path not found, trying current directory...");
-        kb_path = std::env::current_dir()
-            .map_err(|e| format!("Failed to get current dir: {}", e))?
-            .join("system_docs")
-            .join("_system");
+    // Drop whatever an earlier shipped set left behind (its names may differ).
+    let old: Vec<String> = sqlx::query_scalar("SELECT file_path FROM kb_documents WHERE user_id = '_system'")
+        .fetch_all(&db_pool).await.unwrap_or_default();
+    for path in old {
+        if let Err(e) = kb_rag::remove_document_index(&db_pool, "_system", &path).await {
+            eprintln!("[System KB] could not drop old guide {}: {}", path, e);
+        }
     }
-
-    if !kb_path.exists() {
-        println!("[System KB] Trying ../system_docs/_system from current dir...");
-        let current = std::env::current_dir()
-            .map_err(|e| format!("Failed to get current dir: {}", e))?;
-        if let Some(parent) = current.parent() {
-            kb_path = parent.join("system_docs").join("_system");
+    if let Ok(entries) = std::fs::read_dir(&folder) {
+        for entry in entries.flatten() {
+            let keep = SHIPPED_GUIDES.iter().any(|(n, _)| entry.file_name().to_str() == Some(n));
+            if !keep { let _ = std::fs::remove_file(entry.path()); }
         }
     }
 
-    if !kb_path.exists() {
-        eprintln!("[System KB] ⚠️ System documentation directory not found — skipping (installed binary without bundled docs)");
-        db_pool.close().await;
-        return Ok("System documentation not available in this installation".to_string());
-    }
-
-    println!("[System KB] Found system docs directory: {:?}", kb_path);
-
-    let system_docs = vec![
-        "01_zynkbot_overview.md",
-        "02_memory_system.md",
-        "03_features.md",
-        "04_technical_architecture.md",
-        "05_installation_setup.md",
-        "06_faq.md",
-    ];
-
-    let mut indexed_count = 0;
+    let mut indexed_count = 0usize;
     let mut errors = Vec::new();
-
-    for doc_file in &system_docs {
-        let doc_path = kb_path.join(doc_file);
-        let doc_path_str = doc_path.to_str()
-            .ok_or_else(|| format!("Invalid path for {}", doc_file))?;
-
-        println!("[System KB] Indexing: {}", doc_file);
-
-        match kb_rag::index_document(&db_pool, "_system", doc_path_str, None).await {
-            Ok(doc_id) => {
-                println!("[System KB] ✅ Indexed {} (doc_id: {})", doc_file, doc_id);
-                indexed_count += 1;
-            }
-            Err(e) => {
-                let error = format!("Failed to index {}: {}", doc_file, e);
-                eprintln!("[System KB] ⚠️ {}", error);
-                errors.push(error);
-            }
+    for (name, text) in SHIPPED_GUIDES {
+        let path = folder.join(name);
+        if let Err(e) = std::fs::write(&path, text) {
+            errors.push(format!("{}: write failed: {}", name, e));
+            continue;
+        }
+        let path_str = match path.to_str() { Some(p) => p.to_string(), None => { errors.push(format!("{}: bad path", name)); continue; } };
+        match kb_rag::index_document(&db_pool, "_system", &path_str, None).await {
+            Ok(_) => indexed_count += 1,
+            Err(e) => errors.push(format!("{}: {}", name, e)),
         }
     }
 
+    if errors.is_empty() {
+        sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES ('system_docs_version', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+            .bind(&stamp).execute(&db_pool).await.map_err(|e| format!("Failed to store system_docs_version: {}", e))?;
+    }
     db_pool.close().await;
 
     let result = if errors.is_empty() {
-        format!("✅ Indexed {}/{} system documentation files", indexed_count, system_docs.len())
+        format!("Indexed {} built-in guides", indexed_count)
     } else {
-        format!("⚠️ Indexed {}/{} files. Errors: {}", indexed_count, system_docs.len(), errors.join("; "))
+        format!("Indexed {}/{} built-in guides; will retry next start. Errors: {}", indexed_count, SHIPPED_GUIDES.len(), errors.join("; "))
     };
-
-    println!("[System KB] 🏁 {}", result);
+    println!("[System KB] {}", result);
     Ok(result)
+}
+
+#[cfg(test)]
+mod shipped_guides_tests {
+    use super::*;
+
+    #[test]
+    fn shipped_guides_are_distinct_and_non_empty() {
+        let mut names: Vec<&str> = SHIPPED_GUIDES.iter().map(|(n, _)| *n).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), SHIPPED_GUIDES.len(), "duplicate guide name");
+        for (name, text) in SHIPPED_GUIDES {
+            assert!(text.split_whitespace().count() > 100, "{name} is too short to be a guide");
+        }
+    }
+
+    #[test]
+    fn stamp_names_the_count_and_is_stable() {
+        let a = shipped_guides_stamp();
+        assert!(a.starts_with(&format!("{}:", SHIPPED_GUIDES.len())));
+        assert_eq!(a, shipped_guides_stamp());
+    }
 }
 
 /// Apply the pre-computed Einstein seed (first install + reinstall)

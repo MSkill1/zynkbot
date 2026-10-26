@@ -171,7 +171,7 @@ zynkbot/
 │   │   └── models/                      # ML model weights
 │   │       ├── system/                  # Auto-downloaded: embeddings, NER, safety
 │   │       └── user/                    # Optional local LLMs (.gguf files)
-│   └── system_docs/_system/             # Built-in Zynkbot documentation (auto-indexed at startup)
+│   └── (built-in user guides are compiled into the app from docs/ and indexed under knowledge_base/_system at startup)
 ├── docs/
 │   ├── FEATURES.md
 │   ├── ROADMAP.md

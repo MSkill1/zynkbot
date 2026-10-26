@@ -671,6 +671,27 @@ pub async fn generate_reply(
         println!("[KB RAG] Added {} chars of KB context to prompt", kb_context.len());
     }
 
+    // A question about Zynkbot itself: consult the built-in user guides, indexed under the
+    // `_system` knowledge-base user, the way the KB button consults the user's own
+    // documents (Matt, 2026-10-26). Not when the KB button is on, which asks for the
+    // user's documents. Fewer passages on the phone, where the prompt is tight.
+    if is_zynkbot_query && !kb_enabled {
+        let guide_limit = if is_api_model { 5 } else { 3 };
+        match crate::kb_rag::search_kb_chunks(&db_pool, "_system", &query, guide_limit, false).await {
+            Ok(hits) => match crate::kb_prompt::build_guides(&hits, 0.30, guide_limit) {
+                Some(block) => {
+                    println!("[System KB] {} guide passages added for a Zynkbot question (best {:.0}%)",
+                        hits.iter().filter(|h| h.similarity_score > 0.30).count().min(guide_limit),
+                        hits.first().map(|h| h.similarity_score * 100.0).unwrap_or(0.0));
+                    full_prompt = format!("{}{}", block, full_prompt);
+                }
+                None => println!("[System KB] no guide passage matched the Zynkbot question (best {:.0}%)",
+                    hits.first().map(|h| h.similarity_score * 100.0).unwrap_or(0.0)),
+            },
+            Err(e) => eprintln!("[System KB] guide search failed (non-fatal): {}", e),
+        }
+    }
+
     // STEP 6: Call LLM based on backend (use forced_backend for Child mode)
     // All API backends use SSE streaming so the frontend can display tokens as they arrive.
     // Local GGUF models are blocking and cannot stream, so they continue to return all at once.
