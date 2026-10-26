@@ -2,35 +2,275 @@
   "note": "Recall bench (2026-10-25): questions against Matt's own memory database (a read-only copy, RECALL_BENCH_DB), each with the ids of the memories that answer it. Scored by where the first expected memory ranks under the production hybrid search, for four ways of embedding a memory: the stored fact (current), title+fact, fact+source message, and the source message alone (what the old pipeline stored). Ids are those of Matt's desktop database on 2026-10-25; the file is a labs tool, not a product test.",
   "user_id": "cc591dcc-2d80-4aed-a924-5e313645d6ba",
   "cases": [
-    {"q": "What is my current weight?", "expect": [2786]},
-    {"q": "What was my first keto reading?", "expect": [2772]},
-    {"q": "What blood meter did I buy?", "expect": [2773]},
-    {"q": "What do I still need to buy at the grocery store?", "expect": [2777, 2762]},
-    {"q": "How many carbs are in my keto bread?", "expect": [2558]},
-    {"q": "What did I have for breakfast on October 22?", "expect": [2726]},
-    {"q": "What did I eat on October 20?", "expect": [2560, 2541, 2542]},
-    {"q": "Where do I live?", "expect": [2615, 2544, 2581]},
-    {"q": "What is my mailing address?", "expect": [2615]},
-    {"q": "How much money do I make a year?", "expect": [2566]},
-    {"q": "How old was Alexandra when she died?", "expect": [2547]},
-    {"q": "How much would it cost to ship the stuffed animal to Colombia?", "expect": [2638, 2640, 2644, 2646]},
-    {"q": "How do I send money to Alexandra's grandmother?", "expect": [2656]},
-    {"q": "Which privacy products was I comparing?", "expect": [2760]},
-    {"q": "Why do I want a burner phone?", "expect": [2759, 2757]},
-    {"q": "What is the soap making process I wanted to keep?", "expect": [2725]},
-    {"q": "What do I believe about the British Empire and American finance?", "expect": [2602, 2603, 2611, 2605, 2604]},
-    {"q": "Do I like baseball caps?", "expect": [2532]},
-    {"q": "Which photo gallery app did I try and dislike?", "expect": [2533]},
-    {"q": "When is my doctor's appointment?", "expect": [2637]},
-    {"q": "How old is my house?", "expect": [2581]},
-    {"q": "What should I do with the leftover cooked chicken breasts?", "expect": [2616, 2625]},
-    {"q": "What was the best sausage I ever had?", "expect": [2542]},
-    {"q": "What am I planning for dinner tonight?", "expect": [2774]},
-    {"q": "What did I think of the picture of Alexandra?", "expect": [2647]},
-    {"q": "What are my plans for the bathroom?", "expect": [2581, 2659, 2580]},
-    {"q": "What is on my grocery list?", "expect": [2762]},
-    {"q": "What's the deal with the bacon grease jar?", "expect": [2723]},
-    {"q": "What are my weekend plans?", "expect": []},
-    {"q": "What have I been eating lately?", "expect": [2726, 2560, 2541, 2777, 2774]}
+    {
+      "q": "What is my current weight?",
+      "expect": [
+        2786
+      ]
+    },
+    {
+      "q": "What was my first keto reading?",
+      "expect": [
+        2772
+      ]
+    },
+    {
+      "q": "What blood meter did I buy?",
+      "expect": [
+        2773
+      ]
+    },
+    {
+      "q": "What do I still need to buy at the grocery store?",
+      "expect": [
+        2777,
+        2762
+      ]
+    },
+    {
+      "q": "How many carbs are in my keto bread?",
+      "expect": [
+        2558
+      ]
+    },
+    {
+      "q": "What did I have for breakfast on October 22?",
+      "expect": [
+        2726
+      ]
+    },
+    {
+      "q": "What did I eat on October 20?",
+      "expect": [
+        2560,
+        2541,
+        2542
+      ]
+    },
+    {
+      "q": "Where do I live?",
+      "expect": [
+        2615,
+        2544,
+        2581
+      ]
+    },
+    {
+      "q": "What is my mailing address?",
+      "expect": [
+        2615
+      ]
+    },
+    {
+      "q": "How much money do I make a year?",
+      "expect": [
+        2566
+      ]
+    },
+    {
+      "q": "How old was Alexandra when she died?",
+      "expect": [
+        2547
+      ]
+    },
+    {
+      "q": "How much would it cost to ship the stuffed animal to Colombia?",
+      "expect": [
+        2638,
+        2640,
+        2644,
+        2646
+      ]
+    },
+    {
+      "q": "How do I send money to Alexandra's grandmother?",
+      "expect": [
+        2656
+      ]
+    },
+    {
+      "q": "Which privacy products was I comparing?",
+      "expect": [
+        2760
+      ]
+    },
+    {
+      "q": "Why do I want a burner phone?",
+      "expect": [
+        2759,
+        2757
+      ]
+    },
+    {
+      "q": "What is the soap making process I wanted to keep?",
+      "expect": [
+        2725
+      ]
+    },
+    {
+      "q": "What do I believe about the British Empire and American finance?",
+      "expect": [
+        2602,
+        2603,
+        2611,
+        2605,
+        2604
+      ]
+    },
+    {
+      "q": "Do I like baseball caps?",
+      "expect": [
+        2532
+      ]
+    },
+    {
+      "q": "Which photo gallery app did I try and dislike?",
+      "expect": [
+        2533
+      ]
+    },
+    {
+      "q": "When is my doctor's appointment?",
+      "expect": [
+        2637
+      ]
+    },
+    {
+      "q": "How old is my house?",
+      "expect": [
+        2581
+      ]
+    },
+    {
+      "q": "What should I do with the leftover cooked chicken breasts?",
+      "expect": [
+        2616,
+        2625
+      ]
+    },
+    {
+      "q": "What was the best sausage I ever had?",
+      "expect": [
+        2542
+      ]
+    },
+    {
+      "q": "What am I planning for dinner tonight?",
+      "expect": [
+        2774
+      ]
+    },
+    {
+      "q": "What did I think of the picture of Alexandra?",
+      "expect": [
+        2647
+      ]
+    },
+    {
+      "q": "What are my plans for the bathroom?",
+      "expect": [
+        2581,
+        2659,
+        2580
+      ]
+    },
+    {
+      "q": "What is on my grocery list?",
+      "expect": [
+        2762
+      ]
+    },
+    {
+      "q": "What's the deal with the bacon grease jar?",
+      "expect": [
+        2723
+      ]
+    },
+    {
+      "q": "What are my weekend plans?",
+      "expect": []
+    },
+    {
+      "q": "What have I been eating lately?",
+      "expect": [
+        2726,
+        2560,
+        2541,
+        2777,
+        2774
+      ]
+    },
+    {
+      "q": "Which gym did I join?",
+      "expect": [
+        3122,
+        3109,
+        3113
+      ]
+    },
+    {
+      "q": "Remind me what I decided about Starlink.",
+      "expect": [
+        3126,
+        3124
+      ]
+    },
+    {
+      "q": "What did Mike tell me about butcher meat?",
+      "expect": [
+        3128,
+        3155
+      ]
+    },
+    {
+      "q": "Is there a Chase branch near me?",
+      "expect": [
+        3264
+      ]
+    },
+    {
+      "q": "Is Primal Kitchen the mayo I picked?",
+      "expect": [
+        3273
+      ]
+    },
+    {
+      "q": "Am I still using Cronometer?",
+      "expect": [
+        3114,
+        3108
+      ]
+    },
+    {
+      "q": "What was the Keet invitation about?",
+      "expect": [
+        3219
+      ]
+    },
+    {
+      "q": "How much is Verizon charging me?",
+      "expect": [
+        3123,
+        3125
+      ]
+    },
+    {
+      "q": "What was my Clash of Clans problem?",
+      "expect": [
+        3149
+      ]
+    },
+    {
+      "q": "Who did I want to pitch the Homestead Idea to?",
+      "expect": [
+        3158
+      ]
+    },
+    {
+      "q": "What was I adding to my Hannaford list?",
+      "expect": [
+        3272
+      ]
+    }
   ]
 }

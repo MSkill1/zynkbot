@@ -137,3 +137,100 @@ async fn recall_bench() {
     std::fs::write(&path, &report).unwrap();
     println!("written {}", path.display());
 }
+
+/// Does the 60/40 name-versus-meaning weighting earn its place? (Matt, 2026-10-26: "an
+/// arbitrary test decision" nine months ago, never measured.) Same database copy, same
+/// questions and stored embeddings as `recall_bench`; only the scoring formula varies.
+///
+///   RECALL_BENCH_DB=/path/copy.db [RECALL_BENCH_MAP=...] LD_LIBRARY_PATH=lib/vosk \
+///   cargo test --features cuda --lib weight_bench -- --ignored --nocapture
+#[tokio::test]
+#[ignore]
+async fn weight_bench() {
+    let db = std::env::var("RECALL_BENCH_DB").expect("RECALL_BENCH_DB");
+    let set_path = std::env::var("RECALL_BENCH_SET").unwrap_or_else(|_| "../../labs/recall_bench/cases.json".into());
+    let out_dir = std::env::var("RECALL_BENCH_OUT").map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| dirs::home_dir().unwrap().join("Documents/Zynk_related/recall_bench"));
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let mut set: Set = serde_json::from_str(&std::fs::read_to_string(&set_path).expect("case file")).expect("case json");
+    if let Ok(mp) = std::env::var("RECALL_BENCH_MAP") {
+        let map: std::collections::BTreeMap<i32, Vec<i32>> = serde_json::from_str(&std::fs::read_to_string(&mp).expect("map file")).expect("map json");
+        for c in &mut set.cases { let extra: Vec<i32> = c.expect.iter().filter_map(|id| map.get(id)).flatten().copied().collect(); c.expect.extend(extra); }
+    }
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}?mode=ro", db)).await.expect("db");
+    let raw: Vec<(i32, Option<String>, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT id, entities_detected, embedding FROM memories \
+         WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status != 'superseded') \
+         AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now'))")
+        .bind(&set.user_id).fetch_all(&pool).await.expect("rows");
+    let rows: Vec<(i32, Option<String>, Option<Vec<f32>>)> = raw.into_iter()
+        .map(|(id, ents, emb)| (id, ents, emb.map(|b| crate::memory::blob_to_f32_pub(&b)))).collect();
+
+    // (name, score given entity overlap e and cosine s, include regardless of threshold when e > 0)
+    type Formula = (&'static str, fn(f64, f64) -> f64, bool);
+    let formulas: Vec<Formula> = vec![
+        ("current 60/40",            |e, s| if e > 0.0 { 0.6 * e + 0.4 * s } else { s }, true),
+        ("current, no forced entry", |e, s| if e > 0.0 { 0.6 * e + 0.4 * s } else { s }, false),
+        ("never hurts: max(s, 60/40)", |e, s| if e > 0.0 { s.max(0.6 * e + 0.4 * s) } else { s }, true),
+        ("meaning only",             |_, s| s, false),
+        ("meaning + 0.3 x names",    |e, s| s + 0.3 * e, true),
+        ("meaning + 0.6 x names",    |e, s| s + 0.6 * e, true),
+        ("blend 30/70",              |e, s| if e > 0.0 { 0.3 * e + 0.7 * s } else { s }, true),
+    ];
+    const THRESHOLD: f64 = 0.35;
+
+    let enhancer = crate::nlp_enhancer::NLPEnhancer::new();
+    let mut table = String::from("| # | question | names found in the question | ");
+    table.push_str(&formulas.iter().map(|f| f.0).collect::<Vec<_>>().join(" | "));
+    table.push_str(" |\n|---|---|---|");
+    table.push_str(&"---|".repeat(formulas.len()));
+    table.push('\n');
+    let mut hits: Vec<(usize, usize, f64)> = vec![(0, 0, 0.0); formulas.len()];
+    let mut named_hits: Vec<(usize, usize, f64)> = vec![(0, 0, 0.0); formulas.len()];
+    let mut scored_cases = 0usize;
+    let mut named_cases = 0usize;
+    for (ci, case) in set.cases.iter().enumerate() {
+        if case.expect.is_empty() { continue; }
+        scored_cases += 1;
+        let qe = crate::llm::local_embeddings::generate_local_embedding(&case.q).expect("q embed");
+        let ents: Vec<String> = enhancer.extract_entities(&case.q).into_iter().map(|e| e.word.to_lowercase()).filter(|e| e.len() > 1).collect();
+        let named = !ents.is_empty();
+        if named { named_cases += 1; }
+        let mut cells = Vec::new();
+        for (fi, (_, f, forced)) in formulas.iter().enumerate() {
+            let mut scores: Vec<(i32, f64)> = rows.iter().filter_map(|(id, stored_ents, emb)| {
+                let s = emb.as_ref().map(|e| crate::llm::local_embeddings::cosine_similarity(&qe, e) as f64).unwrap_or(0.0);
+                let e = entity_overlap(stored_ents, &ents);
+                let score = f(e, s);
+                if score >= THRESHOLD || (*forced && e > 0.0) { Some((*id, score)) } else { None }
+            }).collect();
+            scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            let rank = rank_of(&scores, &case.expect);
+            if let Some(rk) = rank {
+                for h in [&mut hits[fi]].into_iter().chain(if named { Some(&mut named_hits[fi]) } else { None }) {
+                    if rk <= 4 { h.0 += 1; } if rk <= 10 { h.1 += 1; } h.2 += 1.0 / rk as f64;
+                }
+            }
+            cells.push(rank.map(|r| r.to_string()).unwrap_or_else(|| "–".into()));
+        }
+        table.push_str(&format!("| {} | {} | {} | {} |\n", ci + 1, case.q, ents.join(", "), cells.join(" | ")));
+    }
+    let summarise = |hits: &Vec<(usize, usize, f64)>, n: usize| {
+        let mut s = String::from("| formula | found in top 4 (phone) | found in top 10 (cloud) | mean reciprocal rank |\n|---|---|---|---|\n");
+        for (fi, f) in formulas.iter().enumerate() {
+            let (h4, h10, mrr) = hits[fi];
+            s.push_str(&format!("| {} | {}/{} | {}/{} | {:.2} |\n", f.0, h4, n, h10, n, if n > 0 { mrr / n as f64 } else { 0.0 }));
+        }
+        s
+    };
+    let report = format!(
+        "# Weight bench {}\n\n{} memories in the database copy; {} scored questions, {} of them with a name the name-finder picked up. \
+         Rank of the first expected memory under each scoring formula (e = share of the question's names found in the memory, s = cosine; threshold {}).\n\n\
+         ## All questions\n\n{}\n## Questions with a name only\n\n{}\n## Per question (rank)\n\n{}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M"), rows.len(), scored_cases, named_cases, THRESHOLD,
+        summarise(&hits, scored_cases), summarise(&named_hits, named_cases), table);
+    println!("\n{}", report);
+    let path = out_dir.join(format!("WEIGHTS_{}.md", chrono::Local::now().format("%Y-%m-%d")));
+    std::fs::write(&path, &report).unwrap();
+    println!("written {}", path.display());
+}
