@@ -682,14 +682,25 @@ class WakeWordService : Service() {
             // this thread (KI-097).
             val env = OrtEnvironment.getEnvironment()
             val dir = File(modelDir)
-            val mel = env.createSession(File(dir, "melspectrogram.onnx").absolutePath)
-            val emb = env.createSession(File(dir, "embedding_model.onnx").absolutePath)
-            val kws = env.createSession(File(dir, "hey_zynk.onnx").absolutePath)
+            // One worker thread, no spin-waiting. With the defaults ONNX Runtime opened a
+            // pool the size of the phone and its workers busy-waited between runs: three
+            // threads at a third of a core each with the phone idle, 18.5 h of CPU in
+            // 11.5 h on battery on the Pixel 10 Pro XL (2026-10-26). The models are
+            // small enough that one thread runs them in time.
+            fun opts() = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(1)
+                setInterOpNumThreads(1)
+                addConfigEntry("session.intra_op.allow_spinning", "0")
+                addConfigEntry("session.inter_op.allow_spinning", "0")
+            }
+            val mel = env.createSession(File(dir, "melspectrogram.onnx").absolutePath, opts())
+            val emb = env.createSession(File(dir, "embedding_model.onnx").absolutePath, opts())
+            val kws = env.createSession(File(dir, "hey_zynk.onnx").absolutePath, opts())
             var vad: OrtSession? = null
             val vadFile = File(dir, "silero_vad.onnx")
             if (vadFile.isFile) {
                 try {
-                    val v = env.createSession(vadFile.absolutePath)
+                    val v = env.createSession(vadFile.absolutePath, opts())
                     vad = v
                     WakeLog.i(TAG, "Speech gate loaded (Silero VAD, inputs ${v.inputNames})")
                 } catch (e: Exception) { WakeLog.w(TAG, "Speech gate unavailable, running without it: ${e.message}") }

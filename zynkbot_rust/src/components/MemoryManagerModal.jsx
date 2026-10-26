@@ -77,6 +77,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [isEditing, setIsEditing] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null); // null | 'busy' | 'ok' | 'error'
   const [showStorage, setShowStorage] = useState(false); // backup storage details, folded under the header
+  const [openSaid, setOpenSaid] = useState(() => new Set()); // message groups whose full text is shown (tap the quote)
+  const toggleSaid = (key) => setOpenSaid(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const [backupMsg, setBackupMsg] = useState('');
   const [keyStatus, setKeyStatus] = useState(null); // null | { key: string, acknowledged: boolean }
   const [showKeySaveModal, setShowKeySaveModal] = useState(false);
@@ -491,7 +493,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     setEditFormData({
       title: memory.title || '',
       content: memory.content || '',
-      namespace: memory.namespace || 'personal'
+      namespace: memory.namespace || 'personal',
+      original: memory.original_text || ''
     });
     console.log('[MemoryManager] Edit mode enabled, form data set');
   };
@@ -529,12 +532,19 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
       console.log('[Save] Update successful');
 
+      // "What I said" is shared by every fact from that message; the command rewrites all of them.
+      const newOriginal = (editFormData.original || '').trim();
+      if (newOriginal !== (selectedMemory.original_text || '').trim()) {
+        await invoke('update_memory_original_text', { memoryId: selectedMemory.id, originalText: newOriginal });
+      }
+
       // Update the selected memory locally with the new data
       setSelectedMemory({
         ...selectedMemory,
         title: editFormData.title || null,
         content: editFormData.content,
-        namespace: editFormData.namespace
+        namespace: editFormData.namespace,
+        original_text: newOriginal || null
       });
 
       // Exit edit mode
@@ -1003,8 +1013,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       group.items.map((mem) => renderPhoneFact(mem, false))
                     ) : (
                       <div key={group.key} style={{ background: '#1e1f29', border: '1px solid #44475a', borderRadius: '8px', padding: '10px 12px', marginBottom: '10px' }}>
-                        <div style={{ color: '#6272a4', fontSize: '0.75rem', marginBottom: '2px' }}>You said · {group.items.length} memories</div>
-                        <div style={{ color: '#f8f8f2', fontSize: '0.9rem', fontStyle: 'italic', lineHeight: 1.35, marginBottom: '8px' }}>“{oneLine(group.said, 110)}”</div>
+                        <div style={{ color: '#6272a4', fontSize: '0.75rem', marginBottom: '2px' }}>What I said · {group.items.length} memories</div>
+                        <div onClick={() => toggleSaid(group.key)} title={openSaid.has(group.key) ? 'Tap to shorten' : 'Tap to read the whole message'} style={{ color: '#f8f8f2', fontSize: '0.9rem', fontStyle: 'italic', lineHeight: 1.35, marginBottom: '8px', cursor: 'pointer', whiteSpace: openSaid.has(group.key) ? 'pre-wrap' : 'normal' }}>“{openSaid.has(group.key) ? group.said : oneLine(group.said, 110)}”</div>
                         {group.items.map((mem) => renderPhoneFact(mem, true))}
                       </div>
                     ))}
@@ -1061,6 +1071,13 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         onChange={(e) => setEditFormData({ ...editFormData, content: e.target.value })}
                         rows={8} />
                     </div>
+                    <div className="detail-section">
+                      <strong>What I said:</strong>
+                      <div style={{ color: '#6272a4', fontSize: '0.8rem', margin: '2px 0 4px' }}>Shared by every memory from this message; a change applies to all of them.</div>
+                      <textarea className="edit-textarea" value={editFormData.original}
+                        onChange={(e) => setEditFormData({ ...editFormData, original: e.target.value })}
+                        rows={4} />
+                    </div>
                   </div>
                 ) : (
                   <div className="memory-details-content">
@@ -1095,6 +1112,14 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       <strong>Content:</strong>
                       <div className="content-box">{selectedMemory.content}</div>
                     </div>
+                    {selectedMemory.original_text && (
+                      <div className="detail-section">
+                        <strong>What I said:</strong>
+                        <div className="content-box" style={{ color: '#9aa5c4', fontStyle: 'italic' }}>
+                          {selectedMemory.original_text}
+                        </div>
+                      </div>
+                    )}
                     {selectedMemory.entities_detected && selectedMemory.entities_detected.length > 0 && (
                       <div className="detail-row">
                         <strong>Entities:</strong>
@@ -1377,8 +1402,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       group.items.map((mem) => renderDesktopFact(mem, false))
                     ) : (
                       <div key={group.key} className="memory-group">
-                        <div className="memory-group-said-label">You said · {group.items.length} memories</div>
-                        <div className="memory-group-said">“{oneLine(group.said, 140)}”</div>
+                        <div className="memory-group-said-label">What I said · {group.items.length} memories</div>
+                        <div className={`memory-group-said ${openSaid.has(group.key) ? 'open' : ''}`} onClick={() => toggleSaid(group.key)} title={openSaid.has(group.key) ? 'Click to shorten' : 'Click to read the whole message'}>“{openSaid.has(group.key) ? group.said : oneLine(group.said, 140)}”</div>
                         {group.items.map((mem) => renderDesktopFact(mem, true))}
                       </div>
                     ))}
@@ -1467,6 +1492,16 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         rows={8}
                       />
                     </div>
+                    <div className="detail-section">
+                      <strong>What I said:</strong>
+                      <div style={{ color: '#6272a4', fontSize: '0.8rem', margin: '2px 0 4px' }}>Shared by every memory from this message; a change applies to all of them.</div>
+                      <textarea
+                        className="edit-textarea"
+                        value={editFormData.original}
+                        onChange={(e) => setEditFormData({ ...editFormData, original: e.target.value })}
+                        rows={4}
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className="memory-details-content">
@@ -1515,7 +1550,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     </div>
                     {selectedMemory.original_text && (
                       <div className="detail-section">
-                        <strong>Original:</strong>
+                        <strong>What I said:</strong>
                         <div className="content-box" style={{ color: '#9aa5c4', fontStyle: 'italic' }}>
                           {selectedMemory.original_text}
                         </div>

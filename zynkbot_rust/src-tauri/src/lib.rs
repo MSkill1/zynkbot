@@ -2329,6 +2329,7 @@ pub fn run() {
             commands::memory::list_memories,
             commands::memory::find_memory_source,
             commands::memory::update_memory,
+            commands::memory::update_memory_original_text,
             commands::memory::delete_memory,
             commands::memory::restore_memory,
             commands::memory::resolve_stored_conflict,

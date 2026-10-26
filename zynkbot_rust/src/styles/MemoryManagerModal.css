@@ -691,7 +691,9 @@
   padding: 10px 12px;
 }
 .memory-group-said-label { color: #6272a4; font-size: 0.75rem; margin-bottom: 2px; }
-.memory-group-said { color: #f8f8f2; font-size: 0.9rem; font-style: italic; line-height: 1.35; margin-bottom: 6px; }
+.memory-group-said { color: #f8f8f2; font-size: 0.9rem; font-style: italic; line-height: 1.35; margin-bottom: 6px; cursor: pointer; }
+.memory-group-said:hover { color: #8be9fd; }
+.memory-group-said.open { white-space: pre-wrap; }
 .memory-list-item.in-group {
   background: transparent;
   border: none;
