@@ -6,7 +6,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## [0.9.6-beta5] — unreleased <!-- branch beta5 -->
+## [0.9.6-beta5] — 2026-10-27 <!-- branch local-model; entries for 10-26/27 drafted by Claude, for Matt's review -->
 
 ### Timer, alarm and stopwatch (Android; branch `timer`, 2026-10-25)
 - Zynkbot runs its own timers and alarms instead of handing them to the phone's clock app. They ring with the screen off or the app closed (the fix for a timer that was confirmed but never rang, #29), say what they are, and ring for 30 seconds unless stopped by "Hey Zynk", the Stop button in the app, or Stop on the notification. Several at once, each with a chip above the message box and a notification, both with Cancel. New commands: "check timer", "stop timer" / "cancel timer" / "cancel the ten minute timer", "cancel alarm" / "cancel the 7 30 alarm", "check alarms", "stop stopwatch", "reset stopwatch", "check stopwatch". Needs Android's "Alarms & reminders" switch for Zynkbot, offered on the Voice page.
