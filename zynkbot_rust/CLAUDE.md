@@ -67,6 +67,9 @@ the gallery unless the user accepts the "add to gallery" offer after a download
 
 ## CI
 
-The `release-android` job in `.github/workflows/release.yml` cannot work as written (KI-034): it runs
-`gradlew` without `tauri android build`, so the gitignored Tauri-generated Gradle files are missing.
-Release artefacts are built locally for now.
+The `release-android` job in `.github/workflows/release.yml` works: on a `v*` tag it builds the
+APK with `tauri android build` and attaches `Zynkbot_<version>.apk` (signed with the release key
+from the repository secrets) to the draft release, beside the desktop installers from the
+`release` job. Verified on v0.9.6-beta5, 2026-10-27 (the KI-034 note that it could not work is
+history). The desktop job creates the release as a draft, pre-release when the tag contains
+"beta"; publishing is a `gh release edit --draft=false` by hand, after the notes are set.
