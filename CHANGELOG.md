@@ -25,6 +25,38 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - On the phone with the device model: the prompt it reads is cut down (8 recent messages of 400 characters, 4 memories of 300, 85 words of instructions), so the first answer in a thread takes 10–20 seconds and later ones under 10; the Memory Manager says that memories from the device model take minutes to appear.
 - Junk memories that the old pipeline had stored from raw messages and hands-free turns are gone from the developer's database; nothing in the app deletes yours. The Memory Manager is the place to review them.
 
+### Memory, continued (2026-10-26 and 27, branch `memory-types`)
+- A memory card (a contradiction, or "is this an update?") is kept until it is answered: it shows on the next open or return to the app, and the phone posts a notification "Zynkbot has a question about a memory" when the app is off screen.
+- Passing facts expire: a parking level, an errand, a trip, this week's mood leaves recall two weeks after its day. It stays in the Memory Manager tagged EXPIRED with a Keep button. A memory line in the prompt carries the day the thing happened when that differs from the day it was said.
+- The Memory Manager groups the facts from one message under "What I said", with the day above; tap the quote to read the whole message; the message is editable from any of its facts.
+- Translate, rewrite, reprint and proofread requests store no memory.
+- Names come out cleaner: the fact prefix "User", stray function words ("of", "is") and glued word fragments no longer appear in a memory's names.
+
+### The Zynkbot model at first run
+- A fresh install offers the Zynkbot model (Qwen3-4B-Instruct-2507, Q4_0, 2.4 GB) as a download at the end of setup, on the phone as well as the desktop, with a progress bar and "Later". The download resumes where it stopped if the app was closed, and the file's checksum is verified before it is used. "Later" leaves a Download button on the Current Model page.
+
+### Zynkbot's own guides
+- A question about Zynkbot itself (pairing, Ensemble, permissions, what a button does) is answered from the built-in user guides, which are indexed on the device. Dictation's "zinc sync" and "zinc link" count too. If the guides do not cover it, the answer says so instead of guessing.
+
+### Web search
+- Where a search goes now depends on the model you are using. With a Claude, OpenAI, Grok or Mistral key, the search runs through that provider's own web search tool on your key, and the reply is that model's answer with the pages it used under "View sources"; the provider bills it per search. With a local model, results come from a Brave Search key or a search server address set in Keys and servers, or from DuckDuckGo with neither. The search card, and the hands-free search, work as before.
+- DuckDuckGo's "prove you are human" page is reported as a temporary block instead of "no results"; searches are spaced a few seconds apart, and a known block is waited out.
+- A searched answer is saved into the thread like any other reply.
+
+### Reading a page you point at
+- A web address in your message makes Zynkbot fetch that page on your device and answer from its text, with the page under "View sources". No search involved; works with every model, local ones included. A page that cannot be read is reported as such.
+
+### Documents
+- Word documents, both .docx and the older .doc, can be added to the Knowledge Base and attached to a message; the words are read, not the formatting.
+
+### Timer and alarm fixes
+- "Set an alarm four eight fifteen" (dictation's version of "for") sets 8:15; a time with no am or pm means the next 8:15 to come; "set it for 8:15" after "am or pm?" works; "alarm 4 15 pm" is 4:15 PM.
+- An alarm the app set is no longer disowned by the model a moment later ("I can't set alarms"): the model now knows the app's own clock did it.
+
+### Privacy
+- Deleted conversations and memories are overwritten in the database file at the moment of deletion, not left in free space until the file is compacted.
+- A hidden "MEMORY: no" line no longer reaches the screen under a web-search line.
+
 ### Chat prompt
 - Zynkbot may now ask first: if one or two missing details would change the answer, it asks for them briefly instead of guessing; otherwise it answers and says what it assumed. In testing before 1.0.
 

@@ -271,6 +271,9 @@ export default function App() {
   const [availableModels, setAvailableModels] = useState([]);
   // The model files on this device, for the Current Model page (2026-10-23).
   const [localModelFiles, setLocalModelFiles] = useState([]);
+  // The Zynkbot model download from the Current Model page (2026-10-27): the "Later" of
+  // setup, and the way onto a device that was set up before the model was offered.
+  const [zbDownload, setZbDownload] = useState({ active: false, percent: 0, downloaded: 0, total: 0, verifying: false, error: null });
   // The first time the local model is chosen, say once what to expect (Matt, 2026-10-23:
   // the limit is speed, not intelligence, so set the time expectation rather than hide
   // features). Never shown again on this device.
@@ -579,6 +582,23 @@ export default function App() {
     try { setLocalModelFiles(await invoke('list_local_model_files')); } catch (_) { setLocalModelFiles([]); }
   };
   const formatModelSize = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`);
+  const handleDownloadZbModel = async () => {
+    if (zbDownload.active) return;
+    setZbDownload({ active: true, percent: 0, downloaded: 0, total: 0, verifying: false, error: null });
+    const unlisten = await listen('setup:llm_progress', (e) => {
+      setZbDownload(d => ({ ...d, percent: e.payload.percent, downloaded: e.payload.downloaded, total: e.payload.total, verifying: !!e.payload.verifying }));
+    });
+    try {
+      await invoke('download_user_model', { modelId: 'zb-qwen3-4b' });
+      await fetchModels();
+      await fetchLocalModelFiles();
+      setZbDownload({ active: false, percent: 100, downloaded: 0, total: 0, verifying: false, error: null });
+    } catch (e) {
+      setZbDownload(d => ({ ...d, active: false, error: String(e) }));
+    } finally {
+      unlisten();
+    }
+  };
   // After a model file left the device: refresh both lists and, if it was the one in
   // use, fall back to the first model that remains.
   const afterModelFileGone = async (path) => {
@@ -1941,6 +1961,18 @@ export default function App() {
               );
             })}
           </div>
+          {localModelFiles.length === 0 && (
+            <div style={{ margin: '6px 0 10px' }}>
+              <button className="model-add-btn" disabled={zbDownload.active} onClick={handleDownloadZbModel}
+                title="Qwen3-4B-Instruct-2507 Q4_0 from Hugging Face, checked against its checksum">
+                {zbDownload.active ? (zbDownload.verifying ? 'Checking the file…' : `Downloading… ${zbDownload.percent}%${zbDownload.total ? ' (' + formatModelSize(zbDownload.downloaded) + ' of ' + formatModelSize(zbDownload.total) + ')' : ''}`) : '⬇ Download the Zynkbot model (2.4 GB)'}
+              </button>
+              <div style={{ fontSize: '0.8rem', color: '#9aa5c4', marginTop: '4px' }}>
+                Runs on this device with no key. Wi-Fi recommended; keep the app open. An interrupted download continues where it stopped.
+              </div>
+              {zbDownload.error && <div style={{ fontSize: '0.8rem', color: '#ff5555', marginTop: '4px' }}>{zbDownload.error}</div>}
+            </div>
+          )}
           {!isMobile ? (
             <button className="model-add-btn" title="Open the models folder to add .gguf files"
               onClick={async () => { try { await invoke('open_models_folder'); } catch (error) { alert('Failed to open models folder: ' + error); } }}>

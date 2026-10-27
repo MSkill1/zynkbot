@@ -2499,6 +2499,7 @@ pub fn run() {
             // Setup wizard
             commands::setup_wizard::check_needs_setup,
             commands::setup_wizard::download_system_models,
+            commands::setup_wizard::zb_model_status,
             commands::setup_wizard::download_user_model,
         ])
         .on_window_event(|_window, event| {

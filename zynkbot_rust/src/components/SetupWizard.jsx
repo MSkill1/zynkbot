@@ -8,7 +8,11 @@ const SYSTEM_MODELS = [
   { id: 'toxic-bert', name: 'ToxicBERT',           desc: 'Local safety classifier for content filtering', size: '~440MB' },
 ];
 
+const ZB_MODEL_ID = 'zb-qwen3-4b';
 const USER_MODELS = [
+  // The Zynkbot model (2026-10-27): the model the app is built around, phone-sized; offered
+  // on every platform, the only one offered on a phone.
+  { id: ZB_MODEL_ID,      name: 'Zynkbot model (Qwen3 4B)',          desc: 'The model Zynkbot is built around. Phone-sized, fast, no key needed', size: '2.4GB' },
   { id: 'qwen3-8b',       name: 'Qwen3 8B',                        desc: 'Best all-around — recommended for most users', size: '5.0GB' },
   { id: 'deepseek-r1-8b', name: 'DeepSeek R1 Distill Llama 8B',    desc: 'Reasoning and analytical tasks',               size: '4.7GB' },
   { id: 'llama-lexi-8b',  name: 'Llama 3.1 8B Lexi Uncensored',    desc: 'Creative, unfiltered responses',               size: '4.9GB' },
@@ -69,6 +73,7 @@ export default function SetupWizard({ onComplete }) {
   const [currentLLM, setCurrentLLM]   = useState(null);
   const [llmProgress, setLlmProgress] = useState(0);
   const [llmBytes, setLlmBytes]       = useState({ downloaded: 0, total: 0 });
+  const [llmVerifying, setLlmVerifying] = useState(false);
   const [llmQueue, setLlmQueue]       = useState([]);
   const [error, setError]             = useState(null);
 
@@ -88,7 +93,7 @@ export default function SetupWizard({ onComplete }) {
 
     try {
       await invoke('download_system_models');
-      setScreen(isMobile ? 'complete' : 'llm_selection');
+      setScreen(isMobile ? 'zb_offer' : 'llm_selection');
     } catch (e) {
       setError(String(e));
     } finally {
@@ -106,6 +111,7 @@ export default function SetupWizard({ onComplete }) {
     const ul1 = await listen('setup:llm_progress', (e) => {
       setLlmProgress(e.payload.percent);
       setLlmBytes({ downloaded: e.payload.downloaded, total: e.payload.total });
+      setLlmVerifying(!!e.payload.verifying);
     });
 
     try {
@@ -113,6 +119,7 @@ export default function SetupWizard({ onComplete }) {
         setCurrentLLM(modelId);
         setLlmProgress(0);
         setLlmBytes({ downloaded: 0, total: 0 });
+        setLlmVerifying(false);
         await invoke('download_user_model', { modelId });
       }
       setScreen('complete');
@@ -160,8 +167,9 @@ export default function SetupWizard({ onComplete }) {
 
         {isMobile ? (
           <p style={{ ...S.body, marginBottom: 0 }}>
-            Add an API key (Anthropic, OpenAI, xAI, or Mistral) after setup via{' '}
-            <strong style={{ color: '#ccc' }}>⚙ Settings → API Keys</strong>. Local models are not supported on Android.
+            Next, Zynkbot offers its own model (2.4 GB): it runs on this phone with no key and nothing sent anywhere.
+            A cloud model is the other choice; add its key after setup via{' '}
+            <strong style={{ color: '#ccc' }}>⚙ Settings → Keys and servers</strong>.
           </p>
         ) : (
           <>
@@ -208,7 +216,7 @@ export default function SetupWizard({ onComplete }) {
         <div style={S.title}>Choose a local model (optional)</div>
         <p style={S.body}>
           Local models run entirely on your device with no internet needed.
-          Select any you want to download now — each is ~5GB.
+          Select any you want to download now — 2.4 to 5 GB each.
           You can skip this and use an API key instead — add yours after setup
           via the <strong style={{ color: '#ccc' }}>⚙ Settings</strong> button in the bottom-left corner.
           Local models can also be added from Settings at any time.
@@ -248,6 +256,29 @@ export default function SetupWizard({ onComplete }) {
     </div>
   );
 
+  if (screen === 'zb_offer') {
+    const zb = USER_MODELS.find(m => m.id === ZB_MODEL_ID);
+    return (
+      <div data-modal="" style={S.overlay}>
+        <div style={S.card}>
+          <div style={S.title}>The Zynkbot model</div>
+          <p style={S.body}>
+            {zb.name}, {zb.size}. It answers on this phone with no key and nothing sent anywhere;
+            a first question in a thread takes 10 to 20 seconds, later ones under 10.
+            Download on Wi-Fi and keep the app open. If the download is interrupted it continues
+            where it stopped next time, and the file is checked before it is used.
+          </p>
+          <p style={{ ...S.body, marginBottom: 0 }}>
+            Choose Later to use a cloud model instead; the download stays on the Current Model page.
+          </p>
+          <div>
+            <button style={S.btn} onClick={() => startLLMs([ZB_MODEL_ID])}>Download ({zb.size})</button>
+            <button style={S.btnGhost} onClick={() => setScreen('complete')}>Later</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (screen === 'downloading_llm') {
     const currentIdx = llmQueue.indexOf(currentLLM);
     return (
@@ -268,7 +299,8 @@ export default function SetupWizard({ onComplete }) {
                 <div style={S.row}>
                   <div>
                     <div style={S.name}>{m.name}</div>
-                    {isCurrent && llmBytes.total > 0 && (
+                    {isCurrent && llmVerifying && <div style={S.desc}>Checking the file…</div>}
+                    {isCurrent && !llmVerifying && llmBytes.total > 0 && (
                       <div style={S.desc}>{formatBytes(llmBytes.downloaded)} / {formatBytes(llmBytes.total)}</div>
                     )}
                   </div>
