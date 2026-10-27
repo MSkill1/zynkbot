@@ -441,6 +441,10 @@ Local model inference on phones is a distinct architectural problem from desktop
 
 ---
 
+### Private video playback (later; Matt 2026-10-27)
+
+Play a YouTube video inside Zynkbot without leaving a trace, the way DuckDuckGo's Duck Player does: the video is loaded through YouTube's no-cookie embed inside the app's own view, so no watch history, no recommendations, no ads tied to a person, and nothing on a YouTube account. Two ways to build it, from cheap to thorough: (1) the no-cookie embed in the app's view, which still fetches the video from Google's servers (they see an address, not a person); (2) a privacy front end such as Piped or Invidious, self-hosted or a trusted public instance, which fetches the video on the user's behalf so Google sees the instance instead. A natural companion to web search: "play the video from that page". Not before 1.0.
+
 ### SDK Foundation (Co-primary Track)
 
 Early groundwork for the developer platform. Full SDK public release is v3.0; v1.1 establishes the internal architecture so the surface area is stable before exposing it externally.

@@ -548,7 +548,12 @@ pub async fn search_and_answer(api_key: &str, model: &str, query: &str, max_sear
         "max_tokens": 1500,
         "system": "You answer from web search results. Search for what the user asks, then answer directly and concisely from what you find. Do not narrate the searching or describe your process.",
         "messages": [{"role": "user", "content": format!("Search the web for: {}", query)}],
-        "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}],
+        // The fetch tool beside the search tool (2026-10-27): Claude can find a page by name
+        // and then read it whole, or read an address the user gave. No charge beyond tokens.
+        "tools": [
+            {"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches},
+            {"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 3, "max_content_tokens": 20000},
+        ],
     });
     println!("[Rust Anthropic] Web search through Claude ({}): {}", model, query);
     let response = reqwest::Client::new()
@@ -573,8 +578,8 @@ pub async fn search_and_answer(api_key: &str, model: &str, query: &str, max_sear
 }
 
 /// The answer text and the sources out of a Messages response that used the web search
-/// tool: text blocks joined, every `web_search_result` once, each citation's text as the
-/// snippet of its page.
+/// and web fetch tools: text blocks joined, every `web_search_result` and every fetched
+/// page once, each citation's text as the snippet of its page.
 pub fn parse_web_answer(v: &serde_json::Value) -> Result<super::WebAnswer, LLMError> {
     let mut answer = String::new();
     let mut sources: Vec<super::WebSource> = Vec::new();
@@ -588,6 +593,17 @@ pub fn parse_web_answer(v: &serde_json::Value) -> Result<super::WebAnswer, LLMEr
                         snippets.entry(url.to_string()).or_insert_with(|| cited.trim().to_string());
                     }
                 }
+            }
+            "web_fetch_tool_result" => {
+                let c = &block["content"];
+                if c["type"].as_str() == Some("web_fetch_result") {
+                    let url = c["url"].as_str().unwrap_or("").to_string();
+                    if !url.is_empty() && !sources.iter().any(|s| s.url == url) {
+                        let title = c["content"]["title"].as_str().unwrap_or("").to_string();
+                        sources.push(super::WebSource { title, url, snippet: String::new() });
+                    }
+                }
+                // A fetch that failed is not an error for the whole answer: Claude says so in its text.
             }
             "web_search_tool_result" => {
                 if let Some(items) = block["content"].as_array() {
@@ -641,6 +657,21 @@ mod web_answer_tests {
         assert_eq!(a.sources.len(), 2);
         assert_eq!(a.sources[0].snippet, "Heritage Family Credit Union serves Rutland County...");
         assert_eq!(a.sources[1].title, "Business banking");
+    }
+
+    #[test]
+    fn a_fetched_page_is_a_source_too() {
+        let v = serde_json::json!({"content": [
+            {"type": "server_tool_use", "id": "f1", "name": "web_fetch", "input": {"url": "https://containai.ai/"}},
+            {"type": "web_fetch_tool_result", "tool_use_id": "f1", "content": {"type": "web_fetch_result", "url": "https://containai.ai/",
+                "content": {"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": "Zynkbot..."}, "title": "Contain AI"}, "retrieved_at": "2026-10-27T15:00:00Z"}},
+            {"type": "web_fetch_tool_result", "tool_use_id": "f2", "content": {"type": "web_fetch_tool_result_error", "error_code": "url_not_accessible"}},
+            {"type": "text", "text": "The site describes Zynkbot. The second page could not be read."}
+        ]});
+        let a = parse_web_answer(&v).unwrap();
+        assert_eq!(a.sources.len(), 1);
+        assert_eq!((a.sources[0].title.as_str(), a.sources[0].url.as_str()), ("Contain AI", "https://containai.ai/"));
+        assert!(a.answer.starts_with("The site describes"));
     }
 
     #[test]

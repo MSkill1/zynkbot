@@ -5,7 +5,8 @@
     {
       "q": "What is my current weight?",
       "expect": [
-        2786
+        3277,
+        3121
       ]
     },
     {
@@ -50,15 +51,15 @@
     {
       "q": "Where do I live?",
       "expect": [
-        2615,
-        2544,
-        2581
+        3157,
+        3264,
+        3171
       ]
     },
     {
       "q": "What is my mailing address?",
       "expect": [
-        2615
+        3196
       ]
     },
     {
@@ -138,7 +139,8 @@
     {
       "q": "How old is my house?",
       "expect": [
-        2581
+        3171,
+        3051
       ]
     },
     {

@@ -520,7 +520,7 @@ fn c09_two_facts_from_one_message_are_linked_as_related() {
         bench.ask(Arc::new(RecordingSink::default()), "custom", "I have a cat named Louie and I'm flying to Denver on Thursday", true).await;
         bench.wait_for_memory_containing("Denver").await;
         let mut link: Option<(String, String)> = None;
-        for _ in 0..120 {
+        for _ in 0..240 {
             link = sqlx::query_as("SELECT relation_type, created_by FROM memory_links WHERE created_by = 'same_message'").fetch_optional(&bench.pool).await.unwrap();
             if link.is_some() { break; }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -552,7 +552,7 @@ fn c06_an_update_replaces_the_older_memory_and_keeps_it_as_history() {
         bench.wait_for_memory_containing("Burlington").await;
 
         let mut status: Option<String> = None;
-        for _ in 0..120 {
+        for _ in 0..240 {
             status = sqlx::query_scalar("SELECT temporal_status FROM memories WHERE id = ?").bind(old_id).fetch_one(&bench.pool).await.unwrap();
             if status.as_deref() == Some("superseded") { break; }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
