@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The android.speech meta-data the framework's RecognitionServiceInfo parser looks
+     for on every RecognitionService. Without it the system logs "Parse error in
+     getAvailableServices: No android.speech meta-data for ai.containai.zynkbot" each
+     time it lists assistants (Pixel, 2026-10-27). Zynkbot recognises speech with Vosk
+     itself; this stub only makes the declared service well-formed. -->
+<recognition-service xmlns:android="http://schemas.android.com/apk/res/android" />

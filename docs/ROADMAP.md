@@ -174,6 +174,7 @@ This needs to be resolved before Play Store launch. The core tension:
 
 - **Backup, said where the keys are** *(small; Matt's father, 2026-10-27)* — The Keys and servers screen says nothing about backup. Add a line there: backup exists, it is free, and a button that opens it (Memory Manager → Storage today). A user who has just pasted a key is the user with something to lose.
 - ~~**Word documents in the Knowledge Base**~~ ✅ 2026-10-27 *(Matt's father)* — `.docx` and `.doc` are read for the Knowledge Base and for chat attachments (`word_docs.rs`: the zip's `word/document.xml`, and the old format's piece table); the phone's file probe names them. Words only: no pictures, headers or footnotes.
+- **The local model arrives at first run** *(v1.0; Matt 2026-10-27)* — Nothing fetches the phone's chat model today: the installers and the release workflow ship the app, the wake-word and Vosk models ride in the APK, the small system models come from Hugging Face through the setup wizard, and chat models are picked by hand. For 1.0 the chosen on-device model (after the bench and the fine-tune) is downloaded on first run by the setup wizard on every platform, from the project's own model host with a checksum, resumable, with the size stated before the download starts; Play's size limit rules out bundling it in the AAB. The release workflow publishes the model file alongside the installers.
 - **About me: tap a name under People, places and things to see the memories about it** (before 1.0, after beta3). Today the section is a list of names with counts and nothing is tappable; tags already filter the Memory Browser on tap, names should do the same (Matt, 2026-09-20).
 
 - **Automated test coverage before any rebuild** *(Tier 1 — first job on `v1`; decided 2026-09-17)* — The suite was ~442 lines (63 Rust + 2 guards + 17 frontend) against ~49,000 lines of product code, and the sync layer, the chat pipeline, the LLM clients, memory extraction, backup/restore and all Kotlin had no tests; that is where most of the known issues came from. *Status 2026-10-23: 166 Rust tests plus the two-peer sync harness, the chat harness and the memory bench; Kotlin still has none.* Target before the ZynkSync rebuild: two in-memory peers exercising pairing, key push, memory and history sync and tombstones; a chat request end to end with a fake model; every bug fix from here on ships with a test that failed before it. Why now and not earlier: the design churned through the beta (the voice path was rebuilt three times) and tests against a moving design are wasted; it has settled.
@@ -385,6 +386,15 @@ The ring plays at full alarm volume and the phone's generic software echo cancel
 ### Time as a signal in relationship detection (parked; Matt 2026-10-25)
 
 Relationship candidates are chosen by embedding similarity and entities alone; the only use of time today is the stored date printed on each memory line in the prompt. Parked until the fact-per-message pipeline has run for a while: if related facts go unlinked, add time as a candidate source, not a score. Facts from the same conversation session as candidates regardless of similarity; facts whose event dates fall within a few days of each other; and the two dates in the classifier prompt so it can tell an update (weeks apart) from siblings (same afternoon). Not for recall ranking: a recency weight is a decay on exactly the old facts the recall bench wants back, and its misses were semantic.
+
+### Recall: a word-match component beside meaning (after beta 5; Matt 2026-10-26)
+The recall bench shows short questions with no name in them ranking badly ("Where do I live?" 55th, "What is my mailing address?" 16th, "How old is my house?" 29th on 2026-10-27) while every name-bearing question is found first. Meaning-only search is the weak side; a plain word-match score (the question's content words against the memory's text) added to the blend is the next thing to measure on the bench.
+
+### LiteRT-LM GPU path (after v1.0; survey 2026-10-26)
+Google's LiteRT-LM runs Gemma-class models on the phone's GPU and NPU. The OpenCL path through the engine was measured slower on the OnePlus and refused on the Pixel; LiteRT-LM is the other route to the phone's accelerators, with its own model format. Survey in labs; nothing to build before 1.0.
+
+### Einstein demo in fact form (before the next beta after 5)
+The Einstein seed memories predate the fact-per-message pipeline; rewrite the demo set as third-person facts with titles so the demo shows memories the way the app now makes them.
 
 ### Periodic memory review (planned; Matt 2026-10-26)
 

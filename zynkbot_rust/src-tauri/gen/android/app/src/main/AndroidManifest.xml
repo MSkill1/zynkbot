@@ -195,6 +195,9 @@
             <intent-filter>
                 <action android:name="android.speech.RecognitionService" />
             </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
         </service>
 
         <!-- Zynkbot as a storage location: the "Zynkbot" entry in the Files app drawer
