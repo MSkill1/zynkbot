@@ -215,13 +215,17 @@ jobs:
           npm ci
           npm run build
 
+      # Platform 26 = the app's minSdk. cargo-ndk's default is 21, and the engine's
+      # file mapping (llama-mmap.cpp) uses posix_madvise, which Android's libc only
+      # provides from 23: every check since the engine joined the Android build failed
+      # here while the real builds, made at 26, passed (2026-10-27).
       - name: Check aarch64 (arm64-v8a)
         working-directory: zynkbot_rust/src-tauri
-        run: cargo ndk -t arm64-v8a check --lib
+        run: cargo ndk -t arm64-v8a -P 26 check --lib
 
       - name: Check armv7 (armeabi-v7a)
         working-directory: zynkbot_rust/src-tauri
-        run: cargo ndk -t armeabi-v7a check --lib
+        run: cargo ndk -t armeabi-v7a -P 26 check --lib
 
   # Compiles the hand-written Kotlin. Nothing above does: the Rust check never runs
   # Gradle, so a Kotlin error was only found by a full release build, twenty minutes
