@@ -162,7 +162,7 @@ describe('dictation shapes from the 2026-10-25 phone test', () => {
     expect(parseVoiceCommand('Stop, stop, watch.')).toEqual({ type: 'stopwatch_stop' });
   });
   test('"Set an alarm for 1026." is 10:26, "730 pm" is 19:30', () => {
-    expect(parseVoiceCommand('Set an alarm for 1026.')).toEqual({ type: 'alarm', hour: 10, minute: 26 });
+    expect(parseVoiceCommand('Set an alarm for 1026.', new Date(2026, 9, 25, 9, 0))).toEqual({ type: 'alarm', hour: 10, minute: 26 });
     expect(parseVoiceCommand('set an alarm for 730 pm')).toEqual({ type: 'alarm', hour: 19, minute: 30 });
     expect(parseVoiceCommand('set an alarm for 7:30 am')).toEqual({ type: 'alarm', hour: 7, minute: 30 });
   });
@@ -195,5 +195,29 @@ describe('"timer" heard for "alarm" with a clock time (Pixel, 2026-10-25)', () =
   test('a duration is still a timer', () => {
     expect(parseVoiceCommand('set a timer for 7 minutes')).toEqual({ type: 'timer', seconds: 420 });
     expect(parseVoiceCommand('set a timer for 2.5 minutes')).toEqual({ type: 'timer', seconds: 150 });
+  });
+});
+
+describe('parseVoiceCommand alarms — what went wrong on the Pixel (Matt, 2026-10-26)', () => {
+  const at = (h, m) => new Date(2026, 9, 26, h, m);
+  test('"set an alarm four eight fifteen pm": a misheard "for" is still an alarm', () => {
+    expect(parseVoiceCommand('set an alarm four eight fifteen pm', at(19, 26))).toEqual({ type: 'alarm', hour: 20, minute: 15 });
+  });
+  test('"alarm 4 15 pm" is a quarter past four, not a filler plus "15 pm"', () => {
+    expect(parseVoiceCommand('set an alarm 4 15 pm', at(9, 0))).toEqual({ type: 'alarm', hour: 16, minute: 15 });
+  });
+  test('no am/pm: the next 8:15 to come, tonight at 7 pm, tomorrow morning at 9 pm', () => {
+    expect(parseVoiceCommand('set an alarm for 8:15', at(19, 0))).toEqual({ type: 'alarm', hour: 20, minute: 15 });
+    expect(parseVoiceCommand('set an alarm for 8:15', at(21, 0))).toEqual({ type: 'alarm', hour: 8, minute: 15 });
+    expect(parseVoiceCommand('wake me up at 6', at(7, 0))).toEqual({ type: 'alarm', hour: 18, minute: 0 });
+  });
+  test('a spoken am/pm or a 24-hour time is taken as said', () => {
+    expect(parseVoiceCommand('set an alarm for 8:15 am', at(19, 0))).toEqual({ type: 'alarm', hour: 8, minute: 15 });
+    expect(parseVoiceCommand('set an alarm for 20:15', at(21, 0))).toEqual({ type: 'alarm', hour: 20, minute: 15 });
+  });
+  test('"set it for 8:15" after cancelling one is an alarm; "set it for 8" alone is not', () => {
+    expect(parseVoiceCommand('set it for 8:15', at(19, 0))).toEqual({ type: 'alarm', hour: 20, minute: 15 });
+    expect(parseVoiceCommand('set it for eight fifteen pm', at(9, 0))).toEqual({ type: 'alarm', hour: 20, minute: 15 });
+    expect(parseVoiceCommand('set it for 8', at(19, 0))).toBeNull();
   });
 });

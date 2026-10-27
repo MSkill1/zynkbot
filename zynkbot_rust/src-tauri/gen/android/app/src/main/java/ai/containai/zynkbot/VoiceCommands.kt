@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.AlarmClock
 import android.util.Log
+import java.util.Calendar
 
 /**
  * Voice commands the assistant handles itself, before the model ever sees the
@@ -78,9 +79,19 @@ object VoiceCommands {
         Regex("(\\d+(?:\\.\\d+)?)\\s*$UNIT\\s+timer"),
     )
     // (\\d{1,4}): dictation gives "1026" for ten twenty-six (Pixel, 2026-10-25); split below.
-    private val ALARM_RE = Regex(
-        "(?:set\\s+(?:an?\\s+)?alarm\\s+(?:for|at)|alarm\\s+(?:for|at)|wake\\s+me\\s+up\\s+at)\\s+(\\d{1,4})(?:[:\\s](\\d{1,2}))?\\s*(am|pm)?"
+    // Tried in order, the first that yields a clock time wins: a misheard "for" ("set an
+    // alarm four eight fifteen pm", Matt, Pixel, 2026-10-26; the timer patterns have
+    // tolerated the same words since 2026-10-12), then no joining word at all, so
+    // "alarm 4 15 pm" (a real four) is not read as a filler plus "15 pm".
+    private const val CLOCK = "(\\d{1,4})(?:[:\\s](\\d{1,2}))?\\s*(am|pm)?"
+    private val ALARM_RES = listOf(
+        Regex("(?:set\\s+(?:an?\\s+)?alarm\\s+(?:for|at)|alarm\\s+(?:for|at)|wake\\s+me\\s+up\\s+at)\\s+$CLOCK"),
+        Regex("(?:set\\s+(?:an?\\s+)?alarm|alarm)\\s+(?:four|4|or|of|fer)\\s+$CLOCK"),
+        Regex("(?:set\\s+(?:an?\\s+)?alarm|alarm)\\s+$CLOCK"),
     )
+    // "Set it for 8:15" right after cancelling an alarm (Matt, Pixel, 2026-10-26): a clock
+    // time (minutes or am/pm) after "set it for" is an alarm, the timer-as-alarm rule.
+    private val SET_IT_RE = Regex("\\bset\\s+it\\s+(?:for|four|4|at|or|of|fer)\\s+(\\d{1,2})(?:[:\\s](\\d{2}))?\\s*(am|pm)?\\b")
     // "set a timer for 7:30 am": dictation hears "alarm" as "timer"; a clock time (a colon,
     // or am/pm) after "timer" is an alarm, never a duration.
     private val TIMER_AS_ALARM_RE = Regex("time(?:r)?\\s+(?:for|at)\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?(?:\\s+tomorrow)?\\b")
@@ -101,7 +112,7 @@ object VoiceCommands {
         return Math.round(secs).toInt()
     }
     /** "1026" -> 10:26, "730" -> 7:30, "7" + "30" + "pm" -> 19:30; null when not a clock time. */
-    private fun clockFrom(d: String, m: String, ampm: String): Pair<Int, Int>? {
+    private fun clockFrom(d: String, m: String, ampm: String, now: Calendar): Pair<Int, Int>? {
         var digits = d; var minuteText = m
         if (digits.length >= 3 && minuteText.isEmpty()) { minuteText = digits.takeLast(2); digits = digits.dropLast(2) }
         var hour = digits.toIntOrNull() ?: return null
@@ -109,10 +120,21 @@ object VoiceCommands {
         if (hour > 23 || minute > 59) return null
         if (ampm == "pm" && hour != 12) hour += 12
         if (ampm == "am" && hour == 12) hour = 0
+        if (hour > 23) return null   // "15 pm" is no time at all
+        if (ampm.isEmpty() && hour in 1..12) hour = nextUpcoming(hour, minute, now)
         return Pair(hour, minute)
     }
 
-    fun parse(text: String): Cmd? {
+    /** No am/pm said: "8:15" at 7 pm is tonight, at 9 pm tomorrow morning, whichever of
+     *  the two comes first (Matt, Pixel, 2026-10-26; "8:15" alone used to mean 08:15). */
+    fun nextUpcoming(hour12: Int, minute: Int, now: Calendar): Int {
+        val nowMin = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+        val morning = hour12 % 12
+        fun minutesUntil(h: Int): Int { val d = (h * 60 + minute - nowMin + 1440) % 1440; return if (d == 0) 1440 else d }
+        return if (minutesUntil(morning) <= minutesUntil(morning + 12)) morning else morning + 12
+    }
+
+    fun parse(text: String, now: Calendar = Calendar.getInstance()): Cmd? {
         // Dictation with punctuation heard "Stop, stopwatch." and "stop watch" as two
         // words (Pixel, 2026-10-25): punctuation becomes spaces, "stop watch" one word.
         // "7.30 a.m." (Pixel dictation, 2026-10-25): a.m./p.m. become am/pm, 7.30 becomes 7:30.
@@ -122,7 +144,7 @@ object VoiceCommands {
             .replace(Regex("[,.!?;:](?!\\d)"), " ").replace(Regex("\\bstop\\s+watch\\b"), "stopwatch").replace(Regex("\\s+"), " ").trim()
         val t = normalizeNumbers(cleaned)
         if (CHECK_ALARM_RE.containsMatchIn(t)) return Cmd.CheckAlarm
-        CANCEL_ALARM_AT_RE.find(t)?.let { m -> clockFrom(m.groupValues[1], m.groupValues[2], m.groupValues[3])?.let { return Cmd.CancelAlarm(it.first, it.second) } }
+        CANCEL_ALARM_AT_RE.find(t)?.let { m -> clockFrom(m.groupValues[1], m.groupValues[2], m.groupValues[3], now)?.let { return Cmd.CancelAlarm(it.first, it.second) } }
         if (CANCEL_ALARM_RE.containsMatchIn(t)) return Cmd.CancelAlarm()
         // Control words first: "stop timer" must never read as a timer request.
         CANCEL_TIMER_LEN_RE.find(t)?.let { m -> return Cmd.CancelTimer(toSeconds(m.groupValues[1], m.groupValues[2])) }
@@ -133,7 +155,7 @@ object VoiceCommands {
         if (CHECK_STOPWATCH_RE.containsMatchIn(t)) return Cmd.CheckStopwatch
         TIMER_AS_ALARM_RE.find(t)?.let { m ->
             if (m.groupValues[2].isNotEmpty() || m.groupValues[3].isNotEmpty()) {
-                clockFrom(m.groupValues[1], m.groupValues[2], m.groupValues[3])?.let { return Cmd.Alarm(it.first, it.second) }
+                clockFrom(m.groupValues[1], m.groupValues[2], m.groupValues[3], now)?.let { return Cmd.Alarm(it.first, it.second) }
             }
         }
         for (re in TIMER_RES) {
@@ -141,9 +163,14 @@ object VoiceCommands {
             val secs = toSeconds(m.groupValues[1], m.groupValues[2])
             if (secs > 0) return Cmd.Timer(secs)
         }
-        ALARM_RE.find(t)?.let { m ->
-            val hm = clockFrom(m.groupValues[1], m.groupValues[2], m.groupValues[3]) ?: return null
-            return Cmd.Alarm(hm.first, hm.second)
+        for (re in ALARM_RES) {
+            val m = re.find(t) ?: continue
+            clockFrom(m.groupValues[1], m.groupValues[2], m.groupValues[3], now)?.let { return Cmd.Alarm(it.first, it.second) }
+        }
+        SET_IT_RE.find(t)?.let { m ->
+            if (m.groupValues[2].isNotEmpty() || m.groupValues[3].isNotEmpty()) {
+                clockFrom(m.groupValues[1], m.groupValues[2], m.groupValues[3], now)?.let { return Cmd.Alarm(it.first, it.second) }
+            }
         }
         if (STOPWATCH_RE.containsMatchIn(t)) return Cmd.Stopwatch
         return null

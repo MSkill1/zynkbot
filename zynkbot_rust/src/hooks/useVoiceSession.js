@@ -100,7 +100,7 @@ function toSeconds(value, unit) {
   return Math.round(v);
 }
 // "1026" -> 10:26, "730" -> 7:30, "7" + "30" + "pm" -> 19:30; null when not a clock time.
-function clockFrom(d, m, ampm) {
+function clockFrom(d, m, ampm, now) {
   let digits = d; let minuteText = m || '';
   if (digits.length >= 3 && !minuteText) { minuteText = digits.slice(-2); digits = digits.slice(0, -2); }
   let hour = parseInt(digits, 10);
@@ -109,10 +109,20 @@ function clockFrom(d, m, ampm) {
   const ap = (ampm || '').toLowerCase();
   if (ap === 'pm' && hour !== 12) hour += 12;
   if (ap === 'am' && hour === 12) hour = 0;
+  if (hour > 23) return null;   // "15 pm" is no time at all
+  if (!ap && hour >= 1 && hour <= 12 && now) hour = nextUpcoming(hour, minute, now);
   return [hour, minute];
 }
+// No am/pm said: "8:15" at 7 pm is tonight, at 9 pm tomorrow morning, whichever of the
+// two comes first (Matt, Pixel, 2026-10-26; "8:15" alone used to mean 08:15).
+export function nextUpcoming(hour12, minute, now) {
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const morning = hour12 % 12;
+  const wait = (h) => { const d = (h * 60 + minute - nowMin + 1440) % 1440; return d === 0 ? 1440 : d; };
+  return wait(morning) <= wait(morning + 12) ? morning : morning + 12;
+}
 
-export function parseVoiceCommand(text) {
+export function parseVoiceCommand(text, now = new Date()) {
   // Dictation with punctuation gives "Stop, stopwatch." and "stop watch" (Pixel,
   // 2026-10-25): punctuation becomes spaces, "stop watch" one word.
   // "7.30 a.m." (Pixel dictation, 2026-10-25): a.m./p.m. become am/pm, 7.30 becomes 7:30.
@@ -123,7 +133,7 @@ export function parseVoiceCommand(text) {
   const t = normalizeFractions(normalizeNumbers(cleaned));
   if (/\bcheck\s+(?:the\s+|my\s+)?alarms?\b|what\s+alarms/.test(t)) return { type: 'check_alarm' };
   const cancelAlarmAt = t.match(/\b(?:cancel|stop|delete)\s+(?:the\s+|my\s+)?(\d{1,4})(?:[:\s](\d{1,2}))?\s*(am|pm)?\s+alarm\b/);
-  if (cancelAlarmAt) { const hm = clockFrom(cancelAlarmAt[1], cancelAlarmAt[2], cancelAlarmAt[3]); if (hm) return { type: 'cancel_alarm', hour: hm[0], minute: hm[1] }; }
+  if (cancelAlarmAt) { const hm = clockFrom(cancelAlarmAt[1], cancelAlarmAt[2], cancelAlarmAt[3], now); if (hm) return { type: 'cancel_alarm', hour: hm[0], minute: hm[1] }; }
   if (/\b(?:cancel|stop|delete)\s+(?:the\s+|my\s+)?alarm\b/.test(t)) return { type: 'cancel_alarm' };
   const cancelTimerLen = t.match(/\b(?:stop|cancel)\s+(?:the\s+|my\s+)?(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)\s+timer\b/);
   if (cancelTimerLen) return { type: 'cancel_timer', seconds: toSeconds(cancelTimerLen[1], cancelTimerLen[2]) };
@@ -140,7 +150,7 @@ export function parseVoiceCommand(text) {
   // "timer" (a colon, or am/pm) is an alarm, never a duration.
   const timerAsAlarm = t.match(/time(?:r)?\s+(?:for|at)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s+tomorrow)?\b/);
   if (timerAsAlarm && (timerAsAlarm[2] || timerAsAlarm[3])) {
-    const hm = clockFrom(timerAsAlarm[1], timerAsAlarm[2], timerAsAlarm[3]);
+    const hm = clockFrom(timerAsAlarm[1], timerAsAlarm[2], timerAsAlarm[3], now);
     if (hm) return { type: 'alarm', hour: hm[0], minute: hm[1] };
   }
 
@@ -160,14 +170,28 @@ export function parseVoiceCommand(text) {
     }
   }
 
-  // (\d{1,4}): dictation gives "1026" for ten twenty-six; split below.
-  const alarmM = t.match(
-    /(?:set\s+(?:an?\s+)?alarm\s+(?:for|at)|alarm\s+(?:for|at)|wake\s+me\s+up\s+at)\s+(\d{1,4})(?:[:\s](\d{1,2}))?\s*(am|pm)?/
-  );
-  if (alarmM) {
-    const hm = clockFrom(alarmM[1], alarmM[2], alarmM[3]);
-    if (!hm) return null;
-    return { type: 'alarm', hour: hm[0], minute: hm[1] };
+  // (\d{1,4}): dictation gives "1026" for ten twenty-six; split below. Tried in order,
+  // the first that yields a clock time wins: a misheard "for" ("set an alarm four
+  // eight fifteen pm", Matt, Pixel, 2026-10-26; the timer patterns have tolerated the
+  // same words since 2026-10-12), then no joining word at all, so "alarm 4 15 pm" (a
+  // real four) is not read as a filler plus "15 pm".
+  const alarmRes = [
+    /(?:set\s+(?:an?\s+)?alarm\s+(?:for|at)|alarm\s+(?:for|at)|wake\s+me\s+up\s+at)\s+(\d{1,4})(?:[:\s](\d{1,2}))?\s*(am|pm)?/,
+    /(?:set\s+(?:an?\s+)?alarm|alarm)\s+(?:four|4|or|of|fer)\s+(\d{1,4})(?:[:\s](\d{1,2}))?\s*(am|pm)?/,
+    /(?:set\s+(?:an?\s+)?alarm|alarm)\s+(\d{1,4})(?:[:\s](\d{1,2}))?\s*(am|pm)?/,
+  ];
+  for (const re of alarmRes) {
+    const alarmM = t.match(re);
+    if (!alarmM) continue;
+    const hm = clockFrom(alarmM[1], alarmM[2], alarmM[3], now);
+    if (hm) return { type: 'alarm', hour: hm[0], minute: hm[1] };
+  }
+  // "Set it for 8:15" right after cancelling an alarm (Matt, Pixel, 2026-10-26): a clock
+  // time (minutes or am/pm) after "set it for" is an alarm, the timer-as-alarm rule.
+  const setIt = t.match(/\bset\s+it\s+(?:for|four|4|at|or|of|fer)\s+(\d{1,2})(?:[:\s](\d{2}))?\s*(am|pm)?\b/);
+  if (setIt && (setIt[2] || setIt[3])) {
+    const hm = clockFrom(setIt[1], setIt[2], setIt[3], now);
+    if (hm) return { type: 'alarm', hour: hm[0], minute: hm[1] };
   }
 
   if (/(?:start|begin)\s+(?:the\s+|a\s+)?stopwatch|^stopwatch$/.test(t)) {
