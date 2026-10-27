@@ -292,6 +292,38 @@ fn c03_a_stored_memory_reaches_the_prompt() {
     });
 }
 
+// ---------------------------------------------------------------------------
+// c03b. A question about Zynkbot itself is answered from the built-in guides: the
+//       matching passage reaches the model. Until 2026-10-27 the guide search ran after
+//       the chat path had closed its database pool, so on the phones every guide search
+//       failed ("attempted to acquire a connection on a closed pool") and the model
+//       guessed. This test asks the question the Pixel asked.
+// ---------------------------------------------------------------------------
+#[test]
+fn c03b_a_question_about_zynkbot_gets_the_guide_passage() {
+    let _env = hold_env();
+    rt_test(async {
+        let model = FakeModel::start().await;
+        let bench = Bench::new(&model).await;
+
+        let guide = crate::db::get_app_data_dir().join("PAIRING_GUIDE.md");
+        std::fs::write(&guide, "# Pairing\n\nTo pair a phone with ZynkSync, open the ZynkSync panel on both devices. \
+            One device shows a pairing code in the form address:code; type it into the other device and press Pair. \
+            Both devices must be on the same Wi-Fi.\n").unwrap();
+        crate::kb_rag::index_document(&bench.pool, "_system", guide.to_str().unwrap(), None).await.expect("index the guide");
+
+        model.will_say("Open the ZynkSync panel on both devices and type the code shown on one into the other.");
+        let sink = Arc::new(RecordingSink::default());
+        bench.ask(sink, "custom", "How do I pair my phone with ZynkSync?", false).await;
+
+        let requests = model.chat_requests();
+        assert_eq!(requests.len(), 1);
+        let prompt = FakeModel::prompt_of(&requests[0]);
+        assert!(prompt.contains("ZYNKBOT'S OWN GUIDES") && prompt.contains("pairing code"),
+            "the guide passage never reached the model; prompt was:\n{}", prompt);
+    });
+}
+
 impl FakeModel {
     /// What the model answers when the app asks whether to remember something.
     fn will_decide(&self, decision_json: &str) {
@@ -318,6 +350,28 @@ fn c04_remember_colon_stores_the_fact_verbatim() {
         let stored = bench.wait_for_memory_containing("car is blue").await;
         assert!(stored.iter().any(|m| m.contains("car is blue")),
             "the explicit Remember was not stored; memories: {:?}", stored);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// c05b. A reply that asks for a web search and ends with the memory marker: the marker
+//       stays hidden. On the Pixel on 2026-10-27 "MEMORY: no" reached the screen under a
+//       web-search line, because the line indices for hiding it were taken before the
+//       web-search line was cut out.
+// ---------------------------------------------------------------------------
+#[test]
+fn c05b_the_memory_marker_stays_hidden_under_a_web_search_line() {
+    let _env = hold_env();
+    rt_test(async {
+        let model = FakeModel::start().await;
+        let bench = Bench::new(&model).await;
+        model.will_say("WEB_SEARCH_NEEDED: Zynkbot Memory Manager Keep button\nI don't have that in your memories.\nMEMORY: no");
+
+        let sink = Arc::new(RecordingSink::default());
+        let resp = bench.ask(sink, "custom", "What does the Keep button do?", false).await;
+        let shown = reply_text(&resp);
+        assert!(!shown.to_lowercase().contains("memory:"), "the marker reached the screen:\n{}", shown);
+        assert!(shown.contains("I don't have that"), "the answer itself was lost:\n{}", shown);
     });
 }
 

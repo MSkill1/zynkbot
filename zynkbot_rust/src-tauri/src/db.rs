@@ -131,6 +131,15 @@ mod tests {
         pool
     }
 
+    /// The compile-time default from `.cargo/config.toml` (LIBSQLITE3_FLAGS), so every
+    /// connection has it, the ninety opened without create_pool() included.
+    #[tokio::test]
+    async fn deleted_rows_are_overwritten_on_every_connection() {
+        let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await.unwrap();
+        let on: (i64,) = sqlx::query_as("PRAGMA secure_delete").fetch_one(&pool).await.unwrap();
+        assert_eq!(on.0, 1, "secure_delete is off: LIBSQLITE3_FLAGS=-DSQLITE_SECURE_DELETE was not applied at build");
+    }
+
     #[tokio::test]
     async fn migration_creates_all_tables() {
         let pool = test_pool().await;

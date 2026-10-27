@@ -61,6 +61,7 @@ hmac = "0.12"   # HMAC-SHA256 for AWS Sig V4 signing (R2 backup)
 aes-gcm = "0.10" # AES-256-GCM encryption for cloud backup
 hex = "0.4"     # Hex encode/decode for backup key and signatures
 argon2 = "0.5"  # Argon2id passphrase-derived backup key
+ed25519-dalek = { version = "2", features = ["rand_core"] }  # signing a sealed thread export (2026-10-27)
 
 # Database (SQLite)
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "chrono", "uuid", "json"] }
@@ -70,6 +71,8 @@ regex = "1.10"
 
 # PDF text extraction for Knowledge Base
 pdf-extract = "0.7"
+zip = { version = "8", default-features = false, features = ["deflate"] }  # .docx is a zip: Knowledge Base Word documents (2026-10-27)
+cfb = "0.7"  # .doc is an OLE compound file: Knowledge Base Word documents (2026-10-27)
 
 # Web search (HTML parsing)
 scraper = "0.20"

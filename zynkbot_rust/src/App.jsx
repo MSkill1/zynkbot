@@ -1186,14 +1186,14 @@ export default function App() {
           }
           if (!base64) throw new Error(`Could not read image ${name}`);
           newFiles.push({ name, base64, mimeType, size: base64.length, isImage: true });
-        } else if (kind === 'pdf' || ext === 'pdf') {
-          // A PDF goes through the same text extractor the knowledge base uses.
+        } else if (['pdf', 'docx', 'doc'].includes(kind) || ['pdf', 'docx', 'doc'].includes(ext)) {
+          // A PDF or a Word document goes through the same text extractor the knowledge base uses.
           const filePath = window.AndroidPaths?.copyToCache ? window.AndroidPaths.copyToCache(path) : path;
           if (!filePath) throw new Error(`Could not read ${name}`);
           const content = await invoke('read_attachment_text', { path: filePath });
           newFiles.push({ name, content, size: content.length, isImage: false });
         } else if (kind === 'binary') {
-          alert(`${name} can't be attached: it is not a picture, a PDF or a text file.`);
+          alert(`${name} can't be attached: it is not a picture, a PDF, a Word document or a text file.`);
         } else {
           // Neither the name nor Android's own answer said what this is — Android
           // reports nothing for a file with no extension, and has no other way to

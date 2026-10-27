@@ -622,6 +622,30 @@ pub async fn generate_reply(
     // LLM can address them by name and use the name in MEMORY_EXTRACT lines.
     let user_display_name = crate::memory::get_user_display_name(&db_pool, &user_id).await;
 
+    // A question about Zynkbot itself: consult the built-in user guides, indexed under the
+    // `_system` knowledge-base user, the way the KB button consults the user's own
+    // documents (Matt, 2026-10-26). Not when the KB button is on, which asks for the
+    // user's documents. Fewer passages on the phone, where the prompt is tight.
+    // Runs here, before the pool closes: until 2026-10-27 it ran after the close and
+    // every guide search failed with "attempted to acquire a connection on a closed pool".
+    let mut guide_block: Option<String> = None;
+    if is_zynkbot_query && !kb_enabled {
+        let guide_limit = if is_api_model { 5 } else { 3 };
+        match crate::kb_rag::search_kb_chunks(&db_pool, "_system", &query, guide_limit, false).await {
+            Ok(hits) => match crate::kb_prompt::build_guides(&hits, 0.30, guide_limit) {
+                Some(block) => {
+                    println!("[System KB] {} guide passages added for a Zynkbot question (best {:.0}%)",
+                        hits.iter().filter(|h| h.similarity_score > 0.30).count().min(guide_limit),
+                        hits.first().map(|h| h.similarity_score * 100.0).unwrap_or(0.0));
+                    guide_block = Some(block);
+                }
+                None => println!("[System KB] no guide passage matched the Zynkbot question (best {:.0}%)",
+                    hits.first().map(|h| h.similarity_score * 100.0).unwrap_or(0.0)),
+            },
+            Err(e) => eprintln!("[System KB] guide search failed (non-fatal): {}", e),
+        }
+    }
+
     // Close database connection
     db_pool.close().await;
 
@@ -672,25 +696,9 @@ pub async fn generate_reply(
         println!("[KB RAG] Added {} chars of KB context to prompt", kb_context.len());
     }
 
-    // A question about Zynkbot itself: consult the built-in user guides, indexed under the
-    // `_system` knowledge-base user, the way the KB button consults the user's own
-    // documents (Matt, 2026-10-26). Not when the KB button is on, which asks for the
-    // user's documents. Fewer passages on the phone, where the prompt is tight.
-    if is_zynkbot_query && !kb_enabled {
-        let guide_limit = if is_api_model { 5 } else { 3 };
-        match crate::kb_rag::search_kb_chunks(&db_pool, "_system", &query, guide_limit, false).await {
-            Ok(hits) => match crate::kb_prompt::build_guides(&hits, 0.30, guide_limit) {
-                Some(block) => {
-                    println!("[System KB] {} guide passages added for a Zynkbot question (best {:.0}%)",
-                        hits.iter().filter(|h| h.similarity_score > 0.30).count().min(guide_limit),
-                        hits.first().map(|h| h.similarity_score * 100.0).unwrap_or(0.0));
-                    full_prompt = format!("{}{}", block, full_prompt);
-                }
-                None => println!("[System KB] no guide passage matched the Zynkbot question (best {:.0}%)",
-                    hits.first().map(|h| h.similarity_score * 100.0).unwrap_or(0.0)),
-            },
-            Err(e) => eprintln!("[System KB] guide search failed (non-fatal): {}", e),
-        }
+    // The guide passages found before the pool closed (see above the close).
+    if let Some(block) = guide_block {
+        full_prompt = format!("{}{}", block, full_prompt);
     }
 
     // STEP 6: Call LLM based on backend (use forced_backend for Child mode)
@@ -1215,6 +1223,11 @@ pub async fn generate_reply(
                 if let Some((mi, ref rest)) = inline_marker_line { if mi == idx { return Some(rest.clone()); } }
                 let t = line.trim_start();
                 if t.contains("MEMORY_EXTRACT:") { return None; }
+                // The indices above were taken before the web-search marker and any
+                // <think> block were cut out, which moves every line after them up. A
+                // "MEMORY: no" under a web-search line reached the screen on the Pixel on
+                // 2026-10-27. The marker line is known by its own text as well.
+                if is_memory_flag_line(line) { return None; }
                 // Handle "PART N — ..." lines from local models following the two-part format.
                 // If content follows the separator, keep it. If it's just a header, drop the line.
                 // Case-insensitive and colon-tolerant: Mistral 7B spoke "Part 2: This is a test
@@ -2151,6 +2164,15 @@ mod tests {
 /// Where the web-search marker starts and where its query begins, if a reply has one.
 /// Accepts `WEB_SEARCH_NEEDED:` and the ways small models write it: any case, spaces or
 /// underscores, markdown around it, a colon or dash after it (2026-10-22).
+/// A line that is only the call-1 marker: "MEMORY: yes", "**Memory: no**", "REMEMBER: no".
+fn is_memory_flag_line(line: &str) -> bool {
+    let t = line.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
+    let Some(rest) = t.strip_prefix("memory").or_else(|| t.strip_prefix("remember")) else { return false };
+    let word = rest.trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—'))
+        .trim_end_matches(|c: char| matches!(c, '.' | '!' | ' '));
+    word == "yes" || word == "no"
+}
+
 fn find_web_search_marker(text: &str) -> Option<(usize, usize)> {
     let lower = text.to_ascii_lowercase();
     let start = ["web_search_needed", "web search needed", "web-search-needed"]

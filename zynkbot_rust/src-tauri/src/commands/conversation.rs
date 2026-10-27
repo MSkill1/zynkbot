@@ -168,3 +168,66 @@ pub async fn clear_conversation_history(user_id: String) -> Result<serde_json::V
 
     Ok(serde_json::json!({ "deleted_count": deleted }))
 }
+
+// ============================================================================
+// A SEAL THE USER MAKES (2026-10-27): one chosen thread as a signed file. See seal.rs.
+// ============================================================================
+
+/// Seal one thread: writes `<title>-<date>.zynkseal.json` to the seals folder and returns
+/// where it went. Nothing is written to the database.
+#[tauri::command]
+pub async fn seal_thread(session_id: String, user_id: String) -> Result<serde_json::Value, String> {
+    let pool = crate::db::create_pool().await.map_err(|e| format!("Database error: {}", e))?;
+    let session: Option<(Option<String>, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT title, started_at FROM conversation_sessions WHERE session_id = ? AND user_id = ?")
+        .bind(&session_id).bind(&user_id)
+        .fetch_optional(&pool).await.map_err(|e| format!("Database error: {}", e))?;
+    let Some((title, started_at)) = session else {
+        pool.close().await;
+        return Err("No such thread".to_string());
+    };
+    let messages = conversation_history::get_messages(&pool, &session_id).await
+        .map_err(|e| format!("Database error: {}", e))?;
+    pool.close().await;
+    if messages.is_empty() {
+        return Err("The thread has no messages to seal".to_string());
+    }
+    let thread = crate::seal::SealedThread {
+        session_id: session_id.clone(),
+        title: title.unwrap_or_default(),
+        started_at: started_at.to_rfc3339(),
+        messages: messages.into_iter().map(|m| crate::seal::SealedMessage {
+            role: m.role, at: m.created_at.to_rfc3339(), text: m.content,
+        }).collect(),
+    };
+    let key = crate::seal::load_or_create_key(&crate::seal::key_path())?;
+    let sealed_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let file = crate::seal::seal(thread, &key, &sealed_at);
+    let dir = crate::seal::seals_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create {}: {}", dir.display(), e))?;
+    let path = dir.join(crate::seal::file_name(&file.thread.title, &sealed_at));
+    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("Cannot write the seal: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Cannot write {}: {}", path.display(), e))?;
+    println!("[Seal] thread {} sealed: {} messages, {}", session_id, file.thread.messages.len(), path.display());
+    Ok(serde_json::json!({
+        "path": path.to_string_lossy(),
+        "sealed_at": sealed_at,
+        "messages": file.thread.messages.len(),
+        "signer": file.signer,
+    }))
+}
+
+/// Check a seal file: does the text still match, and did the signer shown make it?
+#[tauri::command]
+pub async fn verify_seal_file(path: String) -> Result<crate::seal::Verdict, String> {
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read {}: {}", path, e))?;
+    let file: crate::seal::SealFile = serde_json::from_str(&text).map_err(|_| "Not a Zynkbot seal file".to_string())?;
+    Ok(crate::seal::verify(&file))
+}
+
+/// This device's seal signer (public key, hex), so the user can recognise their own seals.
+#[tauri::command]
+pub async fn seal_signer_key() -> Result<String, String> {
+    let key = crate::seal::load_or_create_key(&crate::seal::key_path())?;
+    Ok(hex::encode(key.verifying_key().to_bytes()))
+}

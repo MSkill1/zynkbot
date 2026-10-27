@@ -407,7 +407,16 @@ class MainActivity : TauriActivity() {
             } catch (e: Exception) { "" }
         }
 
-        /** What a picked file is, from its own first bytes: image / pdf / text / binary.
+        /** Does this zip hold an entry of that name? Reads entry headers only. */
+        private fun zipHolds(uri: Uri, entry: String): Boolean = try {
+            contentResolver.openInputStream(uri)?.use { s ->
+                java.util.zip.ZipInputStream(s).use { z ->
+                    generateSequence { z.nextEntry }.any { it.name == entry }
+                }
+            } ?: false
+        } catch (_: Exception) { false }
+
+        /** What a picked file is, from its own first bytes: image / pdf / doc / docx / text / binary.
          *  A gallery photo Android could not name was read as text and sent as megabytes
          *  of garbage (2026-10-25); the name and the provider's type are not enough. */
         @JavascriptInterface
@@ -424,6 +433,10 @@ class MainActivity : TauriActivity() {
                     ascii(0, 2) == "BM" -> "image"
                     ascii(4, 4) == "ftyp" -> "image"   // HEIC / HEIF / AVIF containers
                     ascii(0, 4) == "%PDF" -> "pdf"
+                    // Word (2026-10-27): the old binary format has the OLE signature; the new
+                    // one is a zip that holds word/document.xml.
+                    head.size >= 8 && head[0] == 0xD0.toByte() && head[1] == 0xCF.toByte() && head[2] == 0x11.toByte() && head[3] == 0xE0.toByte() -> "doc"
+                    ascii(0, 2) == "PK" && zipHolds(uri, "word/document.xml") -> "docx"
                     else -> {
                         val decodable = try {
                             val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }

@@ -179,7 +179,8 @@ describe('several timers and alarms (2026-10-25)', () => {
     expect(parseVoiceCommand('cancel timer')).toEqual({ type: 'cancel_timer' });
   });
   test('cancel a named alarm, check alarms', () => {
-    expect(parseVoiceCommand('cancel the 730 alarm')).toEqual({ type: 'cancel_alarm', hour: 7, minute: 30 });
+    // No am/pm means the next 7:30 to come, so the clock is fixed at 6 in the morning (2026-10-27).
+    expect(parseVoiceCommand('cancel the 730 alarm', new Date(2026, 9, 25, 6, 0))).toEqual({ type: 'cancel_alarm', hour: 7, minute: 30 });
     expect(parseVoiceCommand('cancel the 7:30 pm alarm')).toEqual({ type: 'cancel_alarm', hour: 19, minute: 30 });
     expect(parseVoiceCommand('check alarms')).toEqual({ type: 'check_alarm' });
     expect(parseVoiceCommand('check my alarm')).toEqual({ type: 'check_alarm' });

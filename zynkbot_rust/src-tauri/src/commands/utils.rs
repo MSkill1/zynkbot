@@ -17,7 +17,14 @@ pub async fn read_file_base64(path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn read_attachment_text(path: String) -> Result<String, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("Could not read {}: {}", path, e))?;
-    if path.to_lowercase().ends_with(".pdf") || bytes.starts_with(b"%PDF") {
+    let lower = path.to_lowercase();
+    if lower.ends_with(".docx") || (bytes.starts_with(b"PK\x03\x04") && crate::word_docs::docx_text(&bytes).is_ok()) {
+        return crate::word_docs::docx_text(&bytes);
+    }
+    if lower.ends_with(".doc") || bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]) {
+        return crate::word_docs::doc_text(&bytes);
+    }
+    if lower.ends_with(".pdf") || bytes.starts_with(b"%PDF") {
         let text = pdf_extract::extract_text_from_mem(&bytes).map_err(|e| format!("Could not read the PDF text: {}", e))?;
         if text.trim().is_empty() { return Err("This PDF has no text to read; it may be a scanned image.".to_string()); }
         return Ok(text);

@@ -85,7 +85,9 @@ mod weather;     // weather questions answered from Open-Meteo before any model 
 mod knowledge_base;  // External reference document system
 mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod kb_prompt;  // Wording of the KB prompt block by search outcome (found / weak / nothing)
+mod word_docs;  // .docx and .doc text for the Knowledge Base and attachments (2026-10-27)
 mod conversation_history;  // Persistent conversation log with full-text search
+mod seal;  // a seal the user makes: one thread as a signed file (2026-10-27)
 pub mod sync_outbox;  // the ZynkSync outbox: drain and receive (step 2)
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
@@ -1196,15 +1198,36 @@ pub(crate) async fn insert_memory(
 
 pub(crate) fn is_query_about_zynkbot(query: &str) -> bool {
     let q = query.to_lowercase();
-    q.contains("zynkbot") || q.contains("zynk bot")
-        || q.contains("zynksync") || q.contains("zynk sync")
-        || q.contains("zynklink") || q.contains("zynk link")
+    // Dictation hears "zinc" and "zink" for "zynk" (Matt, 2026-10-27).
+    q.contains("zynkbot") || q.contains("zynk bot") || q.contains("zinc bot") || q.contains("zincbot") || q.contains("zink bot") || q.contains("zinkbot")
+        || q.contains("zynksync") || q.contains("zynk sync") || q.contains("zinc sync") || q.contains("zink sync")
+        || q.contains("zynklink") || q.contains("zynk link") || q.contains("zinc link") || q.contains("zink link")
         || q.contains("zchat")
         || q.contains("ensemble mode") || q.contains("ensemble")
         || q.contains("containment mode") || q.contains("snap-in") || q.contains("snapin")
         || q.contains("memory manager")
         || q.contains("knowledge base")
         || q.contains("hey zynk") || q.contains("wake word")
+}
+
+#[cfg(test)]
+mod zynkbot_gate_tests {
+    use super::is_query_about_zynkbot;
+
+    #[test]
+    fn spelled_and_misheard_names_open_the_gate() {
+        for q in ["How do I pair my phone with ZynkSync?", "how do i pair with zinc sync", "What does zinc bot remember?",
+                  "Is Zink Link the same as sync?", "What does the Keep button in Memory Manager do?"] {
+            assert!(is_query_about_zynkbot(q), "{}", q);
+        }
+    }
+
+    #[test]
+    fn ordinary_questions_do_not() {
+        for q in ["How much zinc is in oysters?", "What is on my grocery list?", "Where do I bank?"] {
+            assert!(!is_query_about_zynkbot(q), "{}", q);
+        }
+    }
 }
 
 // ============================================================================
@@ -2461,6 +2484,9 @@ pub fn run() {
             voice_prefs::set_voice_pref,
             // Conversation History
             commands::conversation::list_conversation_sessions,
+            commands::conversation::seal_thread,
+            commands::conversation::verify_seal_file,
+            commands::conversation::seal_signer_key,
             commands::conversation::get_conversation_messages,
             commands::conversation::search_conversations,
             commands::conversation::delete_conversation_session,
