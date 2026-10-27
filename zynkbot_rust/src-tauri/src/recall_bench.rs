@@ -234,3 +234,22 @@ async fn weight_bench() {
     std::fs::write(&path, &report).unwrap();
     println!("written {}", path.display());
 }
+
+/// Probe: what the built-in guide search returns for a question, with the same call and
+/// threshold chat.rs uses. RECALL_BENCH_DB=<db copy> GUIDE_Q="How do I ...?"
+#[tokio::test]
+#[ignore]
+async fn guide_probe() {
+    let db = std::env::var("RECALL_BENCH_DB").expect("RECALL_BENCH_DB");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}?mode=ro", db)).await.expect("db");
+    let qs = std::env::var("GUIDE_Q").expect("GUIDE_Q");
+    for q in qs.split('|') {
+        let hits = crate::kb_rag::search_kb_chunks(&pool, "_system", q, 3, false).await.expect("search");
+        println!("Q: {}", q);
+        for h in &hits {
+            let snippet: String = h.content.chars().take(90).collect::<String>().replace('\n', " ");
+            println!("   {:>5.1}%  {}  | {}", h.similarity_score * 100.0, h.file_name, snippet);
+        }
+        println!("   gate (>30%): {}", if hits.iter().any(|h| h.similarity_score > 0.30) { "PASS" } else { "no passage" });
+    }
+}
