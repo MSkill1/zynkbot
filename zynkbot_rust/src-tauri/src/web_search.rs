@@ -268,8 +268,8 @@ mod challenge_tests {
 // ============================================================================
 //
 // A cloud model searches through its own provider's search tool, on the user's own key:
-// Anthropic's and OpenAI's run the searches on their index and hand back the answer with
-// its sources. A local model has nowhere like that, so it uses, in order, whatever is set
+// Anthropic, OpenAI, xAI and Mistral each run the searches on their side and hand back
+// the answer with its sources. A local model has nowhere like that, so it uses, in order, whatever is set
 // up: a Brave Search key, a SearXNG server address, and failing both DuckDuckGo, scraped
 // and paced. WEB_SEARCH_ENGINE=duckduckgo|brave|searxng forces one, for testing.
 
@@ -277,6 +277,8 @@ mod challenge_tests {
 pub enum Engine {
     Anthropic,
     OpenAI,
+    XAI,
+    Mistral,
     Brave,
     SearxNG(String),
     DuckDuckGo,
@@ -295,6 +297,8 @@ pub fn engine_for_with(backend: Option<&str>, lookup: impl Fn(&str) -> Option<St
     if forced.is_none() {
         if backend == "anthropic" && setting("ANTHROPIC_API_KEY").is_some() { return Engine::Anthropic; }
         if backend == "openai" && setting("OPENAI_API_KEY").is_some() { return Engine::OpenAI; }
+        if (backend.contains("xai") || backend.contains("grok")) && setting("XAI_API_KEY").is_some() { return Engine::XAI; }
+        if backend.contains("mistral") && setting("MISTRAL_API_KEY").is_some() { return Engine::Mistral; }
     }
     match forced.as_deref() {
         Some("duckduckgo") => return Engine::DuckDuckGo,
@@ -323,6 +327,18 @@ pub async fn search(query: &str, max_results: usize, backend: Option<&str>) -> R
             let model = std::env::var("OPENAI_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "gpt-5.5".to_string());
             let a = crate::llm::openai::search_and_answer(&key, &model, query).await.map_err(|e| format!("OpenAI web search: {}", e))?;
             Ok(from_answer(query, a, "openai"))
+        }
+        Engine::XAI => {
+            let key = std::env::var("XAI_API_KEY").map_err(|_| "No xAI key".to_string())?;
+            let model = std::env::var("XAI_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "grok-4.5".to_string());
+            let a = crate::llm::xai::search_and_answer(&key, &model, query).await.map_err(|e| format!("xAI web search: {}", e))?;
+            Ok(from_answer(query, a, "xai"))
+        }
+        Engine::Mistral => {
+            let key = std::env::var("MISTRAL_API_KEY").map_err(|_| "No Mistral key".to_string())?;
+            let model = std::env::var("MISTRAL_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "mistral-large-latest".to_string());
+            let a = crate::llm::mistral::search_and_answer(&key, &model, query).await.map_err(|e| format!("Mistral web search: {}", e))?;
+            Ok(from_answer(query, a, "mistral"))
         }
         Engine::Brave => {
             let key = std::env::var("BRAVE_SEARCH_API_KEY").map_err(|_| "No Brave key".to_string())?;
@@ -468,7 +484,13 @@ mod engine_tests {
         let no_brave = settings(&[("ANTHROPIC_API_KEY", "sk-ant"), ("SEARXNG_URL", "https://search.example.org/")]);
         let look2 = |k: &str| no_brave.get(k).cloned();
         assert_eq!(engine_for_with(Some("local"), look2), Engine::SearxNG("https://search.example.org/".into()));
-        assert_eq!(engine_for_with(Some("xai"), look2), Engine::SearxNG("https://search.example.org/".into()), "xAI has no search tool here; it searches like a local model");
+        assert_eq!(engine_for_with(Some("xai"), look2), Engine::SearxNG("https://search.example.org/".into()), "no xAI key: it searches like a local model");
+        let four = settings(&[("XAI_API_KEY", "x"), ("MISTRAL_API_KEY", "m"), ("BRAVE_SEARCH_API_KEY", "b")]);
+        let look4 = |k: &str| four.get(k).cloned();
+        assert_eq!(engine_for_with(Some("xai"), look4), Engine::XAI);
+        assert_eq!(engine_for_with(Some("grok"), look4), Engine::XAI);
+        assert_eq!(engine_for_with(Some("mistral"), look4), Engine::Mistral);
+        assert_eq!(engine_for_with(Some("anthropic"), look4), Engine::Brave, "a cloud backend without its key searches like a local model");
         let nothing = settings(&[("ANTHROPIC_API_KEY", "")]);
         let look3 = |k: &str| nothing.get(k).cloned();
         assert_eq!(engine_for_with(Some("anthropic"), look3), Engine::DuckDuckGo, "an empty key is no key");

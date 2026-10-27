@@ -78,7 +78,7 @@ const PROVIDERS = [
     placeholder: "xai-...",
     link: "https://console.x.ai/",
     billing: "https://console.x.ai/",
-    description: "Grok models",
+    description: "Grok models. A Grok key also gives web search through xAI's own search.",
     models: [
       { id: "grok-4.5", label: "Grok 4.5" },
       { id: "grok-4.3", label: "Grok 4.3" },
@@ -94,7 +94,7 @@ const PROVIDERS = [
     placeholder: "...",
     link: "https://console.mistral.ai/api-keys",
     billing: "https://console.mistral.ai/billing",
-    description: "Mistral and Codestral models",
+    description: "Mistral and Codestral models. A Mistral key also gives web search through Mistral's own search.",
     models: [
       { id: "mistral-large-latest", label: "Mistral Large" },
       { id: "mistral-medium-latest", label: "Mistral Medium" },

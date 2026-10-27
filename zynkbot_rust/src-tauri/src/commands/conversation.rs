@@ -231,3 +231,17 @@ pub async fn seal_signer_key() -> Result<String, String> {
     let key = crate::seal::load_or_create_key(&crate::seal::key_path())?;
     Ok(hex::encode(key.verifying_key().to_bytes()))
 }
+
+/// A searched answer that came back written by the model's own provider (2026-10-27)
+/// goes into the thread the way a synthesised one did: "Web search: <query>" and the
+/// answer. Without this the answer was on screen and nowhere else, and gone after a
+/// restart. Not in HIPAA mode, which keeps no thread.
+#[tauri::command]
+pub async fn log_web_search_answer(session_id: String, user_id: String, query: String, answer: String, backend: String, containment_mode: String) -> Result<(), String> {
+    if containment_mode.eq_ignore_ascii_case("hipaa") { return Ok(()); }
+    let pool = crate::db::create_pool().await.map_err(|e| format!("Database error: {}", e))?;
+    let user_line = format!("Web search: \"{}\"", query);
+    let result = conversation_history::log_exchange(&pool, &session_id, &user_id, &user_line, &answer, &backend, &containment_mode, true, "typed").await;
+    pool.close().await;
+    result.map_err(|e| format!("Could not log the searched answer: {}", e))
+}

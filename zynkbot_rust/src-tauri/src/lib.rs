@@ -2485,6 +2485,7 @@ pub fn run() {
             // Conversation History
             commands::conversation::list_conversation_sessions,
             commands::conversation::seal_thread,
+            commands::conversation::log_web_search_answer,
             commands::conversation::verify_seal_file,
             commands::conversation::seal_signer_key,
             commands::conversation::get_conversation_messages,

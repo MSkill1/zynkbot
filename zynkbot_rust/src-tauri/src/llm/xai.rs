@@ -137,3 +137,61 @@ mod tests {
         assert!(json.contains("grok-3"));
     }
 }
+
+// ============================================================================
+// THE WEB THROUGH xAI'S OWN SEARCH TOOL (2026-10-27)
+// ============================================================================
+
+const XAI_RESPONSES_URL: &str = "https://api.x.ai/v1/responses";
+
+/// One Responses API request with xAI's `web_search` tool: Grok's answer with the pages
+/// it cited. The answer carries inline "[[1]](url)" links; the annotation titles are the
+/// citation numbers, so the page's host stands in as the title.
+pub async fn search_and_answer(api_key: &str, model: &str, query: &str) -> Result<super::WebAnswer, super::LLMError> {
+    use super::LLMError;
+    let body = serde_json::json!({
+        "model": model,
+        "tools": [{"type": "web_search"}],
+        "input": [{"role": "user", "content": format!("Search the web for: {}\n\nAnswer directly and concisely from what you find. Do not narrate the searching or describe your process.", query)}],
+    });
+    println!("[Rust xAI] Web search through Grok ({}): {}", model, query);
+    let response = reqwest::Client::new()
+        .post(XAI_RESPONSES_URL)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+    if !status.is_success() {
+        return Err(LLMError::APIError(format!("Status {}: {}", status, text)));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| LLMError::InvalidResponse(e.to_string()))?;
+    let mut answer = super::openai::parse_web_answer(&value)?;
+    for s in &mut answer.sources {
+        if s.title.trim().is_empty() || s.title.trim().chars().all(|c| c.is_ascii_digit()) {
+            s.title = host_of(&s.url);
+        }
+    }
+    println!("[Rust xAI] ✅ Web answer: {} chars, {} sources", answer.answer.len(), answer.sources.len());
+    Ok(answer)
+}
+
+/// "https://www.hfcuvt.com/business/x.html" -> "hfcuvt.com"
+pub fn host_of(url: &str) -> String {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let host = rest.split('/').next().unwrap_or(rest);
+    host.trim_start_matches("www.").to_string()
+}
+
+#[cfg(test)]
+mod web_answer_tests {
+    #[test]
+    fn hosts_stand_in_for_numbered_titles() {
+        assert_eq!(super::host_of("https://www.hfcuvt.com/business/x.html"), "hfcuvt.com");
+        assert_eq!(super::host_of("http://x.ai/company"), "x.ai");
+        assert_eq!(super::host_of("nonsense"), "nonsense");
+    }
+}

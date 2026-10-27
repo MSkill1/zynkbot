@@ -1649,6 +1649,10 @@ export default function App() {
         ));
         if (speak) voice.speakResponse(searchResults.answer);
         console.log('[WebSearch] Answer came from the provider\'s own search (' + searchResults.engine + ')');
+        // Into the thread, as the synthesis call used to do on its own.
+        try {
+          await invoke('log_web_search_answer', { sessionId, userId, query: searchQuery, answer: searchResults.answer, backend: modelType, containmentMode });
+        } catch (e) { console.warn('[WebSearch] could not log the answer:', e); }
         return;
       }
 

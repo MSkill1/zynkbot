@@ -4,6 +4,7 @@
 pub mod anthropic;
 pub mod openai;
 pub mod xai;  // xAI (Grok) API - OpenAI-compatible
+pub mod mistral;  // Mistral: its own web search through the Conversations API (2026-10-27)
 pub mod local_embeddings;
 
 // On-device GGUF inference on every platform, Android included (2026-10-22, branch
