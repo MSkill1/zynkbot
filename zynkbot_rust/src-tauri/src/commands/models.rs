@@ -387,6 +387,12 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
     if let Ok(model) = std::env::var("MISTRAL_MODEL") {
         keys.insert("MISTRAL_MODEL".to_string(), serde_json::json!(model));
     }
+    // Web search for local models (2026-10-27).
+    for k in ["BRAVE_SEARCH_API_KEY", "SEARXNG_URL"] {
+        if let Ok(v) = std::env::var(k) {
+            keys.insert(k.to_string(), serde_json::json!(v));
+        }
+    }
     if let Ok(v) = std::env::var("R2_ENDPOINT") {
         keys.insert("R2_ENDPOINT".to_string(), serde_json::json!(v));
     }
@@ -463,6 +469,8 @@ pub const PROPAGATABLE_KEYS: &[&str] = &[
     "XAI_API_KEY",       "XAI_MODEL",
     "MISTRAL_API_KEY",   "MISTRAL_MODEL",
     "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+    // Web search for local models (2026-10-27): a Brave key, or a SearXNG server address.
+    "BRAVE_SEARCH_API_KEY", "SEARXNG_URL",
 ];
 
 /// Write one key into this device's .env and the process environment. Used by the

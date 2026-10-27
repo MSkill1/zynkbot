@@ -60,7 +60,7 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 - **Cross-Device Sync** - ZynkSync syncs memories across your own devices
 - **File Sharing** - ZynkLink transfers files directly between paired Zynkbot users
 - **ZChat** - Direct device-to-device messaging without cloud relay
-- **Web Search** - On-demand live web search integrated into conversation when current information is needed
+- **Web Search** - On-demand live web search when current information is needed: through your cloud model's own search tool, or Brave, a SearXNG server or DuckDuckGo for local models
 - **Knowledge Base** - RAG with semantic search over your uploaded documents
 - **No Login Required** - Once installed, just open it. No accounts, no verification codes emailed to you, no password resets
 - **Conversation History** - Persistent log of all conversations; browse by date, full-text search, resume past sessions

@@ -181,6 +181,19 @@ impl Bench {
         serde_json::to_value(&resp).unwrap()
     }
 
+    /// The same, with the thread so far as the page would send it.
+    async fn ask_with_history(&self, sink: Arc<dyn ResponseSink>, backend: &str, message: &str, history: Vec<(&str, &str)>) -> serde_json::Value {
+        let history: Vec<crate::ConversationTurn> = history.into_iter()
+            .map(|(role, content)| crate::ConversationTurn { role: role.to_string(), content: content.to_string() })
+            .collect();
+        let resp = crate::commands::chat::generate_reply(
+            sink, message.to_string(), self.user_id.clone(), self.session_id.clone(),
+            backend.to_string(), "sovereign".to_string(),
+            Some(history), None, Some(true), Some(false), None, None, false,
+        ).await.unwrap_or_else(|e| panic!("generate_reply failed: {}", e));
+        serde_json::to_value(&resp).unwrap()
+    }
+
     async fn memory_contents(&self) -> Vec<String> {
         sqlx::query("SELECT content FROM memories WHERE user_id = ? ORDER BY id")
             .bind(&self.user_id).fetch_all(&self.pool).await.unwrap()
@@ -372,6 +385,34 @@ fn c05b_the_memory_marker_stays_hidden_under_a_web_search_line() {
         let shown = reply_text(&resp);
         assert!(!shown.to_lowercase().contains("memory:"), "the marker reached the screen:\n{}", shown);
         assert!(shown.contains("I don't have that"), "the answer itself was lost:\n{}", shown);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// c05c. An alarm the app set, shown in the thread as "⏰ Alarm set for 8 15 AM.", reaches
+//       the model as an action of Zynkbot's own clock, not as the model's own words. On
+//       2026-10-27 the cloud model read the line as its own claim and took it back.
+// ---------------------------------------------------------------------------
+#[test]
+fn c05c_an_alarm_the_app_set_reaches_the_model_as_an_app_action() {
+    let _env = hold_env();
+    rt_test(async {
+        let model = FakeModel::start().await;
+        let bench = Bench::new(&model).await;
+        model.will_say("Yes, your 8:15 alarm is set.");
+
+        let sink = Arc::new(RecordingSink::default());
+        bench.ask_with_history(sink, "custom", "Is my alarm set?", vec![
+            ("user", "Hey Zynk, set an alarm for eight fifteen."),
+            ("assistant", "⏰ Alarm set for 8 15 AM."),
+        ]).await;
+
+        let requests = model.chat_requests();
+        assert_eq!(requests.len(), 1);
+        let prompt = FakeModel::prompt_of(&requests[0]);
+        assert!(prompt.contains("Zynkbot's own clock did this, not you: Alarm set for 8 15 AM."),
+            "the alarm line was not handed over as an app action; prompt was:\n{}", prompt);
+        assert!(!prompt.contains("⏰ Alarm set"), "the raw line is still in the prompt:\n{}", prompt);
     });
 }
 

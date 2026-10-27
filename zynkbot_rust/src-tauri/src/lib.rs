@@ -270,7 +270,7 @@ pub struct Memory {
     original_text: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct ReplyResponse {
     reply_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]

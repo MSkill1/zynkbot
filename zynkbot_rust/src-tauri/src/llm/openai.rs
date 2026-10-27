@@ -426,3 +426,106 @@ mod tests {
         assert!(json.contains("gpt-4"));
     }
 }
+
+// ============================================================================
+// THE WEB THROUGH OPENAI'S OWN SEARCH TOOL (2026-10-27)
+// ============================================================================
+
+const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
+
+/// One Responses API request with the `web_search` tool: the user's query as the
+/// instruction, the model's answer with its cited pages back. Billed to the user's key.
+pub async fn search_and_answer(api_key: &str, model: &str, query: &str) -> Result<super::WebAnswer, LLMError> {
+    let body = serde_json::json!({
+        "model": model,
+        "tools": [{"type": "web_search"}],
+        "input": format!("Search the web for: {}\n\nAnswer directly and concisely from what you find. Do not narrate the searching or describe your process.", query),
+    });
+    println!("[Rust OpenAI] Web search through GPT ({}): {}", model, query);
+    let response = reqwest::Client::new()
+        .post(OPENAI_RESPONSES_URL)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+    if !status.is_success() {
+        return Err(LLMError::APIError(format!("Status {}: {}", status, text)));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| LLMError::InvalidResponse(e.to_string()))?;
+    let answer = parse_web_answer(&value)?;
+    println!("[Rust OpenAI] ✅ Web answer: {} chars, {} sources", answer.answer.len(), answer.sources.len());
+    Ok(answer)
+}
+
+/// The answer text and the cited pages out of a Responses API result: every
+/// `output_text` joined, every `url_citation` once.
+pub fn parse_web_answer(v: &serde_json::Value) -> Result<super::WebAnswer, LLMError> {
+    let mut answer = String::new();
+    let mut sources: Vec<super::WebSource> = Vec::new();
+    for item in v["output"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        if item["type"].as_str() != Some("message") { continue; }
+        for part in item["content"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+            if part["type"].as_str() != Some("output_text") { continue; }
+            if let Some(t) = part["text"].as_str() { answer.push_str(t); }
+            for a in part["annotations"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+                if a["type"].as_str() != Some("url_citation") { continue; }
+                let url = without_openai_tag(a["url"].as_str().unwrap_or(""));
+                if url.is_empty() || sources.iter().any(|s| s.url == url) { continue; }
+                sources.push(super::WebSource { title: a["title"].as_str().unwrap_or("").to_string(), url, snippet: String::new() });
+            }
+        }
+    }
+    if let Some(msg) = v["error"]["message"].as_str() {
+        return Err(LLMError::APIError(msg.to_string()));
+    }
+    let answer = answer.trim().to_string();
+    if answer.is_empty() {
+        return Err(LLMError::InvalidResponse("the web search returned no answer".to_string()));
+    }
+    Ok(super::WebAnswer { answer, sources })
+}
+
+/// OpenAI appends `utm_source=openai` to every cited address; the page is the same without it.
+fn without_openai_tag(url: &str) -> String {
+    let u = url.replace("?utm_source=openai&", "?").replace("&utm_source=openai", "").replace("?utm_source=openai", "");
+    u
+}
+
+#[cfg(test)]
+mod web_answer_tests {
+    use super::{parse_web_answer, without_openai_tag};
+
+    #[test]
+    fn the_tracking_tag_is_dropped_from_cited_addresses() {
+        assert_eq!(without_openai_tag("https://a.org/p.html?utm_source=openai"), "https://a.org/p.html");
+        assert_eq!(without_openai_tag("https://a.org/p?x=1&utm_source=openai"), "https://a.org/p?x=1");
+        assert_eq!(without_openai_tag("https://a.org/p?utm_source=openai&x=1"), "https://a.org/p?x=1");
+        assert_eq!(without_openai_tag("https://a.org/p"), "https://a.org/p");
+    }
+
+    #[test]
+    fn answer_and_cited_pages_come_out_of_the_response() {
+        let v = serde_json::json!({"output": [
+            {"type": "web_search_call", "id": "ws1", "status": "completed", "action": {"type": "search", "query": "vsecu business checking"}},
+            {"type": "message", "id": "m1", "role": "assistant", "content": [
+                {"type": "output_text", "text": "VSECU offers business checking with no monthly fee.", "annotations": [
+                    {"type": "url_citation", "url": "https://www.vsecu.com/business?utm_source=openai", "title": "Business | VSECU", "start_index": 0, "end_index": 10},
+                    {"type": "url_citation", "url": "https://www.vsecu.com/business", "title": "dup", "start_index": 0, "end_index": 10}
+                ]}
+            ]}
+        ]});
+        let a = parse_web_answer(&v).unwrap();
+        assert_eq!(a.answer, "VSECU offers business checking with no monthly fee.");
+        assert_eq!(a.sources.len(), 1);
+        assert_eq!(a.sources[0].title, "Business | VSECU");
+    }
+
+    #[test]
+    fn no_text_is_an_error() {
+        assert!(parse_web_answer(&serde_json::json!({"output": []})).is_err());
+    }
+}

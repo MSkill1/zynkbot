@@ -253,3 +253,22 @@ async fn guide_probe() {
         println!("   gate (>30%): {}", if hits.iter().any(|h| h.similarity_score > 0.30) { "PASS" } else { "no passage" });
     }
 }
+
+/// Probe: what DuckDuckGo returns for a query, from this machine, through the app's own
+/// search. WEB_Q="query one|query two"
+#[tokio::test]
+#[ignore]
+async fn web_search_probe() {
+    let qs = std::env::var("WEB_Q").expect("WEB_Q");
+    let backend = std::env::var("WEB_BACKEND").ok();
+    for q in qs.split('|') {
+        match crate::web_search::search(q, 5, backend.as_deref()).await {
+            Ok(r) => {
+                println!("Q: {}  -> {} results via {}", q, r.results.len(), r.engine);
+                for x in r.results.iter().take(3) { println!("    {} | {} | {}", x.title, x.url, x.snippet.chars().take(80).collect::<String>()); }
+                if let Some(a) = &r.answer { println!("    ANSWER ({} chars): {}", a.len(), a.chars().take(400).collect::<String>().replace('\n', " ")); }
+            }
+            Err(e) => println!("Q: {}  -> ERROR {}", q, e),
+        }
+    }
+}

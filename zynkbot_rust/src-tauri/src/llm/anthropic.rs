@@ -533,3 +533,122 @@ mod tests {
         assert_eq!(parsed.content[0].text, "Plain answer.");
     }
 }
+
+// ============================================================================
+// THE WEB THROUGH ANTHROPIC'S OWN SEARCH TOOL (2026-10-27)
+// ============================================================================
+
+/// One request with the `web_search` server tool: the user's query as the instruction,
+/// at most `max_searches` searches, Claude's answer with its sources back. Anthropic runs
+/// the searches on its own index and bills the user's key per search plus tokens. The
+/// page text itself comes back encrypted, so the answer is Claude's, not ours.
+pub async fn search_and_answer(api_key: &str, model: &str, query: &str, max_searches: u32) -> Result<super::WebAnswer, LLMError> {
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 1500,
+        "system": "You answer from web search results. Search for what the user asks, then answer directly and concisely from what you find. Do not narrate the searching or describe your process.",
+        "messages": [{"role": "user", "content": format!("Search the web for: {}", query)}],
+        "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}],
+    });
+    println!("[Rust Anthropic] Web search through Claude ({}): {}", model, query);
+    let response = reqwest::Client::new()
+        .post(ANTHROPIC_API_URL)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+    let status = response.status();
+    let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+    if !status.is_success() {
+        return Err(LLMError::APIError(format!("Status {}: {}", status, text)));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| LLMError::InvalidResponse(e.to_string()))?;
+    let answer = parse_web_answer(&value)?;
+    println!("[Rust Anthropic] ✅ Web answer: {} chars, {} sources, {} searches", answer.answer.len(), answer.sources.len(),
+        value["usage"]["server_tool_use"]["web_search_requests"].as_u64().unwrap_or(0));
+    Ok(answer)
+}
+
+/// The answer text and the sources out of a Messages response that used the web search
+/// tool: text blocks joined, every `web_search_result` once, each citation's text as the
+/// snippet of its page.
+pub fn parse_web_answer(v: &serde_json::Value) -> Result<super::WebAnswer, LLMError> {
+    let mut answer = String::new();
+    let mut sources: Vec<super::WebSource> = Vec::new();
+    let mut snippets: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for block in v["content"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        match block["type"].as_str().unwrap_or("") {
+            "text" => {
+                if let Some(t) = block["text"].as_str() { answer.push_str(t); }
+                for c in block["citations"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+                    if let (Some(url), Some(cited)) = (c["url"].as_str(), c["cited_text"].as_str()) {
+                        snippets.entry(url.to_string()).or_insert_with(|| cited.trim().to_string());
+                    }
+                }
+            }
+            "web_search_tool_result" => {
+                if let Some(items) = block["content"].as_array() {
+                    for item in items {
+                        if item["type"].as_str() != Some("web_search_result") { continue; }
+                        let url = item["url"].as_str().unwrap_or("").to_string();
+                        if url.is_empty() || sources.iter().any(|s| s.url == url) { continue; }
+                        sources.push(super::WebSource { title: item["title"].as_str().unwrap_or("").to_string(), url, snippet: String::new() });
+                    }
+                } else if let Some(code) = block["content"]["error_code"].as_str() {
+                    return Err(LLMError::APIError(format!("Anthropic web search: {}", code)));
+                }
+            }
+            _ => {}
+        }
+    }
+    for s in &mut sources {
+        if let Some(sn) = snippets.get(&s.url) { s.snippet = sn.clone(); }
+    }
+    let answer = answer.trim().to_string();
+    if answer.is_empty() && sources.is_empty() {
+        return Err(LLMError::InvalidResponse("the web search returned neither an answer nor sources".to_string()));
+    }
+    Ok(super::WebAnswer { answer, sources })
+}
+
+#[cfg(test)]
+mod web_answer_tests {
+    use super::parse_web_answer;
+
+    #[test]
+    fn answer_sources_and_snippets_come_out_of_the_response() {
+        let v: serde_json::Value = serde_json::json!({
+            "content": [
+                {"type": "text", "text": "I'll search for that."},
+                {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "heritage family credit union rutland"}},
+                {"type": "web_search_tool_result", "tool_use_id": "s1", "content": [
+                    {"type": "web_search_result", "url": "https://www.hfcuvt.com/", "title": "Heritage Family Credit Union", "encrypted_content": "x", "page_age": "2026"},
+                    {"type": "web_search_result", "url": "https://www.hfcuvt.com/business", "title": "Business banking", "encrypted_content": "y"},
+                    {"type": "web_search_result", "url": "https://www.hfcuvt.com/", "title": "dup", "encrypted_content": "z"}
+                ]},
+                {"type": "text", "text": "Heritage Family Credit Union is at hfcuvt.com. ", "citations": [
+                    {"type": "web_search_result_location", "url": "https://www.hfcuvt.com/", "title": "Heritage Family Credit Union", "encrypted_index": "e", "cited_text": "Heritage Family Credit Union serves Rutland County..."}
+                ]},
+                {"type": "text", "text": "Its business page lists checking accounts."}
+            ],
+            "usage": {"server_tool_use": {"web_search_requests": 1}}
+        });
+        let a = parse_web_answer(&v).unwrap();
+        assert_eq!(a.answer, "I'll search for that.Heritage Family Credit Union is at hfcuvt.com. Its business page lists checking accounts.");
+        assert_eq!(a.sources.len(), 2);
+        assert_eq!(a.sources[0].snippet, "Heritage Family Credit Union serves Rutland County...");
+        assert_eq!(a.sources[1].title, "Business banking");
+    }
+
+    #[test]
+    fn a_tool_error_is_an_error_not_an_empty_answer() {
+        let v = serde_json::json!({"content": [
+            {"type": "web_search_tool_result", "tool_use_id": "s1", "content": {"type": "web_search_tool_result_error", "error_code": "too_many_requests"}}
+        ]});
+        assert!(parse_web_answer(&v).unwrap_err().to_string().contains("too_many_requests"));
+        assert!(parse_web_answer(&serde_json::json!({"content": []})).is_err());
+    }
+}

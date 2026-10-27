@@ -658,7 +658,7 @@ pub async fn generate_reply(
         hist.iter().map(|turn| {
             crate::conversation_engine::ConversationTurn {
                 role: turn.role.clone(),
-                content: turn.content.clone(),
+                content: history_turn_for_model(&turn.role, &turn.content),
             }
         }).collect()
     });
@@ -1000,7 +1000,20 @@ pub async fn generate_reply(
         // The sources go back with the reply so the chat can show the same "View n
         // search sources" drop-down a typed search gets; page bodies stay out of it.
         let mut web_sources: Option<serde_json::Value> = None;
-        match crate::web_search::search_with_content(&search_query, 5, 3).await {
+        // A cloud model's own search tool comes back with the answer written (2026-10-27);
+        // that answer is the reply, with no synthesis call after it.
+        let mut provider_answer: Option<String> = None;
+        match crate::web_search::search_with_content(&search_query, 5, 3, Some(&forced_backend)).await {
+            Ok(results) if results.answer.is_some() => {
+                provider_answer = results.answer.clone();
+                web_sources = Some(serde_json::json!({
+                    "query": search_query,
+                    "results": results.results.iter().map(|r| serde_json::json!({
+                        "title": r.title, "url": r.url, "snippet": r.snippet,
+                    })).collect::<Vec<_>>(),
+                    "num_results": results.results.len(),
+                }));
+            }
             Ok(results) if !results.results.is_empty() => {
                 for (i, r) in results.results.iter().enumerate() {
                     context.push_str(&format!("Source {}: {}\nURL: {}\n", i + 1, r.title, r.url));
@@ -1042,6 +1055,28 @@ pub async fn generate_reply(
                     }
                 });
             }
+        }
+        if let Some(answer) = provider_answer {
+            sink.token(&answer);
+            if containment_mode.to_lowercase() != "hipaa" {
+                let (s, u, m, a, b, c) = (session_id.clone(), user_id.clone(), query.clone(), answer.clone(), forced_backend.clone(), containment_mode.clone());
+                tokio::spawn(async move {
+                    if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        if let Err(e) = crate::conversation_history::log_exchange(&pool, &s, &u, &m, &a, &b, &c, true, "hands_free").await {
+                            eprintln!("[ConvHistory] ⚠️ Failed to log searched answer: {}", e);
+                        }
+                    }
+                });
+            }
+            return Ok(ReplyResponse {
+                reply_text: answer,
+                model_backend: Some(forced_backend.clone()),
+                containment_mode: Some(containment_mode.clone()),
+                original_query: Some(query.clone()),
+                pre_search_reply: first_answer,
+                web_search_results: web_sources,
+                ..Default::default()
+            });
         }
         let synthesized = Box::pin(generate_reply(
             sink.clone(), prompt, user_id.clone(), session_id.clone(), forced_backend.clone(), containment_mode.clone(),
@@ -1681,7 +1716,7 @@ pub async fn run_ensemble(
             // Trigger web search with 5-second timeout
             match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
-                crate::web_search::search_duckduckgo(search_query, 3)
+                crate::web_search::search(search_query, 3, None)
             ).await {
                 Ok(Ok(search_response)) => {
                     println!("[Ensemble] ✅ Got {} search results", search_response.num_results);
@@ -2074,6 +2109,19 @@ pub(crate) fn split_inline_memory_marker(line: &str) -> Option<(bool, String)> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn clock_lines_in_the_history_are_handed_over_as_app_actions() {
+        use super::history_turn_for_model as h;
+        assert_eq!(h("assistant", "⏰ Alarm set for 8 15 AM."), "[Zynkbot's own clock did this, not you: Alarm set for 8 15 AM.]");
+        assert_eq!(h("assistant", "⏱️ Timer set for ten minutes."), "[Zynkbot's own clock did this, not you: Timer set for ten minutes.]");
+        assert_eq!(h("assistant", "The 7 30 AM alarm is cancelled."), "[Zynkbot's own clock did this, not you: The 7 30 AM alarm is cancelled.]");
+        assert_eq!(h("assistant", "Stopwatch started."), "[Zynkbot's own clock did this, not you: Stopwatch started.]");
+        // The model's own words, and the user's, pass through untouched.
+        assert_eq!(h("assistant", "You drive a blue Subaru Outback."), "You drive a blue Subaru Outback.");
+        assert_eq!(h("user", "Alarm set for 8 15 AM."), "Alarm set for 8 15 AM.");
+        assert_eq!(h("assistant", "The timer on the oven is broken, you said."), "The timer on the oven is broken, you said.");
+    }
+
+    #[test]
     fn inline_memory_marker_is_cut_off_the_last_line() {
         use super::split_inline_memory_marker as s;
         assert_eq!(s("Enjoy the game tonight. MEMORY: no"), Some((false, "Enjoy the game tonight.".to_string())));
@@ -2164,6 +2212,29 @@ mod tests {
 /// Where the web-search marker starts and where its query begins, if a reply has one.
 /// Accepts `WEB_SEARCH_NEEDED:` and the ways small models write it: any case, spaces or
 /// underscores, markdown around it, a colon or dash after it (2026-10-22).
+/// A timer, alarm or stopwatch line in the thread was written by Zynkbot's own clock, not
+/// by the model, and is handed to the model as that. Until 2026-10-27 the line went in as
+/// the model's own words; the cloud model then read "Alarm set for 8 15 AM" as a claim it
+/// had made, and disowned it in its next reply ("I don't actually have the ability to set
+/// alarms"), while the alarm was set. The page marks these lines with ⏰ or ⏱️; the phrases
+/// are the ones VoiceCommands.kt and useVoiceSession.js speak.
+pub(crate) fn history_turn_for_model(role: &str, content: &str) -> String {
+    if role != "assistant" { return content.to_string(); }
+    let text = content.trim();
+    let after_icon = text.strip_prefix("⏰").or_else(|| text.strip_prefix("⏱️")).or_else(|| text.strip_prefix("⏱"));
+    const PHRASES: &[&str] = &[
+        "Timer set for", "Alarm set for", "Timer cancelled", "Alarm cancelled", "No timer is running",
+        "No alarm is set", "There is no alarm", "There is no ", "One alarm, at", "Stopwatch ", "The stopwatch",
+    ];
+    let is_clock_line = after_icon.is_some()
+        || PHRASES.iter().any(|p| text.starts_with(p))
+        || (text.starts_with("The ") && (text.ends_with(" timer is cancelled.") || text.ends_with(" alarm is cancelled.")))
+        || (text.starts_with("You have ") && (text.contains(" timers:") || text.contains(" alarms:")));
+    if !is_clock_line { return content.to_string(); }
+    let plain = after_icon.unwrap_or(text).trim();
+    format!("[Zynkbot's own clock did this, not you: {}]", plain)
+}
+
 /// A line that is only the call-1 marker: "MEMORY: yes", "**Memory: no**", "REMEMBER: no".
 fn is_memory_flag_line(line: &str) -> bool {
     let t = line.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();

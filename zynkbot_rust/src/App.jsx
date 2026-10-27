@@ -1629,13 +1629,28 @@ export default function App() {
       });
 
       // Execute the web search
+      // The engine is chosen in Rust by the backend (2026-10-27): a cloud model searches
+      // through its own provider and comes back with the answer written; a local model
+      // gets results from Brave, a SearXNG server or DuckDuckGo for the synthesis below.
       const searchResults = await invoke('execute_web_search', {
         query: searchQuery,
         maxResults: 5,
-        fetchTopN: 3
+        fetchTopN: 3,
+        backend: modelType
       });
 
       console.log('[WebSearch] Search results:', searchResults);
+
+      if (searchResults.answer) {
+        setMessages(prev => prev.map(msg =>
+          msg.id === targetId
+            ? { ...msg, content: searchResults.answer, isStreaming: false, web_search_results: searchResults, web_search_query: searchQuery }
+            : msg
+        ));
+        if (speak) voice.speakResponse(searchResults.answer);
+        console.log('[WebSearch] Answer came from the provider\'s own search (' + searchResults.engine + ')');
+        return;
+      }
 
       // Build context from search results to send to LLM
       let searchContext = `Here are the web search results for "${searchQuery}":\n\n`;

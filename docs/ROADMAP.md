@@ -391,6 +391,7 @@ Relationship candidates are chosen by embedding similarity and entities alone; t
 "What have you learned about me in the last day / week / month?" Zynkbot lists it from the memories of that span, grouped the way Memory Manager groups them, says what it is unsure of, and a typed or dictated reply corrects the record: edit, delete, keep (a passing fact that should last) or expire. Builds on the day grouping in Memory Manager and the passing-fact expiry added 2026-10-26; the correction step is the memory-correction card applied to a whole reply rather than one message.
 
 ### Web Search Quality (after v1.0)
+- **A second engine when DuckDuckGo blocks** *(Matt, 2026-10-27)* — After a few quick searches DuckDuckGo answers every search from the address with a human check instead of results. Since 2026-10-27 the app says so instead of reporting "no results"; it still has nowhere else to go. Options: a keyed engine the user supplies (Brave Search has a free tier), a self-hosted or public SearXNG instance, or spacing searches out. A keyed engine means another key in the keys screen; to be decided.
 
 The current web search (DuckDuckGo, top 3 pages fetched for content) is a first pass, not a finished feature — real work is planned here to bring it closer to what Claude and OpenAI's own search does (better result ranking, more reliable content extraction, maybe a better search backend). Fold this question into that work rather than deciding it in isolation:
 

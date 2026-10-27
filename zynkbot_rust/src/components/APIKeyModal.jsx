@@ -23,7 +23,7 @@ const PROVIDERS = [
     placeholder: "sk-ant-...",
     link: "https://console.anthropic.com/settings/keys",
     billing: "https://console.anthropic.com/settings/billing",
-    description: "Claude models",
+    description: "Claude models. A Claude key also gives web search through Anthropic's own search.",
     models: [
       { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
       { id: "claude-opus-5", label: "Claude Opus 5" },
@@ -46,7 +46,7 @@ const PROVIDERS = [
     placeholder: "sk-...",
     link: "https://platform.openai.com/api-keys",
     billing: "https://platform.openai.com/settings/organization/billing/overview",
-    description: "GPT and o-series models",
+    description: "GPT and o-series models. Recommended: an OpenAI key also gives Whisper dictation and web search through OpenAI's own search.",
     models: [
       // No "-pro" variants (gpt-5.x-pro, o1-pro) on purpose: OpenAI serves those only
       // through its Responses API, and every request here goes to /v1/chat/completions,
@@ -133,6 +133,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
     // through the desktop's proxy, which substitutes the desktop's selected model.
     // Backup storage (set in Memory Manager → Storage) rides along too.
     'R2_ENDPOINT',       'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET',
+    'BRAVE_SEARCH_API_KEY', 'SEARXNG_URL',
   ];
 
   const handlePushAllKeys = async () => {
@@ -165,6 +166,11 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
 
   // Custom endpoint state
   const [customUrl, setCustomUrl] = useState("");
+  // Web search for local models (2026-10-27): a Brave key or a SearXNG server address.
+  const [braveKey, setBraveKey] = useState("");
+  const [searxUrl, setSearxUrl] = useState("");
+  const [savingWebSearch, setSavingWebSearch] = useState(false);
+  const [webSearchStatus, setWebSearchStatus] = useState(null);
   const [customApiKey, setCustomApiKey] = useState("");
   const [customModel, setCustomModel] = useState("");
   const [availableCustomModels, setAvailableCustomModels] = useState([]);
@@ -213,6 +219,8 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
       if (keys.CUSTOM_API_URL) setCustomUrl(keys.CUSTOM_API_URL);
       if (keys.CUSTOM_API_KEY) setCustomApiKey(keys.CUSTOM_API_KEY);
       if (keys.CUSTOM_MODEL) setCustomModel(keys.CUSTOM_MODEL);
+      setBraveKey(keys.BRAVE_SEARCH_API_KEY || "");
+      setSearxUrl(keys.SEARXNG_URL || "");
 
       const selections = {};
       for (const p of PROVIDERS) {
@@ -387,6 +395,24 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
       setAvailableCustomModels([]);
     } finally {
       setIsFetchingModels(false);
+    }
+  };
+
+  const handleSaveWebSearch = async () => {
+    setSavingWebSearch(true); setWebSearchStatus(null);
+    try {
+      const key = braveKey.trim();
+      const url = searxUrl.trim();
+      if (url && !/^https?:\/\//i.test(url)) throw new Error('The search server address must start with http:// or https://');
+      if (key) await invoke('set_api_key', { key: 'BRAVE_SEARCH_API_KEY', value: key }); else await invoke('remove_api_key', { key: 'BRAVE_SEARCH_API_KEY' });
+      if (url) await invoke('set_api_key', { key: 'SEARXNG_URL', value: url }); else await invoke('remove_api_key', { key: 'SEARXNG_URL' });
+      setApiKeys(prev => ({ ...prev, BRAVE_SEARCH_API_KEY: key, SEARXNG_URL: url }));
+      setWebSearchStatus({ type: 'success', message: key ? '✓ Saved. Local-model searches use Brave.' : url ? '✓ Saved. Local-model searches use your search server.' : '✓ Saved. Local-model searches use DuckDuckGo.' });
+      if (onKeysChanged) onKeysChanged();
+    } catch (err) {
+      setWebSearchStatus({ type: 'error', message: `Failed to save: ${err.message || err}` });
+    } finally {
+      setSavingWebSearch(false);
     }
   };
 
@@ -692,6 +718,44 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
               )}
             </div>
           ))}
+
+          {/* Web search (2026-10-27): only a local model needs this; a cloud model
+              searches through its own provider on the user's key. */}
+          <div className="api-key-item">
+            <div className="provider-header">
+              <div className="provider-info">
+                <span className="provider-name">Web search</span>
+                <span className="provider-description">For searches made with a local model. Cloud models search through their own provider.</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxWidth: '420px' }}>
+              <input
+                type="password"
+                className="key-input"
+                placeholder="Brave Search API key (optional)"
+                value={braveKey}
+                onChange={(e) => setBraveKey(e.target.value)}
+              />
+              <input
+                type="text"
+                className="key-input"
+                placeholder="Search server address, e.g. https://search.example.org (SearXNG, optional)"
+                value={searxUrl}
+                onChange={(e) => setSearxUrl(e.target.value)}
+              />
+              <div style={{ fontSize: '0.78rem', color: '#9aa5c4', marginTop: '-4px' }}>
+                With neither, DuckDuckGo is used; it blocks a burst of searches for a few minutes.
+              </div>
+              <div className="key-actions">
+                <button onClick={handleSaveWebSearch} disabled={savingWebSearch} className="btn-save">
+                  {savingWebSearch ? 'Saving…' : 'Save'}
+                </button>
+                {webSearchStatus && (
+                  <span style={{ fontSize: '0.8rem', color: webSearchStatus.type === 'error' ? '#ff5555' : '#50fa7b' }}>{webSearchStatus.message}</span>
+                )}
+              </div>
+            </div>
+          </div>
 
           {/* Custom / Ollama section */}
           <div className="api-key-item">

@@ -91,7 +91,7 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 
 **Knowledge Base / RAG** (`knowledge_base.rs`, `kb_rag.rs`) — Document indexing with chunking, hybrid semantic + FTS5 retrieval, filename boosting. Supports PDF, text, and code. Embedding generation via local embeddings module.
 
-**Web Search** (`web_search.rs`) — DuckDuckGo Lite wrapper with page content fetching and HTML text extraction. Privacy-respecting: no API key, no tracking.
+**Web Search** (`web_search.rs`) — one call, several engines: a cloud model's own search tool (Anthropic, OpenAI) on the user's key; Brave Search, a SearXNG server or DuckDuckGo Lite for local models, with page content fetching and HTML text extraction.
 
 **Ensemble Mode** (`commands/chat.rs`) — Multi-model parallel query with synthesis coordination. Coordinator model auto-selected by capability tier; results synthesized into a single response.
 

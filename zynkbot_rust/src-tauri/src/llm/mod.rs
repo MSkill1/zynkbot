@@ -68,3 +68,18 @@ impl std::fmt::Display for LLMError {
 }
 
 impl std::error::Error for LLMError {}
+
+/// A page a provider's own web search drew on (2026-10-27).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct WebSource {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+}
+
+/// What a provider's own web search tool returned: the model's answer and its sources.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WebAnswer {
+    pub answer: String,
+    pub sources: Vec<WebSource>,
+}

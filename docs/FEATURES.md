@@ -230,6 +230,15 @@ Adding a document only puts the file in Zynkbot's folder. Before Zynkbot can tal
 
 ---
 
+### 🔎 Web Search
+
+When a question needs current information, the model says so and a card offers the search with a query you can edit; nothing is searched until you tap it. Hands-free, the search runs without asking. Where the search goes depends on the model you are using (since 2026-10-27):
+
+- **Claude or OpenAI**: the search runs through that provider's own web search tool, on your key, and the reply is that model's answer with the pages it used listed under "View sources". The provider bills it per search (Anthropic: $10 per 1,000 searches, plus the tokens of the search content).
+- **A local model, or any other backend**: results come from the first of these that is set up in Keys and servers: a Brave Search API key; the address of a SearXNG search server (your own, or one you trust); or, with neither, DuckDuckGo. DuckDuckGo blocks a burst of searches from one network for a few minutes, and Zynkbot says so instead of answering "no results".
+
+The query leaves your device in every case; nothing else does. The pages fetched for a local-model search are read on your device.
+
 ### 🎛️ Memory Manager
 
 <img src="../assets/MemManager.png" alt="Memory Manager interface" width="800">
@@ -545,7 +554,7 @@ Native desktop application with OS integration:
 
 **What leaves your device (only if YOU enable):**
 - Conversation prompts (if using API models like GPT-4, Claude)
-- Web searches (if using web search)
+- Web search queries, only when you tap a search (to your model's provider, Brave, your search server or DuckDuckGo)
 - Voice dictation audio (only if using OpenAI Whisper cloud engine — Vosk offline mode sends nothing)
 
 **What NEVER leaves your device:**
