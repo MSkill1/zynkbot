@@ -86,6 +86,7 @@ mod knowledge_base;  // External reference document system
 mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod kb_prompt;  // Wording of the KB prompt block by search outcome (found / weak / nothing)
 mod word_docs;  // .docx and .doc text for the Knowledge Base and attachments (2026-10-27)
+mod web_read;   // a page the user points at, read for the prompt (2026-10-27)
 mod conversation_history;  // Persistent conversation log with full-text search
 mod seal;  // a seal the user makes: one thread as a signed file (2026-10-27)
 pub mod sync_outbox;  // the ZynkSync outbox: drain and receive (step 2)

@@ -100,7 +100,11 @@ impl FakeModel {
             }
         };
 
-        let app = axum::Router::new().route("/chat/completions", axum::routing::post(handler));
+        // A page for the page reader to fetch (c12).
+        let page = || async { axum::response::Html("<html><head><title>Contain AI</title></head><body><nav>Menu</nav><main><h1>Contain AI</h1><p>Zynkbot is a private assistant made by Contain AI in Rutland, Vermont. Your data stays on your device.</p></main></body></html>") };
+        let app = axum::Router::new()
+            .route("/chat/completions", axum::routing::post(handler))
+            .route("/page", axum::routing::get(page));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind fake model");
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, app).await.expect("fake model server"); });
@@ -334,6 +338,34 @@ fn c03b_a_question_about_zynkbot_gets_the_guide_passage() {
         let prompt = FakeModel::prompt_of(&requests[0]);
         assert!(prompt.contains("ZYNKBOT'S OWN GUIDES") && prompt.contains("pairing code"),
             "the guide passage never reached the model; prompt was:\n{}", prompt);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// c12. A web address in the message: the page is read and its text reaches the model,
+//      with the page named as a source (Matt, 2026-10-27: "can you scan that page").
+// ---------------------------------------------------------------------------
+#[test]
+fn c12_a_web_address_in_the_message_gets_the_page_read() {
+    let _env = hold_env();
+    rt_test(async {
+        let model = FakeModel::start().await;
+        let bench = Bench::new(&model).await;
+        model.will_say("The page says Zynkbot is a private assistant made by Contain AI.");
+
+        let url = format!("{}/page", model.base_url);
+        let sink = Arc::new(RecordingSink::default());
+        let resp = bench.ask(sink, "custom", &format!("What does {} say about Zynkbot?", url), false).await;
+
+        let requests = model.chat_requests();
+        assert_eq!(requests.len(), 1);
+        let prompt = FakeModel::prompt_of(&requests[0]);
+        assert!(prompt.contains("WEB PAGES THE USER POINTED AT") && prompt.contains("private assistant made by Contain AI in Rutland"),
+            "the page text never reached the model; prompt was:\n{}", prompt);
+        assert!(!prompt.contains("<nav>"), "markup leaked into the prompt");
+        let sources = &resp["web_search_results"];
+        assert_eq!(sources["results"][0]["title"], "Contain AI", "the page is not named as a source: {}", resp);
+        assert!(sources["query"].as_str().unwrap_or("").starts_with("Read: "));
     });
 }
 

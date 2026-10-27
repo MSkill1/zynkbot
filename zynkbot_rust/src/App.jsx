@@ -1472,6 +1472,8 @@ export default function App() {
         timestamp: new Date().toISOString(),
         isStreaming: false,
         recalled_memories: response.recalled_memories || [],
+        // A page the user pointed at, read for this reply (2026-10-27): shown like search sources.
+        web_search_results: response.web_search_results || undefined,
         metadata: {
           schema: response.schema,
           model_backend: response.model_backend,

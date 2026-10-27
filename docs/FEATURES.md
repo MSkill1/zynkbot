@@ -239,6 +239,8 @@ When a question needs current information, the model says so and a card offers t
 
 The query leaves your device in every case; nothing else does. The pages fetched for a local-model search are read on your device.
 
+**Reading a page you point at.** A web address in your message ("what does containai.ai say about pricing?") makes Zynkbot fetch that page on your device, pull out its readable text, and answer from it, with the page listed under "View sources". No search is involved. Up to two addresses per message; a page built entirely in the browser may show little text, and a site that refuses automated visits is reported as such rather than guessed at. Works with every backend, local models included.
+
 ### 🎛️ Memory Manager
 
 <img src="../assets/MemManager.png" alt="Memory Manager interface" width="800">

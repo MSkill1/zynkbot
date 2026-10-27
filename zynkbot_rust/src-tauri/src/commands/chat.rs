@@ -701,6 +701,42 @@ pub async fn generate_reply(
         full_prompt = format!("{}{}", block, full_prompt);
     }
 
+    // A web address in the message: the page itself is read, on this device, and its text
+    // goes in front of the prompt (Matt, 2026-10-27: "can you scan that page"). A search
+    // engine returns its index; this returns the page the user is looking at. Works for
+    // every backend. Less text on the phone, where the prompt is tight.
+    let mut read_sources: Option<serde_json::Value> = None;
+    let page_urls = crate::web_read::find_urls(&query);
+    if !page_urls.is_empty() {
+        let cap = if is_api_model { 8000 } else { 3000 };
+        let mut pages = Vec::new();
+        let mut failures: Vec<(String, String)> = Vec::new();
+        for url in page_urls.iter().take(2) {
+            match crate::web_read::read_page(url, cap).await {
+                Ok(p) => {
+                    println!("[WebRead] {}: {} chars read{}", url, p.text.chars().count(), if p.cut > 0 { ", cut to fit" } else { "" });
+                    pages.push(p);
+                }
+                Err(e) => {
+                    println!("[WebRead] {}: {}", url, e);
+                    failures.push((url.clone(), e));
+                }
+            }
+        }
+        full_prompt = format!("{}{}", crate::web_read::build_block(&pages, &failures), full_prompt);
+        if !pages.is_empty() {
+            read_sources = Some(serde_json::json!({
+                "query": format!("Read: {}", pages.iter().map(|p| crate::llm::xai::host_of(&p.url)).collect::<Vec<_>>().join(", ")),
+                "results": pages.iter().map(|p| serde_json::json!({
+                    "title": if p.title.is_empty() { crate::llm::xai::host_of(&p.url) } else { p.title.clone() },
+                    "url": p.url,
+                    "snippet": p.text.chars().take(160).collect::<String>(),
+                })).collect::<Vec<_>>(),
+                "num_results": pages.len(),
+            }));
+        }
+    }
+
     // STEP 6: Call LLM based on backend (use forced_backend for Child mode)
     // All API backends use SSE streaming so the frontend can display tokens as they arrive.
     // Local GGUF models are blocking and cannot stream, so they continue to return all at once.
@@ -1343,7 +1379,7 @@ pub async fn generate_reply(
         original_query: Some(query.clone()),
         pre_search_reply: None,
         kb_note: kb_note.clone(),
-        web_search_results: None,
+        web_search_results: read_sources,
     };
 
     // STEP 10: LOG EXCHANGE TO CONVERSATION HISTORY (non-blocking, skipped in HIPAA mode,

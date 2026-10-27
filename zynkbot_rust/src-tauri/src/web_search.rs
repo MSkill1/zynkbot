@@ -27,7 +27,7 @@ pub struct SearchResponse {
 }
 
 /// Extract clean text from HTML
-fn extract_text_from_html(html: &str) -> String {
+pub(crate) fn extract_text_from_html(html: &str) -> String {
     let document = Html::parse_document(html);
 
     // Remove script and style tags
