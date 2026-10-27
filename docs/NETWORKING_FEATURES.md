@@ -52,7 +52,7 @@ A device *is* its TLS certificate and device id; its IP address is only where it
 
 1. Open **System Controls → ZynkSync** on both devices
 2. Note the IP address on Device 1 (port 57963)
-3. On Device 2, click **"Add Device"** and enter Device 1's IP
+3. On Device 2, in System Controls → ZynkSync, tap **"➕ Enter Code from Another Device"** (or **"➕ Enter IP:Code"**) and enter Device 1's address and code
 4. Enter the 6-digit pairing code shown on Device 1
 5. The new device receives everything in 300-row slices sent a second apart (a few thousand rows take under a minute); from then on a change is sent within seconds of being made (the loop wakes when the outbox grows), with a 60-second cycle as the safety net for devices that were unreachable
 
@@ -123,7 +123,7 @@ Zynkbot networking requires only a shared local network — and a mobile hotspot
 
 1. Both devices connect to the same hotspot
 2. Device A opens **System Controls → ZynkLink** and notes its IP address (shown in the UI)
-3. Device B clicks "Add Device", enters Device A's IP and the 6-digit pairing code
+3. Device B taps "➕ Enter Code from Another Device" (or "➕ Enter IP:Code") and enters Device A's address and the 6-digit pairing code; a wrong or expired code is refused with "Invalid or expired pairing code"
 4. Paired — file sharing and ZChat work immediately
 
 The 6-digit code (10-minute expiry) handles security so no additional setup is needed.
