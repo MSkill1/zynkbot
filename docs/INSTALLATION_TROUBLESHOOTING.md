@@ -381,6 +381,8 @@ kill -9 <PID>
    START_ZYNKBOT.bat
    ```
 
+4. Every line the app prints is also written to `logs/zynkbot.log` in the app data folder (`~/.local/share/zynkbot/logs/zynkbot.log` on Linux, `%LOCALAPPDATA%\zynkbot\logs\zynkbot.log` on Windows). **Report a problem** (in the sidebar, or the ⚑ button on a reply) includes the last 300 lines of that log with credentials masked, and has a box to include the Hey Zynk log (the wakes it heard and why it ignored any).
+
 ---
 
 ## Networking Issues
@@ -391,7 +393,7 @@ kill -9 <PID>
 
 **Basic troubleshooting:**
 1. Verify both devices are on the same network (check IP addresses are in same subnet)
-2. Verify pairing codes match and haven't expired (10-minute timeout)
+2. Verify pairing codes match and haven't expired (10-minute timeout). A wrong or expired code is refused, and the joining device shows "Failed to join: Pairing failed: Invalid or expired pairing code"
 3. Check you can ping the other device: `ping <other-device-ip>`
 
 **If connection fails after pairing:**
@@ -427,7 +429,7 @@ sudo firewall-cmd --reload
 - Firewall blocking port 57963
 
 **Solution:**
-1. Check device pairing status in Settings → ZynkSync
+1. Check device pairing status in System Controls → ZynkSync
 2. Verify backend running on both devices
 3. Manually trigger sync from Settings
 4. Check firewall rules (see above)
@@ -448,21 +450,20 @@ sudo firewall-cmd --reload
 - Use fewer models (2-3 recommended)
 - Mix fast local models with API models
 - Check internet connection for web search
-- Verify API keys in Settings → API Keys
+- Verify API keys in System Controls → Current Model
 
 ---
 
 ### Android: files placed in ZynkbotShare don't appear on other devices
 
-**Problem:** You copy a file into `Downloads/ZynkbotShare/` with another app (Chrome, the Files app, a screenshot), tap Rescan in the ZynkLink panel, and it is not listed.
+**Problem:** You put a file in the Zynkbot share folder with another app and it is not listed for your linked devices.
 
-**Cause:** Android's scoped storage. Zynkbot can only see files it created itself. Until September 2026 the app asked for "All files access" to get around this; Google Play does not allow that permission for an app like Zynkbot, so it was removed.
+**Cause:** Until 2026-09-19 the share folder was `Downloads/ZynkbotShare/`, and Android's scoped storage hid every file another app put there from Zynkbot. Since then Zynkbot is a location in the phone's Files app, beside Downloads and Drive, and a target in every app's Share menu. The old Downloads folder is no longer used; files Zynkbot owned there are moved over once.
 
-**Solution:** add the file from inside Zynkbot. Open ZynkLink, tap **Add file**, pick the file in the system picker. Zynkbot copies it into ZynkbotShare under its own name and it is visible to peers immediately. The same applies to the Knowledge Base: use **Add files** in the KB Manager rather than copying into a folder.
+**Solution:** put the file in the Zynkbot location. Use the Share button in any app and pick Zynkbot, or move the file into the Zynkbot location in the Files app, or open ZynkLink → **Browse shared files on this device** → **Add Files**. Files you save from a linked device land there too. The Knowledge Base still uses **Add files** in the KB Manager rather than copying into a folder.
 
 **Notes:**
-- Files you drop into the folder with other apps stay invisible by design; there is no toggle to change this any more.
-- Android 8 to 10 still ask for the older storage permission on first launch so Zynkbot can create the folder itself.
+- The Zynkbot location lives in app storage, not in a media folder, so photos in it do not appear in the gallery. They are one tap away in the Files app.
 - Background: KNOWN_ISSUES.md, KI-015.
 
 ---

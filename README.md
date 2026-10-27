@@ -82,7 +82,7 @@ Development testing validates that features work under controlled conditions. It
 - Does the memory system store things it shouldn't? Miss things it should catch?
 - Does contradiction detection fire when it should — and stay quiet when it shouldn't?
 - Does the hybrid memory search surface the right memories for your queries?
-- Do ZynkSync and ZynkLink work reliably across your devices and network setup?
+- Does ZynkLink work across your devices and network setup?
 
 v1.0 and mobile development depend on what we learn in this phase. If you have a GitHub account, [open an issue](https://github.com/MSkill1/zynkbot/issues). If you'd prefer to contact the project directly, feedback is always welcome at matt@containai.ai.
 
@@ -104,7 +104,7 @@ Pre-built binaries are available for Android, Linux, and Windows — no compilat
 
 **Android:** Download the APK and tap to install. Android will prompt you to allow installation from unknown sources — this is a one-time prompt per device.
 
-Once Zynkbot is on both your phone and desktop, open Settings → ZynkSync on each device and pair them. The new device has everything within a minute; after that, a change on any device reaches the others within seconds whenever they're on the same network, and waits for any that aren't.
+Once Zynkbot is on both your phone and desktop, open System Controls → ZynkSync on each device and pair them. The new device has everything within a minute; after that, a change on any device reaches the others within seconds whenever they're on the same network, and waits for any that aren't.
 
 > ⚠️ **Local models are CPU-only in pre-built desktop binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected. Android uses API models only in Phase 1.
 
@@ -301,13 +301,13 @@ As of two years ago, I had no experience with Rust and only an interest. When it
 
 A **containment mode** is a global safety setting that applies to everything Zynkbot processes — every message in, every response out. Think of it as the safety layer that wraps your entire session. Unlike snap-ins (which are industry-specific behavior customizations), a containment mode is a filter on the AI itself: it determines what kinds of content are allowed through, blocked, or flagged.
 
-Every installation runs in exactly one containment mode at a time. The default is **Guardian**, which blocks severe harm categories without being overly restrictive for everyday use. Developers can implement new modes for specialized deployment scenarios.
+Every installation runs in exactly one containment mode at a time. The default is **Sovereign**, which warns about dangerous content but does not block it. **Guardian** blocks severe harm categories without being overly restrictive for everyday use. Developers can implement new modes for specialized deployment scenarios.
 
 | Mode          | Safety Level          | Use Case                          |
 | ------------- | --------------------- | --------------------------------- |
-| **Guardian**  | Moderate (default)    | General use, blocks severe harm   |
+| **Guardian**  | Moderate              | General use, blocks severe harm   |
 | **Child**     | Strict                | For minors, aggressive filtering  |
-| **Sovereign** | Warnings only         | Warns but doesn't block           |
+| **Sovereign** | Warnings only (default) | Warns but doesn't block         |
 | **Witness**   | No filtering          | Full freedom, no restrictions     |
 | **HIPAA**     | Healthcare-oriented   | PHI detection, no memory storage  |
 
@@ -340,7 +340,8 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 **Local Models (Privacy-First):**
 
 - Place `.gguf` files in `zynkbot_rust/src-tauri/models/user/`
-- Recommended: Qwen3 8B, DeepSeek R1 Distill Llama 8B, Llama 3.1 8B Lexi Uncensored V2 — optional download included in installation script
+- The Zynkbot model: Qwen3-4B-Instruct-2507, the Q4_0 file from unsloth (`Qwen3-4B-Instruct-2507-Q4_0.gguf`, 2.4 GB). The setup wizard offers to download it at first run. On a phone it is the only model offered
+- Alternatives: Qwen3 8B, DeepSeek R1 Distill Llama 8B, Llama 3.1 8B Lexi Uncensored V2 — optional download included in installation script
 - No API key needed — runs completely offline
 - CPU works; NVIDIA GPU with CUDA gives 10–100x faster responses (automatically configured by the installer if you have the CUDA toolkit — see [GPU Acceleration](#gpu-acceleration) below)
 
@@ -364,7 +365,7 @@ You can connect to any of these cloud providers. Your memory database stays loca
 
 Wondering what API keys actually cost? → [Honest cost estimates](API_COSTS.md)
 
-**Configure:** Settings → API Keys
+**Configure:** System Controls → Current Model (the API keys are entered on that page)
 
 <table>
   <tr>

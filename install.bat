@@ -519,7 +519,7 @@ echo Creating .env file...
     echo XAI_API_KEY=
     echo.
     echo # Safety
-    echo ZYNK_CONTAINMENT_MODE=guardian
+    echo ZYNK_CONTAINMENT_MODE=sovereign
     echo.
     echo # ZynkSync
     echo ZYNKSYNC_AUTO_SYNC=true

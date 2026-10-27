@@ -323,7 +323,7 @@ ZYNK_MODEL_BACKEND=local
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 XAI_API_KEY=
-ZYNK_CONTAINMENT_MODE=guardian
+ZYNK_CONTAINMENT_MODE=sovereign
 ZYNKSYNC_AUTO_SYNC=true
 ZYNKSYNC_SYNC_INTERVAL=60
 ```
@@ -363,7 +363,7 @@ See [MODELS.md](MODELS.md) for manual model download instructions.
 
 ### Add Documents to Knowledge Base
 
-1. Settings → **Knowledge Base**
+1. System Controls → **Knowledge Base**
 2. Click **"Manage Documents"**
 3. Add your documents (.txt, .md, .json, code files — PDF support coming soon)
 4. Click 📚 **KB button** in chat to search them
@@ -423,10 +423,10 @@ The Windows installation is functionally identical to Linux:
 After installation:
 
 1. ✅ Start Zynkbot (`START_ZYNKBOT.bat`)
-2. 🔑 Add API keys (optional - Settings → API Keys)
+2. 🔑 Add API keys (optional - System Controls → Current Model)
 3. 🎯 Complete onboarding ("Get to Know You" button)
 4. 📚 Add documents to Knowledge Base (optional)
 5. 💬 Start chatting!
-6. 📱 **Pair your Android phone** — install the Zynkbot APK on your phone, then open Settings → ZynkSync on both devices to pair them. Your memory syncs automatically whenever both devices are on the same network.
+6. 📱 **Pair your Android phone** — install the Zynkbot APK on your phone, then open System Controls → ZynkSync on both devices to pair them. Your memory syncs automatically whenever both devices are on the same network.
 
 **Welcome to Zynkbot!** 🎉

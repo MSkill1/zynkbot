@@ -212,7 +212,7 @@ Get keys from:
 
 ### Add Documents to Knowledge Base
 
-1. Click ⚙️ Settings → **Knowledge Base**
+1. Click ⚙️ System Controls → **Knowledge Base**
 2. Click **"Manage Documents"**
 3. Add `.txt`, `.md`, `.json`, or code files (PDF support coming soon)
 4. Click the 📚 **KB button** in the chat input to search them during conversation
@@ -220,11 +220,11 @@ Get keys from:
 ### Next Steps
 
 1. ✅ Start Zynkbot (`./START_ZYNKBOT.sh`)
-2. 🔑 Add API keys (optional — Settings → API Keys)
+2. 🔑 Add API keys (optional — System Controls → Current Model)
 3. 🎯 Complete onboarding ("Get to Know You" button)
 4. 📚 Add documents to Knowledge Base (optional)
 5. 💬 Start chatting — try "What can you do?"
-6. 📱 **Pair your Android phone** — install the Zynkbot APK on your phone, then open Settings → ZynkSync on both devices to pair them. Your memory syncs automatically whenever both devices are on the same network.
+6. 📱 **Pair your Android phone** — install the Zynkbot APK on your phone, then open System Controls → ZynkSync on both devices to pair them. Your memory syncs automatically whenever both devices are on the same network.
 
 ---
 
@@ -565,7 +565,7 @@ ANTHROPIC_API_KEY=
 XAI_API_KEY=
 
 # Safety
-ZYNK_CONTAINMENT_MODE=guardian
+ZYNK_CONTAINMENT_MODE=sovereign
 
 # ZynkSync
 ZYNKSYNC_AUTO_SYNC=true

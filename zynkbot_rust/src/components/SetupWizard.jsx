@@ -13,7 +13,7 @@ const USER_MODELS = [
   // The Zynkbot model (2026-10-27): the model the app is built around, phone-sized; offered
   // on every platform, the only one offered on a phone.
   { id: ZB_MODEL_ID,      name: 'Zynkbot model (Qwen3 4B)',          desc: 'The model Zynkbot is built around. Phone-sized, fast, no key needed', size: '2.4GB' },
-  { id: 'qwen3-8b',       name: 'Qwen3 8B',                        desc: 'Best all-around — recommended for most users', size: '5.0GB' },
+  { id: 'qwen3-8b',       name: 'Qwen3 8B',                        desc: 'Larger all-around model for a computer with the RAM', size: '5.0GB' },
   { id: 'deepseek-r1-8b', name: 'DeepSeek R1 Distill Llama 8B',    desc: 'Reasoning and analytical tasks',               size: '4.7GB' },
   { id: 'llama-lexi-8b',  name: 'Llama 3.1 8B Lexi Uncensored',    desc: 'Creative, unfiltered responses',               size: '4.9GB' },
 ];

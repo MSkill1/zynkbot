@@ -19,8 +19,8 @@ Zynkbot uses a local SQLite database for persistent, semantic memory that learns
 
 **Memory Types:**
 - **User Memories**: Your personal conversations and preferences
-- **Foundational Memories**: System-level knowledge about Zynkbot (searched only when your query mentions "Zynkbot")
-- **Knowledge Base**: Documents you import (text files, markdown, JSON, code, PDF) for RAG retrieval — stored separately from personal memories.
+- **Foundational Memories**: System-level knowledge about Zynkbot (searched when your question is about Zynkbot itself: the word Zynkbot or a feature name such as ZynkSync, ZynkLink, Memory Manager, Ensemble, Knowledge Base or Hey Zynk, and dictation's "zinc" spellings). Since 2026-10-26 the built-in user guides are indexed on the device and searched the same way, and they are the main source for such questions.
+- **Knowledge Base**: Documents you import (text files, markdown, JSON, code, PDF, HTML, Word .docx and .doc) for RAG retrieval — stored separately from personal memories.
 
 **Features:**
 - ✅ Remembers context across sessions
@@ -77,9 +77,9 @@ Multiple safety modes with category-based filtering.
 
 | Mode | Safety Level | Use Case | Blocked Categories |
 |------|-------------|----------|-------------------|
-| **Guardian** | Moderate (default) | General use, blocks severe harm | Violence, sexual, self-harm, weapons |
+| **Guardian** | Moderate | General use, blocks severe harm | Violence, sexual, self-harm, weapons |
 | **Child** | Strict | For minors, blocks all unsafe content | All unsafe categories |
-| **Sovereign** | Warnings only | Warns but doesn't block | None (warnings only) |
+| **Sovereign** | Warnings only (default since beta 3) | Warns but doesn't block | None (warnings only) |
 | **Witness** | No filtering | Full freedom, no restrictions | None |
 | **HIPAA** | Healthcare compliance | PHI protection, blocks medical advice | Custom PHI + medical content rules |
 
@@ -120,14 +120,15 @@ Zynkbot supports multiple LLM backends with mid-conversation switching via the U
 - The Current Model page lists the model files on this device with their sizes, with **Move to…** and **Remove** for each (added 2026-10-23)
 - Models are auto-discovered and appear in the model picker
 - No API key needed - runs completely offline
+- A fresh install offers the Zynkbot model at the end of setup, on every platform (2.4 GB download from Hugging Face, checksum verified, resumable); "Later" leaves a Download button on the Current Model page
 
 **Recommended models:**
-- **Llama 3.2 3B Instruct** (2.0GB) - Fast, balanced performance
-- **Qwen 2.5 7B Instruct** (4.4GB) - Best coding and reasoning
-- **Dolphin Mistral 7B** (4.1GB) - Uncensored, creative responses
+- **Zynkbot model: Qwen3-4B-Instruct-2507, Q4_0** (2.4GB) - The model Zynkbot is built around; phone-sized and fast; the exact unsloth file (a Q4_K_M of the same model from elsewhere scored lower and read prompts 40% slower on a Pixel)
+- **Qwen3 8B** (5.0GB) - Larger all-around model for a desktop with the RAM
+- **DeepSeek R1 Distill Llama 8B** (4.7GB) and **Llama 3.1 8B Lexi Uncensored** (4.9GB) - alternatives offered by the installers
 
 **Download:**
-- `install.bat` offers to download automatically during installation
+- The setup wizard offers the Zynkbot model at first run; `install.sh` and `install.bat` offer it and the three larger models during a source install
 - Or download manually from [Hugging Face](https://huggingface.co/models?library=gguf)
 
 **Performance:**
@@ -206,6 +207,8 @@ Adding a document only puts the file in Zynkbot's folder. Before Zynkbot can tal
 - JSON files (.json)
 - Code files (any language)
 - PDF documents
+- HTML pages saved from a browser
+- Word documents (.docx and .doc)
 
 **How it works:**
 1. Index files via Settings → Knowledge Base
@@ -252,6 +255,8 @@ Professional database-style interface for managing your memories.
 - **Inline Editing**: Edit memories directly in the UI
 - **Bulk Operations**: Delete multiple memories at once
 - **Database-style UI**: No SQL knowledge required
+- **Grouped by message** (2026-10-26): the facts taken from one message sit under "What I said" with the day above; tap the quote to read the whole message, editable from any of its facts
+- **EXPIRED and Keep**: a passing fact (a parking level, an errand) leaves recall two weeks after its day and stays listed as EXPIRED with a Keep button; a replaced memory is tagged REPLACED with "Undo replacement"
 
 **Access:**
 - Click 🧠 **Memory Manager** button in header
@@ -276,7 +281,7 @@ Tap **About me** in Memory Manager for a report of what Zynkbot knows about you.
 
 ### 🗓️ What the extraction call records about each memory
 
-The call that lists the facts in a message (call 2 of the memory pipeline, since 2026-10-24; before that, the single decision call) also returns, with no extra request: the **event date** (when the thing happened, only if the message states or implies it; the value is kept only if it parses, is not before 1900 or more than about two years ahead, and is not a January 1 placeholder), a **category** from the fixed namespace list above, up to five lowercase **tags**, the user's **tone** (positive, neutral, negative, frustrated, anxious or excited, stored as a sentiment label and score) and the **named entities** mentioned, each as a person, place, organisation or thing. Values the model omits or gets wrong fall back to the local NLP guess. Memories from hands-free turns are marked with source type `hands_free`. <!-- added by Claude 2026-09-09, review -->
+The call that lists the facts in a message (call 2 of the memory pipeline, since 2026-10-24; before that, the single decision call) also returns, with no extra request: the **event date** (when the thing happened, only if the message states or implies it; the value is kept only if it parses, is not before 1900, is not in the future (a future date is never a day something happened; KI-066), and is not a January 1 placeholder), a **category** from the fixed namespace list above, up to five lowercase **tags**, the user's **tone** (positive, neutral, negative, frustrated, anxious or excited, stored as a sentiment label and score) and the **named entities** mentioned, each as a person, place, organisation or thing. Values the model omits or gets wrong fall back to the local NLP guess. Memories from hands-free turns are marked with source type `hands_free`. <!-- added by Claude 2026-09-09, review -->
 
 **Older memories** stored before these fields existed are filled in by a background pass that starts automatically after launch: one memory every 1.5 seconds, up to 2000 per run, content and title untouched, each stamped so it is never revisited. If the model backend is unusable it stops after a run of failures and tries again on a later launch. About me shows how many are still pending. <!-- added by Claude 2026-09-09, review -->
 
@@ -288,7 +293,7 @@ Foundational memories are system-level entries stored with `user_id='system'` an
 
 **How they work:**
 - Automatically excluded from the Memory Manager UI (to keep your personal memories view clean)
-- Automatically included in semantic search during conversations alongside your personal memories when you mention "Zynkbot"
+- Automatically included in semantic search during conversations alongside your personal memories when your question is about Zynkbot itself (the word Zynkbot or a feature name; see Memory Types above)
 - Stored in the same local database as your memories, filtered out of the user-facing view
 
 **Viewing system memories (direct database access):**
@@ -444,7 +449,7 @@ Personal facts are taken from your messages by a separate model call after the r
 - Only what the message states, nothing guessed
 - One thing with its details is one fact: "I'm flying to Denver Thursday for my nephew's wedding" is one fact, not three
 - What you ask is not a fact, but what you state while asking is ("Raspberry pie is my favorite. What's a good recipe?" holds one fact)
-- Nothing from text you quote, paste or ask to translate; greetings and thanks are not facts
+- Nothing from text you quote, paste, or ask to translate, rewrite, reprint or proofread; greetings and thanks are not facts
 - Feelings count ("I've been feeling worn out this week" is stored)
 
 **Guards against invention (small local models):** a fact that shares no content word with your message is dropped, as is a restatement of a fact already taken from the same message or a near-duplicate of one; a message produces at most three memories. Measured on the project's memory bench (2026-10-24): the on-device model found 66 of 69 expected facts with no junk memory from 26 no-fact messages; Claude found all 69.
@@ -460,7 +465,7 @@ Automatically detects when new information contradicts existing memories.
 **How it works:**
 1. New memory compared against existing memories semantically
 2. If high similarity but conflicting content detected
-3. **Contradiction Resolution Modal** appears
+3. **Contradiction Resolution Modal** appears, as a card that waits until it is answered: it shows on the next open or return to the app, and on a phone a notification "Zynkbot has a question about a memory" is posted when the app is off screen (2026-10-26). A likely update ("I traded the Civic in") asks "Is this an update?" instead
 4. User chooses:
    - Keep old memory (discard new)
    - Keep new memory (the old one is kept as history, out of recall, and can be brought back with "Undo replacement")
@@ -550,6 +555,7 @@ Native desktop application with OS integration:
 
 **Data flows:**
 - Memories: Local database (never sent to cloud)
+- Deletion: a deleted conversation or memory is overwritten in the database file at the moment of deletion (SQLite secure_delete), not left in free space until the file is compacted
 - Embeddings: Generated locally (Candle framework)
 - API calls: Only when YOU choose API models
 - Safety filtering: Local TinyBERT (no cloud)

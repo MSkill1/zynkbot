@@ -287,15 +287,14 @@ async fn r2_get(cfg: &R2Config, object_key: &str) -> Result<Vec<u8>, String> {
 }
 
 
-// --- Device identity in the backup (KI-050, step 4 of the outbox rebuild) ---
+// --- Device identity and the backup (KI-050, KI-092) ---
 //
-// A reinstalled phone minted a new device id, so it reappeared on every peer beside its
-// old entry. The fix is that the device's identity — ids, name, TLS certificate and key,
-// and the peers it knew — rides in the encrypted backup as its own small object,
-// `device-<device_id>.enc`, one per device. A fresh install that restores it *is* the
-// old device: the peers' rows for it simply keep working. The user says which device
-// this one replaces; nothing is guessed from a name or an address (decided 2026-09-12,
-// confirmed 2026-10-01).
+// A reinstalled phone mints a new device id, so it reappears on every peer beside its
+// old entry, which the peers show as "(old)". For six days in October 2026 the identity
+// (ids, name, TLS certificate and key, known peers) rode in the backup as
+// `device-<device_id>.enc` so a restored install was the old device; that was withdrawn
+// on 2026-10-08 (1d180cc): Restore restores memories, nothing else, and a reinstall
+// pairs again by code. The backup is one object, `backup.enc`.
 
 #[tauri::command]
 pub async fn get_r2_config_status() -> Result<serde_json::Value, String> {

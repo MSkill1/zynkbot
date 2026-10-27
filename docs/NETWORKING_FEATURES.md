@@ -1,4 +1,4 @@
-# Zynkbot Networking Features (v0.9.5)
+# Zynkbot Networking Features (v0.9.6-beta5)
 
 **Local-first, privacy-preserving networking across your devices**
 
@@ -36,11 +36,11 @@ Once a minute, each device **drains** its queue to every paired device: it reads
 
 The receiving device sets a flag (`sync_suppress`) while it applies a batch so the triggers do not queue the arriving rows back to the sender. A row that arrives under a name the receiver has never seen is first matched against what it already holds — a memory by its text, a message by its thread, speaker, second and text — and adopts the incoming name; this is how copies that existed on two devices before the rebuild became one, and it stays on: two memories with the same text are one memory.
 
-**Edits** keep their name, so the other devices update their copy; the newest `updated_at` wins. **Deletions** are queued like any change and delivered when the device is reachable; a memory's deletion also records a tombstone, so a stale copy never comes back. **Keys** (the API keys and the backup key) are rows too: a device gets all of them on first contact, and the newest value per key wins — saving a key in Settings or pressing *Push to all devices* stamps it with the current time.
+**Edits** keep their name, so the other devices update their copy; the newest `updated_at` wins. **Deletions** are queued like any change and delivered when the device is reachable; a memory's deletion also records a tombstone, so a stale copy never comes back. A conversation thread deleted on one device is closed on every other device where it was open, with a short notice on that device. **Keys** (the API keys and the backup key) are rows too: a device gets all of them on first contact, and the newest value per key wins — saving a key in Settings or pressing *Push to all devices* stamps it with the current time.
 
 ### Identity and addresses
 
-A device *is* its TLS certificate and device id; its IP address is only where it was last seen. Every message names the device it is for, and a device that is not that device refuses it. A device whose address changed (GrapheneOS gives the Pixel a new one on every Wi-Fi connection) is corrected on its peers by its first request. Each backup also saves the device's identity, so a phone that is wiped and reinstalled can become itself again from **Memory Manager → Restore**: the peers see the device they already knew, and it is sent everything it is missing. Nothing is ever guessed from a name or an address.
+A device *is* its TLS certificate and device id; its IP address is only where it was last seen. Every message names the device it is for, and a device that is not that device refuses it. A device whose address changed (GrapheneOS gives the Pixel a new one on every Wi-Fi connection) is corrected on its peers by its first request. A backup holds memories, not the device's identity: a phone that is wiped and reinstalled is a new device and pairs again by code, and its old record on the peers shows as "(old)" (the identity-in-backup design of 2026-10-02 was withdrawn on 2026-10-08, KI-092). Nothing is ever guessed from a name or an address.
 
 ### Conflict Resolution
 
@@ -50,7 +50,7 @@ A device *is* its TLS certificate and device id; its IP address is only where it
 
 ### Setup
 
-1. Open **Settings → ZynkSync** on both devices
+1. Open **System Controls → ZynkSync** on both devices
 2. Note the IP address on Device 1 (port 57963)
 3. On Device 2, click **"Add Device"** and enter Device 1's IP
 4. Enter the 6-digit pairing code shown on Device 1
@@ -58,7 +58,7 @@ A device *is* its TLS certificate and device id; its IP address is only where it
 
 ### Implementation
 
-- **Backend**: `zynkbot_rust/src-tauri/src/sync_outbox.rs` (queue, drain, receiver, keys, identity restore) and `zynksync.rs` (service, pairing, routes)
+- **Backend**: `zynkbot_rust/src-tauri/src/sync_outbox.rs` (queue, drain, receiver, keys) and `zynksync.rs` (service, pairing, routes)
 - **Routes**: `/api/zynksync/outbox` (a batch in) and `/api/zynksync/outbox/pull` (a request to be drained to), both behind mutual TLS with pinned certificates
 - **Tables**: `sync_outbox`, `sync_outbox_cursor` (how far each peer has been sent), `sync_inbox_cursor` (how far this device has heard from each peer), `sync_suppress`, `sync_secrets`; `sync_id` columns on memories, sessions, messages and memory links (migrations 0013–0016)
 - **Retention**: queued rows every peer has acknowledged are pruned; anything older than 7 days is dropped
@@ -89,6 +89,7 @@ Memory entities (`memory_entities`, the per-memory named things) and the knowled
 - ✅ **Download to Knowledge Base**: Instantly integrate shared documents into your AI's context
 - ✅ **Read-only by default**: All shares are created read-only; write operations are not implemented
 - ✅ **Security**: Path traversal protection, SHA256 file hashing
+- ✅ **Refresh**: the Refresh button shows "Refreshing..." and then "✓ Refreshed". A file added to a shared folder appears on the other devices at their next Refresh
 
 ### Knowledge Base Integration
 
@@ -98,6 +99,7 @@ Memory entities (`memory_entities`, the per-memory named things) and the knowled
 - Your Zynkbot can answer questions about shared files immediately
 - No manual import process - click "Download to KB" button
 - Files are indexed and embedded automatically
+- After the transfer the file shows "Indexing n / N chunks" until it can be asked about. Replies may be slow until this finishes
 - Great for team collaboration, family document sharing, or syncing research papers
 
 **UI Location:** ZynkLinkPanel shows two download buttons:
@@ -120,7 +122,7 @@ Zynkbot networking requires only a shared local network — and a mobile hotspot
 **Pairing over a hotspot is identical to pairing over a home network:**
 
 1. Both devices connect to the same hotspot
-2. Device A opens Settings → Zynklink and notes its IP address (shown in the UI)
+2. Device A opens **System Controls → ZynkLink** and notes its IP address (shown in the UI)
 3. Device B clicks "Add Device", enters Device A's IP and the 6-digit pairing code
 4. Paired — file sharing and ZChat work immediately
 
@@ -139,7 +141,7 @@ The 6-digit code (10-minute expiry) handles security so no additional setup is n
 
 ### Setup
 
-1. **On sharing device**: Settings → ZynkLink → "Share Directory"
+1. **On sharing device**: System Controls → ZynkLink → "Share a Directory"
 2. Select folder to share and set permissions
 3. **On receiving device**: Browse shared directories from paired devices
 4. Download files to custom location OR directly to knowledge base
@@ -184,7 +186,7 @@ The 6-digit code (10-minute expiry) handles security so no additional setup is n
 ### UI Features
 
 **ZChatModal Component:**
-- Opens per device from ZynkLink panel
+- Opens per device from the ZynkLink page (another person's device) or from the **Chat** button on the ZynkSync page (your own synced devices)
 - Scrollable message history
 - Device name in modal title
 - "You" vs remote device attribution
@@ -240,7 +242,7 @@ CREATE TABLE zchat_messages (
 
 **Encrypted backup and restore to a storage bucket you control**
 
-Cloud backup is opened from Memory Manager and writes to an S3-compatible bucket (Cloudflare R2 is the tested target) configured in Settings → API Keys with `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and optionally `R2_BUCKET` (default `zynkbot-backups`). Each backup replaces a single object, `backup.enc`. <!-- added by Claude 2026-09-09, review -->
+Cloud backup is opened from Memory Manager and writes to an S3-compatible bucket (Cloudflare R2 is the tested target) configured on the **Current Model** page in System Controls (the API keys are entered there) with `R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and optionally `R2_BUCKET` (default `zynkbot-backups`). Each backup replaces a single object, `backup.enc`. <!-- added by Claude 2026-09-09, review -->
 
 **What is backed up:** your memories (everything except Zynkbot's own `_zynkbot` self-knowledge) with title, content, source type, session, namespace, sync and share flags, the raw entity blob, event type, original message text, creation time and embedding; and your conversation history, both the session list (including pinned state) and every message. Restore inserts what is not already present (memories matched by content, sessions by id, messages by session, time and role), regenerates an embedding for any memory that lacks one, clears any local deletion tombstones for restored memories so sync does not remove them again, and then pushes the restored memories to paired devices. <!-- added by Claude 2026-09-09, review -->
 
@@ -277,7 +279,7 @@ All networking features share common infrastructure:
 
 ## Security Considerations
 
-### Current (v0.9.5 Production)
+### Current (v0.9.6-beta5)
 
 - ✅ **TLS transport** for ZynkSync, ZynkLink, and ZChat LAN traffic.
 - ✅ **mTLS device authentication for ZynkSync protected routes** — sync-paired devices present a certificate during the TLS handshake, and the server verifies it against the pinned certificate in the device database. This also protects the paired-desktop Ollama proxy and API-key propagation routes.
@@ -288,7 +290,7 @@ All networking features share common infrastructure:
 - ✅ **Pairing required** for all network features
 - ✅ **Independent trust relationships** — ZynkLink and ZynkSync are separate pairings. Unsyncing a device does not remove its ZynkLink pairing, and unlinking does not remove its ZynkSync pairing. Each can be revoked independently.
 - ✅ **Ollama admin operations blocked** — paired devices may use inference and model discovery via the remote proxy; pull, push, create, copy, and delete are rejected.
-- ✅ **Backup key rides with "Push to all devices"**: the API-key push in Settings → API Keys appends the cloud-backup encryption key to the set it sends. On the receiving device the key is written as `backup.key` (never into `.env`) and marked as acknowledged, so that device can decrypt the shared backup instead of holding a random key of its own. The push route requires the sender's pinned certificate like every other protected route. <!-- added by Claude 2026-09-09, review -->
+- ✅ **Backup key rides with "Push to all devices"**: the API-key push on the Current Model page in System Controls appends the cloud-backup encryption key to the set it sends. On the receiving device the key is written as `backup.key` (never into `.env`) and marked as acknowledged, so that device can decrypt the shared backup instead of holding a random key of its own. The push route requires the sender's pinned certificate like every other protected route. <!-- added by Claude 2026-09-09, review -->
 
 **Safe for:**
 - Home networks
@@ -317,7 +319,7 @@ See [ROADMAP.md](ROADMAP.md) for planned security features:
 **Devices can't connect:**
 1. Verify both devices on same network
 2. Check firewall allows port 57963
-3. Confirm pairing codes match
+3. Confirm pairing codes match. A wrong or expired code is refused, and the joining device shows "Failed to join: Pairing failed: Invalid or expired pairing code"
 4. Test ping between devices
 
 **Commands to allow port 57963:**
@@ -347,7 +349,7 @@ sudo firewall-cmd --reload
 - Firewall blocking port 57963
 
 **Solution:**
-1. Check device pairing status in Settings → ZynkLink
+1. Check device pairing status in System Controls → ZynkLink
 2. Verify backend running on both devices
 3. Manually trigger sync from Settings
 
@@ -422,7 +424,7 @@ sudo firewall-cmd --reload
 
 ## Platform Support
 
-**Current (v0.9.5):**
+**Current (v0.9.6-beta5):**
 - ✅ Windows 10/11
 - ✅ Linux (Ubuntu, Arch, Fedora)
 - ✅ Android (beta — APK via [GitHub Releases](https://github.com/MSkill1/zynkbot/releases/latest))
