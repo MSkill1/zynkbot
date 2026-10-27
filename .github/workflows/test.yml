@@ -223,9 +223,10 @@ jobs:
         working-directory: zynkbot_rust/src-tauri
         run: cargo ndk -t arm64-v8a -P 26 check --lib
 
-      - name: Check armv7 (armeabi-v7a)
-        working-directory: zynkbot_rust/src-tauri
-        run: cargo ndk -t armeabi-v7a -P 26 check --lib
+      # No armv7 check: every Android build the project makes is aarch64 only
+      # (release.yml and the local build both pass --target aarch64), and the engine's
+      # all-variants ARM build does not compile for 32-bit ARM (armv9 march flags,
+      # vcvtnq_s32_f32 redefinition). A check of a target that never ships only fails.
 
   # Compiles the hand-written Kotlin. Nothing above does: the Rust check never runs
   # Gradle, so a Kotlin error was only found by a full release build, twenty minutes
