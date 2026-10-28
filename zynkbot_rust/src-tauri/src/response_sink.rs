@@ -55,6 +55,31 @@ impl ResponseSink for TauriSink {
     }
 }
 
+/// Wraps another sink and logs how long the first word took from the moment the request
+/// began (2026-10-28), so "it felt slow" has a number to read in the log.
+pub struct TimedSink {
+    inner: std::sync::Arc<dyn ResponseSink>,
+    start: std::time::Instant,
+    first_seen: std::sync::atomic::AtomicBool,
+}
+
+impl TimedSink {
+    pub fn new(inner: std::sync::Arc<dyn ResponseSink>, start: std::time::Instant) -> Self {
+        Self { inner, start, first_seen: std::sync::atomic::AtomicBool::new(false) }
+    }
+}
+
+impl ResponseSink for TimedSink {
+    fn token(&self, token: &str) {
+        if !token.is_empty() && !self.first_seen.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            println!("[⏱️ PERF] First word on screen: {:.2}s after the request began", self.start.elapsed().as_secs_f32());
+        }
+        self.inner.token(token);
+    }
+    fn event(&self, name: &str, payload: Value) { self.inner.event(name, payload); }
+    fn card_notice(&self, title: &str, text: &str) { self.inner.card_notice(title, text); }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

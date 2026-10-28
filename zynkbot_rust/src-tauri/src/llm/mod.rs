@@ -84,3 +84,32 @@ pub struct WebAnswer {
     pub answer: String,
     pub sources: Vec<WebSource>,
 }
+
+/// Where a provider's web answer is sent word by word while it is written (2026-10-28).
+pub type OnToken<'a> = &'a (dyn Fn(&str) + Send + Sync);
+
+/// Reads a server-sent-events response and hands every `data:` line that holds JSON to
+/// `on_event`, as it arrives. The three web search endpoints stream the same way.
+pub async fn read_sse(
+    response: reqwest::Response,
+    mut on_event: impl FnMut(&serde_json::Value) -> Result<(), LLMError>,
+) -> Result<(), LLMError> {
+    use futures::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+        buf.extend_from_slice(&chunk);
+        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line);
+            let Some(data) = line.trim().strip_prefix("data:") else { continue };
+            let data = data.trim();
+            if data.is_empty() || data == "[DONE]" { continue; }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                on_event(&v)?;
+            }
+        }
+    }
+    Ok(())
+}

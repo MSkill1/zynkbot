@@ -313,6 +313,28 @@ pub async fn forget_secret(pool: &SqlitePool, name: &str) -> Result<(), String> 
 /// this table existed), is recorded with the current time. Keys the receiver wrote arrive
 /// through apply_secret, which sets both the environment and the row, so they match and
 /// are left alone. Called at the start of every drain; cheap.
+/// The other direction (2026-10-28, KI-100): a key this device recorded in sync_secrets
+/// but no longer holds in its environment (the .env was cut short, or deleted) goes back
+/// into the environment and the file. The table is this device's own record of its keys,
+/// so nothing is invented. Run once at startup (lib.rs), not in the drain: the sync
+/// harness's peers share one process environment, and a restore in the drain would hand
+/// one peer's value to the other's seed (b20).
+pub async fn restore_env_from_secrets(pool: &SqlitePool) -> Result<usize, String> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT name, value FROM sync_secrets ORDER BY name")
+        .fetch_all(pool).await.map_err(|e| format!("outbox: read secrets: {}", e))?;
+    let mut restored = 0;
+    for (name, value) in rows {
+        if !crate::commands::models::PROPAGATABLE_KEYS.contains(&name.as_str()) || value.trim().is_empty() { continue; }
+        let missing = std::env::var(&name).map(|v| v.trim().is_empty()).unwrap_or(true);
+        if missing {
+            crate::commands::models::apply_env_key(&name, &value)?;
+            println!("[ZynkSync] key {} put back from this device's own records", name);
+            restored += 1;
+        }
+    }
+    Ok(restored)
+}
+
 pub async fn seed_secrets_from_env(pool: &SqlitePool) -> Result<usize, String> {
     let mut held: Vec<(String, String)> = crate::commands::models::PROPAGATABLE_KEYS.iter()
         .filter_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()).map(|v| (k.to_string(), v)))

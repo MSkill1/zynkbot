@@ -243,6 +243,15 @@ export default function App() {
   // The local model's meter: tokens of the prompt read so far (engine event), cleared when
   // the first word streams in or the request ends (Matt, 2026-10-24).
   const [localProgress, setLocalProgress] = useState(null);
+  // What the app is doing while it waits for the first word ("Searching the web…"); set by the backend.
+  const [chatStatus, setChatStatus] = useState(null);
+  useEffect(() => {
+    let unlisten;
+    listen('chat-status', (e) => { setChatStatus(typeof e.payload === 'string' ? e.payload : null); }).then(fn => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
+  }, []);
+  useEffect(() => { if (!isLoading) setChatStatus(null); }, [isLoading]);
+
   useEffect(() => {
     let unlisten;
     listen('local-prompt-progress', (e) => { setLocalProgress(e.payload || null); }).then(fn => { unlisten = fn; });
@@ -1378,7 +1387,10 @@ export default function App() {
       id: Date.now(),
       role: 'user',
       content: message,  // Show clean message in chat UI (no raw file dump)
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      // The pictures stay with the message while the thread is open (2026-10-28), so the
+      // next turns can send them again and the model can compare or refer back.
+      images: imageData,
     };
 
     if (!skipUserMessageAdd) {
@@ -1397,9 +1409,18 @@ export default function App() {
       // Send up to last 50 messages - backend will apply adaptive limits based on model type
       // (Local models: 8 messages, API models: 40 messages)
       // Format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-      const conversationHistory = historyBase.slice(-50).map(msg => ({
+      // The newest three pictures in the thread travel with their turns (2026-10-28).
+      const recent = historyBase.slice(-50);
+      let picturesLeft = 3;
+      const withPictures = new Set();
+      for (let i = recent.length - 1; i >= 0 && picturesLeft > 0; i--) {
+        const n = Array.isArray(recent[i].images) ? recent[i].images.length : 0;
+        if (n > 0 && n <= picturesLeft) { withPictures.add(i); picturesLeft -= n; }
+      }
+      const conversationHistory = recent.map((msg, i) => ({
         role: msg.role,
-        content: msg.content
+        content: msg.content,
+        ...(withPictures.has(i) ? { images: msg.images } : {}),
       }));
       console.log('Conversation History:', conversationHistory.length, 'messages (backend will apply adaptive limits)');
       console.log('KB Enabled:', kbEnabled);
@@ -1438,6 +1459,13 @@ export default function App() {
       });
 
       unlisten(); // Stop listening for tokens — stream is complete
+      // The model's one-line record of the picture goes under the message that carried it,
+      // the same way the thread stores it (2026-10-28).
+      if (response?.picture_note) {
+        setMessages(prev => prev.map(msg =>
+          msg.id === userMessage.id ? { ...msg, content: `${msg.content}\n[Picture: ${response.picture_note}]` } : msg
+        ));
+      }
       // A "Hey Zynk" question the page answered counts as a real wake, the same as
       // one the phone answers itself with the screen off. Without this the "Send my
       // wake-word clips" count only grew from screen-off use (Matt, 2026-09-20).
@@ -1654,12 +1682,29 @@ export default function App() {
       // The engine is chosen in Rust by the backend (2026-10-27): a cloud model searches
       // through its own provider and comes back with the answer written; a local model
       // gets results from Brave, a SearXNG server or DuckDuckGo for the synthesis below.
-      const searchResults = await invoke('execute_web_search', {
-        query: searchQuery,
-        maxResults: 5,
-        fetchTopN: 3,
-        backend: modelType
+      // A cloud model's own search streams its answer as it is written: the first word
+      // replaces the "Searching…" line, the rest follows it.
+      let streamedWords = false;
+      const unlistenSearch = await listen('stream-token', (event) => {
+        const first = !streamedWords;
+        streamedWords = true;
+        setMessages(prev => prev.map(msg =>
+          msg.id === targetId
+            ? { ...msg, content: (first ? '' : msg.content) + event.payload }
+            : msg
+        ));
       });
+      let searchResults;
+      try {
+        searchResults = await invoke('execute_web_search', {
+          query: searchQuery,
+          maxResults: 5,
+          fetchTopN: 3,
+          backend: modelType
+        });
+      } finally {
+        unlistenSearch();
+      }
 
       console.log('[WebSearch] Search results:', searchResults);
 
@@ -2379,7 +2424,7 @@ export default function App() {
                     ));
                   })()
                 )}
-                {isLoading && (
+                {isLoading && (modelType?.endsWith('.gguf') || !messages.some(m => m.isStreaming && m.content)) && (
                   <div className="message bot-message">
                     <div className="message-content">
                       {modelType && modelType.endsWith('.gguf') ? (() => {
@@ -2395,7 +2440,7 @@ export default function App() {
                             </div>
                           </div>
                         );
-                      })() : 'Thinking...'}
+                      })() : (chatStatus || 'Thinking...')}
                     </div>
                   </div>
                 )}

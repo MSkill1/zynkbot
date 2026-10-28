@@ -104,8 +104,14 @@ async fn fetch_page_content(url: &str) -> Result<String, String> {
 
 /// Search DuckDuckGo and fetch content from top results
 pub async fn search_with_content(query: &str, max_results: usize, fetch_top_n: usize, backend: Option<&str>) -> Result<SearchResponse, String> {
+    search_with_content_streaming(query, max_results, fetch_top_n, backend, &|_| {}).await
+}
+
+/// The same, with a cloud model's own search sending its answer to `on_token` word by
+/// word while it is written (2026-10-28). The other engines have no answer to stream.
+pub async fn search_with_content_streaming(query: &str, max_results: usize, fetch_top_n: usize, backend: Option<&str>, on_token: crate::llm::OnToken<'_>) -> Result<SearchResponse, String> {
     // First, get search results
-    let mut response = search(query, max_results, backend).await?;
+    let mut response = search_streaming(query, max_results, backend, on_token).await?;
     // A provider's own search has read the pages already and written the answer.
     if response.answer.is_some() {
         return Ok(response);
@@ -313,31 +319,35 @@ pub fn engine_for_with(backend: Option<&str>, lookup: impl Fn(&str) -> Option<St
 
 /// Search through the engine chosen for this backend.
 pub async fn search(query: &str, max_results: usize, backend: Option<&str>) -> Result<SearchResponse, String> {
+    search_streaming(query, max_results, backend, &|_| {}).await
+}
+
+pub async fn search_streaming(query: &str, max_results: usize, backend: Option<&str>, on_token: crate::llm::OnToken<'_>) -> Result<SearchResponse, String> {
     let engine = engine_for(backend);
     println!("[WebSearch] engine for {:?}: {:?}", backend.unwrap_or("-"), engine);
     match engine {
         Engine::Anthropic => {
             let key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| "No Anthropic key".to_string())?;
             let model = std::env::var("ANTHROPIC_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "claude-sonnet-5".to_string());
-            let a = crate::llm::anthropic::search_and_answer(&key, &model, query, 3).await.map_err(|e| format!("Anthropic web search: {}", e))?;
+            let a = crate::llm::anthropic::search_and_answer(&key, &model, query, 3, on_token).await.map_err(|e| format!("Anthropic web search: {}", e))?;
             Ok(from_answer(query, a, "anthropic"))
         }
         Engine::OpenAI => {
             let key = std::env::var("OPENAI_API_KEY").map_err(|_| "No OpenAI key".to_string())?;
             let model = std::env::var("OPENAI_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "gpt-5.5".to_string());
-            let a = crate::llm::openai::search_and_answer(&key, &model, query).await.map_err(|e| format!("OpenAI web search: {}", e))?;
+            let a = crate::llm::openai::search_and_answer(&key, &model, query, on_token).await.map_err(|e| format!("OpenAI web search: {}", e))?;
             Ok(from_answer(query, a, "openai"))
         }
         Engine::XAI => {
             let key = std::env::var("XAI_API_KEY").map_err(|_| "No xAI key".to_string())?;
             let model = std::env::var("XAI_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "grok-4.5".to_string());
-            let a = crate::llm::xai::search_and_answer(&key, &model, query).await.map_err(|e| format!("xAI web search: {}", e))?;
+            let a = crate::llm::xai::search_and_answer(&key, &model, query, on_token).await.map_err(|e| format!("xAI web search: {}", e))?;
             Ok(from_answer(query, a, "xai"))
         }
         Engine::Mistral => {
             let key = std::env::var("MISTRAL_API_KEY").map_err(|_| "No Mistral key".to_string())?;
             let model = std::env::var("MISTRAL_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "mistral-large-latest".to_string());
-            let a = crate::llm::mistral::search_and_answer(&key, &model, query).await.map_err(|e| format!("Mistral web search: {}", e))?;
+            let a = crate::llm::mistral::search_and_answer(&key, &model, query, on_token).await.map_err(|e| format!("Mistral web search: {}", e))?;
             Ok(from_answer(query, a, "mistral"))
         }
         Engine::Brave => {

@@ -237,7 +237,8 @@ impl ConversationEngine {
         // On-device 4, the fact only: the "you said" text doubled each line and the fact is
         // what the model needs. (3 for an afternoon on 2026-10-24: the fourth memory held
         // the answer to the second test question, and 100 tokens more is fine; Matt.)
-        let max_memories = if is_api_model { 20 } else if self.on_device { 4 } else { 7 };
+        // Cloud: 30, matching the search limit (was 20; 2026-10-28, Matt).
+        let max_memories = if is_api_model { 30 } else if self.on_device { 4 } else { 7 };
 
         // Limit based on model type
         let limited_memories: Vec<&Memory> = if useful_memories.len() > max_memories {

@@ -126,7 +126,7 @@ async fn load_recent_turns(session_id: &str) -> Option<Vec<crate::ConversationTu
     Some(
         msgs[start..]
             .iter()
-            .map(|m| crate::ConversationTurn { role: m.role.clone(), content: m.content.clone() })
+            .map(|m| crate::ConversationTurn { role: m.role.clone(), content: m.content.clone(), images: None })
             .collect(),
     )
 }

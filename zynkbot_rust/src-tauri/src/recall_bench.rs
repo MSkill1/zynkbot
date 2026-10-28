@@ -262,9 +262,17 @@ async fn web_search_probe() {
     let qs = std::env::var("WEB_Q").expect("WEB_Q");
     let backend = std::env::var("WEB_BACKEND").ok();
     for q in qs.split('|') {
-        match crate::web_search::search(q, 5, backend.as_deref()).await {
+        let t0 = std::time::Instant::now();
+        let first = std::sync::Mutex::new(None::<f32>);
+        let count = std::sync::atomic::AtomicUsize::new(0);
+        let on_token = |_t: &str| {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            first.lock().unwrap().get_or_insert(t0.elapsed().as_secs_f32());
+        };
+        match crate::web_search::search_streaming(q, 5, backend.as_deref(), &on_token).await {
             Ok(r) => {
-                println!("Q: {}  -> {} results via {}", q, r.results.len(), r.engine);
+                println!("Q: {}  -> {} results via {}; {} pieces streamed, first at {:?}s, done at {:.1}s", q, r.results.len(), r.engine,
+                    count.load(std::sync::atomic::Ordering::SeqCst), first.lock().unwrap(), t0.elapsed().as_secs_f32());
                 for x in r.results.iter().take(3) { println!("    {} | {} | {}", x.title, x.url, x.snippet.chars().take(80).collect::<String>()); }
                 if let Some(a) = &r.answer { println!("    ANSWER ({} chars): {}", a.len(), a.chars().take(400).collect::<String>().replace('\n', " ")); }
             }

@@ -388,9 +388,11 @@ fn transcribe_openai(pcm: &[i16], sample_rate: u32) -> Result<String, String> {
         .mime_str("audio/wav")
         .map_err(|e| format!("MIME error: {e}"))?;
     let form = reqwest::blocking::multipart::Form::new()
-        .text("model", "whisper-1")
+        .text("model", crate::DICTATION_MODEL)
         .part("file", part);
 
+    let secs = pcm.len() as f32 / sample_rate.max(1) as f32;
+    let t_upload = Instant::now();
     let response = client
         .post("https://api.openai.com/v1/audio/transcriptions")
         .header("Authorization", format!("Bearer {api_key}"))
@@ -406,6 +408,7 @@ fn transcribe_openai(pcm: &[i16], sample_rate: u32) -> Result<String, String> {
     let json: serde_json::Value = response
         .json()
         .map_err(|e| format!("Failed to parse OpenAI response: {e}"))?;
+    println!("[⏱️ PERF] Dictation: {:.1}s of audio transcribed in {:.2}s ({})", secs, t_upload.elapsed().as_secs_f32(), crate::DICTATION_MODEL);
     json["text"]
         .as_str()
         .map(|s| s.trim().to_string())

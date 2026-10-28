@@ -5,23 +5,24 @@ use super::{LLMError, WebAnswer, WebSource};
 
 const MISTRAL_CONVERSATIONS_URL: &str = "https://api.mistral.ai/v1/conversations";
 
-pub async fn search_and_answer(api_key: &str, model: &str, query: &str) -> Result<WebAnswer, LLMError> {
-    match request(api_key, model, query).await {
+pub async fn search_and_answer(api_key: &str, model: &str, query: &str, on_token: super::OnToken<'_>) -> Result<WebAnswer, LLMError> {
+    match request(api_key, model, query, on_token).await {
         // The small "ministral" models refuse the connector; a model that takes it answers instead.
         Err(LLMError::APIError(msg)) if msg.contains("connector") && model != "mistral-small-latest" => {
             println!("[Rust Mistral] {} cannot search ({}); using mistral-small-latest for the search", model, msg.chars().take(80).collect::<String>());
-            request(api_key, "mistral-small-latest", query).await
+            request(api_key, "mistral-small-latest", query, on_token).await
         }
         other => other,
     }
 }
 
-async fn request(api_key: &str, model: &str, query: &str) -> Result<WebAnswer, LLMError> {
+async fn request(api_key: &str, model: &str, query: &str, on_token: super::OnToken<'_>) -> Result<WebAnswer, LLMError> {
     let body = serde_json::json!({
         "model": model,
         "tools": [{"type": "web_search"}],
         "inputs": format!("Search the web for: {}\n\nAnswer directly and concisely from what you find. Do not narrate the searching or describe your process.", query),
         "store": false,
+        "stream": true,
     });
     println!("[Rust Mistral] Web search through Mistral ({}): {}", model, query);
     let response = reqwest::Client::new()
@@ -33,14 +34,41 @@ async fn request(api_key: &str, model: &str, query: &str) -> Result<WebAnswer, L
         .await
         .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
     let status = response.status();
-    let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
     if !status.is_success() {
+        let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
         return Err(LLMError::APIError(format!("Status {}: {}", status, text)));
     }
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| LLMError::InvalidResponse(e.to_string()))?;
-    let answer = parse_web_answer(&value)?;
+    let mut chunks: Vec<serde_json::Value> = Vec::new();
+    super::read_sse(response, |ev| fold_stream_event(&mut chunks, ev, on_token)).await?;
+    let answer = parse_web_answer(&serde_json::json!({"outputs": [{"type": "message.output", "content": chunks}]}))?;
     println!("[Rust Mistral] ✅ Web answer: {} chars, {} sources", answer.answer.len(), answer.sources.len());
     Ok(answer)
+}
+
+/// One streamed Conversations event: a `message.output.delta` carries a piece of the
+/// answer, either plain text or a chunk (text, or a `tool_reference` naming a cited page).
+/// The pieces are kept as the chunk list a finished response would hold.
+pub fn fold_stream_event(chunks: &mut Vec<serde_json::Value>, ev: &serde_json::Value, on_token: super::OnToken<'_>) -> Result<(), LLMError> {
+    match ev["type"].as_str().unwrap_or("") {
+        "message.output.delta" => match &ev["content"] {
+            serde_json::Value::String(t) => {
+                if !t.is_empty() { on_token(t); chunks.push(serde_json::json!({"type": "text", "text": t})); }
+            }
+            c @ serde_json::Value::Object(_) => {
+                if c["type"].as_str() == Some("text") {
+                    if let Some(t) = c["text"].as_str() { if !t.is_empty() { on_token(t); } }
+                }
+                chunks.push(c.clone());
+            }
+            _ => {}
+        },
+        "conversation.response.error" => {
+            let msg = ev["message"].as_str().or_else(|| ev["error"]["message"].as_str()).unwrap_or("the stream reported an error");
+            return Err(LLMError::APIError(msg.to_string()));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// The answer and the cited pages out of a Conversations result: every `message.output`
@@ -101,5 +129,30 @@ mod web_answer_tests {
         let v = serde_json::json!({"outputs": [{"type": "message.output", "content": "Plain answer."}]});
         assert_eq!(parse_web_answer(&v).unwrap().answer, "Plain answer.");
         assert!(parse_web_answer(&serde_json::json!({"outputs": []})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod web_stream_tests {
+    use super::{fold_stream_event, parse_web_answer};
+
+    #[test]
+    fn deltas_become_the_chunks_of_the_answer() {
+        let events = vec![
+            serde_json::json!({"type": "conversation.response.started"}),
+            serde_json::json!({"type": "tool.execution.started", "name": "web_search"}),
+            serde_json::json!({"type": "message.output.delta", "content": "Green Mountain has a branch "}),
+            serde_json::json!({"type": "message.output.delta", "content": {"type": "tool_reference", "tool": "web_search", "title": "GMCU", "url": "https://gmcu.org/"}}),
+            serde_json::json!({"type": "message.output.delta", "content": {"type": "text", "text": "in Rutland."}}),
+            serde_json::json!({"type": "conversation.response.done"}),
+        ];
+        let words = std::sync::Mutex::new(String::new());
+        let on_token = |t: &str| words.lock().unwrap().push_str(t);
+        let mut chunks = Vec::new();
+        for ev in &events { fold_stream_event(&mut chunks, ev, &on_token).unwrap(); }
+        assert_eq!(*words.lock().unwrap(), "Green Mountain has a branch in Rutland.");
+        let a = parse_web_answer(&serde_json::json!({"outputs": [{"type": "message.output", "content": chunks}]})).unwrap();
+        assert_eq!(a.answer, "Green Mountain has a branch in Rutland.");
+        assert_eq!(a.sources[0].url, "https://gmcu.org/");
     }
 }

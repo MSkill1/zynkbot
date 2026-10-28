@@ -42,6 +42,10 @@ fn wav_duration_and_rms(wav: &[u8]) -> (f32, f32) {
 }
 
 /// What Whisper says when it hears nothing.
+/// OpenAI's transcription model for dictation on every platform (the phone's
+/// OpenAiDictation.kt names the same one).
+pub const DICTATION_MODEL: &str = "gpt-4o-mini-transcribe";
+
 fn whisper_silence_phrase(t: &str) -> bool {
     let w: String = t.to_lowercase().chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect();
     let w = w.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -304,6 +308,10 @@ pub struct ReplyResponse {
     /// has to carry them through the reply and the native-turn queue (2026-09-22).
     #[serde(skip_serializing_if = "Option::is_none")]
     web_search_results: Option<serde_json::Value>,
+    /// One line the model wrote about the picture(s) sent with this message (2026-10-28),
+    /// so the thread keeps a record of what was shown after the picture itself is gone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    picture_note: Option<String>,
 }
 
 // ============================================================================
@@ -318,6 +326,10 @@ pub struct ReplyResponse {
 pub struct ConversationTurn {
     role: String,
     content: String,
+    /// Pictures that were sent with this turn, when the page still holds them
+    /// (2026-10-28): the model sees them again so it can compare or refer back.
+    #[serde(default)]
+    images: Option<Vec<crate::llm::ImageAttachment>>,
 }
 
 /// Extract only factual declarative statements from a message
@@ -1256,10 +1268,13 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
         .mime_str("audio/wav")
         .map_err(|e| format!("MIME error: {e}"))?;
 
+    // gpt-4o-mini-transcribe (2026-10-28, was whisper-1): OpenAI's newer transcription
+    // model, lower latency and half the price. The wait after speaking is logged.
     let form = reqwest::multipart::Form::new()
-        .text("model", "whisper-1")
+        .text("model", DICTATION_MODEL)
         .part("file", part);
 
+    let t_upload = std::time::Instant::now();
     let client = reqwest::Client::new();
     let response = client
         .post("https://api.openai.com/v1/audio/transcriptions")
@@ -1281,6 +1296,7 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
         .map_err(|e| format!("Failed to parse OpenAI response: {e}"))?;
 
     let text = json["text"].as_str().map(|s| s.trim().to_string());
+    println!("[⏱️ PERF] Dictation: {:.1}s of audio transcribed in {:.2}s ({})", secs, t_upload.elapsed().as_secs_f32(), DICTATION_MODEL);
     if let Some(t) = &text {
         if secs < 2.5 && whisper_silence_phrase(t) {
             println!("[Dictation] dropped Whisper's silence phrase {:?} ({:.2}s)", t, secs);
@@ -2205,6 +2221,13 @@ pub fn run() {
                     // datetime reader and emptied the Memory Manager (2026-10-26). Give them a
                     // midnight time, once, before anything reads them.
                     if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        // Keys this device recorded but no longer holds (a cut .env, KI-100) go
+                        // back into the environment and the file before anything needs them.
+                        match crate::sync_outbox::restore_env_from_secrets(&pool).await {
+                            Ok(n) if n > 0 => println!("[Dotenv] {} key(s) restored from this device's own records", n),
+                            Ok(_) => {}
+                            Err(e) => eprintln!("[Dotenv] could not restore keys: {}", e),
+                        }
                         match sqlx::query("UPDATE memories SET event_date = event_date || 'T00:00:00+00:00' WHERE event_date IS NOT NULL AND length(event_date) = 10").execute(&pool).await {
                             Ok(r) if r.rows_affected() > 0 => println!("[Memory] gave {} date-only event dates a time", r.rows_affected()),
                             Ok(_) => {}

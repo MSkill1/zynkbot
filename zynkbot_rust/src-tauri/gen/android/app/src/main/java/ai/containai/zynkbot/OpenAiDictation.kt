@@ -165,7 +165,12 @@ object OpenAiDictation {
         if (secs < 2.5 && isSilencePhrase(t)) { Log.i(TAG, "dropped Whisper's silence phrase (${"%.1f".format(secs)}s)"); "" } else t
     }
 
+    // OpenAI's newer transcription model (2026-10-28, was whisper-1): lower latency, half
+    // the price. The desktop names the same one (lib.rs DICTATION_MODEL).
+    private const val MODEL = "gpt-4o-mini-transcribe"
+
     private fun transcribeRaw(key: String, wav: ByteArray): String? {
+        val t0 = System.currentTimeMillis()
         val boundary = "----ZynkbotDictation" + System.currentTimeMillis()
         val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -180,7 +185,7 @@ object OpenAiDictation {
                 fun field(name: String, value: String) {
                     body.writeBytes("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n")
                 }
-                field("model", "whisper-1")
+                field("model", MODEL)
                 field("language", "en")
                 field("response_format", "json")
                 body.writeBytes("--$boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\n")
@@ -195,7 +200,8 @@ object OpenAiDictation {
             }
             val json = conn.inputStream.bufferedReader().readText()
             val text = org.json.JSONObject(json).optString("text", "").trim()
-            Log.i(TAG, "Transcribed ${wav.size / 1024} KB in ${text.length} chars")
+            val secs = (wav.size - 44).coerceAtLeast(0) / (SAMPLE_RATE * 2.0)
+            Log.i(TAG, "Transcribed ${"%.1f".format(secs)}s of audio (${wav.size / 1024} KB) into ${text.length} chars in ${System.currentTimeMillis() - t0} ms ($MODEL)")
             return text
         } catch (e: Exception) {
             Log.e(TAG, "Upload failed: ${e.javaClass.simpleName}: ${e.message}")

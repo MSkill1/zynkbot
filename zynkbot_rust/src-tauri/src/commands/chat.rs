@@ -148,6 +148,17 @@ pub async fn send_message_with_memory(
 /// JNI-backed sink so this can run and speak a reply with no WebView present.
 /// No Flask dependency — handles everything in Rust.
 #[allow(clippy::too_many_arguments)]
+/// What the screen says while the app waits for the cloud model's first word.
+fn waiting_text(backend: &str) -> String {
+    let b = backend.to_lowercase();
+    let who = if b.contains("anthropic") || b.contains("claude") { "Claude" }
+        else if b.contains("openai") || b.contains("gpt") { "OpenAI" }
+        else if b.contains("xai") || b.contains("grok") { "Grok" }
+        else if b.contains("mistral") { "Mistral" }
+        else { "the model" };
+    format!("Waiting for {}…", who)
+}
+
 pub async fn generate_reply(
     sink: std::sync::Arc<dyn crate::response_sink::ResponseSink>,
     message: String,
@@ -174,6 +185,11 @@ pub async fn generate_reply(
 
     let request_start = std::time::Instant::now();
     println!("[⏱️ PERF] Request start");
+    // Time to the first word is logged, and the screen is told what the wait is for.
+    // A nested call (the second pass of a hands-free search) is already wrapped.
+    let sink: std::sync::Arc<dyn crate::response_sink::ResponseSink> =
+        std::sync::Arc::new(crate::response_sink::TimedSink::new(sink, request_start));
+    sink.event("chat-status", serde_json::json!("Looking through your memories…"));
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  💬 NEW CHAT REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
@@ -273,6 +289,7 @@ pub async fn generate_reply(
                     }
                     return Ok(ReplyResponse {
                         reply_text: text,
+                        picture_note: None,
                         recalled_memories: None,
                         model_backend: Some("weather".to_string()),
                         containment_mode: Some(containment_mode),
@@ -309,6 +326,7 @@ pub async fn generate_reply(
                     println!("[⏱️ PERF] OpenAI moderation check: {:.3}s", step_start.elapsed().as_secs_f32());
                     return Ok(ReplyResponse {
                         reply_text: block_message,
+                        picture_note: None,
                         recalled_memories: None,
                         model_backend: Some(forced_backend),
                         containment_mode: Some(containment_mode),
@@ -334,6 +352,7 @@ pub async fn generate_reply(
                             "I'm having trouble checking if this is safe for Child Mode. Please try again later.\n\nError: {}",
                             e
                         ),
+                        picture_note: None,
                         recalled_memories: None,
                         model_backend: Some(forced_backend),
                         containment_mode: Some(containment_mode),
@@ -366,6 +385,7 @@ pub async fn generate_reply(
                         println!("[RUST] 🛑 Content BLOCKED by containment layer");
                         return Ok(ReplyResponse {
                             reply_text: message,
+                            picture_note: None,
                             recalled_memories: None,
                             model_backend: Some(forced_backend),
                             containment_mode: Some(containment_mode),
@@ -464,7 +484,9 @@ pub async fn generate_reply(
     // also carry recalled memories (18 were recalled for "the weather in Morocco" and read
     // at 20 tokens/s on a warm phone, 2026-10-22).
     let search_pass = message.starts_with("Answer the user's question using the web search results");
-    let memory_search_limit = if search_pass && !ConversationEngine::is_api_model(&forced_backend) { 0 } else { if ConversationEngine::is_api_model(&forced_backend) { 15 } else { 10 } };
+    // Cloud: 30 (was 15 until 2026-10-28). The bench's short no-name questions ranked their
+    // memory 16th and 29th; a memory line is 60-100 tokens, so 30 is ~1,500 tokens more.
+    let memory_search_limit = if search_pass && !ConversationEngine::is_api_model(&forced_backend) { 0 } else { if ConversationEngine::is_api_model(&forced_backend) { 30 } else { 10 } };
 
     // Smart namespace filtering: search ONLY system memories if query is about Zynkbot
     let is_zynkbot_query = crate::is_query_about_zynkbot(&query);
@@ -656,12 +678,32 @@ pub async fn generate_reply(
     // Convert conversation history to conversation engine format
     let engine_history: Option<Vec<crate::conversation_engine::ConversationTurn>> = conversation_history.as_ref().map(|hist| {
         hist.iter().map(|turn| {
-            crate::conversation_engine::ConversationTurn {
-                role: turn.role.clone(),
-                content: history_turn_for_model(&turn.role, &turn.content),
-            }
+            let mut content = history_turn_for_model(&turn.role, &turn.content);
+            if turn.images.as_ref().map_or(false, |v| !v.is_empty()) { content.push_str(" [sent with a picture]"); }
+            crate::conversation_engine::ConversationTurn { role: turn.role.clone(), content }
         }).collect()
     });
+
+    // Pictures from earlier turns of this thread, oldest first, the newest three at most
+    // (2026-10-28): the page keeps them while the thread is open and sends them again, so
+    // "which looks better?" after two photos has both to look at. Before this, a picture
+    // lived only in the message it came with and the next turn could not see it.
+    let earlier_pictures: Vec<(String, crate::llm::ImageAttachment)> = {
+        let mut v: Vec<(String, crate::llm::ImageAttachment)> = conversation_history.as_ref().map(|hist| {
+            hist.iter().filter(|t| t.role == "user").flat_map(|t| {
+                let said: String = t.content.lines().next().unwrap_or("").chars().take(80).collect();
+                t.images.clone().unwrap_or_default().into_iter().map(move |img| (said.clone(), img))
+            }).collect()
+        }).unwrap_or_default();
+        let keep = v.len().saturating_sub(3);
+        v.drain(..keep);
+        v
+    };
+    let vision_images: Option<Vec<crate::llm::ImageAttachment>> = {
+        let mut all: Vec<crate::llm::ImageAttachment> = earlier_pictures.iter().map(|(_, i)| i.clone()).collect();
+        all.extend(image_data.clone().unwrap_or_default());
+        if all.is_empty() || !is_api_model { None } else { Some(all) }
+    };
 
     // Convert recalled memories to conversation engine format
     // Include semantic results AND one-hop graph-linked memories only.
@@ -708,6 +750,7 @@ pub async fn generate_reply(
     let mut read_sources: Option<serde_json::Value> = None;
     let page_urls = crate::web_read::find_urls(&query);
     if !page_urls.is_empty() {
+        sink.event("chat-status", serde_json::json!("Reading the page…"));
         let cap = if is_api_model { 8000 } else { 3000 };
         let mut pages = Vec::new();
         let mut failures: Vec<(String, String)> = Vec::new();
@@ -737,10 +780,28 @@ pub async fn generate_reply(
         }
     }
 
+    // What each picture is, and the one-line record asked for (2026-10-28).
+    if let Some(ref imgs) = vision_images {
+        let now = image_data.as_ref().map_or(0, |v| v.len());
+        let mut block = String::from("\n\nPictures attached, in order:");
+        for (n, (said, _)) in earlier_pictures.iter().enumerate() {
+            block.push_str(&format!("\n- Picture {}: sent earlier in this thread with the message \"{}\".", n + 1, said));
+        }
+        for n in 0..now {
+            block.push_str(&format!("\n- Picture {}: sent with this message.", earlier_pictures.len() + n + 1));
+        }
+        if now > 0 {
+            block.push_str("\nAt the very end of your reply, on its own last line, write PICTURE: followed by one plain sentence saying what the picture sent with this message shows (who or what, where; no opinion). That line is the thread's record of the picture and is not part of your answer.");
+        }
+        let _ = imgs;
+        full_prompt.push_str(&block);
+    }
+
     // STEP 6: Call LLM based on backend (use forced_backend for Child mode)
     // All API backends use SSE streaming so the frontend can display tokens as they arrive.
     // Local GGUF models are blocking and cannot stream, so they continue to return all at once.
     let _api_start = std::time::Instant::now();
+    sink.event("chat-status", serde_json::json!(waiting_text(&forced_backend)));
 
 
     let reply_text = if forced_backend.to_lowercase().contains("anthropic") || forced_backend.to_lowercase().contains("claude") {
@@ -754,7 +815,7 @@ pub async fn generate_reply(
 
         let sink_c = sink.clone();
 
-        if let Some(ref imgs) = image_data {
+        if let Some(ref imgs) = vision_images {
             println!("[⏱️ PERF] Calling Anthropic API ({}) with vision streaming...", model_name);
             let response = crate::llm::anthropic::send_vision_streaming(
                 &api_key,
@@ -795,7 +856,7 @@ pub async fn generate_reply(
 
         let sink_c = sink.clone();
 
-        if let Some(ref imgs) = image_data {
+        if let Some(ref imgs) = vision_images {
             println!("[⏱️ PERF] Calling OpenAI API ({}) with vision streaming...", model_name);
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
@@ -843,7 +904,7 @@ pub async fn generate_reply(
         let xai_model = xai_model_owned.as_str();
         let sink_c = sink.clone();
 
-        if let Some(ref imgs) = image_data {
+        if let Some(ref imgs) = vision_images {
             println!("[⏱️ PERF] Calling xAI API ({}) with vision streaming...", xai_model);
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
@@ -881,7 +942,7 @@ pub async fn generate_reply(
         let mistral_model = mistral_model_owned.as_str();
         let sink_c = sink.clone();
 
-        if let Some(ref imgs) = image_data {
+        if let Some(ref imgs) = vision_images {
             println!("[⏱️ PERF] Calling Mistral API ({}) with vision streaming...", mistral_model);
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
@@ -1031,6 +1092,7 @@ pub async fn generate_reply(
     if hands_free && web_search_query.is_some() {
         let search_query = web_search_query.clone().unwrap_or_default();
         sink.event("web-search", serde_json::json!({ "query": search_query }));
+        sink.event("chat-status", serde_json::json!("Searching the web…"));
         println!("[RUST] Hands-free auto search: {}", search_query);
         let mut context = format!("Here are the web search results for \"{}\":\n\n", search_query);
         // The sources go back with the reply so the chat can show the same "View n
@@ -1039,7 +1101,8 @@ pub async fn generate_reply(
         // A cloud model's own search tool comes back with the answer written (2026-10-27);
         // that answer is the reply, with no synthesis call after it.
         let mut provider_answer: Option<String> = None;
-        match crate::web_search::search_with_content(&search_query, 5, 3, Some(&forced_backend)).await {
+        let streaming_sink = sink.clone();
+        match crate::web_search::search_with_content_streaming(&search_query, 5, 3, Some(&forced_backend), &move |t: &str| streaming_sink.token(t)).await {
             Ok(results) if results.answer.is_some() => {
                 provider_answer = results.answer.clone();
                 web_sources = Some(serde_json::json!({
@@ -1093,7 +1156,7 @@ pub async fn generate_reply(
             }
         }
         if let Some(answer) = provider_answer {
-            sink.token(&answer);
+            // Its words already went to the sink while the provider wrote them.
             if containment_mode.to_lowercase() != "hipaa" {
                 let (s, u, m, a, b, c) = (session_id.clone(), user_id.clone(), query.clone(), answer.clone(), forced_backend.clone(), containment_mode.clone());
                 tokio::spawn(async move {
@@ -1364,11 +1427,15 @@ pub async fn generate_reply(
         }
     }
 
+    let picture_note = if image_data.is_some() { take_picture_line(&mut final_reply_text) } else { None };
+    if let Some(ref n) = picture_note { println!("[Picture] note kept with the message: {}", n); }
+
     println!("[⏱️ PERF] Total request time: {:.2}s", request_start.elapsed().as_secs_f32());
 
     // STEP 9: RETURN RESPONSE IMMEDIATELY (before memory processing)
     let immediate_response = ReplyResponse {
         reply_text: final_reply_text.clone(),
+        picture_note: picture_note.clone(),
         recalled_memories: Some(response_memories.clone()),
         model_backend: Some(forced_backend.clone()),
         containment_mode: Some(containment_mode.clone()),
@@ -1389,7 +1456,8 @@ pub async fn generate_reply(
     if containment_mode.to_lowercase() != "hipaa" && !is_no_query {
         let ch_session = session_id.clone();
         let ch_user = user_id.clone();
-        let ch_message = query.clone();  // Store clean question, not file dump
+        // Store clean question, not file dump; the picture's one-line record goes under it.
+        let ch_message = match &picture_note { Some(n) => format!("{}\n[Picture: {}]", query, n), None => query.clone() };
         // A reply that was only the WEB_SEARCH_NEEDED marker is empty once the marker is
         // stripped; an empty assistant turn sat in History as a blank bubble (2026-09-20).
         let ch_reply = match (&web_search_query, final_reply_text.trim().is_empty()) {
@@ -2272,6 +2340,36 @@ pub(crate) fn history_turn_for_model(role: &str, content: &str) -> String {
 }
 
 /// A line that is only the call-1 marker: "MEMORY: yes", "**Memory: no**", "REMEMBER: no".
+/// The "PICTURE: …" line a vision reply ends with (2026-10-28): taken out of the reply
+/// and returned on its own. Tolerant of bold markers around the label.
+pub(crate) fn take_picture_line(reply: &mut String) -> Option<String> {
+    let mut lines: Vec<&str> = reply.lines().collect();
+    let idx = lines.iter().rposition(|l| {
+        let t = l.trim().trim_start_matches(|c: char| matches!(c, '*' | '_' | '`' | '#' | ' ')).to_uppercase();
+        t.starts_with("PICTURE:")
+    })?;
+    let raw = lines[idx].trim().trim_start_matches(|c: char| matches!(c, '*' | '_' | '`' | '#' | ' '));
+    let note = raw[raw.to_uppercase().find("PICTURE:").unwrap_or(0) + 8..].trim().trim_matches('*').trim().to_string();
+    lines.remove(idx);
+    *reply = lines.join("\n").trim_end().to_string();
+    if note.is_empty() { None } else { Some(note) }
+}
+
+#[cfg(test)]
+mod picture_line_tests {
+    use super::take_picture_line;
+
+    #[test]
+    fn the_last_line_comes_out_and_the_reply_keeps_the_rest() {
+        let mut r = "The longer cut suits you.\n\n**PICTURE:** A man with shoulder-length curly hair, indoors by a window.".to_string();
+        assert_eq!(take_picture_line(&mut r).as_deref(), Some("A man with shoulder-length curly hair, indoors by a window."));
+        assert_eq!(r, "The longer cut suits you.");
+        let mut plain = "No line here.".to_string();
+        assert!(take_picture_line(&mut plain).is_none());
+        assert_eq!(plain, "No line here.");
+    }
+}
+
 fn is_memory_flag_line(line: &str) -> bool {
     let t = line.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
     let Some(rest) = t.strip_prefix("memory").or_else(|| t.strip_prefix("remember")) else { return false };

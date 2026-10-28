@@ -435,30 +435,60 @@ const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 
 /// One Responses API request with the `web_search` tool: the user's query as the
 /// instruction, the model's answer with its cited pages back. Billed to the user's key.
-pub async fn search_and_answer(api_key: &str, model: &str, query: &str) -> Result<super::WebAnswer, LLMError> {
+pub async fn search_and_answer(api_key: &str, model: &str, query: &str, on_token: super::OnToken<'_>) -> Result<super::WebAnswer, LLMError> {
     let body = serde_json::json!({
         "model": model,
         "tools": [{"type": "web_search"}],
+        "stream": true,
         "input": format!("Search the web for: {}\n\nAnswer directly and concisely from what you find. Do not narrate the searching or describe your process.", query),
     });
     println!("[Rust OpenAI] Web search through GPT ({}): {}", model, query);
+    stream_responses(OPENAI_RESPONSES_URL, api_key, &body, on_token).await
+}
+
+/// A streamed Responses API request (OpenAI and xAI speak the same events): the answer's
+/// words go to `on_token` as they arrive, and the finished response the stream ends with
+/// is read as a non-streamed one would be.
+pub async fn stream_responses(url: &str, api_key: &str, body: &serde_json::Value, on_token: super::OnToken<'_>) -> Result<super::WebAnswer, LLMError> {
     let response = reqwest::Client::new()
-        .post(OPENAI_RESPONSES_URL)
+        .post(url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .json(&body)
+        .json(body)
         .send()
         .await
         .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
     let status = response.status();
-    let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
     if !status.is_success() {
+        let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
         return Err(LLMError::APIError(format!("Status {}: {}", status, text)));
     }
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| LLMError::InvalidResponse(e.to_string()))?;
-    let answer = parse_web_answer(&value)?;
-    println!("[Rust OpenAI] ✅ Web answer: {} chars, {} sources", answer.answer.len(), answer.sources.len());
+    let mut finished: Option<serde_json::Value> = None;
+    super::read_sse(response, |ev| fold_responses_event(&mut finished, ev, on_token)).await?;
+    let finished = finished.ok_or_else(|| LLMError::InvalidResponse("the stream ended without a finished response".to_string()))?;
+    let answer = parse_web_answer(&finished)?;
+    println!("[Rust Responses] ✅ Web answer: {} chars, {} sources", answer.answer.len(), answer.sources.len());
     Ok(answer)
+}
+
+/// One Responses stream event: text deltas go out, the finished response is kept.
+pub fn fold_responses_event(finished: &mut Option<serde_json::Value>, ev: &serde_json::Value, on_token: super::OnToken<'_>) -> Result<(), LLMError> {
+    match ev["type"].as_str().unwrap_or("") {
+        "response.output_text.delta" => {
+            if let Some(t) = ev["delta"].as_str() { if !t.is_empty() { on_token(t); } }
+        }
+        "response.completed" | "response.incomplete" => { *finished = Some(ev["response"].clone()); }
+        "response.failed" => {
+            let msg = ev["response"]["error"]["message"].as_str().unwrap_or("the search failed");
+            return Err(LLMError::APIError(msg.to_string()));
+        }
+        "error" => {
+            let msg = ev["message"].as_str().or_else(|| ev["error"]["message"].as_str()).unwrap_or("the stream reported an error");
+            return Err(LLMError::APIError(msg.to_string()));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// The answer text and the cited pages out of a Responses API result: every
@@ -527,5 +557,40 @@ mod web_answer_tests {
     #[test]
     fn no_text_is_an_error() {
         assert!(parse_web_answer(&serde_json::json!({"output": []})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod web_stream_tests {
+    use super::{fold_responses_event, parse_web_answer};
+    use std::sync::Mutex;
+
+    #[test]
+    fn deltas_go_out_and_the_finished_response_is_kept() {
+        let finished_resp = serde_json::json!({"output": [{"type": "message", "content": [
+            {"type": "output_text", "text": "VSECU has no fee.", "annotations": [
+                {"type": "url_citation", "url": "https://www.vsecu.com/b?utm_source=openai", "title": "VSECU"}]}]}]});
+        let events = vec![
+            serde_json::json!({"type": "response.created", "response": {}}),
+            serde_json::json!({"type": "response.web_search_call.searching"}),
+            serde_json::json!({"type": "response.output_text.delta", "delta": "VSECU "}),
+            serde_json::json!({"type": "response.output_text.delta", "delta": "has no fee."}),
+            serde_json::json!({"type": "response.completed", "response": finished_resp}),
+        ];
+        let words = Mutex::new(Vec::<String>::new());
+        let on_token = |t: &str| words.lock().unwrap().push(t.to_string());
+        let mut finished = None;
+        for ev in &events { fold_responses_event(&mut finished, ev, &on_token).unwrap(); }
+        assert_eq!(*words.lock().unwrap(), vec!["VSECU ", "has no fee."]);
+        let a = parse_web_answer(&finished.unwrap()).unwrap();
+        assert_eq!(a.answer, "VSECU has no fee.");
+        assert_eq!(a.sources[0].url, "https://www.vsecu.com/b");
+    }
+
+    #[test]
+    fn a_failed_response_is_an_error() {
+        let mut finished = None;
+        let ev = serde_json::json!({"type": "response.failed", "response": {"error": {"message": "rate limited"}}});
+        assert!(fold_responses_event(&mut finished, &ev, &|_| {}).unwrap_err().to_string().contains("rate limited"));
     }
 }

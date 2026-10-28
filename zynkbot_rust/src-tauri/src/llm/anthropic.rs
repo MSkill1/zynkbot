@@ -542,10 +542,13 @@ mod tests {
 /// at most `max_searches` searches, Claude's answer with its sources back. Anthropic runs
 /// the searches on its own index and bills the user's key per search plus tokens. The
 /// page text itself comes back encrypted, so the answer is Claude's, not ours.
-pub async fn search_and_answer(api_key: &str, model: &str, query: &str, max_searches: u32) -> Result<super::WebAnswer, LLMError> {
+pub async fn search_and_answer(api_key: &str, model: &str, query: &str, max_searches: u32, on_token: super::OnToken<'_>) -> Result<super::WebAnswer, LLMError> {
     let body = serde_json::json!({
         "model": model,
         "max_tokens": 1500,
+        // Streamed (2026-10-28): the answer's words reach the screen as they are written
+        // instead of all at once after the searches.
+        "stream": true,
         "system": "You answer from web search results. Search for what the user asks, then answer directly and concisely from what you find. Do not narrate the searching or describe your process.",
         "messages": [{"role": "user", "content": format!("Search the web for: {}", query)}],
         // The fetch tool beside the search tool (2026-10-27): Claude can find a page by name
@@ -566,15 +569,58 @@ pub async fn search_and_answer(api_key: &str, model: &str, query: &str, max_sear
         .await
         .map_err(|e| LLMError::RequestFailed(e.to_string()))?;
     let status = response.status();
-    let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
     if !status.is_success() {
+        let text = response.text().await.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
         return Err(LLMError::APIError(format!("Status {}: {}", status, text)));
     }
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| LLMError::InvalidResponse(e.to_string()))?;
-    let answer = parse_web_answer(&value)?;
-    println!("[Rust Anthropic] ✅ Web answer: {} chars, {} sources, {} searches", answer.answer.len(), answer.sources.len(),
-        value["usage"]["server_tool_use"]["web_search_requests"].as_u64().unwrap_or(0));
+    let mut blocks: Vec<serde_json::Value> = Vec::new();
+    let mut searches = 0u64;
+    super::read_sse(response, |ev| {
+        if ev["type"].as_str() == Some("message_delta") {
+            searches = ev["usage"]["server_tool_use"]["web_search_requests"].as_u64().unwrap_or(searches);
+        }
+        fold_stream_event(&mut blocks, ev, on_token)
+    }).await?;
+    let answer = parse_web_answer(&serde_json::json!({ "content": blocks }))?;
+    println!("[Rust Anthropic] ✅ Web answer: {} chars, {} sources, {} searches", answer.answer.len(), answer.sources.len(), searches);
     Ok(answer)
+}
+
+/// One streamed event folded into the content blocks a non-streamed response would have
+/// held, so `parse_web_answer` reads both the same way. Text deltas also go to `on_token`.
+pub fn fold_stream_event(blocks: &mut Vec<serde_json::Value>, ev: &serde_json::Value, on_token: super::OnToken<'_>) -> Result<(), LLMError> {
+    match ev["type"].as_str().unwrap_or("") {
+        "content_block_start" => {
+            let mut b = ev["content_block"].clone();
+            if b["type"].as_str() == Some("text") && b["text"].is_null() { b["text"] = serde_json::json!(""); }
+            blocks.push(b);
+        }
+        "content_block_delta" => {
+            let idx = ev["index"].as_u64().unwrap_or(0) as usize;
+            let d = &ev["delta"];
+            if let Some(block) = blocks.get_mut(idx) {
+                match d["type"].as_str().unwrap_or("") {
+                    "text_delta" => {
+                        let t = d["text"].as_str().unwrap_or("");
+                        let so_far = block["text"].as_str().unwrap_or("").to_string();
+                        block["text"] = serde_json::json!(format!("{}{}", so_far, t));
+                        if !t.is_empty() { on_token(t); }
+                    }
+                    "citations_delta" => {
+                        if !block["citations"].is_array() { block["citations"] = serde_json::json!([]); }
+                        if let Some(arr) = block["citations"].as_array_mut() { arr.push(d["citation"].clone()); }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "error" => {
+            let msg = ev["error"]["message"].as_str().unwrap_or("the stream reported an error");
+            return Err(LLMError::APIError(msg.to_string()));
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// The answer text and the sources out of a Messages response that used the web search
@@ -681,5 +727,44 @@ mod web_answer_tests {
         ]});
         assert!(parse_web_answer(&v).unwrap_err().to_string().contains("too_many_requests"));
         assert!(parse_web_answer(&serde_json::json!({"content": []})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod web_stream_tests {
+    use super::{fold_stream_event, parse_web_answer};
+    use std::sync::Mutex;
+
+    #[test]
+    fn streamed_events_fold_into_the_same_answer_and_words_go_out_as_they_come() {
+        let events = vec![
+            serde_json::json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            serde_json::json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Let me look. "}}),
+            serde_json::json!({"type": "content_block_stop", "index": 0}),
+            serde_json::json!({"type": "content_block_start", "index": 1, "content_block": {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {}}}),
+            serde_json::json!({"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"query\":"}}),
+            serde_json::json!({"type": "content_block_start", "index": 2, "content_block": {"type": "web_search_tool_result", "tool_use_id": "s1", "content": [
+                {"type": "web_search_result", "url": "https://www.hfcuvt.com/", "title": "Heritage Family Credit Union", "encrypted_content": "x"}]}}),
+            serde_json::json!({"type": "content_block_start", "index": 3, "content_block": {"type": "text", "text": ""}}),
+            serde_json::json!({"type": "content_block_delta", "index": 3, "delta": {"type": "text_delta", "text": "Heritage is at "}}),
+            serde_json::json!({"type": "content_block_delta", "index": 3, "delta": {"type": "citations_delta", "citation": {"type": "web_search_result_location", "url": "https://www.hfcuvt.com/", "cited_text": "Serves Rutland County"}}}),
+            serde_json::json!({"type": "content_block_delta", "index": 3, "delta": {"type": "text_delta", "text": "hfcuvt.com."}}),
+        ];
+        let words = Mutex::new(Vec::<String>::new());
+        let on_token = |t: &str| words.lock().unwrap().push(t.to_string());
+        let mut blocks = Vec::new();
+        for ev in &events { fold_stream_event(&mut blocks, ev, &on_token).unwrap(); }
+        assert_eq!(*words.lock().unwrap(), vec!["Let me look. ", "Heritage is at ", "hfcuvt.com."]);
+        let a = parse_web_answer(&serde_json::json!({"content": blocks})).unwrap();
+        assert_eq!(a.answer, "Let me look. Heritage is at hfcuvt.com.");
+        assert_eq!(a.sources.len(), 1);
+        assert_eq!(a.sources[0].snippet, "Serves Rutland County");
+    }
+
+    #[test]
+    fn an_error_event_stops_the_stream() {
+        let mut blocks = Vec::new();
+        let ev = serde_json::json!({"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}});
+        assert!(fold_stream_event(&mut blocks, &ev, &|_| {}).unwrap_err().to_string().contains("Overloaded"));
     }
 }

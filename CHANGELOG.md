@@ -6,6 +6,16 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
+## Unreleased (on `local-model` after beta 5)
+
+- **Web search answers stream.** A cloud model's own search (Claude, OpenAI, Grok, Mistral) now sends its answer word by word as it is written instead of all at once after the searches; the sources still attach at the end. Measured first word: 3.5 to 11 s depending on the provider.
+- **The waiting bubble says what it is waiting for** ("Looking through your memories…", "Reading the page…", "Searching the web…", "Waiting for Claude…") and the log records the time to the first word of every reply.
+- **Pictures stay with the thread while it is open.** The newest three pictures go back to the model with the history, so it can compare two photos sent in different messages; after a picture message the model writes one line about what the picture showed, kept under the message in the thread.
+- **Cloud models recall more.** Memory search returns 30 instead of 15 and the prompt holds 30 instead of 20 (local and on-device limits unchanged).
+- **Settings file could be cut to one line when the app was killed while saving (KI-100), fixed:** the `.env` is now written atomically with a `.env.bak` beside it, a failed read is never treated as an empty file, and at startup the app puts back any key it holds in its own sync records that the environment lacks.
+- **Dictation uses `gpt-4o-mini-transcribe`** (was `whisper-1`) on phone, Linux and Windows, and logs how long each transcription took.
+- Conversation History: the section headers (Current thread, Pinned, Today, Yesterday, This Week) have their own colours.
+
 ## [0.9.6-beta5] — 2026-10-27 <!-- branch local-model; entries for 10-26/27 drafted by Claude, for Matt's review -->
 
 ### Timer, alarm and stopwatch (Android; branch `timer`, 2026-10-25)

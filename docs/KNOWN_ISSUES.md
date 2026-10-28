@@ -342,6 +342,12 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-100 — The settings file could be cut to one line when the app was killed while saving (fixed 2026-10-28)
+**Status:** Fixed on `local-model` 2026-10-28 (`env_file.rs`, `sync_outbox.rs`).  
+**Affected:** Every platform up to beta 5. Seen on the desktop dev app: `~/.local/share/zynkbot/.env` went from 14 settings to the single line `ZYNK_MODEL_BACKEND=…` during a restart, and the app came back with no API keys.  
+**Description:** Every write to `.env` (saving a key, choosing a model, a key arriving by sync) read the file, changed one line and wrote the whole file back in place. Two faults: a read that failed for any reason counted as an empty file, so the rewrite kept only the one line being saved; and the write truncated the file before filling it, so a kill at that instant (Android does this to background apps as a matter of course) left it empty or short. Either way the next write produced a one-line file and every key was gone from disk.  
+**Fix:** The file is written to a temp file and renamed over the old one, the previous content is kept as `.env.bak`, a failed read is an error and never an empty file, and a rewrite that would shrink the file is refused. On top of that, at the start of every sync round the app puts back any key that its own `sync_secrets` table holds and the environment lacks, so a device that lost its file recovers on its own; that is how the desktop got its keys back.
+
 ### KI-099 — Facts from a message were lost when the next questions came quickly (fixed 2026-10-24)
 **Status:** Fixed on `memory-types` by the memory job queue (`memory_jobs.rs`, migration 0023).  
 **Affected:** Any backend; worst on a phone, where a message's background work takes minutes.  

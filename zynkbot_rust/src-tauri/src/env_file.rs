@@ -109,27 +109,69 @@ pub fn load(path: &Path) -> std::io::Result<(usize, Vec<usize>)> {
     Ok((loaded, skipped))
 }
 
+/// Read the file's lines for a rewrite. A missing file is empty; any other failure is an
+/// error, never an empty file (2026-10-28: a read that failed was treated as "nothing
+/// there", and the rewrite that followed left the desktop's .env with one line of
+/// fourteen; KI-100).
+fn read_lines(path: &Path) -> Result<Vec<String>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(c) => Ok(c.lines().map(|s| s.to_string()).collect()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("Could not read .env file at {:?}: {}", path, e)),
+    }
+}
+
+/// ".env" + ".bak" = ".env.bak" (with_extension would make ".env.env.bak" of a dotfile).
+fn sibling(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| ".env".to_string());
+    path.with_file_name(format!("{}{}", name, suffix))
+}
+
+/// Write the whole file at once: the new content goes to a sibling temp file and is
+/// renamed over the old one, so a kill mid-write leaves the old file, not a cut one. The
+/// previous content, when there was any, is kept beside it as `.env.bak`.
+fn write_atomic(path: &Path, lines: &[String]) -> Result<(), String> {
+    if let Ok(old) = std::fs::read_to_string(path) {
+        if !old.trim().is_empty() {
+            let bak = sibling(path, ".bak");
+            if let Err(e) = std::fs::write(&bak, &old) {
+                eprintln!("[Dotenv] could not keep a backup at {:?}: {}", bak, e);
+            }
+        }
+    }
+    let tmp = sibling(path, ".tmp");
+    let mut content = lines.join("\n");
+    content.push('\n');
+    std::fs::write(&tmp, content).map_err(|e| format!("Failed to write .env file at {:?}: {}", tmp, e))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("Failed to replace .env file at {:?}: {}", path, e))
+}
+
 /// Replace or append `KEY=value` in the file (other lines untouched).
 pub fn upsert(path: &Path, key: &str, value: &str) -> Result<(), String> {
-    let content = std::fs::read_to_string(path).unwrap_or_default();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let mut lines = read_lines(path)?;
+    let before = lines.len();
     let prefix = format!("{}=", key);
     let line = format_line(key, value);
     match lines.iter_mut().find(|l| l.starts_with(&prefix)) {
         Some(existing) => *existing = line,
         None => lines.push(line),
     }
-    std::fs::write(path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", path, e))
+    if lines.len() < before {
+        return Err(format!("Refusing to rewrite {:?}: {} lines would become {}", path, before, lines.len()));
+    }
+    write_atomic(path, &lines)
 }
 
 /// Drop every `KEY=` line from the file.
 pub fn remove(path: &Path, key: &str) -> Result<(), String> {
-    let content = std::fs::read_to_string(path).unwrap_or_default();
+    let lines = read_lines(path)?;
     let prefix = format!("{}=", key);
-    let lines: Vec<&str> = content.lines().filter(|l| !l.starts_with(&prefix)).collect();
-    std::fs::write(path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", path, e))
+    let removed = lines.iter().filter(|l| l.starts_with(&prefix)).count();
+    let kept: Vec<String> = lines.iter().filter(|l| !l.starts_with(&prefix)).cloned().collect();
+    if kept.len() + removed != lines.len() {
+        return Err(format!("Refusing to rewrite {:?}: unexpected line count", path));
+    }
+    write_atomic(path, &kept)
 }
 
 #[cfg(test)]
@@ -204,9 +246,58 @@ mod tests {
         upsert(&p, "A", "1").unwrap();
         upsert(&p, "B", r"C:\path").unwrap();
         upsert(&p, "A", "2").unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "A=2\nB='C:\\path'");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "A=2\nB='C:\\path'\n");
         remove(&p, "A").unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "B='C:\\path'");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "B='C:\\path'\n");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod rewrite_tests {
+    use super::*;
+
+    fn tmp_dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("zynk_envfile_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn upsert_keeps_every_other_line_and_leaves_a_backup() {
+        let d = tmp_dir("upsert");
+        let p = d.join(".env");
+        std::fs::write(&p, "A=1\nB=2\nC=3").unwrap();
+        upsert(&p, "B", "two").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "A=1\nB=two\nC=3\n");
+        upsert(&p, "D", "4").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap().lines().count(), 4);
+        assert_eq!(std::fs::read_to_string(d.join(".env.bak")).unwrap(), "A=1\nB=two\nC=3\n");
+        assert!(!d.join(".env.tmp").exists());
+    }
+
+    #[test]
+    fn an_unreadable_file_is_an_error_not_an_empty_one() {
+        let d = tmp_dir("unreadable");
+        let p = d.join(".env");
+        // Not UTF-8: read_to_string fails. The old code took that as an empty file and
+        // wrote one line over it.
+        std::fs::write(&p, [b'A', b'=', 0xff, b'\n', b'B', b'=', b'2']).unwrap();
+        let before = std::fs::read(&p).unwrap();
+        assert!(upsert(&p, "C", "3").unwrap_err().contains("Could not read"));
+        assert_eq!(std::fs::read(&p).unwrap(), before);
+    }
+
+    #[test]
+    fn remove_drops_only_that_key_and_a_missing_file_is_empty() {
+        let d = tmp_dir("remove");
+        let p = d.join(".env");
+        std::fs::write(&p, "A=1\nB=2\nB=old\nC=3\n").unwrap();
+        remove(&p, "B").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "A=1\nC=3\n");
+        let fresh = d.join("new.env");
+        upsert(&fresh, "K", "v").unwrap();
+        assert_eq!(std::fs::read_to_string(&fresh).unwrap(), "K=v\n");
     }
 }

@@ -3,6 +3,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { confirmDialog } from '../utils/confirmDialog';
 
+// Section header colours (month groups fall back to the muted blue)
+const GROUP_COLORS = {
+  "Current thread": "#50fa7b",
+  "Pinned": "#f1fa8c",
+  "Today": "#8be9fd",
+  "Yesterday": "#bd93f9",
+  "This Week": "#ffb86c",
+};
+
 // Groups sessions by relative date for display
 function dateLabel(dateStr) {
   const d = new Date(dateStr);
@@ -377,7 +386,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
             )}
             {!isLoading && Object.entries(groups).map(([label, group]) => (
               <div key={label}>
-                <div style={{ padding: "6px 16px 4px", fontSize: "0.75rem", color: "#a4acd0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                <div style={{ padding: "6px 16px 4px", fontSize: "0.75rem", fontWeight: 600, color: GROUP_COLORS[label] || "#a4acd0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                   {label}
                 </div>
                 {group.map((session) => (

@@ -188,7 +188,7 @@ impl Bench {
     /// The same, with the thread so far as the page would send it.
     async fn ask_with_history(&self, sink: Arc<dyn ResponseSink>, backend: &str, message: &str, history: Vec<(&str, &str)>) -> serde_json::Value {
         let history: Vec<crate::ConversationTurn> = history.into_iter()
-            .map(|(role, content)| crate::ConversationTurn { role: role.to_string(), content: content.to_string() })
+            .map(|(role, content)| crate::ConversationTurn { role: role.to_string(), content: content.to_string(), images: None })
             .collect();
         let resp = crate::commands::chat::generate_reply(
             sink, message.to_string(), self.user_id.clone(), self.session_id.clone(),
