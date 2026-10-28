@@ -71,6 +71,9 @@ pub struct PeerDevice {
     pub user_id: Option<String>,       // the host's user id (identity adoption during pairing)
     #[serde(default)]
     pub is_online: bool,               // heartbeat received within the last 45 s
+    /// When a sync with this peer last completed without error (not persisted; 2026-10-28).
+    #[serde(default)]
+    pub last_synced: Option<DateTime<Utc>>,
 }
 
 /// "192.168.0.5" -> ("192.168.0.5", default); "192.168.0.5:4444" -> ("192.168.0.5", 4444).
@@ -134,6 +137,8 @@ pub struct Transport {
     pub(crate) peers: Arc<RwLock<HashMap<String, PeerDevice>>>,
     /// Last heartbeat per peer device id (not persisted).
     pub(crate) peer_last_seen: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+    /// Last successful sync per peer device id (not persisted): the "last synced" line.
+    pub(crate) peer_last_synced: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
     /// Debounce for connection-error logging per peer.
     pub(crate) last_conn_error_logged: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
     /// Failed pairing attempts per client IP — the code is invalidated after 5.
@@ -155,6 +160,7 @@ impl Transport {
             http_client: Arc::new(RwLock::new(reqwest::Client::new())),
             peers: Arc::new(RwLock::new(HashMap::new())),
             peer_last_seen: Arc::new(RwLock::new(HashMap::new())),
+            peer_last_synced: Arc::new(RwLock::new(HashMap::new())),
             last_conn_error_logged: Arc::new(RwLock::new(HashMap::new())),
             failed_pairing_attempts: Arc::new(RwLock::new(HashMap::new())),
             pairing_code: Arc::new(RwLock::new(None)),
@@ -252,6 +258,7 @@ impl Transport {
                 pairing_code: None,
                 user_id: None,
                 is_online: false,
+                last_synced: None,
             });
         }
         println!("[Transport] Loaded {} devices from database", peers_map.len());
@@ -274,11 +281,13 @@ impl Transport {
                 .unwrap_or_default();
         let peers_map = self.peers.read().await;
         let online_map = self.peer_last_seen.read().await;
+        let synced_map = self.peer_last_synced.read().await;
         let threshold = Utc::now() - chrono::Duration::seconds(45);
         peers_map.values().map(|peer| {
             let mut p = peer.clone();
             if let Some(name) = stored_names.get(&peer.device_id) { p.device_name = name.clone(); }
             p.is_online = online_map.get(&peer.device_id).map_or(false, |&t| t > threshold);
+            p.last_synced = synced_map.get(&peer.device_id).copied();
             p
         }).collect()
     }

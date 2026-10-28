@@ -304,6 +304,17 @@ export default function App() {
   // (Matt, 2026-10-23: "I can't believe it took this long"). The backend fills it from the
   // first message; History renames it too, and tells us through a window event.
   const [threadTitle, setThreadTitle] = useState('');
+  // Conversation mode (2026-10-28): a short instruction block in front of the prompt, for this
+  // page session; 'normal' sends nothing. The names and blocks live in chat_modes.rs.
+  const [chatMode, setChatMode] = useState('normal');
+  const MODE_HELP = {
+    normal: '',
+    tool: 'Tool: does what is asked and nothing more. No commentary, no suggestions.',
+    companion: 'Companion: direct, calm and personal. No flattery, no therapy language.',
+    debate: 'Debate: challenges weak reasoning and names the weakest point; argues the other side when asked.',
+    premise: 'Premise: takes what you state as true for this conversation and reasons from it, no fact-checking.',
+    editing: 'Editing: fixes grammar, spelling and clarity only; keeps your wording, tone and meaning.',
+  };
   const [editingThreadTitle, setEditingThreadTitle] = useState(null); // null, or the draft text
   const fetchThreadTitle = async () => {
     if (!userId || !sessionId) return;
@@ -995,6 +1006,7 @@ export default function App() {
     setSessionId(fresh);
     try { sessionStorage.setItem('zynkbot_session_id', fresh); } catch (_) {}
     setMessages([]);
+    myAnchorRef.current = Date.now(); // a deliberate new conversation: stay until another device writes after this
   };
 
   const handleCopyAll = () => {
@@ -1056,6 +1068,83 @@ export default function App() {
     clearTimeout(noticeTimerRef.current);
     noticeTimerRef.current = setTimeout(() => setNotice(''), ms);
   };
+
+  // ONE SHARED CONVERSATION ACROSS DEVICES (2026-10-28, Matt): whichever device wrote to a
+  // thread last, that thread is the current one everywhere. A device lands in it when it is
+  // brought back to the front (or has been idle for a while and a sync brings news); it
+  // never moves while the user is typing, waiting for a reply or has a file attached.
+  // "New" is respected: a device that started a new conversation stays there until another
+  // device writes after that. Old threads stay in History to reopen at any time.
+  const liveRef = useRef({});
+  liveRef.current = { sessionId, isLoading, hasDraft: input.trim().length > 0 || attachedFiles.length > 0, editing: editingMessageId !== null, count: messages.length, userId };
+  const myAnchorRef = useRef(0);      // when this device last wrote, or asked for a new conversation
+  const lastTouchRef = useRef(Date.now());
+  const adoptingRef = useRef(false);
+  const adoptLatestThread = async (why, allowSwitch = true) => {
+    const st = liveRef.current;
+    if (!st.userId || adoptingRef.current || st.isLoading || st.hasDraft || st.editing) return;
+    adoptingRef.current = true;
+    try {
+      const latest = await invoke('get_latest_thread', { userId: st.userId });
+      if (!latest) return;
+      const theirs = new Date(latest.last_active).getTime();
+      const rows = await invoke('get_conversation_messages', { sessionId: latest.session_id });
+      if (!rows || rows.length === 0) return;
+      const asMessage = (m) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [] });
+      if (latest.session_id === liveRef.current.sessionId) {
+        // Same thread, written on another device meanwhile: append what this device lacks.
+        // The thread is replaced by the stored copy, never appended to: the page can hold
+        // fewer rows than the database (a search turn, a pre-search answer), so counting
+        // and appending could double a message.
+        const have = liveRef.current.count;
+        if (rows.length > have && theirs > myAnchorRef.current + 2000) {
+          setMessages(rows.map(asMessage));
+          myAnchorRef.current = theirs;
+          console.log('[Session] this thread was continued on another device; refreshed (' + why + ')');
+        }
+        return;
+      }
+      // A different thread: only when another device wrote after this one last did, and
+      // (for a sync event) only once this device has been quiet for a while.
+      if (!allowSwitch || theirs <= myAnchorRef.current + 2000) return;
+      handleResumeSession({ sessionId: latest.session_id, messages: rows.map(asMessage) });
+      myAnchorRef.current = theirs;
+      notify('Continuing the conversation from your other device.', 3500);
+      console.log('[Session] switched to the thread another device was using (' + why + ')');
+    } catch (e) {
+      console.warn('[Session] could not check for the shared thread:', e);
+    } finally {
+      adoptingRef.current = false;
+    }
+  };
+  // When this device's own reply finishes, its write lands a moment later: that write is ours.
+  const wasLoadingRef = useRef(false);
+  useEffect(() => {
+    if (wasLoadingRef.current && !isLoading) myAnchorRef.current = Math.max(myAnchorRef.current, Date.now() + 5000);
+    wasLoadingRef.current = isLoading;
+  }, [isLoading]);
+  useEffect(() => {
+    const touch = () => { lastTouchRef.current = Date.now(); };
+    const onVisible = () => { if (document.visibilityState === 'visible') adoptLatestThread('returned to this device'); };
+    const onFocus = () => adoptLatestThread('returned to this device');
+    window.addEventListener('keydown', touch); window.addEventListener('pointerdown', touch);
+    document.addEventListener('visibilitychange', onVisible); window.addEventListener('focus', onFocus);
+    let unlisten = null;
+    (async () => {
+      // A sync round brought news: the open thread refreshes at once (nothing jumps); moving
+      // to another thread waits until this device has been quiet for 45 s.
+      unlisten = await listen('zynksync-threads-changed', () => {
+        adoptLatestThread('sync', Date.now() - lastTouchRef.current > 45000);
+      });
+    })();
+    const startup = setTimeout(() => adoptLatestThread('app started'), 2500);
+    return () => {
+      window.removeEventListener('keydown', touch); window.removeEventListener('pointerdown', touch);
+      document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onFocus);
+      clearTimeout(startup); if (unlisten) unlisten();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   // 🔊 on a reply: read it aloud, or stop if it is the one being read (2026-09-20).
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
@@ -1292,6 +1381,7 @@ export default function App() {
 
   const handleSendMessage = async (message, options = {}) => {
     if (!message.trim()) return;
+    myAnchorRef.current = Date.now() + 1000; // this device is writing now: no other device's older news moves it
 
     // Capture and reset wake flags before any early returns
     const triggeredByWake = voice.wakeTriggeredRef.current;
@@ -1455,7 +1545,8 @@ export default function App() {
         containmentMode,
         conversationHistory,
         kbEnabled,
-        imageData
+        imageData,
+        mode: chatMode === 'normal' ? undefined : chatMode,
       });
 
       unlisten(); // Stop listening for tokens — stream is complete
@@ -2375,7 +2466,7 @@ export default function App() {
                   <span
                     onClick={() => setEditingThreadTitle(threadTitle)}
                     title="Tap to rename this conversation"
-                    style={{ flex: 1, fontSize: '0.9rem', color: threadTitle ? '#f8f8f2' : '#6272a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
+                    style={{ flex: 1, fontSize: '0.95rem', fontWeight: threadTitle ? 700 : 400, color: threadTitle ? '#8be9fd' : '#6272a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
                   >
                     {threadTitle || 'New conversation'}
                   </span>
@@ -2388,7 +2479,25 @@ export default function App() {
                     style={{ background: 'transparent', border: 'none', color: '#9aa5c4', cursor: 'pointer', fontSize: '0.95rem', padding: '0 4px' }}
                   >✏️</button>
                 )}
+                <select
+                  value={chatMode}
+                  onChange={(e) => setChatMode(e.target.value)}
+                  title="Conversation mode: how the model behaves in this conversation. Normal sends nothing extra."
+                  style={{ fontSize: '0.75rem', background: chatMode === 'normal' ? 'transparent' : '#44475a', color: chatMode === 'normal' ? '#9aa5c4' : '#f1fa8c', border: '1px solid #44475a', borderRadius: '4px', padding: '1px 4px', flexShrink: 0 }}
+                >
+                  <option value="normal">Mode: Normal</option>
+                  <option value="tool">Mode: Tool</option>
+                  <option value="companion">Mode: Companion</option>
+                  <option value="debate">Mode: Debate</option>
+                  <option value="premise">Mode: Premise</option>
+                  <option value="editing">Mode: Editing</option>
+                </select>
               </div>
+              {chatMode !== 'normal' && (
+                <div style={{ fontSize: '0.75rem', color: '#f1fa8c', padding: '0 4px 6px', opacity: 0.9 }}>
+                  {MODE_HELP[chatMode]} <span style={{ color: '#9aa5c4' }}>Set the mode back to Normal to switch it off.</span>
+                </div>
+              )}
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
                   introSeen('chat')

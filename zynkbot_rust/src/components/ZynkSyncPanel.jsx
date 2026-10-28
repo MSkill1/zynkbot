@@ -796,8 +796,18 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                   <div style={{ color: '#f8f8f2', fontWeight: 'bold', flex: 1 }}>
                     {displayName(peer)}
                   </div>
-                  <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
+                  <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4', textAlign: 'right' }}>
                     {peer.is_online ? 'Online' : 'Offline'}
+                    {(() => {
+                      // "Last synced" (2026-10-28): when a round with this device last finished
+                      // cleanly. Online but not synced for a while shows in amber, so a link that
+                      // is up and not carrying anything is visible within minutes.
+                      if (!peer.last_synced) return <div style={{ color: peer.is_online ? '#ffb86c' : '#6272a4' }}>Not synced since this app started</div>;
+                      const secs = Math.max(0, Math.round((Date.now() - new Date(peer.last_synced).getTime()) / 1000));
+                      const ago = secs < 10 ? 'just now' : secs < 90 ? `${secs} s ago` : secs < 5400 ? `${Math.round(secs / 60)} min ago` : `${Math.round(secs / 3600)} h ago`;
+                      const stale = peer.is_online && secs > 300;
+                      return <div style={{ color: stale ? '#ffb86c' : '#8be9fd' }}>Last synced {ago}</div>;
+                    })()}
                   </div>
                   {/* A labelled button, not a faint ✕: Matt could not find the ✕ when
                       removing a stale entry during the sync pass (2026-10-07). */}

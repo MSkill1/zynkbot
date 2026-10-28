@@ -310,6 +310,24 @@ class MainActivity : TauriActivity() {
             } catch (e: Exception) { e.message ?: "failed" }
         }
 
+        /**
+         * A picture the page holds in memory (a thumbnail in the thread, 2026-10-28) saved to
+         * the gallery on a long press: written to a temp file, then the same path as above.
+         * Returns "" on success, else the reason.
+         */
+        @JavascriptInterface
+        fun saveImageBase64ToGallery(base64: String, mime: String): String {
+            return try {
+                val ext = when (mime.lowercase()) { "image/png" -> "png"; "image/webp" -> "webp"; else -> "jpg" }
+                val name = "Zynkbot_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date()) + "." + ext
+                val tmp = File(cacheDir, name)
+                tmp.writeBytes(android.util.Base64.decode(base64, android.util.Base64.DEFAULT))
+                val r = saveToGallery(tmp.absolutePath)
+                tmp.delete()
+                r
+            } catch (e: Exception) { e.message ?: "failed" }
+        }
+
         /** Voice settings selector ('vosk' | 'openai'); anything else is ignored. */
         @JavascriptInterface
         fun setVoiceInputSource(src: String) {

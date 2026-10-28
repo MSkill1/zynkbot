@@ -140,7 +140,7 @@ pub async fn set_session_pinned(
     pinned: bool,
 ) -> Result<bool, sqlx::Error> {
     let result = sqlx::query(
-        "UPDATE conversation_sessions SET pinned = ? WHERE session_id = ? AND user_id = ?",
+        "UPDATE conversation_sessions SET pinned = ?, pinned_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE session_id = ? AND user_id = ?",
     )
     .bind(if pinned { 1 } else { 0 })
     .bind(session_id)

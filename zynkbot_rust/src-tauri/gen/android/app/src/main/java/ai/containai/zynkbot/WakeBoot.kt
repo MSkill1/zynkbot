@@ -77,6 +77,23 @@ object WakeBoot {
         try { nm.notify(NOTIF_ID, n) } catch (_: Exception) {}
     }
 
+    /** A one-off notice with its own tap target (the after-update notice, KI-101). */
+    fun notice(ctx: Context, title: String, text: String, tap: Intent, id: Int) {
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(CHANNEL) == null) {
+            nm.createNotificationChannel(NotificationChannel(CHANNEL, "Hey Zynk after a restart", NotificationManager.IMPORTANCE_DEFAULT).apply { setSound(null, null) })
+        }
+        val open = PendingIntent.getActivity(ctx, id, tap.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val n = NotificationCompat.Builder(ctx, CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle(title)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentText(text)
+            .setContentIntent(open).setAutoCancel(true).setSilent(true)
+            .build()
+        try { nm.notify(id, n) } catch (_: Exception) {}
+    }
+
     fun cancelNotice(ctx: Context) {
         try { (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(NOTIF_ID) } catch (_: Exception) {}
     }

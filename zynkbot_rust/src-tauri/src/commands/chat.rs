@@ -130,6 +130,7 @@ pub async fn send_message_with_memory(
     kb_enabled: Option<bool>,
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
+    mode: Option<String>,
 ) -> Result<ReplyResponse, String> {
     let sink: std::sync::Arc<dyn crate::response_sink::ResponseSink> =
         std::sync::Arc::new(crate::response_sink::TauriSink::new(app));
@@ -138,6 +139,7 @@ pub async fn send_message_with_memory(
         conversation_history, skip_containment, skip_memory_storage,
         kb_enabled, user_query, image_data,
         false, // hands_free: this is the in-app path
+        mode,
     )
     .await
 }
@@ -173,6 +175,8 @@ pub async fn generate_reply(
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
     hands_free: bool,
+    // A conversation mode's name (chat_modes.rs), None for normal.
+    mode: Option<String>,
 ) -> Result<ReplyResponse, String> {
     use crate::conversation_engine::ConversationEngine;
 
@@ -732,6 +736,12 @@ pub async fn generate_reply(
         user_display_name.as_deref(),
     );
 
+    // The conversation mode's block goes in front of everything (2026-10-28).
+    if let Some(b) = crate::chat_modes::block(mode.as_deref()) {
+        println!("[Mode] {}", mode.as_deref().unwrap_or(""));
+        full_prompt = format!("{}\n\n{}", b, full_prompt);
+    }
+
     // Prepend KB context if available
     if !kb_context.is_empty() {
         full_prompt = format!("{}{}", kb_context, full_prompt);
@@ -1179,7 +1189,7 @@ pub async fn generate_reply(
         }
         let synthesized = Box::pin(generate_reply(
             sink.clone(), prompt, user_id.clone(), session_id.clone(), forced_backend.clone(), containment_mode.clone(),
-            None, Some(true), Some(true), Some(kb_enabled), Some(query.clone()), None, true,
+            None, Some(true), Some(true), Some(kb_enabled), Some(query.clone()), None, true, None,
         )).await?;
         return Ok(ReplyResponse { original_query: Some(query.clone()), pre_search_reply: first_answer, web_search_results: web_sources, ..synthesized });
     }

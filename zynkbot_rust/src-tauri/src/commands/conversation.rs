@@ -16,6 +16,22 @@ pub async fn list_conversation_sessions(
         .map_err(|e: sqlx::Error| e.to_string())
 }
 
+/// The thread any of the user's devices wrote to most recently (2026-10-28, single shared
+/// context): the one every device lands in when it is brought back to the front. Threads
+/// with no messages (a started-and-abandoned "New") are not counted.
+#[tauri::command]
+pub async fn get_latest_thread(user_id: String) -> Result<Option<serde_json::Value>, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e: sqlx::Error| e.to_string())?;
+    let row: Option<(String, String, i64)> = sqlx::query_as(
+        "SELECT session_id, last_active, message_count FROM conversation_sessions
+         WHERE user_id = ? AND message_count > 0 ORDER BY last_active DESC LIMIT 1")
+        .bind(&user_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    pool.close().await;
+    Ok(row.map(|(session_id, last_active, message_count)| serde_json::json!({
+        "session_id": session_id, "last_active": last_active, "message_count": message_count })))
+}
+
 #[tauri::command]
 pub async fn get_conversation_messages(
     session_id: String,

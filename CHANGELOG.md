@@ -15,6 +15,9 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - **Settings file could be cut to one line when the app was killed while saving (KI-100), fixed:** the `.env` is now written atomically with a `.env.bak` beside it, a failed read is never treated as an empty file, and at startup the app puts back any key it holds in its own sync records that the environment lacks.
 - **Dictation uses `gpt-4o-mini-transcribe`** (was `whisper-1`) on phone, Linux and Windows, and logs how long each transcription took.
 - Conversation History: the section headers (Current thread, Pinned, Today, Yesterday, This Week) have their own colours.
+- **Pinned conversations sync** between devices (migration 0025: `pinned_at`; the newest change to a pin wins everywhere).
+- **One shared conversation across devices.** The thread any device wrote to last is the current one on all of them: a device lands in it when it is brought back to the front, when the app starts, or when a sync brings news and the device has been idle 45 s; it never moves while you are typing, waiting for a reply or have a file attached, and "New" is respected until another device writes after it.
+- **"Last synced" in the sync panel**, per device: how long since a round finished cleanly, in amber when the device is online but nothing has synced for five minutes.
 
 ## [0.9.6-beta5] — 2026-10-27 <!-- branch local-model; entries for 10-26/27 drafted by Claude, for Matt's review -->
 

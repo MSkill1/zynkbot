@@ -180,7 +180,7 @@ impl Bench {
         let resp = crate::commands::chat::generate_reply(
             sink, message.to_string(), self.user_id.clone(), self.session_id.clone(),
             backend.to_string(), "sovereign".to_string(),
-            None, None, Some(!store_memories), Some(false), None, None, false,
+            None, None, Some(!store_memories), Some(false), None, None, false, None,
         ).await.unwrap_or_else(|e| panic!("generate_reply failed: {}", e));
         serde_json::to_value(&resp).unwrap()
     }
@@ -193,7 +193,7 @@ impl Bench {
         let resp = crate::commands::chat::generate_reply(
             sink, message.to_string(), self.user_id.clone(), self.session_id.clone(),
             backend.to_string(), "sovereign".to_string(),
-            Some(history), None, Some(true), Some(false), None, None, false,
+            Some(history), None, Some(true), Some(false), None, None, false, None,
         ).await.unwrap_or_else(|e| panic!("generate_reply failed: {}", e));
         serde_json::to_value(&resp).unwrap()
     }

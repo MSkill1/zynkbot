@@ -96,13 +96,17 @@ async fn memory_bench() {
         let skip_extraction = std::env::var("MEMORY_BENCH_SKIP_EXTRACTION").is_ok();
         for c in cases.extraction.iter().filter(|_| !skip_extraction) {
             pause().await;
-            let prompt = crate::memory_prompts::extraction_prompt(&c.message, &cases.subject, c.context.as_deref(), today);
+            // MEMORY_BENCH_SLIM: the phone's prompt and schema (fact, title, date, passing), so a
+            // model tuned on that prompt is scored on it (2026-10-28, labs/finetune).
+            let slim = std::env::var("MEMORY_BENCH_SLIM").is_ok();
+            let prompt = crate::memory_prompts::extraction_prompt_with(&c.message, &cases.subject, c.context.as_deref(), today, slim);
+            let schema = if slim { crate::memory_prompts::EXTRACTION_SCHEMA_SLIM } else { crate::memory_prompts::EXTRACTION_SCHEMA };
             let t = std::time::Instant::now();
             let mut r = ExtractionResult { id: c.id.clone(), ..Default::default() };
             // MEMORY_BENCH_NO_SCHEMA: let a local model answer free-form (the JSON is parsed
             // leniently) to measure what the grammar itself costs in recall (2026-10-24).
             let answer = if std::env::var("MEMORY_BENCH_NO_SCHEMA").is_ok() { crate::call_backend_with_prompt(&prompt, backend).await }
-                else { crate::call_backend_with_schema(&prompt, backend, crate::memory_prompts::EXTRACTION_SCHEMA).await };
+                else { crate::call_backend_with_schema(&prompt, backend, schema).await };
             match answer {
                 Ok(text) => {
                     r.raw = text.clone();

@@ -25,6 +25,8 @@ mod memory_bench; // which model makes the right memories: labs/memory_bench
 #[cfg(test)]
 mod recall_bench; // does recall find the right memory: labs/recall_bench
 #[cfg(test)]
+mod finetune_export; // the app's own prompts as training input: labs/finetune
+#[cfg(test)]
 mod memory_refactor; // one-off: old composite memories into facts (2026-10-25)
 
 /// Seconds and RMS level (0..1) of a 16-bit mono 16 kHz WAV as the page encodes it.
@@ -93,6 +95,7 @@ mod word_docs;  // .docx and .doc text for the Knowledge Base and attachments (2
 mod web_read;   // a page the user points at, read for the prompt (2026-10-27)
 mod conversation_history;  // Persistent conversation log with full-text search
 mod seal;  // a seal the user makes: one thread as a signed file (2026-10-27)
+mod chat_modes;  // a mode's block in front of the prompt (2026-10-28)
 pub mod sync_outbox;  // the ZynkSync outbox: drain and receive (step 2)
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
@@ -518,16 +521,44 @@ pub(crate) fn generate_title_from_content(content: &str) -> String {
 /// Call 3 on the phone (2026-10-24): relationships only. The full call writes a title and
 /// the extras too, sixty-odd tokens the 4B produces at three a second under the grammar,
 /// and since call 2 now gives the title those tokens bought nothing. Same four definitions.
-pub(crate) async fn ask_llm_for_links_only(
-    extracted_fact: &str,
-    similar_memories: &[(i32, String, Option<String>, f32)],
-    backend: &str,
-) -> Result<Vec<RelationshipClassification>, String> {
-    if similar_memories.is_empty() { return Ok(Vec::new()); }
+/// The first balanced `{ … }` in a text, braces inside strings ignored.
+pub(crate) fn first_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let bytes = text.as_bytes();
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        if in_str {
+            if esc { esc = false; } else if b == b'\\' { esc = true; } else if b == b'"' { in_str = false; }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => { depth -= 1; if depth == 0 { return Some(&text[start..=i]); } }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod first_json_object_tests {
+    #[test]
+    fn the_first_object_is_taken_and_a_second_one_ignored() {
+        let t = "{\"relationships\": [{\"memory_id\": 1, \"relationship_type\": \"none\"}]}\n{\"facts\": []}";
+        assert_eq!(super::first_json_object(t).unwrap(), "{\"relationships\": [{\"memory_id\": 1, \"relationship_type\": \"none\"}]}");
+        assert_eq!(super::first_json_object("text {\"a\": \"}\"} tail").unwrap(), "{\"a\": \"}\"}");
+        assert!(super::first_json_object("no braces").is_none());
+    }
+}
+
+/// The links-only prompt the phone uses (text unchanged; moved out 2026-10-28 so the
+/// fine-tuning exporter in `finetune_export.rs` writes the exact prompt the app sends).
+pub(crate) fn links_only_prompt(extracted_fact: &str, similar_memories: &[(i32, String, Option<String>, f32)]) -> String {
     let similar_memories_text = similar_memories.iter()
         .map(|(id, content, title, _)| format!("Memory #{}{}: {}", id, title.as_ref().map(|t| format!(" ({})", t)).unwrap_or_default(), content))
         .collect::<Vec<_>>().join("\n");
-    let prompt = format!(
+    format!(
         r#"A new fact about the user and some existing memories. For each memory, say how the new fact relates to it.
 
 NEW FACT: {}
@@ -542,13 +573,24 @@ Types, pick the first that fits:
 - "none": different things. Two facts about the same user are not related just because they are both about the user; a shared broad topic is not enough.
 
 Answer with JSON only: {{"relationships": [{{"memory_id": 123, "relationship_type": "updates|contradicts|related|none", "confidence": 0.9}}]}}"#,
-        extracted_fact, similar_memories_text);
+        extracted_fact, similar_memories_text)
+}
+
+pub(crate) async fn ask_llm_for_links_only(
+    extracted_fact: &str,
+    similar_memories: &[(i32, String, Option<String>, f32)],
+    backend: &str,
+) -> Result<Vec<RelationshipClassification>, String> {
+    if similar_memories.is_empty() { return Ok(Vec::new()); }
+    let prompt = links_only_prompt(extracted_fact, similar_memories);
     let response = if backend.ends_with(".gguf") || backend == "local" {
         call_local_for_memory_decision(&prompt, backend, Some(LINKS_SCHEMA)).await?
     } else {
         call_backend_with_prompt(&prompt, backend).await?
     };
-    let body = match (response.find('{'), response.rfind('}')) { (Some(a), Some(b)) if b > a => &response[a..=b], _ => response.trim() };
+    // The first complete JSON object: a model that writes a second object after its
+    // answer (the fine-tuned 4B did, 2026-10-28) used to fail with "trailing characters".
+    let body = first_json_object(&response).unwrap_or_else(|| response.trim());
     #[derive(serde::Deserialize)]
     struct Links { #[serde(default)] relationships: Vec<RelationshipClassification> }
     let links: Links = serde_json::from_str(body).map_err(|e| format!("Failed to parse links JSON: {}", e))?;
@@ -2508,6 +2550,7 @@ pub fn run() {
             voice_prefs::set_voice_pref,
             // Conversation History
             commands::conversation::list_conversation_sessions,
+            commands::conversation::get_latest_thread,
             commands::conversation::seal_thread,
             commands::conversation::log_web_search_answer,
             commands::conversation::verify_seal_file,

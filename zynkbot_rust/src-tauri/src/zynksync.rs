@@ -127,6 +127,11 @@ pub struct SyncConversationSession {
     /// The row's name on every device (0013); equals session_id.
     #[serde(default)]
     pub sync_id: Option<String>,
+    /// Pinned, and when that was last changed (0025). Absent from an older peer: no change.
+    #[serde(default)]
+    pub pinned: Option<bool>,
+    #[serde(default)]
+    pub pinned_at: Option<String>,
 }
 
 /// Conversation message payload for cross-device sync
@@ -557,6 +562,7 @@ impl ZynkSyncService {
             pairing_code: None,
             user_id: host_user_id,  // Include host's user_id for identity sync
             is_online: false,
+            last_synced: None,
         };
 
         {
@@ -648,6 +654,7 @@ impl ZynkSyncService {
                             pairing_code: None,
                             user_id: None,
                             is_online: false,
+                            last_synced: None,
                         });
                     }
 
@@ -1056,6 +1063,8 @@ impl ZynkSyncService {
 
         // Keeps is_first_sync() honest for the paths that still consult it.
         self.update_sync_timestamp(&peer.device_id, true).await?;
+        // The sync panel's "last synced" line (2026-10-28): a round that finished cleanly.
+        self.transport.peer_last_synced.write().await.insert(peer.device_id.clone(), Utc::now());
 
         if pushed.entries_sent > 0 || pulled.entries_sent > 0 {
             println!("[ZynkSync] ✓ Sync with {} - sent {} ({} batches), received {} ({} batches)",
@@ -1702,6 +1711,7 @@ async fn verify_pairing_inner(
                 pairing_code: None,
                 user_id: None,  // Not relevant - this is the HOST adding the CLIENT
                 is_online: false,
+                last_synced: None,
             };
 
             // Store client device with its TLS cert for future pinned connections
@@ -1856,6 +1866,7 @@ async fn verify_pairing_inner(
                                 pairing_code: None,
                                 user_id: None,
                                 is_online: false,
+                                last_synced: None,
                             });
                         }
                     }
@@ -2161,6 +2172,7 @@ async fn handle_introduce(
                 pairing_code: None,
                 user_id: None,
                 is_online: false,
+                last_synced: None,
             });
         }
         println!("[ZynkSync] ✓ Mesh-paired with introduced device: {}", new_device_name);

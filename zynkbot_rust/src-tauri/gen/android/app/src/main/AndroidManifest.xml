@@ -152,6 +152,14 @@
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
+        <!-- After an update: restart the Hey Zynk listener and say if the Z needs the assistant re-selected (KI-101). -->
+        <receiver
+            android:name=".PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <!-- Zynkbot's own timer/alarm: the exact-alarm receiver and the 30 s ring service. -->
         <receiver
             android:name=".TimerReceiver"

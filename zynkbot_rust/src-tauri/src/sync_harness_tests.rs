@@ -1130,3 +1130,54 @@ fn b33_a_device_that_left_and_rejoins_after_the_queue_was_pruned_still_catches_u
         assert_eq!(got.len(), 2, "laptop: doubled or lost a memory on re-join; has {:?}", got);
     });
 }
+
+// ---------------------------------------------------------------------------
+// 30. A pin travels, and the newest change to it wins on every device (2026-10-28).
+// ---------------------------------------------------------------------------
+async fn pinned_of(p: &Peer, session: &str) -> i64 {
+    sqlx::query_scalar("SELECT pinned FROM conversation_sessions WHERE session_id = ?").bind(session).fetch_one(&p.pool).await.unwrap()
+}
+
+#[test]
+fn b30_a_pin_travels_and_the_newest_change_wins() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let uid = a.user_id();
+        crate::conversation_history::log_exchange(&a.pool, "pin-thread", &uid, "q", "a", "anthropic", "guardian", true, "typed").await.unwrap();
+        a.sync_with(&b).await;
+        assert_eq!((pinned_of(&a, "pin-thread").await, pinned_of(&b, "pin-thread").await), (0, 0));
+
+        // Pinned on the desktop: the phone's list shows it pinned after one round.
+        crate::conversation_history::set_session_pinned(&a.pool, "pin-thread", &uid, true).await.unwrap();
+        a.sync_with(&b).await;
+        assert_eq!(pinned_of(&b, "pin-thread").await, 1, "the pin did not reach the phone");
+
+        // Unpinned on the phone a moment later: the desktop follows, not the other way round.
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        crate::conversation_history::set_session_pinned(&b.pool, "pin-thread", &b.user_id(), false).await.unwrap();
+        a.sync_with(&b).await;
+        assert_eq!(pinned_of(&a, "pin-thread").await, 0, "the later unpin did not reach the desktop");
+        assert_eq!(pinned_of(&b, "pin-thread").await, 0, "the desktop's older pin came back");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// 31. The sync panel's "last synced": a clean round sets it for that peer (2026-10-28).
+// ---------------------------------------------------------------------------
+#[test]
+fn b31_a_clean_sync_round_records_when_it_happened() {
+    rt_test(async {
+        let a = Peer::spawn("desktop").await;
+        let b = Peer::spawn("phone").await;
+        b.pair_with(&a).await;
+        let before = a.svc.get_peers().await;
+        assert!(before.iter().all(|p| p.last_synced.is_none()), "nothing has synced yet");
+        a.sync_with(&b).await;
+        let after = a.svc.get_peers().await;
+        let phone = after.iter().find(|p| p.device_id == b.device_id()).expect("phone listed");
+        let at = phone.last_synced.expect("last_synced not set after a round");
+        assert!((chrono::Utc::now() - at).num_seconds() < 30);
+    });
+}

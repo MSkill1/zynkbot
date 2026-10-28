@@ -342,6 +342,12 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-101 — After an app update, "Hey Zynk" does not answer until the app is opened, and the Z does not return until the assistant is re-selected or the phone rebooted (open; listener part fixed 2026-10-28)
+**Status:** Listener restart fixed on `local-model` 2026-10-28 (`PackageReplacedReceiver.kt`). The Z part is a system behaviour the app cannot force; the app now says so once after an update, with a tap that opens the assistant setting.  
+**Affected:** Android, every build so far. Seen on the Pixel (GrapheneOS) after the 2026-10-28 install over a running app.  
+**Description:** Installing a new build kills the running app. Two things do not come back on their own: (1) the Hey Zynk listener, a foreground service, stays stopped until the app is opened, so the wake word is heard by nothing — Matt said it six times to a silent phone; (2) the system does not re-bind Zynkbot's assistant service to the updated package even though Zynkbot still holds the assistant role and the `voice_interaction_service` setting still names it, so a wake is answered by the in-service path with no Z on screen (the log line is "Assistant service not bound … using in-service dictation"). Re-setting the setting (`adb shell settings put secure voice_interaction_service ai.containai.zynkbot/.ZynkAssistantService`), re-selecting Zynkbot under Default assistant, or a reboot makes the system bind it again.  
+**Fix / workaround:** A receiver for the "my package was replaced" broadcast restarts the listener after every update. For the Z: after an update, if the Z does not appear, choose Zynkbot again under Settings → Apps → Default apps → Digital assistant, or reboot. Testers get this line in the release notes.
+
 ### KI-100 — The settings file could be cut to one line when the app was killed while saving (fixed 2026-10-28)
 **Status:** Fixed on `local-model` 2026-10-28 (`env_file.rs`, `sync_outbox.rs`).  
 **Affected:** Every platform up to beta 5. Seen on the desktop dev app: `~/.local/share/zynkbot/.env` went from 14 settings to the single line `ZYNK_MODEL_BACKEND=…` during a restart, and the app came back with no API keys.  
