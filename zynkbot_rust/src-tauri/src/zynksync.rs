@@ -5,7 +5,8 @@
 /// Features:
 /// - Manual device management (add devices by IP:port)
 /// - Automatic sync loop (configurable interval)
-/// - Conflict resolution (last-write-wins by timestamp)
+/// - Conflict resolution: every row travels with its `updated_at` and the newer one wins on
+///   both devices (sync_outbox.rs); deletions are tombstones a stale copy cannot undo
 /// - Background async processing with tokio
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -1031,8 +1032,8 @@ impl ZynkSyncService {
     // Conversation history sync
     // -------------------------------------------------------------------------
 
-    /// Bidirectional sync with "active device wins" reconciliation
-    /// Compares memory inventories and syncs from the device with most recent activity
+    /// Bidirectional sync: drain this device's outbox to the peer, then pull the peer's.
+    /// (The pre-outbox "active device wins" inventory compare is gone; 2026-10-01.)
     pub async fn sync_bidirectional(&self, peer_id: &str, user_id: &str) -> Result<SyncResult, String> {
         let peer = {
             let peers_map = self.transport.peers.read().await;
@@ -1319,7 +1320,7 @@ impl ZynkSyncService {
                 }
             };
 
-            // Bidirectional sync with each peer (active device wins)
+            // Bidirectional sync with each peer (outbox each way, newest row wins)
             for peer in peers {
                 // A first contact goes slice after slice, a second apart, instead of one
                 // slice per tick (KI-068 keeps each request at 300 rows; the pacing was

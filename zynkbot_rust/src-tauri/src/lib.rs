@@ -713,8 +713,10 @@ Return ONLY valid JSON starting with {{:
             .split("```").next().unwrap_or(&response).trim()
     } else if response.contains("```") {
         response.split("```").nth(1).unwrap_or(&response).trim()
-    } else if let Some(start) = response.find('{') {
-        &response[start..]
+    } else if let Some(obj) = first_json_object(&response) {
+        // The first complete object only: text after it (the fine-tuned 4B wrote a second
+        // object, 2026-10-28) used to fail the parse with "trailing characters".
+        obj
     } else {
         response.trim()
     };

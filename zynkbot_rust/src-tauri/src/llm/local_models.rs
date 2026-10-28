@@ -15,8 +15,29 @@ use std::num::NonZeroU32;
 use std::sync::Mutex;
 
 /// Detect model type and build appropriate prompt format
-fn build_prompt_for_model(model_path: &str, messages: &[Message]) -> String {
-    let model_name = model_path.to_lowercase();
+/// `arch` is the file's own `general.architecture` ("qwen3", "llama", "gemma3"…), read from
+/// the loaded model (2026-10-28). The file name decides first, as before; when it names
+/// nothing known, the architecture does. Until then a renamed or fine-tuned Qwen file
+/// (`mem3-Q4_0.gguf`) got the bare generic format, never saw its chat markers, and
+/// rambled to the token limit — 7 s a call instead of 0.4 s.
+fn build_prompt_for_model(model_path: &str, messages: &[Message], arch: Option<&str>) -> String {
+    let file_name = model_path.to_lowercase();
+    let arch = arch.unwrap_or("").to_lowercase();
+    let known = ["qwen", "deepseek", "llama-3", "llama3", "dolphin", "openhermes", "tinyllama", "gemma", "lfm", "granite", "smollm", "mistral", "phi-3", "phi-4", "phi3", "phi4", "phi-2", "phi2"];
+    let model_name = if known.iter().any(|k| file_name.contains(k)) || arch.is_empty() {
+        file_name
+    } else {
+        println!("[Rust Local Models] File name says nothing about the format; going by its architecture: {}", arch);
+        // The architecture names map onto the same patterns the file names use.
+        match arch.as_str() {
+            a if a.starts_with("qwen") => "qwen".to_string(),
+            a if a.starts_with("gemma") => "gemma".to_string(),
+            a if a.starts_with("llama") => "llama-3".to_string(),
+            a if a.starts_with("phi3") => "phi-3".to_string(),
+            a if a.starts_with("granite") || a.starts_with("lfm") || a.starts_with("smollm") => "lfm".to_string(),
+            a => a.to_string(),
+        }
+    };
 
     // Order matters: more specific patterns before generic ones
     let (format_name, prompt) = if model_name.contains("qwen") {
@@ -650,7 +671,8 @@ impl LocalModelSession {
         background: bool,
     ) -> Result<(LLMResponse, Vec<LlamaToken>), LLMError> {
         let interrupted = || LLMError::RequestFailed(INTERRUPTED.to_string());
-        let prompt = build_prompt_for_model(&self.model_path, &messages);
+        let arch = self.model.meta_val_str("general.architecture").ok();
+        let prompt = build_prompt_for_model(&self.model_path, &messages, arch.as_deref());
         let max_output_tokens = max_tokens.unwrap_or(512) as usize;
         let temp = temperature.unwrap_or(0.7);
 

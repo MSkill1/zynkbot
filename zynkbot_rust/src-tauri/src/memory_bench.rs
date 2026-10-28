@@ -149,13 +149,21 @@ async fn memory_bench() {
             report.extraction.push(r);
         }
 
+        let slim_rel = std::env::var("MEMORY_BENCH_SLIM").is_ok();
         for c in &cases.relationships {
             pause().await;
             let similar: Vec<(i32, String, Option<String>, f32)> = c.existing.iter().map(|e| (e.id, e.content.clone(), e.title.clone(), 0.8)).collect();
             let t = std::time::Instant::now();
             let mut r = RelationshipResult { id: c.id.clone(), expected: c.expected.kind.clone(), ..Default::default() };
             sm.relationship_cases += 1;
-            match crate::ask_llm_for_relationships(&c.new_fact, &similar, backend).await {
+            // MEMORY_BENCH_SLIM scores the phone's own relationship step (links only, the
+            // slim prompt) instead of the desktop's title+links+extras call (2026-10-28).
+            let answer = if slim_rel {
+                crate::ask_llm_for_links_only(&c.new_fact, &similar, backend).await.map(|rels| (None, rels, crate::memory_extras::MemoryExtras::default()))
+            } else {
+                crate::ask_llm_for_relationships(&c.new_fact, &similar, backend).await
+            };
+            match answer {
                 Ok((_title, rels, _extras)) => {
                     let hit = rels.iter().find(|x| x.memory_id() == c.expected.memory_id);
                     let got = hit.map(|x| x.relationship_type().to_string()).unwrap_or_else(|| "none".to_string());

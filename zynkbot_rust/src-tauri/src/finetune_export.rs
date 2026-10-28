@@ -138,11 +138,15 @@ fn local_probe() {
     let model = std::env::var("LOCAL_PROBE_MODEL").expect("LOCAL_PROBE_MODEL");
     let n: usize = std::env::var("LOCAL_PROBE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
     let data_dir = std::env::var("FINETUNE_OUT").unwrap_or_else(|_| format!("{}/zynkbot-finetune/data", std::env::var("HOME").unwrap_or_default()));
-    let rows: Vec<serde_json::Value> = std::fs::read_to_string(format!("{}/prompts_extraction.jsonl", data_dir)).expect("prompts").lines()
+    // LOCAL_PROBE_FILE: another prompts file (e.g. relx/prompts_relationships.jsonl);
+    // LOCAL_PROBE_SCHEMA=links uses the links grammar instead of the extraction one.
+    let file = std::env::var("LOCAL_PROBE_FILE").unwrap_or_else(|_| format!("{}/prompts_extraction.jsonl", data_dir));
+    let schema_choice: &'static str = if std::env::var("LOCAL_PROBE_SCHEMA").as_deref() == Ok("links") { crate::LINKS_SCHEMA } else { crate::memory_prompts::EXTRACTION_SCHEMA_SLIM };
+    let rows: Vec<serde_json::Value> = std::fs::read_to_string(&file).expect("prompts").lines()
         .filter(|l| !l.trim().is_empty()).take(n).map(|l| serde_json::from_str(l).unwrap()).collect();
     for r in rows {
         let prompt = r["prompt"].as_str().unwrap().to_string();
-        for (label, schema) in [("free", None), ("grammar", Some(crate::memory_prompts::EXTRACTION_SCHEMA_SLIM))] {
+        for (label, schema) in [("free", None), ("grammar", Some(schema_choice))] {
             let t = std::time::Instant::now();
             let msgs = vec![crate::llm::Message { role: "user".into(), content: prompt.clone() }];
             let out = match schema {
