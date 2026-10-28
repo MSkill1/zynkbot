@@ -86,3 +86,22 @@ side by side for review; a judge step can be added once the suite is real.
   not the answer. Fix in `train_lora.py`: prompt/completion rows, loss on the answer
   only (`completion_only_loss`). Also the data was half "no facts" rows; mem2 caps those
   at ~37%. The base model's bench numbers above are the bar every run has to clear.
+- **2026-10-28, the slowness explained.** Every tuned file ran 7 to 9 s a call in the app
+  against 0.3 s for the base, free or under the grammar, while running at full speed in
+  llama.cpp's own tool. Cause: `local_models.rs` chose the chat format by file name; the
+  base is called "Qwen3-…" and got ChatML, `mem3-Q4_0.gguf` matched nothing and got the
+  bare generic format, so the model never saw its chat markers and rambled to the token
+  limit. Fixed two ways: the app now falls back to the file's own `general.architecture`,
+  and the export names files `Qwen3-4B-<run>-Q4_0.gguf`. Relationship results before this
+  fix (mem3 8/44, mem4 28/44 at 8.6 s) were taken under the wrong format.
+- **2026-10-28, first fair numbers (file names fixed, phone's prompt, 84+44 bench cases
+  never trained on):**
+
+  | | facts found | invented | junk | relationships | extraction | relationships |
+  |---|---|---|---|---|---|---|
+  | base Qwen3-4B Q4_0 | 66/69 | 7 | 0 | 28/44 | 0.30 s | 0.99 s |
+  | mem3 (933 extraction rows) | 68/69 | 0 | 0 | 26/44 | 0.32 s | 0.21 s |
+  | mem4 (+349 relationship rows) | 68/69 | 1 | 0 | 38/44 | 0.31 s | 0.21 s |
+
+  mem4's six relationship misses: five "updates" called "contradicts" (the signal-word
+  distinction), one "none" called "related". Candidate for the phone; untested in use.
