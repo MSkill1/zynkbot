@@ -103,6 +103,8 @@ mod transport; // shared peer-to-peer layer: identity, server, pinned client, re
 pub mod voice_prefs; // hands-free settings mirrored for the native path
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod vosk_desktop; // Offline dictation on Linux and Windows desktop (cpal + vosk)
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod openai_realtime; // Live dictation text from OpenAI's Realtime transcription session (2026-10-28)
 pub mod response_sink; // Where a chat response goes as it streams (Tauri today, native JNI later)
 #[cfg(target_os = "android")]
 mod android_jni; // ZynkCore JNI door: run the chat core natively from Kotlin
@@ -1389,18 +1391,28 @@ async fn stop_vosk_recording() -> Result<String, String> {
     Err("Offline dictation via Vosk is not available on this platform.".to_string())
 }
 
-/// Desktop dictation — cpal mic capture, OpenAI Whisper cloud engine (Linux only).
+/// Desktop dictation — cpal mic capture, OpenAI cloud engine (Linux only).
 /// Bypasses the broken Linux Tauri WebView getUserMedia; Windows uses browser audio instead.
 #[tauri::command]
-async fn start_openai_recording() -> Result<(), String> {
+async fn start_openai_recording(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
-    { return Err("Android uses the WebAudio path for OpenAI Whisper.".to_string()); }
+    { let _ = app; return Err("Android uses the WebAudio path for OpenAI Whisper.".to_string()); }
     #[cfg(target_os = "linux")]
     {
-        return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::OpenAI, None))
+        // Since 2026-10-28 the audio streams to OpenAI's Realtime transcription session
+        // while the user speaks, and the words so far reach the page as the same
+        // "dictation-live" events Vosk sends (openai_realtime.rs; falls back to the
+        // one-shot upload when the socket cannot be opened or DICTATION_STREAM=0).
+        let live: vosk_desktop::LiveSink = Box::new(move |text: String| {
+            use tauri::Emitter;
+            let _ = app.emit("dictation-live", text);
+        });
+        return tokio::task::spawn_blocking(move || vosk_desktop::start(vosk_desktop::Engine::OpenAI, Some(live)))
             .await
             .map_err(|e| format!("start task join failed: {e}"))?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
+    { let _ = app; }
     #[cfg(not(any(target_os = "android", target_os = "linux")))]
     Err("Rust mic capture is only available on Linux; use browser audio on Windows/macOS.".to_string())
 }

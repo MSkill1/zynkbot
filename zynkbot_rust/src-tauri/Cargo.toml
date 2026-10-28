@@ -46,7 +46,8 @@ futures = "0.3"  # Stream processing for SSE token streaming
 # Environment variable loading
 
 # Async runtime (needed for reqwest)
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }  # OpenAI Realtime transcription: live dictation text on the desktop (2026-10-28)
 
 # Directory walking for knowledge base
 walkdir = "2"

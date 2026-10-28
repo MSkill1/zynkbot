@@ -11,8 +11,11 @@ export function useVoiceInput() {
   const audioBufferRef = useRef([]);
   // Live text (2026-10-20): while Vosk is listening, the words recognised so far are
   // handed to `onLive(text)` as they change — Android through window.__voskLive from
-  // the Kotlin bridge, desktop through the "dictation-live" Tauri event. Whisper has
-  // no live text: it hears the whole clip only when recording stops.
+  // the Kotlin bridge, desktop through the "dictation-live" Tauri event. Since
+  // 2026-10-28 the Linux OpenAI path streams the audio to OpenAI's Realtime session
+  // and sends the same event, so both desktop engines show words as they are spoken.
+  // The browser-audio OpenAI path (Android, Windows, macOS) still hears the whole
+  // clip only when recording stops.
   const onLiveRef = useRef(null);
   const liveUnlistenRef = useRef(null);
   const stopLive = () => {
@@ -176,7 +179,7 @@ export function useVoiceInput() {
   const startRecordingDesktopRust = async (source) => {
     const cmd = source === 'openai' ? 'start_openai_recording' : 'start_vosk_recording';
     try {
-      if (source !== 'openai' && onLiveRef.current) {
+      if (onLiveRef.current) {
         liveUnlistenRef.current = await listen('dictation-live', (e) => { onLiveRef.current?.(e.payload || ''); });
       }
       await invoke(cmd);

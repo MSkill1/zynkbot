@@ -9,7 +9,11 @@
 //!     of the current utterance alone — everything said before the last pause was
 //!     lost. While recording, the text so far is handed to `on_live` (throttled)
 //!     so the page can show the words as they are spoken.
-//!   - OpenAI: buffers raw i16 samples, encodes to WAV on stop, uploads.
+//!   - OpenAI: streams the samples to OpenAI's Realtime transcription session
+//!     (`openai_realtime`) so the words show while the user speaks, and keeps the
+//!     raw i16 samples too. On stop the session's text is returned; if the session
+//!     could not be opened (no network, DICTATION_STREAM=0, server error) the kept
+//!     samples are encoded to WAV and uploaded in one go, as before 2026-10-28.
 //!
 //! One recording at a time (global session mutex).
 
@@ -228,12 +232,27 @@ fn run_audio_thread(
     let live_cb: Option<Arc<LiveSink>> = on_live.map(Arc::new);
     let live_cb2 = live_cb.clone();
 
+    // OpenAI: open the live session now; the socket connects in the background while
+    // the mic is already running. None here means the one-shot upload runs on stop.
+    let (mut feeder, live_session) = match engine {
+        Engine::OpenAI => match crate::openai_realtime::Session::open(sample_rate, live_cb.clone()) {
+            Ok((f, s)) => (Some(f), Some(s)),
+            Err(e) => {
+                println!("[Dictation] Live stream not used ({e}); the clip is uploaded on stop");
+                (None, None)
+            }
+        },
+        Engine::Vosk => (None, None),
+    };
+    let mut feeder2 = feeder.clone();
+
     let build_result = match sample_format {
         SampleFormat::F32 => device.build_input_stream(
             &stream_config,
             move |data: &[f32], _| {
                 let mono = downmix_f32_to_i16(data, channels);
                 dispatch(&mono, &rec_cb, &buf_cb, &live_cb);
+                if let Some(f) = feeder.as_mut() { f.push(&mono); }
             },
             err_cb,
             None,
@@ -243,6 +262,7 @@ fn run_audio_thread(
             move |data: &[i16], _| {
                 let mono = downmix_i16(data, channels);
                 dispatch(&mono, &rec_cb, &buf_cb, &live_cb2);
+                if let Some(f) = feeder2.as_mut() { f.push(&mono); }
             },
             err_cb,
             None,
@@ -291,9 +311,17 @@ fn run_audio_thread(
                 Ok(guard) => Ok(guard.clone()),
                 Err(e) => Err(format!("OpenAI buffer lock poisoned: {e}")),
             };
-            match pcm_result {
-                Ok(pcm) => transcribe_openai(&pcm, sample_rate),
-                Err(e) => Err(e),
+            // The live session's text is the answer when it worked; otherwise the
+            // kept clip goes up the old way, so a dropped socket still yields text.
+            let streamed = live_session.map(|s| s.finish());
+            match (streamed, pcm_result) {
+                (Some(Ok(text)), _) => Ok(text),
+                (Some(Err(e)), Ok(pcm)) => {
+                    eprintln!("[Dictation] Live stream failed ({e}); uploading the clip instead");
+                    transcribe_openai(&pcm, sample_rate)
+                }
+                (None, Ok(pcm)) => transcribe_openai(&pcm, sample_rate),
+                (_, Err(e)) => Err(e),
             }
         }
     };

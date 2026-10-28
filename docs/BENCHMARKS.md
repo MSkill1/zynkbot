@@ -147,8 +147,10 @@ markers. The app now reads the architecture the file declares, and the export na
 after the base model. All of the "tuned model is worse" numbers before that fix were taken
 under the wrong format.
 
-**Status.** mem4 is a candidate for the phone. It has not yet been used day to day; that
-test comes before any decision to ship it.
+**Status.** mem4 is a candidate for the phone, named **Sophro-4B-memory-v1** (from
+*sophrosyne*, the Greek word for soundness of mind and self-restraint, which is the habit the
+training is for: store what was said, nothing more). File `Sophro-4B-memory-v1-Q4_0.gguf`,
+2.37 GB. It has not yet been used day to day; that test comes before any decision to ship it.
 
 ## 4. Running the benches
 
