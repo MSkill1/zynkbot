@@ -105,3 +105,7 @@ side by side for review; a judge step can be added once the suite is real.
 
   mem4's six relationship misses: five "updates" called "contradicts" (the signal-word
   distinction), one "none" called "related". Candidate for the phone; untested in use.
+- **Name (Matt, 2026-10-28): the tuned model family is "Sophro"**, from *sophrosyne*
+  (soundness of mind, self-restraint). Scheme: family, size, job, version, quantisation:
+  `Sophro-4B-memory-v1-Q4_0.gguf` is mem4. The app reads the chat format from the file's
+  own architecture since the same day, so the name need not contain "Qwen".
