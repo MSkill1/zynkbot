@@ -43,6 +43,11 @@ object OpenAiDictation {
     fun hasApiKey(context: Context): Boolean = EnvFile.read(context, ENV_KEY) != null
     fun apiKey(context: Context): String? = EnvFile.read(context, ENV_KEY)
 
+    /** `DICTATION_STREAM=0` in the settings file turns the live stream ([OpenAiRealtime])
+     *  off and keeps the upload-after-stop path, as on the desktop. */
+    fun streamingEnabled(context: Context): Boolean =
+        EnvFile.read(context, "DICTATION_STREAM")?.lowercase() !in setOf("0", "false", "off", "no")
+
     /**
      * Decides where the utterance starts and ends from chunk energy. [feed] returns
      * true when the recording is complete; [result] is then the PCM16 to upload, empty
@@ -131,7 +136,7 @@ object OpenAiDictation {
         return sqrt(acc / n)
     }
 
-    private fun toBytes(s: ShortArray, n: Int): ByteArray {
+    internal fun toBytes(s: ShortArray, n: Int): ByteArray {
         val b = ByteArray(n * 2)
         for (i in 0 until n) {
             b[i * 2] = (s[i].toInt() and 0xFF).toByte()
@@ -160,14 +165,21 @@ object OpenAiDictation {
         return w in SILENCE_PHRASES
     }
 
-    fun transcribe(key: String, wav: ByteArray): String? = transcribeRaw(key, wav)?.let { t ->
-        val secs = (wav.size - 44).coerceAtLeast(0) / (SAMPLE_RATE * 2.0)
-        if (secs < 2.5 && isSilencePhrase(t)) { Log.i(TAG, "dropped Whisper's silence phrase (${"%.1f".format(secs)}s)"); "" } else t
+    fun transcribe(key: String, wav: ByteArray): String? =
+        transcribeRaw(key, wav)?.let { guardSilence(it, (wav.size - 44).coerceAtLeast(0)) }
+
+    /** The silence-phrase guard: a short clip ([pcmBytes] of PCM16) whose whole text is
+     *  one of the model's "heard nothing" phrases becomes "". Shared by the upload and the
+     *  live stream, so both paths treat a cough the same. */
+    fun guardSilence(text: String, pcmBytes: Int): String {
+        val secs = pcmBytes / (SAMPLE_RATE * 2.0)
+        return if (secs < 2.5 && isSilencePhrase(text)) { Log.i(TAG, "dropped the model's silence phrase (${"%.1f".format(secs)}s)"); "" } else text
     }
 
     // OpenAI's newer transcription model (2026-10-28, was whisper-1): lower latency, half
-    // the price. The desktop names the same one (lib.rs DICTATION_MODEL).
-    private const val MODEL = "gpt-4o-mini-transcribe"
+    // the price. The desktop names the same one (lib.rs DICTATION_MODEL); the live stream
+    // (OpenAiRealtime) asks for it too.
+    const val MODEL = "gpt-4o-mini-transcribe"
 
     private fun transcribeRaw(key: String, wav: ByteArray): String? {
         val t0 = System.currentTimeMillis()

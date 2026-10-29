@@ -315,7 +315,7 @@ class ZynkAssistantSession(context: Context) : VoiceInteractionSession(context) 
         }
         listenStartedAt = System.currentTimeMillis(); firstPartialLogged = false
         lateinit var d: Dictation
-        d = Dictation(engine, model, key, timers = true, listener = object : Dictation.Listener {
+        d = Dictation(engine, model, key, timers = true, stream = OpenAiDictation.streamingEnabled(context), listener = object : Dictation.Listener {
             override fun onPartial(text: String) {
                 if (!firstPartialLogged) { firstPartialLogged = true; Log.i(TAG, "[Dictation] first words after ${System.currentTimeMillis() - listenStartedAt} ms") }
             }

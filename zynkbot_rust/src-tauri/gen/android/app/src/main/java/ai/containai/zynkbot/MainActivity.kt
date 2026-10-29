@@ -638,7 +638,11 @@ class MainActivity : TauriActivity() {
         // The page's mic button (2026-10-20 rebuild): one Dictation fed from the
         // wake-word service's stream when Hey Zynk is on, else from a stream of its
         // own. Live text (everything finished so far plus the utterance in progress)
-        // on every change; the full text when the user taps stop.
+        // on every change; the full text when the user taps stop. Since 2026-10-28 the
+        // engine follows the Voice settings selector: OpenAI (streamed live through
+        // OpenAiRealtime, with the clip upload as fallback) when selected and a key is on
+        // file, else Vosk. Before that the page recorded OpenAI dictation itself through
+        // getUserMedia and uploaded the clip on stop, with no live text.
         @Volatile private var dictation: Dictation? = null
         private var ownStream: MicStream? = null
 
@@ -675,12 +679,21 @@ class MainActivity : TauriActivity() {
                 return
             }
             Thread {
-                val model = Dictation.voskModel(this@MainActivity)
-                if (model == null) {
+                val source = voiceInputSource(this@MainActivity)
+                val key = if (source == "openai") OpenAiDictation.apiKey(this@MainActivity) else null
+                if (source == "openai" && key == null) {
+                    fire("window.__voskError&&window.__voskError('No OpenAI API key — add one in Settings, or choose offline dictation');")
+                    return@Thread
+                }
+                val engine = if (key != null) Dictation.Engine.WHISPER else Dictation.Engine.VOSK
+                val model = if (engine == Dictation.Engine.VOSK) Dictation.voskModel(this@MainActivity) else null
+                if (engine == Dictation.Engine.VOSK && model == null) {
                     fire("window.__voskError&&window.__voskError('Voice model not downloaded yet');")
                     return@Thread
                 }
-                val d = Dictation(Dictation.Engine.VOSK, model, null, timers = false, listener = listener)
+                Log.i("VoskBridge", "Dictation engine=${engine.name.lowercase()}")
+                val d = Dictation(engine, model, key, timers = false, listener = listener,
+                    stream = OpenAiDictation.streamingEnabled(this@MainActivity))
                 dictation?.cancel()
                 dictation = d
                 // Step 2 of the rebuild feeds this from the wake-word service's stream
@@ -771,7 +784,8 @@ class MainActivity : TauriActivity() {
             return try { org.json.JSONObject(h).optString("text", "").trim() } catch (_: Exception) { "" }
         }
 
-        private fun esc(s: String) = s.replace("\\", "\\\\").replace("'", "\\'")
+        // Newlines too: the cloud model's text can hold one, which would end the JS string.
+        private fun esc(s: String) = s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
 
         private fun fire(js: String) {
             val wv = webViewRef?.get() ?: return

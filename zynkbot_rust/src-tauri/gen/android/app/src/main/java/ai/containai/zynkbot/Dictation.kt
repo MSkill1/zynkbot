@@ -14,7 +14,10 @@ import java.io.File
  *
  * Vosk: chunks go to a Recognizer; the live text (finished utterances plus the one in
  * progress) is reported on every change. Whisper: chunks go through the energy
- * endpointer and the clip is uploaded when speech ends. Timers, hands-free only:
+ * endpointer, and since 2026-10-28 also to an [OpenAiRealtime] session, whose running
+ * transcript is reported the same way as Vosk's; when speech ends the session's text
+ * is the result, or the clip is uploaded as before if the stream failed or heard
+ * nothing. Timers, hands-free only:
  * nothing said within 6 s → done; 1.5 s after the text stops changing → done; 30 s
  * cap. The app's mic button runs without timers and ends on [stop].
  *
@@ -27,6 +30,8 @@ class Dictation(
     private val apiKey: String?,
     private val timers: Boolean,
     private val listener: Listener,
+    /** OpenAI only: stream the audio live ([OpenAiRealtime]) rather than upload on stop. */
+    stream: Boolean = true,
 ) : MicStream.Sink {
     enum class Engine { VOSK, WHISPER }
 
@@ -68,6 +73,15 @@ class Dictation(
     private var chunks = 0
     private var partialsWithText = 0
     private val endpointer = if (engine == Engine.WHISPER) OpenAiDictation.Endpointer(timers) else null
+    /** The live OpenAI session, connecting from the moment the dictation exists so the
+     *  socket is usually up by the first word. Null for Vosk, without a key, or with
+     *  DICTATION_STREAM=0; then the clip is uploaded on stop as before. */
+    private val live: OpenAiRealtime? =
+        if (engine == Engine.WHISPER && apiKey != null && stream) {
+            try {
+                OpenAiRealtime(apiKey, RATE) { text -> emit(text) }.also { it.open() }
+            } catch (e: Exception) { Log.w(TAG, "Live stream not started: ${e.javaClass.simpleName}: ${e.message}"); null }
+        } else null
     @Volatile private var done = false
     @Volatile var isCancelled = false
         private set
@@ -89,7 +103,11 @@ class Dictation(
             samplesTotal += n
             when (engine) {
                 Engine.VOSK -> feedVosk(pcm, n)
-                Engine.WHISPER -> if (endpointer!!.feed(pcm, n)) "speech ended" else null
+                Engine.WHISPER -> {
+                    val ended = endpointer!!.feed(pcm, n)
+                    live?.feed(pcm, n)
+                    if (ended) "speech ended" else null
+                }
             }
         }
         if (finished != null) finish(finished)
@@ -139,6 +157,7 @@ class Dictation(
             done = true; isCancelled = true
             closeVosk()
         }
+        live?.abort()
         Log.i(TAG, "Dictation cancelled after ${elapsed()} ms")
         onDone?.invoke()
         main.post { listener.onFinal(null) }
@@ -172,12 +191,16 @@ class Dictation(
                 main.post { listener.onFinal(full) }
             }
             Engine.WHISPER -> {
-                Log.i(TAG, "Whisper dictation ended ($reason) after ${elapsed()} ms: ${pcm.size / 1024} KB")
-                if (pcm.isEmpty()) { main.post { listener.onFinal("") }; return }
+                Log.i(TAG, "Whisper dictation ended ($reason) after ${elapsed()} ms: ${pcm.size / 1024} KB${if (live != null) ", live stream" else ""}")
+                if (pcm.isEmpty()) { live?.abort(); main.post { listener.onFinal("") }; return }
                 val key = apiKey
-                if (key == null) { Log.w(TAG, "No OpenAI key"); main.post { listener.onFinal(null) }; return }
+                if (key == null) { live?.abort(); Log.w(TAG, "No OpenAI key"); main.post { listener.onFinal(null) }; return }
                 Thread({
-                    val text = OpenAiDictation.transcribe(key, OpenAiDictation.toWav(pcm))
+                    // The live session's text when it has any; otherwise (no stream, it
+                    // failed, or it heard nothing) the upload-after-stop call as before.
+                    val streamed = live?.finish()
+                    val text = if (!streamed.isNullOrEmpty()) OpenAiDictation.guardSilence(streamed, pcm.size)
+                               else OpenAiDictation.transcribe(key, OpenAiDictation.toWav(pcm))
                     main.post { if (!isCancelled) listener.onFinal(text) }
                 }, "WhisperUpload").start()
             }

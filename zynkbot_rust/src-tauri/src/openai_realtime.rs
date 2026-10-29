@@ -12,9 +12,10 @@
 //! and when the socket cannot be opened, the session errors out, or the user sets
 //! `DICTATION_STREAM=0`, the old one-shot upload runs on stop exactly as before.
 //!
-//! The session speaks the "realtime=v1" beta protocol: `transcription_session.update`
-//! to configure, `input_audio_buffer.append` with base64 PCM16 at 24 kHz mono, and
-//! `input_audio_buffer.commit` on stop. Audio is resampled from the capture rate to
+//! The session speaks the GA Realtime protocol (the beta header and its
+//! `transcription_session.update` were refused on 2026-10-28: "no longer supported"):
+//! `session.update` with a transcription session to configure, `input_audio_buffer.append`
+//! with base64 PCM16 at 24 kHz mono, and `input_audio_buffer.commit` on stop. Audio is resampled from the capture rate to
 //! 24 kHz here, because the API accepts pcm16 at 24 kHz only.
 
 use std::sync::mpsc as std_mpsc;
@@ -280,16 +281,15 @@ impl Session {
 
 fn session_update() -> String {
     serde_json::json!({
-        "type": "transcription_session.update",
+        "type": "session.update",
         "session": {
-            "input_audio_format": "pcm16",
-            "input_audio_transcription": {
-                "model": crate::DICTATION_MODEL,
-                "language": "en"
-            },
-            "turn_detection": {
-                "type": "server_vad",
-                "silence_duration_ms": 700
+            "type": "transcription",
+            "audio": {
+                "input": {
+                    "format": { "type": "audio/pcm", "rate": 24000 },
+                    "transcription": { "model": crate::DICTATION_MODEL, "language": "en" },
+                    "turn_detection": { "type": "server_vad", "silence_duration_ms": 700 }
+                }
             }
         }
     })
@@ -321,7 +321,6 @@ async fn run_session(
         .parse()
         .map_err(|e| format!("auth header: {e}"))?;
     req.headers_mut().insert("Authorization", auth);
-    req.headers_mut().insert("OpenAI-Beta", "realtime=v1".parse().map_err(|e| format!("header: {e}"))?);
 
     let (ws, _) = tokio::time::timeout(Duration::from_secs(5), tokio_tungstenite::connect_async(req))
         .await
@@ -528,9 +527,11 @@ mod tests {
         let bytes = base64::engine::general_purpose::STANDARD.decode(v["audio"].as_str().unwrap()).unwrap();
         assert_eq!(bytes, vec![1, 0, 0xFF, 0xFF]);
         let u: serde_json::Value = serde_json::from_str(&session_update()).unwrap();
-        assert_eq!(u["session"]["input_audio_format"], "pcm16");
-        assert_eq!(u["session"]["input_audio_transcription"]["model"], crate::DICTATION_MODEL);
-        assert_eq!(u["session"]["turn_detection"]["silence_duration_ms"], 700);
+        assert_eq!(u["type"], "session.update");
+        assert_eq!(u["session"]["type"], "transcription");
+        assert_eq!(u["session"]["audio"]["input"]["format"]["rate"], 24000);
+        assert_eq!(u["session"]["audio"]["input"]["transcription"]["model"], crate::DICTATION_MODEL);
+        assert_eq!(u["session"]["audio"]["input"]["turn_detection"]["silence_duration_ms"], 700);
     }
 
     #[test]

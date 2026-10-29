@@ -13,9 +13,10 @@ export function useVoiceInput() {
   // handed to `onLive(text)` as they change — Android through window.__voskLive from
   // the Kotlin bridge, desktop through the "dictation-live" Tauri event. Since
   // 2026-10-28 the Linux OpenAI path streams the audio to OpenAI's Realtime session
-  // and sends the same event, so both desktop engines show words as they are spoken.
-  // The browser-audio OpenAI path (Android, Windows, macOS) still hears the whole
-  // clip only when recording stops.
+  // and sends the same event, and Android's OpenAI dictation goes through the Kotlin
+  // bridge (OpenAiRealtime.kt) with the same window.__voskLive callback, so both
+  // engines show words as they are spoken there too. The browser-audio OpenAI path
+  // (Windows, macOS) still hears the whole clip only when recording stops.
   const onLiveRef = useRef(null);
   const liveUnlistenRef = useRef(null);
   const stopLive = () => {
@@ -29,8 +30,10 @@ export function useVoiceInput() {
   // 'vosk' (offline, no punctuation) or 'openai' (cloud Whisper). Persists in localStorage.
   const getSource = () => localStorage.getItem('zynkbot_voice_input_source') || 'vosk';
 
-  // ── Android / Vosk path ──────────────────────────────────────────────────
+  // ── Android path (both engines, through the Kotlin bridge) ───────────────
 
+  // The bridge picks Vosk or OpenAI from the Voice settings selector (mirrored to the
+  // Kotlin side by setVoiceInputSource); the window.__vosk* callbacks serve both.
   const startRecordingVosk = () => {
     window.__voskPartial = null; // clear any stale wake-word callback before dictation
     window.__voskLive = (text) => { onLiveRef.current?.(text || ''); };
@@ -143,8 +146,9 @@ export function useVoiceInput() {
     }
   };
 
-  // WebAudio → WAV → OpenAI Whisper. Used by Android when source === 'openai'.
-  // On desktop, both engines use the Rust mic path (this function is unused there).
+  // WebAudio → WAV → OpenAI Whisper. Used by Windows and macOS when source === 'openai'.
+  // Android used it too until 2026-10-28 (now the Kotlin bridge); Linux uses the Rust
+  // mic path for both engines.
   const stopRecordingDesktop = async () => {
     setIsRecording(false);
     setIsTranscribing(true);
@@ -218,9 +222,9 @@ export function useVoiceInput() {
     const source = getSource();
     onLiveRef.current = typeof onLive === 'function' ? onLive : null;
     if (isAndroid()) {
-      // Android WebView is Chromium — getUserMedia works, so OpenAI uses the
-      // same WebAudio path as pre-Vosk. Vosk still goes through the Kotlin bridge.
-      if (source === 'openai') return startRecordingDesktop();
+      // Both engines go through the Kotlin bridge, which reads the selector itself:
+      // Vosk offline, or OpenAI streamed live (2026-10-28; before that OpenAI recorded
+      // here through getUserMedia and heard the whole clip only on stop).
       return startRecordingVosk();
     }
     if (isDesktopLinux()) {
@@ -241,10 +245,7 @@ export function useVoiceInput() {
     if (!isRecording) return '';
     const source = getSource();
     stopLive();
-    if (isAndroid()) {
-      if (source === 'openai') return stopRecordingDesktop();
-      return stopRecordingVosk();
-    }
+    if (isAndroid()) return stopRecordingVosk();
     if (isDesktopLinux()) {
       return stopRecordingDesktopRust(source);
     }
