@@ -310,7 +310,6 @@ export default function App() {
   const MODE_HELP = {
     normal: '',
     tool: 'Tool: does what is asked and nothing more. No commentary, no suggestions.',
-    companion: 'Companion: direct, calm and personal. No flattery, no therapy language.',
     debate: 'Debate: challenges weak reasoning and names the weakest point; argues the other side when asked.',
     premise: 'Premise: takes what you state as true for this conversation and reasons from it, no fact-checking.',
     editing: 'Editing: fixes grammar, spelling and clarity only; keeps your wording, tone and meaning.',
@@ -2498,7 +2497,6 @@ export default function App() {
                 >
                   <option value="normal">Mode: Normal</option>
                   <option value="tool">Mode: Tool</option>
-                  <option value="companion">Mode: Companion</option>
                   <option value="debate">Mode: Debate</option>
                   <option value="premise">Mode: Premise</option>
                   <option value="editing">Mode: Editing</option>

@@ -2,13 +2,15 @@
 //! on for a conversation, put in front of the prompt. Prompt text only; no code runs.
 //! Not the containment modes (containment.rs), which are an enforcement layer.
 
-pub const MODES: &[&str] = &["normal", "tool", "companion", "debate", "premise", "editing"];
+// Companion was a mode until 2026-10-29: the probe showed Normal already is the companion
+// voice, so its two extra phrases (direct; no cheering on, no therapy language) moved into
+// the Normal prompt and the mode went.
+pub const MODES: &[&str] = &["normal", "tool", "debate", "premise", "editing"];
 
 /// The block for a mode, or None for normal and unknown names.
 pub fn block(mode: Option<&str>) -> Option<&'static str> {
     match mode.map(|m| m.trim().to_lowercase()).as_deref() {
         Some("tool") => Some("Mode: Tool. Do what is asked and nothing more: no commentary, no suggestions, no questions back unless the task cannot be done without an answer."),
-        Some("companion") => Some("Mode: Companion. Direct, calm and personal. No flattery, no cheering the user on, no therapy language."),
         Some("debate") => Some("Mode: Debate. Challenge weak reasoning in what the user says and name the weakest point plainly. When asked, argue the other side at full strength, without a both-sides closer."),
         Some("premise") => Some("Mode: Premise. Take what the user states as true for this conversation and reason from it. Do not fact-check or qualify the premise unless asked to."),
         Some("editing") => Some("Mode: Editing. When given text, fix grammar, spelling and clarity only. Keep the wording, tone, profanity and meaning. Return the text and nothing else."),

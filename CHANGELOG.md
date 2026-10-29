@@ -21,6 +21,11 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - **One shared conversation across devices.** The thread any device wrote to last is the current one on all of them: a device lands in it when it is brought back to the front, when the app starts, or when a sync brings news and the device has been idle 45 s; it never moves while you are typing, waiting for a reply or have a file attached, and "New" is respected until another device writes after it.
 - **"Last synced" in the sync panel**, per device: how long since a round finished cleanly, in amber when the device is online but nothing has synced for five minutes.
 
+- **Live dictation on Android (OpenAI engine):** words appear while you talk, in stretches after each pause, instead of after the stop button.
+- **Conversation modes:** a drop-down beside the thread title (Tool, Debate, Premise, Editing) puts one short instruction block in front of the prompt for that conversation; a help line under the title says what the mode does. Checked case by case against Claude on 2026-10-29 (`mode_probe`): Editing and Debate change the answers clearly; a Companion mode was tried and folded into Normal, whose voice now also says direct, no cheering on, no therapy language.
+- **One shared conversation, follow-up:** a device touched just before another device wrote now catches up once it has been quiet for 45 s (before, it never did until the app was reopened).
+- Phones: a small line under a picture in the chat says it can be held to save it to the gallery.
+
 ## [0.9.6-beta5] — 2026-10-27 <!-- branch local-model; entries for 10-26/27 drafted by Claude, for Matt's review -->
 
 ### Timer, alarm and stopwatch (Android; branch `timer`, 2026-10-25)
