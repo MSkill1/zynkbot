@@ -307,13 +307,32 @@ export default function App() {
   // Conversation mode (2026-10-28): a short instruction block in front of the prompt, for this
   // page session; 'normal' sends nothing. The names and blocks live in chat_modes.rs.
   const [chatMode, setChatMode] = useState('normal');
-  const MODE_HELP = {
-    normal: '',
-    tool: 'Tool: does what is asked and nothing more. No commentary, no suggestions.',
-    debate: 'Debate: challenges weak reasoning and names the weakest point; argues the other side when asked.',
-    premise: 'Premise: takes what you state as true for this conversation and reasons from it, no fact-checking.',
-    editing: 'Editing: fixes grammar, spelling and clarity only; keeps your wording, tone and meaning.',
-  };
+  // The modes, in menu order: key, name, one line on what it does. The menu is drawn by the
+  // page (2026-10-29, Matt): a standard drop-down's open list is a native GTK menu on Linux,
+  // which ignores the page colours and shows no description per entry.
+  const MODES = [
+    ['normal', 'Normal', 'The usual Zynkbot: warm, direct and honest. Nothing extra is sent.'],
+    ['tool', 'Tool', 'Does what is asked and nothing more. No commentary, no suggestions.'],
+    ['debate', 'Debate', 'Challenges weak reasoning and names the weakest point; argues the other side when asked.'],
+    ['premise', 'Premise', 'Takes what you state as true for this conversation and reasons from it, no fact-checking.'],
+    ['editing', 'Editing', 'Fixes grammar, spelling and clarity only; keeps your wording, tone and meaning.'],
+  ];
+  const MODE_HELP = Object.fromEntries(MODES.map(([k, name, blurb]) => [k, k === 'normal' ? '' : `${name}: ${blurb}`]));
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const modeMenuRef = useRef(null);
+  useEffect(() => {
+    if (!modeMenuOpen) return undefined;
+    const away = (e) => { if (modeMenuRef.current && !modeMenuRef.current.contains(e.target)) setModeMenuOpen(false); };
+    const esc = (e) => { if (e.key === 'Escape') setModeMenuOpen(false); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('touchstart', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('touchstart', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [modeMenuOpen]);
   const [editingThreadTitle, setEditingThreadTitle] = useState(null); // null, or the draft text
   const fetchThreadTitle = async () => {
     if (!userId || !sessionId) return;
@@ -878,6 +897,11 @@ export default function App() {
     window.__zynkResumed = checkPendingCards;
     const onVisible = () => { if (document.visibilityState === 'visible') checkPendingCards(); };
     document.addEventListener('visibilitychange', onVisible);
+    // On the desktop, switching to another window and back does not change the page's
+    // visibility (WebKitGTK reports hidden only when minimised), so the return is the
+    // window regaining focus (2026-10-29: a card raised while Matt was in the window
+    // showed only after a page refresh).
+    window.addEventListener('focus', checkPendingCards);
 
     const setupListener = async () => {
       unlisten = await listen('contradiction-detected', (event) => {
@@ -895,6 +919,7 @@ export default function App() {
 
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', checkPendingCards);
       if (window.__zynkResumed === checkPendingCards) window.__zynkResumed = null;
       if (unlisten) {
         unlisten();
@@ -2004,6 +2029,10 @@ export default function App() {
           setControlsPage(null);
           memoryManagerRef.current?.close();
         }}
+        // Opening the sidebar hides an open memory card (above). When the sidebar closes,
+        // any card still unanswered comes back (2026-10-29: Matt opened the sidebar to
+        // switch models seconds after a card appeared and it was gone until a refresh).
+        onClose={() => { if (window.__zynkResumed) window.__zynkResumed(); }}
       >
         {/* One button per section; each opens a page of its own (ControlsPage below).
             Getting Started leads the list until onboarding has been completed on this
@@ -2491,26 +2520,37 @@ export default function App() {
                 )}
                 {/* The pencil follows the title text; this spacer pushes the Mode control to the right (2026-10-29). */}
                 <span style={{ flex: 1 }} />
-                <select
-                  value={chatMode}
-                  onChange={(e) => setChatMode(e.target.value)}
-                  title="Conversation mode: how the model behaves in this conversation. Normal sends nothing extra."
-                  style={{
-                    // WebKitGTK paints its own white box behind a <select> unless the native look is
-                    // switched off; the chevron is then drawn here (2026-10-29).
-                    WebkitAppearance: 'none', appearance: 'none',
-                    fontSize: '0.75rem', background: '#282a36', color: chatMode === 'normal' ? '#c8d0e0' : '#f1fa8c',
-                    border: '1px solid #44475a', borderRadius: '4px', padding: '2px 20px 2px 6px', flexShrink: 0, cursor: 'pointer',
-                    backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23c8d0e0'/></svg>\")",
-                    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
-                  }}
-                >
-                  <option value="normal">Mode: Normal</option>
-                  <option value="tool">Mode: Tool</option>
-                  <option value="debate">Mode: Debate</option>
-                  <option value="premise">Mode: Premise</option>
-                  <option value="editing">Mode: Editing</option>
-                </select>
+                <div ref={modeMenuRef} style={{ position: 'relative', flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => setModeMenuOpen(o => !o)}
+                    title="Conversation mode: how the model behaves in this conversation"
+                    aria-haspopup="menu"
+                    aria-expanded={modeMenuOpen}
+                    style={{ fontSize: '0.75rem', background: '#282a36', color: chatMode === 'normal' ? '#c8d0e0' : '#f1fa8c', border: '1px solid #44475a', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  >
+                    Mode: {(MODES.find(([k]) => k === chatMode) || MODES[0])[1]} ▾
+                  </button>
+                  {modeMenuOpen && (
+                    <div role="menu" style={{ position: 'absolute', right: 0, top: 'calc(100% + 4px)', zIndex: 50, width: '320px', maxWidth: '88vw', background: '#282a36', border: '1px solid #44475a', borderRadius: '6px', boxShadow: '0 6px 18px rgba(0,0,0,0.45)', padding: '4px' }}>
+                      {MODES.map(([k, name, blurb]) => (
+                        <button
+                          key={k}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={k === chatMode}
+                          onClick={() => { setChatMode(k); setModeMenuOpen(false); }}
+                          style={{ display: 'block', width: '100%', textAlign: 'left', background: k === chatMode ? 'rgba(139, 233, 253, 0.12)' : 'transparent', border: 'none', borderRadius: '4px', padding: '6px 8px', cursor: 'pointer', color: '#f8f8f2' }}
+                          onMouseEnter={(e) => { if (k !== chatMode) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; }}
+                          onMouseLeave={(e) => { if (k !== chatMode) e.currentTarget.style.background = 'transparent'; }}
+                        >
+                          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: k === chatMode ? '#8be9fd' : '#f8f8f2' }}>{name}{k === chatMode ? ' ✓' : ''}</div>
+                          <div style={{ fontSize: '0.75rem', color: '#9aa5c4', lineHeight: 1.35 }}>{blurb}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               {chatMode !== 'normal' && (
                 <div style={{ fontSize: '0.75rem', color: '#f1fa8c', padding: '0 4px 6px', opacity: 0.9 }}>
@@ -2989,12 +3029,14 @@ export default function App() {
                     2026-10-24). The tap explains in the notice line instead. */}
                 <button
                   onClick={() => {
-                    if (modelType && modelType.endsWith('.gguf')) { showNotice('Ensemble needs cloud models. Pick one in the model menu to use it.'); return; }
+                    // Phones only (2026-10-29, Matt): the desktop opens Ensemble whatever the current model
+                    // is; its window lists the local model next to the cloud ones.
+                    if (window.AndroidPaths && modelType && modelType.endsWith('.gguf')) { showNotice('Ensemble needs cloud models. Pick one in the model menu to use it.'); return; }
                     setShowEnsemble(true);
                   }}
                   disabled={isLoading || containmentMode === 'child'}
                   title={containmentMode === 'child' ? 'Ensemble mode is not available in Child safety mode'
-                    : (modelType && modelType.endsWith('.gguf')) ? 'Ensemble needs cloud models; switch off the local model to use it'
+                    : (window.AndroidPaths && modelType && modelType.endsWith('.gguf')) ? 'Ensemble needs cloud models; switch off the local model to use it'
                     : 'Multi-model collaboration'}
                   style={{
                     width: '85px',
@@ -3004,7 +3046,7 @@ export default function App() {
                     minHeight: '42px',
                     maxHeight: '42px',
                     padding: '0',
-                    background: (containmentMode === 'child' || (modelType && modelType.endsWith('.gguf'))) ? '#6272a4' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    background: (containmentMode === 'child' || (window.AndroidPaths && modelType && modelType.endsWith('.gguf'))) ? '#6272a4' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                     color: '#fff',
                     border: 'none',
                     borderRadius: '8px',
@@ -3012,7 +3054,7 @@ export default function App() {
                     fontWeight: 'bold',
                     fontSize: '0.75rem',
                     transition: 'all 0.2s',
-                    opacity: (isLoading || containmentMode === 'child' || (modelType && modelType.endsWith('.gguf'))) ? 0.5 : 1,
+                    opacity: (isLoading || containmentMode === 'child' || (window.AndroidPaths && modelType && modelType.endsWith('.gguf'))) ? 0.5 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -3021,7 +3063,7 @@ export default function App() {
                     gridColumn: isMobile ? 1 : 2,
                     gridRow: 1,
                   }}
-                  onMouseOver={(e) => !(isLoading || containmentMode === 'child' || (modelType && modelType.endsWith('.gguf'))) && (e.target.style.transform = 'translateY(-2px)')}
+                  onMouseOver={(e) => !(isLoading || containmentMode === 'child' || (window.AndroidPaths && modelType && modelType.endsWith('.gguf'))) && (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                 >
                   Ensemble

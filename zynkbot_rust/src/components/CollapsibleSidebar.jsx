@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 
-export default function CollapsibleSidebar({ children, icon, title, onInfoClick, onVoiceClick, onReportClick, hideToggle, onOpen }) {
+export default function CollapsibleSidebar({ children, icon, title, onInfoClick, onVoiceClick, onReportClick, hideToggle, onOpen, onClose }) {
   const [isOpen, setIsOpen] = useState(false);
 
   const handleToggle = () => {
     if (!isOpen && onOpen) onOpen();
+    if (isOpen && onClose) onClose();
     setIsOpen(!isOpen);
   };
 
@@ -185,7 +186,7 @@ export default function CollapsibleSidebar({ children, icon, title, onInfoClick,
       {isOpen && (
         <div
           className="sidebar-backdrop"
-          onClick={() => setIsOpen(false)}
+          onClick={() => { setIsOpen(false); if (onClose) onClose(); }}
           style={{
             position: 'fixed',
             top: '0',

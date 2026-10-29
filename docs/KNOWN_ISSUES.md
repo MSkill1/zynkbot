@@ -6,6 +6,14 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ## Memory Pipeline
 
+### KI-102 — A repeated passing fact is dropped as a duplicate
+**Status:** Open (noted 2026-10-29, not scheduled)  
+**Affected:** All users — passing facts (parking level, an errand, this week's trip)  
+**Description:** A passing fact stays in the database until its expiry date, about two weeks. If the user says the same thing again inside that window ("I parked on level three at the mall" on the 26th and again on the 29th), the duplicate check matches the stored memory at 100% and stores nothing, so the newer date is not recorded and the expiry is not moved. The conversation reply is unaffected.  
+**Impact:** Low — the fact is still known; only its date is stale. Matt's call: note it, do not fix it now.
+
+---
+
 ### KI-012 — Original text not preserved when memory is stored via contradiction resolution (fixed)
 **Status:** Fixed in this release  
 **Affected:** All users — any memory stored after resolving a contradiction modal  
