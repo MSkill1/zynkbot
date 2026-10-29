@@ -363,6 +363,7 @@ Below you have access to stored personal memories that were recalled from the us
 When responding:
 - Use these memories to provide personalized, contextual answers about the user's life and experiences
 - Reference the memories naturally and conversationally when they're relevant
+- When you list things the user has planned, has coming up or meant to do, give the date each one was mentioned (the date in front of the memory), so they can see how old it is
 - For general knowledge questions unrelated to the stored memories, answer from your training data without mentioning the memories
 - Be helpful, accurate, and maintain appropriate context when discussing personal information
 
@@ -390,11 +391,11 @@ After you indicate a web search is needed, the user will be shown your suggested
             // the memories line and the web-search rule; the explanations around them went,
             // and the "ask for missing details first" line (2026-10-20, written for GPT) is
             // left out so a 4B model answers rather than questions back.
-            format!("{opening}You are Zynkbot, a warm, honest, direct companion. Never claim to be human or to replace the people in the user's life. Say so when you are unsure. Do not flatter; no cheering on, no therapy language. When someone shares grief or frustration, acknowledge it before solutions.\n\nStored memories below are the user's own history; treat them as facts about their life.\n\nFor news, weather, prices or recent events, output: WEB_SEARCH_NEEDED: [query]. Never for the date or time, or for the user's own history.\n\n")
+            format!("{opening}You are Zynkbot, a warm, honest, direct companion. Never claim to be human or to replace the people in the user's life. Say so when you are unsure. Do not flatter; no cheering on, no therapy language. When someone shares grief or frustration, acknowledge it before solutions.\n\nStored memories below are the user's own history; treat them as facts about their life. When you list plans or things coming up, say when each was mentioned (the date in front of the memory).\n\nFor news, weather, prices or recent events, output: WEB_SEARCH_NEEDED: [query]. Never for the date or time, or for the user's own history.\n\n")
         } else {
             // Slim prompt for local models: task-first framing so fact extraction (PART 1)
             // is understood as a primary output requirement, not an afterthought.
-            format!("{opening}As Zynkbot, be warm, calm, direct and genuinely present. Never claim to be human or to replace people in the user's life. Be honest when uncertain. Don't flatter or validate automatically; no cheering on, no therapy language. Don't encourage dependency; reserve professional-help suggestions for real clinical/legal stakes. When someone shares grief or frustration, acknowledge it before solutions. Keep responses proportionate. If one or two missing details would change your answer, ask for them first, briefly; otherwise answer and say what you assumed. The user's data belongs to them.\n\nStored memories below are the user's own personal history — treat them as facts about their life and experiences. Reference them when relevant; answer general questions from training otherwise. You cannot change a memory yourself: when the user corrects one, say the correction will be checked against the stored memories and that they can edit any memory in Memory Manager; never say you have updated it.\n\nThe current date and time are stated above — answer those directly, never search for them. For other real-time info (news, weather, prices, recent events) output: WEB_SEARCH_NEEDED: [query]. Questions using words like 'latest', 'recent', or 'news' require WEB_SEARCH_NEEDED — do not answer those from training data. Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history or memories.\n\n")
+            format!("{opening}As Zynkbot, be warm, calm, direct and genuinely present. Never claim to be human or to replace people in the user's life. Be honest when uncertain. Don't flatter or validate automatically; no cheering on, no therapy language. Don't encourage dependency; reserve professional-help suggestions for real clinical/legal stakes. When someone shares grief or frustration, acknowledge it before solutions. Keep responses proportionate. If one or two missing details would change your answer, ask for them first, briefly; otherwise answer and say what you assumed. The user's data belongs to them.\n\nStored memories below are the user's own personal history — treat them as facts about their life and experiences. Reference them when relevant; answer general questions from training otherwise. When listing plans or things coming up, give the date in front of each memory. You cannot change a memory yourself: when the user corrects one, say the correction will be checked against the stored memories and that they can edit any memory in Memory Manager; never say you have updated it.\n\nThe current date and time are stated above — answer those directly, never search for them. For other real-time info (news, weather, prices, recent events) output: WEB_SEARCH_NEEDED: [query]. Questions using words like 'latest', 'recent', or 'news' require WEB_SEARCH_NEEDED — do not answer those from training data. Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history or memories.\n\n")
         };
 
         // If we know the user's name, tell the LLM so it can use it instead of "User"
@@ -698,8 +699,9 @@ mod on_device_prompt_tests {
         let instructions = &p[..p.find("RECENT CONVERSATION").unwrap()];
         // 140 until 2026-10-25; the "background, not the topic" line (Matt) added about twenty words on purpose.
         // 165 → 190 on 2026-10-26 for the "say you do not have it" line (Matt); 190 → 210 the same day
-        // for the "already happened" line (the funeral read as a plan).
-        assert!(instructions.split_whitespace().count() < 210, "{} words", instructions.split_whitespace().count());
+        // for the "already happened" line (the funeral read as a plan). 210 → 225 on 2026-10-29 for
+        // the "give the date in front of each memory" line when listing plans (Matt).
+        assert!(instructions.split_whitespace().count() < 225, "{} words", instructions.split_whitespace().count());
         assert!(p.contains("WEB_SEARCH_NEEDED"));
     }
     #[test]

@@ -282,6 +282,7 @@ This needs to be resolved before Play Store launch. The core tension:
 - **Word document (.docx) support in Knowledge Base**
 - **GPU conflict warning scope: desktop only** — suppress the Ensemble GPU conflict warning when `window.AndroidPaths` is present.
 - **Model Management UI** — download/delete .gguf models from UI with progress indicators.
+- **Tooltips drawn by the page** — the hover hints are the operating system's own tooltips (under Mint-Y-Aqua: light blue, large, instant). Replace them with small dark tooltips drawn by the page with a short delay, the same on Windows and Linux. The long hint on the message box was removed 2026-10-29 as a stopgap. *(Matt, 2026-10-29)*
 - **Auto-update notification** — detect new version and prompt to update.
 
 ---

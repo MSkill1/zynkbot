@@ -798,6 +798,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             REPLACED
           </span>
         )}
+        {mem.temporal_status === 'completed' && (
+          <span title="You said this was done; it is kept as history and left out of recall" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
+            DONE
+          </span>
+        )}
         {passingState(mem) === 'expired' && (
           <span title="A passing fact whose time has passed; it is left out of recall" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
             EXPIRED
@@ -854,6 +859,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               {mem.temporal_status === 'superseded' && (
                 <span className="memory-namespace-badge" title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a' }}>
                   REPLACED
+                </span>
+              )}
+              {mem.temporal_status === 'completed' && (
+                <span className="memory-namespace-badge" title="You said this was done; it is kept as history and left out of recall" style={{ background: '#44475a' }}>
+                  DONE
                 </span>
               )}
               {passingState(mem) === 'expired' && (
@@ -1128,6 +1138,14 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     <div className="detail-row">
                       <strong>Created:</strong> {new Date(selectedMemory.created_at).toLocaleString()}
                     </div>
+                    {selectedMemory.temporal_status === 'completed' && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> done, by your answer to a check-in question. Kept as history and left out of recall.{' '}
+                        <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="Not done after all: this memory is current again">
+                          Not done after all
+                        </button>
+                      </div>
+                    )}
                     {selectedMemory.temporal_status === 'superseded' && (
                       <div className="detail-row">
                         <strong>Status:</strong> replaced by a newer memory. Kept as history and left out of recall.
@@ -1574,6 +1592,14 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     <div className="detail-row">
                       <strong>Source:</strong> {selectedMemory.source_type || 'N/A'}
                     </div>
+                    {selectedMemory.temporal_status === 'completed' && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> done, by your answer to a check-in question. Kept as history and left out of recall.{' '}
+                        <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="Not done after all: this memory is current again">
+                          Not done after all
+                        </button>
+                      </div>
+                    )}
                     {selectedMemory.temporal_status === 'superseded' && (
                       <div className="detail-row">
                         <strong>Status:</strong> replaced by a newer memory. Kept as history and left out of recall.{' '}

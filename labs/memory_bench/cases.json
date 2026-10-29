@@ -1511,6 +1511,81 @@
     "memory_id": 101,
     "type": "related"
    }
+  },
+  {
+   "id": "r45",
+   "new_fact": "Matt parked on level five in the airport garage.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt parked on level three at the mall.",
+     "title": "Parked on level three at mall"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r46",
+   "new_fact": "Matt parked on level five in the airport garage.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a dentist appointment on Thursday.",
+     "title": "Dentist on Thursday"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r47",
+   "new_fact": "Matt wants to retire by sixty.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is going to cut the grocery budget this month.",
+     "title": "Cutting the grocery budget"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r48",
+   "new_fact": "Matt is flying to Denver this weekend.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is flying to Boston this weekend.",
+     "title": "Flying to Boston this weekend"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r49",
+   "new_fact": "Matt is making chili with beef patties for dinner tonight.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt had chicken wings for dinner last night.",
+     "title": "Had chicken wings last night"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
   }
  ]
 }

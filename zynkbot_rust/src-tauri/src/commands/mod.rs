@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod chat;
+pub mod checkin;
 pub mod setup_wizard;
 pub mod conversation;
 pub mod knowledge_base;

@@ -11,6 +11,7 @@ Experiments and design notes that are not scheduled work. Scheduled work lives i
 | `zynksync_improvements/` | Semantic conflict detection during sync and other sync ideas | Design phase, aimed at v1.0 |
 | `kits/` | "Kits": packaged uses of the memory system (the Kitchen kit ships free; others are one-time purchases) | Design; the tier decision is on the roadmap |
 | `standing_instructions/` | An always-loaded memory tier of user-written rules, the foundation for Parenting and Elder Mode | Speculative; not before v1.0 |
+| `check_in/` | "Did you ever…?": one question a day about a stale intention at its expiry; app logic, no training | Built 2026-10-29 as a beta 5 experiment; note kept as the spec |
 | `snapin_platform/`, `zynkforge/` | The snap-in platform: plan and embedding-dimension notes | Labs plan (2026-09), not scheduled |
 | `moe_poc/` | ZynkCluster: running a frontier-class open model across several ordinary machines with a distributed mixture-of-experts layout; a RAM-first plan for used office PCs; illustrative coordinator and node code | Design phase, illustrative code only; nothing runs yet. Depends on hardware the project does not have |
 | `collaboration_history/` | How the project is built: the two-session, four-device beta test day of 2026-09-12/13 | Record, not a plan |

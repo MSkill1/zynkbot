@@ -49,7 +49,8 @@ pub struct Memory {
     /// JSON array of lowercase topic words from the decision call (migration 0011).
     #[sqlx(default)]
     pub tags: Option<String>,
-    /// NULL for a current memory; "superseded" once an "updates" link replaced it with a
+    /// NULL for a current memory; "completed" once the user answered a check-in question
+    /// with "done" (labs/check_in, 2026-10-29); "superseded" once an "updates" link replaced it with a
     /// newer memory (migration 0022, 2026-10-23). A superseded memory leaves recall and
     /// stays visible in Memory Manager as history, with a way back.
     #[sqlx(default)]
@@ -387,7 +388,7 @@ pub async fn hybrid_search(
     let mut sql = String::from(
         "SELECT id, embedding, entities_detected FROM memories \
          WHERE (embedding IS NOT NULL OR (entities_detected IS NOT NULL AND entities_detected != '[]')) \
-         AND (temporal_status IS NULL OR temporal_status != 'superseded') \
+         AND (temporal_status IS NULL OR temporal_status NOT IN ('superseded', 'completed')) \
          AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now'))",
     );
     // Exclude system memories EXCEPT when explicitly searching the system user.

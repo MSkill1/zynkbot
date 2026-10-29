@@ -100,6 +100,99 @@ This is intentionally minimal. A marketplace/discovery layer is a later mileston
 
 ---
 
+## What a complete snap-in contains (added 2026-10-29)
+
+The therapist demo shows one part of a snap-in: a workspace that files notes and searches
+them. A complete snap-in is more than a folder. It bundles everything a domain
+needs, and it is the natural home for a conversation mode: a "legal mode" on its own is a
+paragraph of text anyone can copy, but a legal mode that comes with case files, a deadline
+tracker and citation checks is a product. Snap-ins are installed and switched on from the
+Snap-ins page in System Controls (it exists today, waiting for snap-ins); the Mode menu
+shows a snap-in's mode only while that snap-in is on. Pricing is the kits note's business
+(`labs/kits/KITS_DESIGN.md`); the `[license]` block below only leaves room for it.
+
+Seven parts. A snap-in declares the ones it uses; the manifest below is the contract.
+
+| part | what it is | exists today? |
+|---|---|---|
+| **workspace** | its own page (`index.html`): forms, lists, timelines | yes (therapist demo, hard-coded) |
+| **knowledge base folder** | documents it indexes and searches, scoped to its path | yes (`_system` style folder, RAG) |
+| **memory namespace** | memories it may read and write, nothing outside | yes (namespaces exist; scoping does not) |
+| **mode** | a prompt block and rules that shape every reply while the snap-in is active, listed in the Mode menu like Tool or Debate | no (modes are in `chat_modes.rs`, fixed list) |
+| **tools** | actions the model may call or the page offers: "add to timeline", "draft a letter from this template", "check this citation", "export the file" | no |
+| **check-in questions** | the one-question-a-day pattern from `labs/check_in`, with the snap-in's own rules on what to ask | no |
+| **policy** | containment interplay (a therapy snap-in forces HIPAA), consent text shown at install, and the licence | partly (containment modes exist) |
+
+### Manifest, extended
+
+```toml
+[snapin]
+id = "ai.containai.legal"
+name = "Legal case files"
+version = "0.1.0"
+entry = "index.html"
+
+[permissions]
+memory_namespaces = ["legal"]
+knowledge_base_paths = ["snap_ins/legal/"]
+network = false
+
+[mode]                                  # shown in the Mode menu while the snap-in is installed
+key = "legal"
+name = "Legal"
+blurb = "Precise, cites sources, flags deadlines; never gives advice as a lawyer would."
+prompt = "mode.md"                      # the block put in front of the prompt, same mechanism as chat_modes.rs
+forces_containment = "guardian"         # optional: therapy would say "hipaa"
+
+[[tools]]                               # each tool is a snapin_* command plus a line the model sees
+id = "timeline_add"
+label = "Add to the case timeline"
+model_visible = true                    # the model may ask for it, the user confirms (like web search today)
+
+[[tools]]
+id = "deadline_list"
+label = "Deadlines in the next 30 days"
+model_visible = true
+
+[checkins]                              # optional; off unless the user turns the snap-in's questions on
+patterns = ["file", "serve", "call the clerk"]
+max_per_day = 1
+
+[license]
+kind = "one_time"                       # or "free"
+unlock = "receipt_file"                 # a signed receipt placed next to the manifest; no server call
+```
+
+### Worked example: therapy / journal snap-in
+
+- **Workspace:** today's demo (clients, dated session notes) plus a session shape: opening
+  check-in, the body, a closing summary the user approves.
+- **Mode:** "Journal". Asks one open question per reply, reflects back without diagnosing,
+  never suggests dependency on itself; the same restraint rules as Normal. This is where
+  the "interview mode" idea from 2026-10-29 lives; it is not a general mode.
+- **Tools:** "summarise this month's sessions", "find the first mention of X", export.
+- **Check-ins:** only about things the user set themselves in a session ("I said I would
+  call my sister"), never about mood.
+- **Policy:** forces HIPAA containment; install text says notes never leave the device.
+
+### Worked example: legal snap-in
+
+- **Workspace:** matters (cases), each with parties, documents, a timeline, deadlines.
+- **Mode:** "Legal". Precise wording, cites the document and page it relies on, states
+  plainly that it is not a lawyer and that deadlines must be verified against the court's
+  rules; refuses to guess at law it has no source for in the knowledge base.
+- **Tools:** add to timeline, list deadlines, draft from a template (letter, notice),
+  citation check against the indexed documents, export a matter as a folder.
+- **Check-ins:** "You said you would file the response by the 14th. Done?"
+- **Policy:** Guardian containment at least; network off; one-time licence.
+
+### What this means for the platform plan above
+
+The loader and the `snapin_*` API stand. Two additions: `chat_modes::apply` reads
+snap-in modes as well as the built-in list, and the Mode menu (drawn by the page since
+2026-10-29) lists them with the snap-in's name as a group header. Tools reuse the web-search
+confirmation path: the model writes a marker, the page asks the user, the command runs.
+
 ## Permissions & Isolation
 
 This is the most important design decision and the one most worth getting right before writing code.

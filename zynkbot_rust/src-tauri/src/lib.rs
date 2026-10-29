@@ -569,7 +569,7 @@ EXISTING MEMORIES:
 {}
 
 Types, pick the first that fits:
-- "updates": the new fact replaces an older state of the same thing and the wording signals the change ("moved", "now", "switched to", "no longer"). The old memory is kept as history.
+- "updates": the new fact replaces an older state of the same thing. Either the wording signals the change ("moved", "now", "switched to", "no longer"), or both are short-lived facts of the same kind that cannot both hold now, such as where the car is parked or which hotel they are in: the newer one wins. Not where someone lives or works without a change word (that is "contradicts"). Things done on different days (a meal, a workout, an outing) are separate facts, "none"; more detail about the same trip or errand is "related". The old memory is kept as history.
 - "contradicts": same attribute, different values, with no sign that one came after the other; or opposite claims on the same topic.
 - "related": the same specific person, pet, place, thing or habit, adding to it or confirming it.
 - "none": different things. Two facts about the same user are not related just because they are both about the user; a shared broad topic is not enough.
@@ -646,7 +646,7 @@ SIMILAR EXISTING MEMORIES:
 {}
 
 RELATIONSHIP TYPES (pick the first that fits, top to bottom):
-- "updates": The new fact REPLACES an older state of the same thing, and the wording signals the change ("moved", "now", "switched to", "new", "no longer", "quit", "used to", "retired"). "Matt lives in Rutland" + "Matt moved to Burlington" = updates. The old memory is kept as history.
+- "updates": The new fact REPLACES an older state of the same thing. Either the wording signals the change ("moved", "now", "switched to", "new", "no longer", "quit", "used to", "retired"), or both are short-lived facts of the same kind that cannot both hold now, such as where the car is parked or which hotel they are in: the newer one wins ("parked on level 3 at the mall" + "parked on level 5 at the airport" = updates). Not where someone lives or works without a change word ("lives in Rutland" + "lives in Burlington" = contradicts). Things done on different days ("had wings last night" + "making chili tonight") are separate facts, "none"; more detail about the same trip or errand ("going to Denver this week" + "flying to Denver on Thursday for a wedding") is "related". "Matt lives in Rutland" + "Matt moved to Burlington" = updates. The old memory is kept as history.
 - "contradicts": Same attribute, different values, with NO sign that one came after the other — or opposite claims on the same topic. "Matt's cat is Milo" + "Matt's cat is Louie" = contradicts (a second cat or a mistake; the user is asked).
 - "related": The same specific subject (the same person, pet, place, thing or habit), adding to it or confirming it. "Matt has a cat" + "Matt's cat is named Louie" = related.
 - "none": Different things. Use "none" whenever they do not share a specific subject — two facts about the same user are NOT related just because they are both about the user, and a shared broad topic (both about food, both about family, both hobbies) is not enough.
@@ -2543,6 +2543,10 @@ pub fn run() {
             commands::zynklink::cancel_zynklink_download,
             commands::zynklink::remove_shared_file,
             commands::zynklink::move_shared_file,
+            commands::checkin::next_memory_checkin,
+            commands::checkin::answer_memory_checkin,
+            commands::checkin::get_checkin_enabled,
+            commands::checkin::set_checkin_enabled,
             commands::zynklink::get_linked_devices,
             // External file/folder opening + Knowledge Base
             commands::knowledge_base::open_external_file,

@@ -67,7 +67,7 @@ fn place_in(query: &str) -> Option<String> {
 pub async fn remembered_place(user_id: &str) -> Option<String> {
     let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.ok()?;
     let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT content FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status != 'superseded') \
+        "SELECT content FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status NOT IN ('superseded', 'completed')) \
          AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now')) \
          AND (content LIKE '%lives in %' OR content LIKE '%live in %' OR content LIKE '%mailing address%' OR content LIKE '%home is in %' OR content LIKE '%moved to %') \
          ORDER BY created_at DESC LIMIT 30")

@@ -32,6 +32,7 @@ import ZynkClusterModal from "./components/ZynkClusterModal";
 import OnboardingModal from "./components/OnboardingModal";
 import SetupWizard from "./components/SetupWizard";
 import SnapInModal from "./components/SnapInModal";
+import CheckInCard from "./components/CheckInCard";
 import ConversationHistoryPanel from "./components/ConversationHistoryPanel";
 import VoiceModal from "./components/VoiceModal";
 import { useVoiceSession, parseVoiceCommand, shouldSpeakReply, nativeTurnsToMessages } from './hooks/useVoiceSession';
@@ -318,6 +319,12 @@ export default function App() {
     ['editing', 'Editing', 'Fixes grammar, spelling and clarity only; keeps your wording, tone and meaning.'],
   ];
   const MODE_HELP = Object.fromEntries(MODES.map(([k, name, blurb]) => [k, k === 'normal' ? '' : `${name}: ${blurb}`]));
+  // Check-in question (labs/check_in, 2026-10-29): asked once a day at the start of a
+  // conversation, about something the user said they would do; experimental in beta 5.
+  const [pendingCheckin, setPendingCheckin] = useState(null);
+  const [checkinEnabled, setCheckinEnabled] = useState(true);
+  const containmentModeRef = useRef('sovereign');
+  const checkinAskedThisOpenRef = useRef(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const modeMenuRef = useRef(null);
   useEffect(() => {
@@ -333,6 +340,28 @@ export default function App() {
       document.removeEventListener('keydown', esc);
     };
   }, [modeMenuOpen]);
+  // At the app's open, or on a return after ten quiet minutes, ask the backend for the one
+  // check-in question of the day. Never while something is typed or a card is open.
+  const maybeAskCheckin = async (onOpen, force = false) => {
+    if (!userId || pendingCheckin) return false;
+    const el = inputTextareaRef.current;
+    if (!force && el && el.value && el.value.trim()) return false;
+    if (!force && !onOpen && Date.now() - lastTouchRef.current < 10 * 60 * 1000) return false;
+    try {
+      const q = await invoke('next_memory_checkin', { userId, containmentMode: containmentModeRef.current, force });
+      if (q) { setPendingCheckin(q); return true; }
+    } catch (e) { console.warn('[App] check-in:', e); }
+    return false;
+  };
+  const answerCheckin = async (answer) => {
+    const q = pendingCheckin;
+    setPendingCheckin(null);
+    if (!q) return;
+    try {
+      const note = await invoke('answer_memory_checkin', { memoryId: q.memory_id, answer });
+      if (note) notify(note, 3500);
+    } catch (e) { notify(`Could not save that: ${e}`, 6000); }
+  };
   const [editingThreadTitle, setEditingThreadTitle] = useState(null); // null, or the draft text
   const fetchThreadTitle = async () => {
     if (!userId || !sessionId) return;
@@ -404,6 +433,7 @@ export default function App() {
   // impression for a safety layer that exists to be shown off, not to actually
   // gate a real conversation. Sovereign warns instead of blocking (Matt, 2026-09-20).
   const [containmentMode, setContainmentMode] = useState("sovereign");
+  useEffect(() => { containmentModeRef.current = containmentMode; }, [containmentMode]);
   // "Report a problem" — opened from the sidebar or a reply's ⚑ button.
   const [showReport, setShowReport] = useState(false);
   const [reportContext, setReportContext] = useState('');
@@ -677,6 +707,7 @@ export default function App() {
   const [modelMoveBusy, setModelMoveBusy] = useState(null);
   useEffect(() => {
     if (controlsPage === 'model') fetchLocalModelFiles();
+    if (controlsPage === 'experimental') invoke('get_checkin_enabled').then((on) => setCheckinEnabled(on !== false)).catch(() => {});
   }, [controlsPage]);
   useEffect(() => {
     const onChanged = () => { fetchModels(); fetchLocalModelFiles(); };
@@ -890,8 +921,13 @@ export default function App() {
         if (cards && cards.length > 0) {
           setCurrentConflict(prev => prev || cards[0]);
           setShowConflictResolution(true);
+          return;
         }
       } catch (e) { console.warn('[App] pending cards:', e); }
+      // No card waiting: the check-in question gets the slot (once at open, then on quiet returns).
+      const first = !checkinAskedThisOpenRef.current;
+      checkinAskedThisOpenRef.current = true;
+      maybeAskCheckin(first);
     };
     checkPendingCards();
     window.__zynkResumed = checkPendingCards;
@@ -925,6 +961,8 @@ export default function App() {
         unlisten();
       }
     };
+    // maybeAskCheckin reads refs and current state; re-running this effect per render would re-register the listener.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   // (Wake lock, wake word lifecycle, dictation listener, pause/visibility effects
@@ -2092,6 +2130,12 @@ export default function App() {
           dim
           onClick={() => setControlsPage('cluster')}
         />}
+        <ControlsMenuButton
+          icon="🧪"
+          title="Experimental"
+          subtitle="Features under test in this beta"
+          onClick={() => setControlsPage('experimental')}
+        />
         {!gettingStartedOnTop && gettingStartedButton}
         <ControlsMenuButton
           icon="📖"
@@ -2344,6 +2388,44 @@ export default function App() {
         </ControlsPage>
       )}
 
+      {controlsPage === 'experimental' && (
+        <ControlsPage icon="🧪" title="Experimental" subtitle="Features under test in this beta" onClose={() => setControlsPage(null)}>
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.85rem', color: '#f8f8f2', marginBottom: '6px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={checkinEnabled}
+              onChange={async (e) => {
+                const on = e.target.checked;
+                setCheckinEnabled(on);
+                try { await invoke('set_checkin_enabled', { enabled: on }); } catch (err) { notify(`Could not save: ${err}`, 5000); }
+                if (!on) setPendingCheckin(null);
+              }}
+              style={{ width: 'auto', margin: '3px 0 0' }}
+            />
+            <span>
+              <strong>Ask about old plans</strong>
+              <div style={{ color: '#9aa5c4', marginTop: '2px', lineHeight: 1.45 }}>
+                When something you said you would do (an errand, a purchase, a chore) is about to leave Zynkbot's memory after two weeks,
+                Zynkbot asks once, at the start of a conversation and at most once a day, whether it happened. Done keeps it as history,
+                Not yet keeps it two more weeks, Never mind deletes it. Plans that are not short-lived are never asked about.
+              </div>
+            </span>
+          </label>
+          <button
+            type="button"
+            disabled={!checkinEnabled}
+            onClick={async () => {
+              const asked = await maybeAskCheckin(true, true);
+              setControlsPage(null);
+              if (!asked) notify('Nothing to ask about yet: no short-lived plan of yours is waiting.', 5000);
+            }}
+            title="Ask the next question now, ignoring the once-a-day rule and the two-week timing (for testing)"
+            style={{ marginTop: '8px', background: '#44475a', color: '#f8f8f2', border: 'none', borderRadius: '6px', padding: '8px 14px', cursor: checkinEnabled ? 'pointer' : 'default', opacity: checkinEnabled ? 1 : 0.5, fontSize: '0.85rem' }}
+          >
+            Try it now
+          </button>
+        </ControlsPage>
+      )}
       {controlsPage === 'cluster' && (
         <ControlsPage icon="🔬" title="ZynkCluster" subtitle="Upcoming" onClose={() => setControlsPage(null)}>
           <button
@@ -2557,6 +2639,7 @@ export default function App() {
                   {MODE_HELP[chatMode]} <span style={{ color: '#9aa5c4' }}>Set the mode back to Normal to switch it off.</span>
                 </div>
               )}
+              <CheckInCard checkin={pendingCheckin} onAnswer={answerCheckin} onDismiss={() => answerCheckin('other')} />
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
                   introSeen('chat')
@@ -2748,7 +2831,6 @@ export default function App() {
                     }
                   }}
                   placeholder={window.AndroidPaths ? "Type your message..." : "Type your message... (Shift+Enter for new line)"}
-                  title={'Start with "Remember:" to save exactly what follows as a memory. Any case works; by voice, say "remember colon".'}
                   className="query-input"
                   disabled={isLoading}
                   rows={isMobile ? 3 : 4}

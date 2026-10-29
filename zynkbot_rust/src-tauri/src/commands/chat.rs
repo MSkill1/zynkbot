@@ -555,7 +555,7 @@ pub async fn generate_reply(
                         continue;
                     }
                     if let Ok(Some(linked_mem)) = crate::memory::get_memory(&db_pool, linked_id).await {
-                        if linked_mem.temporal_status.as_deref() == Some("superseded") {
+                        if matches!(linked_mem.temporal_status.as_deref(), Some("superseded") | Some("completed")) {
                             continue;
                         }
                         if already_included_content.contains(&linked_mem.content) {
@@ -2624,7 +2624,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             // its similarity, so the classifier sees the pair that conflicts (2026-10-25).
             if let Some((wrong, _)) = &bg_correction {
                 let held: Vec<(i32, String, Option<String>)> = sqlx::query_as(
-                    "SELECT id, content, title FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status != 'superseded') AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now')) AND content LIKE ? ORDER BY created_at DESC LIMIT 10")
+                    "SELECT id, content, title FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status NOT IN ('superseded', 'completed')) AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now')) AND content LIKE ? ORDER BY created_at DESC LIMIT 10")
                     .bind(&bg_user_id).bind(format!("%{}%", wrong)).fetch_all(&db_pool).await.unwrap_or_default();
                 let mut forced: Vec<(i32, String, Option<String>, f32)> = held.into_iter().filter(|(id, _, _)| !bg_sibling_ids.contains(id)).map(|(id, content, title)| (id, content, title, 1.0)).collect();
                 println!("[RUST BACKGROUND] Name correction {} -> {}: {} memories hold the old name", wrong, bg_correction.as_ref().map(|c| c.1.as_str()).unwrap_or(""), forced.len());
