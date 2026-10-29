@@ -35,7 +35,9 @@ use crate::vosk_desktop::LiveSink;
 pub const TARGET_RATE: u32 = 24_000;
 const REALTIME_URL: &str = "wss://api.openai.com/v1/realtime?intent=transcription";
 /// How long `stop` waits for the transcript of the last words after committing.
-const FINAL_WAIT: Duration = Duration::from_secs(3);
+/// 8 s since 2026-10-29: at 3 s the wait gave up on a slow last segment and the words
+/// not yet shown were lost (Matt's log: "gave up waiting for the last transcript after 3s").
+const FINAL_WAIT: Duration = Duration::from_secs(8);
 /// Audio is sent in pieces of about this long (100 ms at 24 kHz).
 const SEND_CHUNK: usize = (TARGET_RATE / 10) as usize;
 

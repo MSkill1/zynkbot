@@ -179,7 +179,6 @@ async fn mode_probe() {
     let src = std::env::var("MODE_PROBE_CASES").expect("MODE_PROBE_CASES");
     let dst = std::env::var("MODE_PROBE_OUT").expect("MODE_PROBE_OUT");
     let backend = std::env::var("MODE_PROBE_BACKEND").unwrap_or_else(|_| "anthropic".to_string());
-    let engine = crate::conversation_engine::ConversationEngine::new();
     let done: std::collections::HashSet<String> = std::fs::read_to_string(&dst).unwrap_or_default().lines()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter_map(|v| v["id"].as_str().map(String::from)).collect();
     let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&dst).expect("out file");
@@ -196,7 +195,10 @@ async fn mode_probe() {
             let a = t.as_array()?;
             Some(crate::conversation_engine::ConversationTurn { role: a.first()?.as_str()?.to_string(), content: a.get(1)?.as_str()?.to_string() })
         }).collect()).unwrap_or_default();
-        let base = engine.build_prompt(&user, if history.is_empty() { None } else { Some(history.as_slice()) }, None, true, Some("Matt"));
+        // MODE_PROBE_ON_DEVICE=1 asks for the slim on-device prompt a local model gets (2026-10-29).
+        let on_device = std::env::var("MODE_PROBE_ON_DEVICE").map(|v| v == "1").unwrap_or(false);
+        let engine = crate::conversation_engine::ConversationEngine::new().with_on_device(on_device);
+        let base = engine.build_prompt(&user, if history.is_empty() { None } else { Some(history.as_slice()) }, None, !on_device, Some("Matt"));
         for (label, m) in [("with_mode", Some(mode.as_str())), ("normal", None)] {
             let prompt = crate::chat_modes::apply(m, base.clone());
             let t = std::time::Instant::now();

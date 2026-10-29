@@ -23,6 +23,9 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 - **Live dictation on Android (OpenAI engine):** words appear while you talk, in stretches after each pause, instead of after the stop button.
 - **Conversation modes:** a drop-down beside the thread title (Tool, Debate, Premise, Editing) puts one short instruction block in front of the prompt for that conversation; a help line under the title says what the mode does. Checked case by case against Claude on 2026-10-29 (`mode_probe`): Editing and Debate change the answers clearly; a Companion mode was tried and folded into Normal, whose voice now also says direct, no cheering on, no therapy language.
+- Message rows: on wide screens the Copy / Edit / Report / Read aloud buttons sit on the name line instead of a row of their own, and the padding around each message is trimmed; an exchange is about 80 px shorter. Phones keep the buttons below the text.
+- Desktop dictation (OpenAI live): after Stop the app waits up to 8 s instead of 3 s for the transcript of the last words; at 3 s a slow final segment was dropped.
+- Thread title row: the pencil follows the title text; the Mode control is dark and subtle instead of a white box with grey text.
 - **One shared conversation, follow-up:** a device touched just before another device wrote now catches up once it has been quiet for 45 s (before, it never did until the app was reopened).
 - Phones: a small line under a picture in the chat says it can be held to save it to the gallery.
 

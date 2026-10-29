@@ -2476,7 +2476,7 @@ export default function App() {
                   <span
                     onClick={() => setEditingThreadTitle(threadTitle)}
                     title="Tap to rename this conversation"
-                    style={{ flex: 1, fontSize: '0.95rem', fontWeight: threadTitle ? 700 : 400, color: threadTitle ? '#8be9fd' : '#6272a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
+                    style={{ flex: '0 1 auto', minWidth: 0, fontSize: '0.95rem', fontWeight: threadTitle ? 700 : 400, color: threadTitle ? '#8be9fd' : '#6272a4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'text' }}
                   >
                     {threadTitle || 'New conversation'}
                   </span>
@@ -2489,11 +2489,21 @@ export default function App() {
                     style={{ background: 'transparent', border: 'none', color: '#9aa5c4', cursor: 'pointer', fontSize: '0.95rem', padding: '0 4px' }}
                   >✏️</button>
                 )}
+                {/* The pencil follows the title text; this spacer pushes the Mode control to the right (2026-10-29). */}
+                <span style={{ flex: 1 }} />
                 <select
                   value={chatMode}
                   onChange={(e) => setChatMode(e.target.value)}
                   title="Conversation mode: how the model behaves in this conversation. Normal sends nothing extra."
-                  style={{ fontSize: '0.75rem', background: chatMode === 'normal' ? 'transparent' : '#44475a', color: chatMode === 'normal' ? '#9aa5c4' : '#f1fa8c', border: '1px solid #44475a', borderRadius: '4px', padding: '1px 4px', flexShrink: 0 }}
+                  style={{
+                    // WebKitGTK paints its own white box behind a <select> unless the native look is
+                    // switched off; the chevron is then drawn here (2026-10-29).
+                    WebkitAppearance: 'none', appearance: 'none',
+                    fontSize: '0.75rem', background: '#282a36', color: chatMode === 'normal' ? '#c8d0e0' : '#f1fa8c',
+                    border: '1px solid #44475a', borderRadius: '4px', padding: '2px 20px 2px 6px', flexShrink: 0, cursor: 'pointer',
+                    backgroundImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%23c8d0e0'/></svg>\")",
+                    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center',
+                  }}
                 >
                   <option value="normal">Mode: Normal</option>
                   <option value="tool">Mode: Tool</option>

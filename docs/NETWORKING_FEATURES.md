@@ -28,6 +28,10 @@ All features work over any shared local network (home WiFi, office LAN, or mobil
 - Works while devices come and go: a device that was off gets everything it missed when it comes back
 - Runs on your local network only; nothing goes through a server
 
+### One conversation across devices (October 2026)
+
+Whichever device you wrote to last, that thread is the current one on all of your paired devices. Another device lands in it when you bring the app back to the front, when the app starts, or, if it was left open, once it has been quiet for 45 seconds after the new messages arrive. A device never switches while you are typing, waiting for a reply or have a file attached. A device where you tapped New stays on its new thread until another device writes after that. Old threads stay in History and can be reopened at any time.
+
 ### How It Works (since the outbox rebuild, October 2026)
 
 Every row that sync cares about — a memory, a conversation thread, a message, a memory link, a key — has a **name** (`sync_id`) that is the same on every device. Whenever one of those rows is added, changed or deleted, a database trigger adds one line to a **queue** (`sync_outbox`): which table, which name, what happened.
