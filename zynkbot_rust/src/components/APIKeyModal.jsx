@@ -162,6 +162,10 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
   };
 
   const [showOllama, setShowOllama] = useState(false);
+  // Each group folds (Matt, 2026-10-29: the page got long). Closed on open; the header
+  // still shows whether the key is set.
+  const [openGroups, setOpenGroups] = useState({});
+  const toggleGroup = (k) => setOpenGroups(g => ({ ...g, [k]: !g[k] }));
   const [ollamaLive, setOllamaLive] = useState(null); // {state, models} desktop-only live probe
 
   // Custom endpoint state
@@ -584,7 +588,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
         <div className="api-keys-list">
           {PROVIDERS.map(provider => (
             <div key={provider.key} className="api-key-item">
-              <div className="provider-header">
+              <div className="provider-header" onClick={() => toggleGroup(provider.key)} style={{ cursor: 'pointer', userSelect: 'none' }}>
                 <div className="provider-info">
                   <span className="provider-name">{provider.name}</span>
                   <span className="provider-description">{provider.description}</span>
@@ -595,9 +599,11 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
                   ) : (
                     <span className="status-missing">⚠️ Not set</span>
                   )}
+                  <span style={{ color: '#9aa5c4', marginLeft: '8px' }}>{openGroups[provider.key] ? '▾' : '▸'}</span>
                 </div>
               </div>
 
+              {openGroups[provider.key] && (<>
               {editingKey === provider.key ? (
                 <div className="key-edit-mode">
                   <input
@@ -716,18 +722,21 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
                   </select>
                 </div>
               )}
+              </>)}
             </div>
           ))}
 
           {/* Web search (2026-10-27): only a local model needs this; a cloud model
               searches through its own provider on the user's key. */}
           <div className="api-key-item">
-            <div className="provider-header">
+            <div className="provider-header" onClick={() => toggleGroup('websearch')} style={{ cursor: 'pointer', userSelect: 'none' }}>
               <div className="provider-info">
                 <span className="provider-name">Web search</span>
                 <span className="provider-description">For searches made with a local model. Cloud models search through their own provider.</span>
               </div>
+              <div className="provider-status"><span style={{ color: '#9aa5c4' }}>{openGroups.websearch ? '▾' : '▸'}</span></div>
             </div>
+            {openGroups.websearch && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px', maxWidth: '420px' }}>
               <input
                 type="password"
@@ -755,6 +764,7 @@ export default function APIKeyModal({ isOpen, onClose, onKeysChanged, embedded =
                 )}
               </div>
             </div>
+            )}
           </div>
 
           {/* Custom / Ollama section */}

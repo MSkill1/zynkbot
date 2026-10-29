@@ -2541,6 +2541,8 @@ pub fn run() {
             commands::zynklink::download_to_knowledge_base,
             commands::zynklink::download_to_custom_location,
             commands::zynklink::cancel_zynklink_download,
+            commands::zynklink::remove_shared_file,
+            commands::zynklink::move_shared_file,
             commands::zynklink::get_linked_devices,
             // External file/folder opening + Knowledge Base
             commands::knowledge_base::open_external_file,

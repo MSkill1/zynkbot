@@ -79,7 +79,7 @@ function formatBytes(bytes) {
   return `${(bytes / 1073741824).toFixed(2)} GB`;
 }
 
-function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave, onAddModel, shareId, deviceId, isOwnShare }) {
+function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave, onAddModel, shareId, deviceId, isOwnShare, onRemove, onMove }) {
   const isExpanded = expandedFolders.has(name);
   const childKeys = Object.keys(node.children);
 
@@ -103,6 +103,8 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
               onKB={onKB}
               onSave={onSave}
               onAddModel={onAddModel}
+              onRemove={onRemove}
+              onMove={onMove}
               shareId={shareId}
               deviceId={deviceId}
               isOwnShare={isOwnShare}
@@ -117,8 +119,7 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
                 {file.file_size > 0 && (
                   <span className="zfb-file-size">{formatBytes(file.file_size)}</span>
                 )}
-                {(!isOwnShare || isModelFile(filename)) && (
-                  <div className="zfb-file-actions">
+                <div className="zfb-file-actions">
                     {isModelFile(filename) && (
                       <button
                         className="zfb-btn-kb"
@@ -127,6 +128,12 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
                       >
                         → Models
                       </button>
+                    )}
+                    {isOwnShare && (
+                      <>
+                        <button className="zfb-btn-save" onClick={() => onMove(shareId, file.relative_path)} title="Move this file somewhere else on this device">Move…</button>
+                        <button className="zfb-btn-danger" onClick={() => onRemove(shareId, file.relative_path, file.file_size)} title="Remove this file from the share folder">Remove</button>
+                      </>
                     )}
                     {!isOwnShare && isKBCompatible(filename) && (
                       <button
@@ -146,8 +153,7 @@ function FolderNode({ node, name, level, expandedFolders, onToggle, onKB, onSave
                         Save…
                       </button>
                     )}
-                  </div>
-                )}
+                </div>
               </div>
             );
           })}
@@ -168,6 +174,18 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
   // Populated by listening for zynklink:download:{start,progress,complete} events
   // emitted by the Rust streaming download in src-tauri/src/lib.rs.
   const [downloads, setDownloads] = useState({});
+  // Sort order (Matt, 2026-10-29: a share with many files needs more than name order).
+  // Remembered per browser; folders keep their place, files inside each folder follow it.
+  const [sortBy, setSortBy] = useState(() => { try { return localStorage.getItem('zfb.sort') || 'name'; } catch (_) { return 'name'; } });
+  const changeSort = (k) => { setSortBy(k); try { localStorage.setItem('zfb.sort', k); } catch (_) {} };
+  const sortedFiles = React.useMemo(() => {
+    const name = (f) => f.relative_path.replace(/\\/g, '/').split('/').pop().toLowerCase();
+    const out = [...files];
+    if (sortBy === 'size') out.sort((a, b) => (b.file_size || 0) - (a.file_size || 0) || name(a).localeCompare(name(b)));
+    else if (sortBy === 'newest') out.sort((a, b) => new Date(b.last_modified || 0) - new Date(a.last_modified || 0) || name(a).localeCompare(name(b)));
+    else out.sort((a, b) => name(a).localeCompare(name(b)));
+    return out;
+  }, [files, sortBy]);
 
   // A ticking "now" so the progress panel re-renders ~every second to update
   // speed/ETA without needing a new event from the backend.
@@ -435,6 +453,47 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
     }
   };
 
+  // Own-share files (Matt, 2026-10-29): the browser could add files and send a model to
+  // the models folder, but not remove or move anything.
+  const handleRemoveOwn = async (shareId, relativePath, size) => {
+    const filename = relativePath.replace(/\\/g, '/').split('/').pop();
+    if (!window.confirm(`Remove ${filename}${size > 0 ? ' (' + formatBytes(size) + ')' : ''} from the share folder? This cannot be undone.`)) return;
+    try {
+      await invoke('remove_shared_file', { shareId, relativePath });
+      setFiles(prev => prev.filter(f => f.relative_path !== relativePath));
+      setMessage(`✓ Removed ${filename}`);
+      setTimeout(() => setMessage(''), 4000);
+    } catch (err) {
+      setMessage(`✗ ${err}`);
+      setTimeout(() => setMessage(''), 6000);
+    }
+  };
+  // Desktop: a save dialog names the destination and Rust moves the file. Android: the
+  // system save-as picker (MainActivity.moveFileTo) streams it where the user chooses,
+  // the same way the Current Model page moves a model file.
+  const handleMoveOwn = async (shareId, relativePath) => {
+    const filename = relativePath.replace(/\\/g, '/').split('/').pop();
+    try {
+      if (window.AndroidPaths?.moveFileTo) {
+        const abs = await invoke('get_shared_file_path', { shareId, relativePath });
+        await new Promise((resolve, reject) => {
+          window.__zmvResolve = resolve; window.__zmvReject = reject;
+          if (!window.AndroidPaths.moveFileTo(abs)) { window.__zmvResolve = null; window.__zmvReject = null; reject('file not found'); }
+        });
+        try { await invoke('scan_shared_directory', { shareId, maxFiles: 1000 }); } catch (_) {}
+      } else {
+        const dest = await save({ defaultPath: filename, title: 'Move file to' });
+        if (!dest) return;
+        await invoke('move_shared_file', { shareId, relativePath, destinationPath: dest });
+      }
+      setFiles(prev => prev.filter(f => f.relative_path !== relativePath));
+      setMessage(`✓ Moved ${filename}`);
+      setTimeout(() => setMessage(''), 4000);
+    } catch (err) {
+      if (err !== 'cancelled') { setMessage(`✗ ${err}`); setTimeout(() => setMessage(''), 6000); }
+    }
+  };
+
   const handleAddFile = async () => {
     if (!window.AndroidPaths) return;
     try {
@@ -473,7 +532,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
   if (!isOpen) return null;
 
   const isOwnShare = deviceId === localDeviceId;
-  const tree = buildFolderTree(files);
+  const tree = buildFolderTree(sortedFiles);
   const topFolderKeys = Object.keys(tree.children);
 
   return ReactDOM.createPortal(
@@ -510,6 +569,14 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
         </div>
 
         <div className="zfb-body">
+          {!loading && files.length > 1 && (
+            <div className="zfb-sort-row">
+              <span>Sort:</span>
+              {[['name', 'Name'], ['size', 'Size'], ['newest', 'Newest']].map(([k, label]) => (
+                <button key={k} className={`zfb-sort-btn${sortBy === k ? ' active' : ''}`} onClick={() => changeSort(k)}>{label}</button>
+              ))}
+            </div>
+          )}
           {loading ? (
             <div className="zfb-loading">
               <div className="zfb-spinner" />
@@ -532,7 +599,6 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                     {file.file_size > 0 && (
                       <span className="zfb-file-size">{formatBytes(file.file_size)}</span>
                     )}
-                    {(!isOwnShare || isModelFile(filename)) && (
                       <div className="zfb-file-actions">
                         {isModelFile(filename) && (
                           <button className="zfb-btn-kb" onClick={() => handleAddModel(shareId, file.relative_path, deviceId)} title="Add to my models: make this model available in the model list">→ Models</button>
@@ -543,8 +609,13 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                         {!isOwnShare && (
                           <button className="zfb-btn-save" onClick={() => handleSave(shareId, file.relative_path, deviceId)} title="Save to custom location">Save…</button>
                         )}
+                        {isOwnShare && (
+                          <>
+                            <button className="zfb-btn-save" onClick={() => handleMoveOwn(shareId, file.relative_path)} title="Move this file somewhere else on this device">Move…</button>
+                            <button className="zfb-btn-danger" onClick={() => handleRemoveOwn(shareId, file.relative_path, file.file_size)} title="Remove this file from the share folder">Remove</button>
+                          </>
+                        )}
                       </div>
-                    )}
                   </div>
                 );
               })}
@@ -560,6 +631,8 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                   onKB={handleKB}
                   onSave={handleSave}
                   onAddModel={handleAddModel}
+                  onRemove={handleRemoveOwn}
+                  onMove={handleMoveOwn}
                   shareId={shareId}
                   deviceId={deviceId}
                   isOwnShare={isOwnShare}
@@ -629,7 +702,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
                       onClick={() => handleCancelDownload(relPath)}
                       title="Cancel this download"
                     >
-                      ✕
+                      ✕ Cancel
                     </button>
                   </div>
                   <div className="zfb-download-bar-wrapper">

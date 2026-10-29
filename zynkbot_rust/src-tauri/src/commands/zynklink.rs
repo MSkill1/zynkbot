@@ -584,6 +584,45 @@ pub async fn get_shared_file_path(share_id: i32, relative_path: String) -> Resul
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Remove a file from this device's own share folder (Matt, 2026-10-29: the browser
+/// could add files and send a model to the models folder, but not delete anything).
+/// The path is resolved through get_file_path, so it cannot leave the share.
+#[tauri::command]
+pub async fn remove_shared_file(share_id: i32, relative_path: String) -> Result<(), String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let path = zynklink::get_file_path(&pool, share_id, &relative_path).await?;
+    tokio::fs::remove_file(&path).await.map_err(|e| format!("Could not remove the file: {}", e))?;
+    sqlx::query("DELETE FROM zynk_link_manifest WHERE linked_directory_id = ? AND relative_path = ?")
+        .bind(share_id).bind(&relative_path).execute(&pool).await
+        .map_err(|e| format!("Removed, but could not update the file list: {}", e))?;
+    println!("[ZynkLink] Removed {} from share {}", relative_path, share_id);
+    Ok(())
+}
+
+/// Move a file out of this device's own share folder to a path the user chose (desktop;
+/// Android moves through the system picker in MainActivity.moveFileTo). Copy then remove,
+/// so a move across drives works and a failed copy leaves the original in place.
+#[tauri::command]
+pub async fn move_shared_file(share_id: i32, relative_path: String, destination_path: String) -> Result<String, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let src = zynklink::get_file_path(&pool, share_id, &relative_path).await?;
+    let dest = std::path::PathBuf::from(&destination_path);
+    if dest.exists() { return Err(format!("{} already exists", dest.display())); }
+    if tokio::fs::rename(&src, &dest).await.is_err() {
+        tokio::fs::copy(&src, &dest).await.map_err(|e| format!("Could not copy the file: {}", e))?;
+        tokio::fs::remove_file(&src).await.map_err(|e| format!("Copied, but could not remove the original: {}", e))?;
+    }
+    sqlx::query("DELETE FROM zynk_link_manifest WHERE linked_directory_id = ? AND relative_path = ?")
+        .bind(share_id).bind(&relative_path).execute(&pool).await
+        .map_err(|e| format!("Moved, but could not update the file list: {}", e))?;
+    println!("[ZynkLink] Moved {} out of share {} to {}", relative_path, share_id, dest.display());
+    Ok(dest.to_string_lossy().to_string())
+}
+
 /// Cancel an in-flight ZynkLink download
 #[tauri::command]
 pub fn cancel_zynklink_download(relative_path: String) -> Result<(), String> {

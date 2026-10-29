@@ -26,6 +26,9 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - **One shared conversation, follow-up:** a device touched just before another device wrote now catches up once it has been quiet for 45 s (before, it never did until the app was reopened).
 - Phones: a small line under a picture in the chat says it can be held to save it to the gallery.
 
+- **ZynkLink file browser:** files in your own share folder can be removed or moved (desktop: save dialog; Android: the system picker); a Sort row (Name, Size, Newest) above the list, remembered; the download cancel button is labelled "Cancel"; "Browse shared files on this device" looks like the other buttons.
+- **Keys page:** each provider group folds; closed on open, the header still says whether the key is set.
+
 ## [0.9.6-beta5] — 2026-10-27 <!-- branch local-model; entries for 10-26/27 drafted by Claude, for Matt's review -->
 
 ### Timer, alarm and stopwatch (Android; branch `timer`, 2026-10-25)

@@ -741,7 +741,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                 style={{
                   flex: 1,
                   padding: '10px',
-                  background: '#44475a',
+                  background: '#6272a4',
                   border: 'none',
                   borderRadius: '4px',
                   color: '#f8f8f2',
