@@ -119,7 +119,12 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
                         : { maxWidth: '160px', maxHeight: '160px', borderRadius: '8px', cursor: 'zoom-in', objectFit: 'cover' }}
                     />
                   ))}
-                  {saveNote && <div style={{ width: '100%', fontSize: '0.75rem', color: '#8be9fd' }}>{saveNote}</div>}
+                  {saveNote
+                    ? <div style={{ width: '100%', fontSize: '0.75rem', color: '#8be9fd' }}>{saveNote}</div>
+                    : window.AndroidPaths?.saveImageBase64ToGallery && (
+                      // The hold gesture is invisible, so say it once under the pictures (phones only).
+                      <div style={{ width: '100%', fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)' }}>Hold a picture to save it to the gallery</div>
+                    )}
                 </div>
               )}
               <div className="message-content">{content}</div>

@@ -164,3 +164,52 @@ fn local_probe() {
         }
     }
 }
+
+/// Conversation modes, behaviour check (2026-10-29): each case from MODE_PROBE_CASES is
+/// answered twice by the cloud model through the app's own prompt builder — once with its
+/// mode's block in front, once in Normal — so the two can be read side by side.
+/// MODE_PROBE_CASES=<jsonl> MODE_PROBE_OUT=<jsonl> [MODE_PROBE_BACKEND=anthropic]
+#[tokio::test]
+#[ignore]
+async fn mode_probe() {
+    let candidates = [crate::db::get_app_data_dir().join(".env"), std::path::PathBuf::from(".env"), std::path::PathBuf::from("../../.env")];
+    for p in &candidates {
+        if p.exists() { let _ = crate::env_file::load(p); }
+    }
+    let src = std::env::var("MODE_PROBE_CASES").expect("MODE_PROBE_CASES");
+    let dst = std::env::var("MODE_PROBE_OUT").expect("MODE_PROBE_OUT");
+    let backend = std::env::var("MODE_PROBE_BACKEND").unwrap_or_else(|_| "anthropic".to_string());
+    let engine = crate::conversation_engine::ConversationEngine::new();
+    let done: std::collections::HashSet<String> = std::fs::read_to_string(&dst).unwrap_or_default().lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter_map(|v| v["id"].as_str().map(String::from)).collect();
+    let mut out = std::fs::OpenOptions::new().create(true).append(true).open(&dst).expect("out file");
+    let rows: Vec<serde_json::Value> = std::fs::read_to_string(&src).expect("cases file").lines().filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("case line")).collect();
+    println!("{} cases, {} done, backend {}", rows.len(), done.len(), backend);
+    let mut errors = 0;
+    for mut r in rows {
+        let id = r["id"].as_str().unwrap_or("").to_string();
+        if done.contains(&id) { continue; }
+        let mode = r["mode"].as_str().unwrap_or("normal").to_string();
+        let user = r["prompt"].as_str().unwrap_or("").to_string();
+        let history: Vec<crate::conversation_engine::ConversationTurn> = r["history"].as_array().map(|h| h.iter().filter_map(|t| {
+            let a = t.as_array()?;
+            Some(crate::conversation_engine::ConversationTurn { role: a.first()?.as_str()?.to_string(), content: a.get(1)?.as_str()?.to_string() })
+        }).collect()).unwrap_or_default();
+        let base = engine.build_prompt(&user, if history.is_empty() { None } else { Some(history.as_slice()) }, None, true, Some("Matt"));
+        for (label, m) in [("with_mode", Some(mode.as_str())), ("normal", None)] {
+            let prompt = crate::chat_modes::apply(m, base.clone());
+            let t = std::time::Instant::now();
+            match crate::call_backend_with_prompt(&prompt, &backend).await {
+                Ok(text) => {
+                    let shown = crate::conversation_engine::strip_memory_marker(text.trim());
+                    r[label] = serde_json::json!(shown.trim());
+                    println!("  {} {:<9} {:4.1}s {}", id, label, t.elapsed().as_secs_f32(), shown.chars().take(80).collect::<String>().replace('\n', " "));
+                }
+                Err(e) => { errors += 1; println!("  {} {} ERROR {}", id, label, e.chars().take(160).collect::<String>()); if errors >= 3 { panic!("three errors; stopping"); } }
+            }
+        }
+        use std::io::Write;
+        writeln!(out, "{}", r).expect("write");
+    }
+}

@@ -1124,7 +1124,16 @@ export default function App() {
     wasLoadingRef.current = isLoading;
   }, [isLoading]);
   useEffect(() => {
-    const touch = () => { lastTouchRef.current = Date.now(); };
+    // News that arrived while this device was busy is checked again once it has been
+    // quiet for 45 s; every touch pushes that check back (2026-10-29: the first check
+    // happened only at the moment the rows arrived, so a phone touched just before
+    // never switched at all).
+    let quietTimer = null;
+    const checkWhenQuiet = () => {
+      if (quietTimer) clearTimeout(quietTimer);
+      quietTimer = setTimeout(() => { quietTimer = null; adoptLatestThread('quiet after sync', true); }, 45000);
+    };
+    const touch = () => { lastTouchRef.current = Date.now(); if (quietTimer) checkWhenQuiet(); };
     const onVisible = () => { if (document.visibilityState === 'visible') adoptLatestThread('returned to this device'); };
     const onFocus = () => adoptLatestThread('returned to this device');
     window.addEventListener('keydown', touch); window.addEventListener('pointerdown', touch);
@@ -1134,14 +1143,16 @@ export default function App() {
       // A sync round brought news: the open thread refreshes at once (nothing jumps); moving
       // to another thread waits until this device has been quiet for 45 s.
       unlisten = await listen('zynksync-threads-changed', () => {
-        adoptLatestThread('sync', Date.now() - lastTouchRef.current > 45000);
+        const quiet = Date.now() - lastTouchRef.current > 45000;
+        adoptLatestThread('sync', quiet);
+        if (!quiet) checkWhenQuiet();
       });
     })();
     const startup = setTimeout(() => adoptLatestThread('app started'), 2500);
     return () => {
       window.removeEventListener('keydown', touch); window.removeEventListener('pointerdown', touch);
       document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onFocus);
-      clearTimeout(startup); if (unlisten) unlisten();
+      clearTimeout(startup); if (quietTimer) clearTimeout(quietTimer); if (unlisten) unlisten();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
