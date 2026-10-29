@@ -30,6 +30,19 @@ paid flagships, enough that a household can leave corporate AI. Today's ceiling 
 desktop (RTX 3090 24 GB, 62 GB DDR4, i9-10900F, MSI Z490, 4 DDR4 slots, 128 GB max) is
 gpt-oss-120b at 4-bit, about 65 GB.
 
+## Why a household would want this
+
+The reason to run a large model at home is not speed. It is that the questions people most
+want help with are the ones they least want to send anywhere: a parent reading a child's
+medical results, a couple working through the family finances, an adult child managing a
+parent's care. A capable model that can be given direct access to those records, because
+they never leave the house, is a different product from a chat window with a privacy
+policy. "Ask the big one and wait a minute" is an acceptable trade for that. Step 1 showed
+the mechanism is already within reach of a home user who knows what they are doing; the work
+from here is making the wait short and the setup easy. The wider idea this serves, one
+household model behind a family network of synced devices, is sketched in
+[`FAMILY_NETWORK_NOTE.md`](FAMILY_NETWORK_NOTE.md).
+
 ---
 
 ## Candidates
