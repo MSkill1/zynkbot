@@ -2,8 +2,8 @@
 
 **Running a frontier-class open model on used office PCs**
 
-**Status:** Design notes, not yet tested
-**Date:** 17 October 2026
+**Status:** Step 1 measured on 29 October 2026 (see [Step 1 results](#step-1-results-29-october-2026)); steps 2–4 untested
+**Date:** 17 October 2026, results added 29 October 2026
 **Source:** working session 16–17 October 2026. Full raw notes are kept locally at
 `~/Documents/Zynk_related/claude_notes/ZynkCluster_moe_discussion_2026-10-17.md`
 (not in this repository).
@@ -161,6 +161,16 @@ over-provisioned by three orders of magnitude — 100 Mbit would do, and the ses
 few KB per word" was right. Gigabit is also adequate for expert-split *decode*, so 2.5 GbE
 is headroom rather than a requirement there.
 
+**Measured correction (29 Oct 2026).** The per-word figures above count one hidden-state
+transfer per boundary. llama.cpp's RPC backend, as shipped, sends about **22 sequential
+messages and ~1.1 MB per generated token across one boundary** (inputs for the remote
+layers, allocation queries, the re-serialised compute graph, and, with default placement,
+785 KB of word scores coming back from the output layer). Each message waits a full round
+trip. Over WiFi at a 4 ms median that was ~90 ms of waiting per word, more than the
+desktop's whole compute time for the test model; over a wired 0.2 ms link the same messages
+would cost ~5 ms. The bandwidth conclusions in this section stand; the latency conclusion is
+stronger than written and applies to the layer split too, until the protocol is leaner.
+
 What actually matters for an expert split is **round-trip latency, not bandwidth**: each
 word needs ~75 sequential round trips, one per MoE layer. Wired at 0.1–0.3 ms that is
 8–23 ms per word against several hundred ms of compute — negligible. Over WiFi at 2–10 ms
@@ -200,7 +210,10 @@ expected in 2028. Check eBay **Sold items** for real prices rather than asking p
   16 GB card covers about 30%.
 
 The laptop has no usable GPU and is fine as a CPU node, but a slow node in a layer split
-adds its full turn to every word; give it fewer layers than the towers. Raspberry Pis were
+adds its full turn to every word; give it fewer layers than the towers. Measured 29 Oct
+2026: the laptop reads memory at ~15 GB/s against the desktop's ~45 GB/s on the same test,
+half the 25–35 GB/s this document assumes for a two-channel tower. Run the bandwidth test on
+every candidate machine before buying memory for it. Raspberry Pis were
 rejected — too little memory and too little bandwidth to be worth a hop.
 
 ---
@@ -216,6 +229,11 @@ words/s. Note that llama.cpp's RPC backend is explicitly experimental and unauth
 ZynkSync's existing pairing and mTLS once it leaves the bench.
 *Done when:* a model answers across two machines, and the per-token wall time is within a
 third of read-per-word ÷ measured bandwidth.
+*Result (29 Oct 2026):* done. gpt-oss-20b answered across the desktop and the laptop in
+every configuration tried. The compute part of the per-token time fits the estimate once an
+inference bandwidth is used rather than a streaming-read one; the network hop does not fit
+the "few KB per word" picture and needs its own term. Details in
+[Step 1 results](#step-1-results-29-october-2026).
 
 **2. Build the cluster and measure the three costs separately.** Memory reading, network
 hops and arithmetic, measured independently rather than as one aggregate words/s number.
@@ -236,6 +254,67 @@ question plus its memory context go to the cluster, the local model keeps answer
 normally in the meantime, and the result arrives as a notification. The cluster is an
 optional back end, never a dependency — if it is off, Zynkbot behaves exactly as it does
 today.
+
+---
+
+## Step 1 results (29 October 2026)
+
+Full write-up with exact commands, logs and caveats is kept locally at
+`~/Documents/Zynk_related/zynkcluster_step1_2026-10-29.md` (not in this repository).
+
+**Setup.** Desktop (i9-10900F, 62 GB, RTX 3090) as main host; laptop (i7-1255U, 16 GB, no
+GPU, Ubuntu 24.04) as the CPU node running `ggml-rpc-server`. llama.cpp 0.8.0, commit
+`8642541`, built with `-DGGML_RPC=ON`. Model gpt-oss-20b MXFP4 (12.1 GB, 24 layers, 32
+experts, 4 active, ~3.6B active parameters). **Both machines on WiFi** through one access
+point: 139 Mbit/s, 4.2 ms median round trip. The laptop has no Ethernet port or adapter.
+
+**Timed runs**, same 117-token prompt, 128 tokens generated, one run each:
+
+| Run | Desktop | Laptop | Prefill | Decode per word |
+|---|---|---|---|---|
+| Baseline | CPU, all 24 layers | – | 1.4 s | 65 ms |
+| 1 | CPU, 18 layers | CPU, 6 layers + output layer | 3.8 s | 222 ms |
+| 1b | CPU, 18 layers + output layer | CPU, 6 layers | 4.9 s | 141 ms |
+| 2 | GPU, 17 layers + output layer | CPU, 7 layers | 3.5 s | 81 ms |
+| 2a (mis-split) | GPU, 6 layers + output layer | CPU, 18 layers | 8.2 s | 169 ms |
+
+For scale, the 3090 alone decodes this model at ~5 ms per word.
+
+**Findings.**
+
+1. *The hop, not the node, was the main cost.* ~22 messages and ~1.1 MB per word per
+   boundary (counted with `GGML_RPC_DEBUG`); at WiFi latency that predicts ~155 ms of
+   overhead and run 1 measured +156 ms over the baseline. See the correction in
+   §"Network budget".
+2. *Default placement puts the largest per-word transfer on the remote node.* llama.cpp
+   counts the output layer as the last layer and places it on the last device, then pulls
+   785 KB of word scores back every word. Pinning it to the main host with
+   `-ot 'output\.weight=CPU'` saved 80 ms per word (run 1 → 1b).
+3. *`--tensor-split` order is RPC first.* llama.cpp inserts RPC servers at the front of the
+   device list (`src/llama.cpp`, "to minimize network transfers"), so `-ts 18,6` gave the
+   laptop 18 layers (run 2a). The fraction is also applied over 24 layers + the output
+   layer, so "6 of 24" became 7.
+4. *Prefill got slower in every split, including with the 3090 doing 17 layers.* The slow
+   node's share runs on the slow node while the other machine waits. This is
+   §"The real bottleneck is prefill" on the smallest possible cluster, and it raises the
+   priority of prefix caching and pipelined prefill relative to the expert split.
+5. *Memory bandwidth varied 3× between two machines already owned* (45 vs 15 GB/s).
+6. *Against the "done when" test:* desktop alone measured 65 ms per word against 44 ms
+   predicted from the 45 GB/s streaming read (1.5×), i.e. inference reaches about two thirds
+   of streaming bandwidth on this machine. The split's compute terms then predict ~100 ms
+   for run 1b against 141 ms measured, with the remainder being the hop.
+
+**What this changes in the plan.** Step 2 stays, but wired from day one, with messages per
+word as the first thing measured, and with the output layer on the main host. Step 3's
+ordering question (expert split vs pipelined prefill and prefix caching) tilts toward the
+latter: the expert split needs ~75 exchanges per word and the stock protocol already spent
+22 on one boundary.
+
+**Not shown by this test.** No wired run exists; every network figure is WiFi. One prompt,
+one output length, n = 1 per timed run (a 3× llama-bench repeat agreed for the CPU-only
+split; the CUDA+RPC bench rows disagreed with the timed runs and were not investigated).
+No long-context run. The laptop is a poor stand-in for an office tower in both bandwidth
+and core count.
 
 ---
 
@@ -271,10 +350,16 @@ metadata, probably a carried-over config, and is a minor thing to re-check at so
 - **Whether pipelined prefill should come before the expert split** in step 3. Depends on
   what step 2 measures for a realistic memory-context prompt.
 - **Effective DDR4 bandwidth on actual used towers** — the 25–35 GB/s assumption carries
-  every speed figure here and is cheap to measure on the first machine bought.
+  every speed figure here and is cheap to measure on the first machine bought. Step 1 adds:
+  use an *inference* bandwidth, about two thirds of the streaming-read figure on the desktop.
+- **Messages per word on a wired link.** Step 1 counted ~22 per boundary per word over WiFi;
+  the wired cost is predicted (~5 ms), not measured. First measurement for step 2.
+- **Whether llama.cpp's RPC can be made leaner** (graph reuse across words, fewer allocation
+  queries) before any custom protocol is written. Worth a look at upstream issues first.
 - ~~Active parameters for MiniMax-M2.7, GLM-5.3, Kimi-K3~~ — resolved above.
 - ~~Network: is gigabit enough~~ — resolved above. Wire it; latency, not bandwidth, is the
-  constraint for an expert split.
+  constraint, and after step 1 that applies to the layer split as well, not only the expert
+  split.
 
 ---
 
@@ -302,9 +387,10 @@ Two consequences of that removal, both measured from the repository:
 
 ## What this does not claim
 
-- Nothing here has been measured on a cluster. Every speed figure is derived from
-  bandwidth, FLOP and packet-size arithmetic, and derived figures are wrong in the
-  direction of optimism more often than not.
+- Only step 1 has been measured, on two machines over WiFi. Every other speed figure is
+  derived from bandwidth, FLOP and packet-size arithmetic, and derived figures are wrong in
+  the direction of optimism more often than not; step 1's network term was optimistic by
+  roughly 20 messages per word.
 - The footprint column assumes a 4-bit quantisation of the stated quality exists for each
   model and that 10% of overhead covers embeddings and KV cache. Long contexts will exceed
   that allowance.
@@ -336,7 +422,7 @@ Two consequences of that removal, both measured from the repository:
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 17 October 2026
+**Document Version:** 1.1
+**Last Updated:** 29 October 2026
 **Author:** Matt Skillman (notes from a working session with Claude)
 **License:** See main repository LICENSE file

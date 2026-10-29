@@ -11,6 +11,8 @@
 > memory *capacity* rather than compute is the binding constraint for the models worth
 > running. Read that document first for which model to run, what to buy, and why the first
 > milestone needs no custom code at all.
+> Step 1 of that plan (llama.cpp RPC across two machines, no custom code) was run on
+> 29 Oct 2026; its results section records what the measurement changed.
 
 ---
 
