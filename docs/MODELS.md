@@ -20,6 +20,10 @@ Models will appear in the app's model selector after placing them in this direct
 
 **Local models vs. API models:** API models (Claude, GPT-4o, Grok) produce the most consistent results for memory extraction, contradiction detection, and long-form reasoning. Local models work well for conversation but vary in how precisely they follow Zynkbot's internal structured instructions — this affects how reliably memories are created and contradictions flagged. Results depend on the model, hardware, and question type. As open-source models continue to improve, so will local model performance in Zynkbot.
 
+**How a local model is prompted.** Any model loaded from a `.gguf` file gets a shorter prompt than a cloud model: the last 8 messages of the conversation (each cut to 400 characters), up to 4 recalled memories (each cut to 300 characters), and a shorter opening. Cloud models get 40 messages and 30 memories. This is why a local model sometimes forgets something said ten messages ago that a cloud model would still have.
+
+**Sophro (not yet shipped).** Sophro-4B-memory-v1 is a fine-tune of the Zynkbot model (Qwen3-4B) trained on memory extraction: store what was said, nothing more. Its results are in [BENCHMARKS.md](BENCHMARKS.md). It is being used day to day on the developer's devices before any decision to ship it; the installer still offers Qwen3-4B.
+
 ### The Zynkbot model: Qwen3-4B-Instruct-2507 ⭐ **Recommended**
 - **Size:** 2.4GB
 - **File:** `Qwen3-4B-Instruct-2507-Q4_0.gguf`, the Q4_0 file from unsloth

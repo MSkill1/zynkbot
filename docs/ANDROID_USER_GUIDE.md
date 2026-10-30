@@ -67,6 +67,8 @@ Other apps' recordings: if another app is using the microphone (a call, a voice 
 
 After a restart. If Hey Zynk was on, it comes back on its own about a minute after the phone boots, without opening the app (the Voice page switch "Start listening when the phone starts", on by default). If the phone refuses, a notification "Hey Zynk is off since the restart" offers a tap that starts it. Measured working on a Pixel 10 Pro XL and a OnePlus 12R, 2026-10-25.
 
+Conversation modes. The Mode control beside the conversation title (Normal, Tool, Debate, Premise, Editing) changes how the model answers for that conversation; tap it for a one-line description of each. It goes back to Normal when the app is reopened.
+
 ## 4. What it does without asking a model
 
 Some requests are handled on the phone and never sent to a model. Numbers can be spoken as words ("ten minutes") or digits.
@@ -125,7 +127,7 @@ Dictation means turning your speech into text. Open System Controls, then the Vo
 
 Offline, Vosk (the default). Runs on the phone. No internet needed and no audio leaves the device. It produces lowercase text with no punctuation, and numbers come out as words ("ten minutes"). Models understand requests fine without punctuation.
 
-OpenAI Whisper. Sends the recording to OpenAI and gets text back with punctuation and capitals. It needs an OpenAI key entered under API keys in the app (the entry is named OPENAI_API_KEY). If the key is missing, hands-free quietly uses Vosk instead. Hands-free waits up to 8 seconds for you to start speaking, records until you pause for just over a second, and never records more than 30 seconds. If the upload fails, that one listen falls back to Vosk. What OpenAI does with the audio is described in section 3.
+OpenAI (shown as "OpenAI Whisper" on the Voice page). Sends your speech to OpenAI's transcription model (gpt-4o-mini-transcribe) and gets text back with punctuation and capitals. It needs an OpenAI key entered under API keys in the app (the entry is named OPENAI_API_KEY). If the key is missing, hands-free quietly uses Vosk instead. Hands-free waits up to 8 seconds for you to start speaking, records until you pause for just over a second, and never records more than 30 seconds. If the upload fails, that one listen falls back to Vosk. What OpenAI does with the audio is described in section 3.
 
 ## 7. Files and folders
 
@@ -161,9 +163,11 @@ How memories are made (since beta 5). Your message is not stored as a memory. Af
 
 Memory Manager. The Memory Manager (a button in the app; on a phone it sits in the bottom row of buttons) lists every memory. You can edit, delete or add memories there. A "Remembered on request" checkbox above the list shows only the memories you stored with "Remember:".
 
-Passing facts expire. A parking level, an errand, a trip, how this week is going: a fact like that leaves recall two weeks after its day. It stays in the Memory Manager tagged EXPIRED, with a Keep button that makes it permanent. A memory replaced by a newer one is tagged REPLACED, with "Undo replacement".
+Passing facts expire. A parking level, an errand, a trip, how this week is going: a fact like that leaves recall two weeks after its day. It stays in the Memory Manager tagged EXPIRED, with a Keep button that makes it permanent. A memory replaced by a newer one is tagged REPLACED, with "Undo replacement". A plan you told a check-in question was done is tagged DONE; open it and tap "Not done after all" if that was wrong.
 
 Memory cards. When a new fact contradicts a stored one, or looks like an update to it, Zynkbot asks on a card: which is right, or "Is this an update?". The card waits until you answer: it shows on the next open or return to the app, and if the app is off screen the phone posts a notification "Zynkbot has a question about a memory". Tap it to answer.
+
+Check-in questions (experimental). About once a day, when you open the app, Zynkbot may ask whether something you said you would do actually happened, quoting your words. Done keeps it as history, Not yet keeps it two more weeks, Never mind deletes it. Turn it off under System Controls → Experimental.
 
 About me. In the Memory Manager, tap "About me". It builds a report from the memories on this phone, in these sections:
 

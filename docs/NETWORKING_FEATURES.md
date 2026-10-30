@@ -91,7 +91,9 @@ Memory entities (`memory_entities`, the per-memory named things) and the knowled
 - ✅ **Browse Files**: See files from paired devices in real-time
 - ✅ **Download to Custom Location**: Pull files from remote devices to any local path
 - ✅ **Download to Knowledge Base**: Instantly integrate shared documents into your AI's context
-- ✅ **Read-only by default**: All shares are created read-only; write operations are not implemented
+- ✅ **Your own folder is yours to tidy**: in "Browse shared files on this device" each file has **Move…** (desktop: choose where it goes; Android: the system picker) and **Remove**, which asks first and cannot be undone. On Android the same view has **+ Add Files**.
+- ✅ **Other devices' shares are read-only**: from another device you can **Save…** a file to a place of your choosing or send a document straight to the knowledge base (**→ KB**); a model file offers "Add to my models". Nothing you do there changes the other device.
+- ✅ **Sort**: Name, Size or Newest, shown when a folder has more than one file; the choice is kept on that device.
 - ✅ **Security**: Path traversal protection, SHA256 file hashing
 - ✅ **Refresh**: the Refresh button shows "Refreshing..." and then "✓ Refreshed". A file added to a shared folder appears on the other devices at their next Refresh
 

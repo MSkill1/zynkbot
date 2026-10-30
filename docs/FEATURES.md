@@ -109,6 +109,8 @@ Multiple safety modes with category-based filtering.
 
 Zynkbot supports multiple LLM backends with mid-conversation switching via the UI.
 
+The API Keys page (Settings → API Keys) lists one fold per provider, closed until you tap it; the header already says "Configured" or "Not set", so you can check every key without opening anything. The Web search fold (Brave key, SearXNG address) is only needed for searches made with a local model.
+
 <img src="../assets/settings.png" alt="Settings and API configuration">
 
 #### Option 1: Local Inference (Default, Privacy-First)
@@ -194,6 +196,22 @@ Every completed exchange is automatically saved to a local database. Conversatio
 
 ---
 
+### 🎭 Conversation modes
+
+A conversation mode is a short set of instructions put in front of the prompt for the conversation you are in. It changes how the model answers, not what it can see. The **Mode** control sits to the right of the conversation title; it opens a list with one line on each mode. While a mode other than Normal is on, a line under the title says what it does. The mode applies until you set it back to Normal or reload the app.
+
+| Mode | What it does |
+|---|---|
+| Normal | The usual Zynkbot: warm, direct and honest. Nothing extra is sent. |
+| Tool | Does what is asked and nothing more. No commentary, no suggestions. |
+| Debate | Challenges weak reasoning and names the weakest point; argues the other side when asked. |
+| Premise | Takes what you state as true for this conversation and reasons from it, no fact-checking. |
+| Editing | Fixes grammar, spelling and clarity only; keeps your wording, tone and meaning. |
+
+Conversation modes are not containment modes (the safety layer above). A mode is prompt text; containment is enforced in code.
+
+---
+
 ### 📚 Knowledge Base
 
 <img src="../assets/Kbase.png" alt="Knowledge Base interface">
@@ -256,7 +274,7 @@ Professional database-style interface for managing your memories.
 - **Bulk Operations**: Delete multiple memories at once
 - **Database-style UI**: No SQL knowledge required
 - **Grouped by message** (2026-10-26): the facts taken from one message sit under "What I said" with the day above; tap the quote to read the whole message, editable from any of its facts
-- **EXPIRED and Keep**: a passing fact (a parking level, an errand) leaves recall two weeks after its day and stays listed as EXPIRED with a Keep button; a replaced memory is tagged REPLACED with "Undo replacement"
+- **EXPIRED and Keep**: a passing fact (a parking level, an errand) leaves recall two weeks after its day and stays listed as EXPIRED with a Keep button; a replaced memory is tagged REPLACED with "Undo replacement"; a plan you confirmed as done (see Check-in questions) is tagged DONE and its detail view has "Not done after all", which brings it back into recall
 
 **Access:**
 - Click 🧠 **Memory Manager** button in header
@@ -268,6 +286,12 @@ Professional database-style interface for managing your memories.
 - Edit memory content and metadata
 - Delete unwanted memories
 - See memory relationships (contradicts, supports, etc.) — see [Memory Relationship Graph](architecture_and_development/MEMORY_RELATIONSHIP_GRAPH.md) for a full explanation of the graph, its practical uses, and its research potential
+
+---
+
+### ✅ Check-in questions (experimental, beta 5)
+
+When something you said you would do (an errand, a purchase, a chore) is about to leave memory after its two weeks, Zynkbot asks once whether it happened, quoting your own words: "A while back you said "I need to get a water filter". Did that happen?" The question appears above the conversation at the start of a session, at most once a day, and only when nothing is typed and no other card is open. Three answers: **Done** keeps the memory as history (tagged DONE in Memory Manager, out of recall), **Not yet** keeps it for two more weeks, **Never mind** deletes it; ✕ leaves it alone. Long-term plans are never asked about, only facts Zynkbot already treats as passing. Not asked in Child or HIPAA mode. The mark that a memory has been asked about syncs with the memory, so the question is asked on one device, not each. Switch it off, or ask the next question now, under System Controls → Experimental → "Ask about old plans".
 
 ---
 
@@ -378,9 +402,18 @@ See [NETWORKING_FEATURES.md](NETWORKING_FEATURES.md) for detailed documentation:
 
 Zynkbot's own, on Android since 2026-10-25: "set a timer for ten minutes", "set an alarm for 7 30 AM", "start stopwatch", typed or hands-free after "Hey Zynk". A timer rings with the screen off or the app closed, says what it is, and rings for 30 seconds unless stopped (say "Hey Zynk", tap the Stop button, or Stop on the notification). Several at once; each shows as a chip above the message box and a notification, both with Cancel. "Check timer", "cancel timer" (or "cancel the ten minute timer"), "check alarms", "cancel the 7 30 alarm", "stop stopwatch", "reset stopwatch", "check stopwatch". Needs Android's "Alarms & reminders" switch for Zynkbot, offered on the Voice page; without it the phone's clock app takes the command. On the desktop, timers run inside the app and ring only while it is open; alarms are phone-only. Details: `docs/ANDROID_USER_GUIDE.md` section 4, `docs/architecture_and_development/ANDROID_ARCHITECTURE.md` section 6a.
 
+### 🎤 Dictation
+
+The mic button turns speech into text in the message box. Two engines, chosen on the Voice page under System Controls:
+
+- **Offline — Vosk** (default): runs on the device, no internet, no audio leaves it. Lowercase text, no punctuation.
+- **OpenAI**: the recording goes to OpenAI (model `gpt-4o-mini-transcribe`) and comes back with punctuation and capitals. Needs an OpenAI key. On the Linux desktop the words appear while you speak; after Stop the app waits up to 8 seconds for the last of them, then the final text replaces the live words. If the live connection cannot be opened, the recording is sent when you stop, as before.
+
 ### 🤝 Ensemble Mode
 
 Query multiple AI models simultaneously and synthesize their responses into a consensus answer. Works with any combination of local and API models — no network required.
+
+On the desktop the Ensemble button opens whatever model you are using; the window lists the local model beside the cloud ones. On a phone with a local model selected, the button says "Ensemble needs cloud models" and does not open. Not available in Child mode.
 
 **Best for:** fact-checking, catching hallucinations, contested questions, and any decision where you want more than one AI perspective before acting.
 

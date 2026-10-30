@@ -186,6 +186,22 @@ unlock = "receipt_file"                 # a signed receipt placed next to the ma
 - **Check-ins:** "You said you would file the response by the 14th. Done?"
 - **Policy:** Guardian containment at least; network off; one-time licence.
 
+### Worked example: music player snap-in
+
+- **Workspace:** what is playing now, the queue, and a list of the user's playlists, read
+  from the music app on the device.
+- **Mode:** "DJ". Short replies while music is on; talks about the music only when asked;
+  never interrupts a track to comment.
+- **Tools:** play, pause, skip, "play something like this", "add this to <playlist>",
+  "what is this song" (from the player's own metadata, no network). On Android these are
+  media-session commands to whichever player is open; on the desktop they would go to
+  MPRIS on Linux (the standard desktop media interface) and the equivalent on Windows.
+- **Check-ins:** none. Nothing about listening habits is a plan to ask after.
+- **Memory namespace:** `music`, for likes and dislikes the user states out loud ("I love
+  this one", "never play this again"); nothing is inferred from play counts.
+- **Policy:** any containment; network off; the player's own account stays in the player.
+  Not a music service: it controls what the user already has.
+
 ### What this means for the platform plan above
 
 The loader and the `snapin_*` API stand. Two additions: `chat_modes::apply` reads
