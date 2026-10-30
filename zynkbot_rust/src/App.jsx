@@ -136,6 +136,13 @@ function modelWindowTokens(modelId, models) {
   return 8192; // custom / Ollama: unknown, assume small
 }
 
+// Sources saved with a searched or page-read answer (sources_json on the row, 0028), back in
+// the shape ChatMessage renders under the answer. Anything unreadable is simply no list.
+const parseSources = (text) => {
+  if (!text) return undefined;
+  try { const v = JSON.parse(text); return v && Array.isArray(v.results) && v.results.length ? v : undefined; } catch (_) { return undefined; }
+};
+
 export default function App() {
   // Persistent user ID from backend (shared across all YOUR devices)
   const [userId, setUserId] = useState(null);
@@ -203,7 +210,7 @@ export default function App() {
         if (!rows || rows.length === 0) return;
         setSessionId(current);
         try { sessionStorage.setItem('zynkbot_session_id', current); } catch (_) {}
-        setMessages(rows.map((m) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [] })));
+        setMessages(rows.map((m) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [], web_search_results: parseSources(m.sources_json) })));
         console.log('[Session] restored thread', current.slice(0, 8), 'with', rows.length, 'messages');
       } catch (e) {
         console.warn('[Session] could not restore the current thread:', e);
@@ -353,6 +360,13 @@ export default function App() {
     } catch (e) { console.warn('[App] check-in:', e); }
     return false;
   };
+  // Bring the card into view when it appears, even if the user had scrolled up.
+  useEffect(() => {
+    if (!pendingCheckin) return;
+    userScrolledUpRef.current = false;
+    const t = setTimeout(() => conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80);
+    return () => clearTimeout(t);
+  }, [pendingCheckin]);
   const answerCheckin = async (answer) => {
     const q = pendingCheckin;
     setPendingCheckin(null);
@@ -1087,7 +1101,8 @@ export default function App() {
   const handleResumeSession = ({ sessionId: resumedId, messages: pastMessages }) => {
     setSessionId(resumedId);
     try { sessionStorage.setItem('zynkbot_session_id', resumedId); } catch (_) {}
-    setMessages(pastMessages);
+    // Rows straight from the database carry their saved sources as text; the page wants the list.
+    setMessages((pastMessages || []).map((m) => (m.web_search_results || !m.sources_json) ? m : { ...m, web_search_results: parseSources(m.sources_json) }));
     // Scroll to bottom after loading
     setTimeout(() => {
       const el = document.getElementById('messages-end');
@@ -1152,7 +1167,7 @@ export default function App() {
       const theirs = new Date(latest.last_active).getTime();
       const rows = await invoke('get_conversation_messages', { sessionId: latest.session_id });
       if (!rows || rows.length === 0) return;
-      const asMessage = (m) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [] });
+      const asMessage = (m) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [], web_search_results: parseSources(m.sources_json) });
       if (latest.session_id === liveRef.current.sessionId) {
         // Same thread, written on another device meanwhile: append what this device lacks.
         // The thread is replaced by the stored copy, never appended to: the page can hold
@@ -1871,6 +1886,13 @@ export default function App() {
       }
 
       console.log('[WebSearch] Search results:', searchResults);
+      // What goes into the thread with the answer (0028): titles, links and snippets only,
+      // not the page bodies the synthesis prompt gets.
+      const threadSources = {
+        query: searchQuery,
+        results: (searchResults.results || []).map((r) => ({ title: r.title, url: r.url, snippet: r.snippet })),
+        num_results: (searchResults.results || []).length,
+      };
 
       if (searchResults.answer) {
         setMessages(prev => prev.map(msg =>
@@ -1882,7 +1904,7 @@ export default function App() {
         console.log('[WebSearch] Answer came from the provider\'s own search (' + searchResults.engine + ')');
         // Into the thread, as the synthesis call used to do on its own.
         try {
-          await invoke('log_web_search_answer', { sessionId, userId, query: searchQuery, answer: searchResults.answer, backend: modelType, containmentMode });
+          await invoke('log_web_search_answer', { sessionId, userId, query: searchQuery, answer: searchResults.answer, backend: modelType, containmentMode, sources: threadSources });
         } catch (e) { console.warn('[WebSearch] could not log the answer:', e); }
         return;
       }
@@ -1936,7 +1958,8 @@ export default function App() {
         containmentMode,
         conversationHistory: [], // Don't include history for this synthesis
         skipContainment: true, // Skip safety checks for internal web search synthesis
-        skipMemoryStorage: true // Don't store web search results as memories
+        skipMemoryStorage: true, // Don't store web search results as memories
+        webSources: threadSources // saved with the answer, so the list survives a restart
       });
 
       unlisten();
@@ -2639,7 +2662,6 @@ export default function App() {
                   {MODE_HELP[chatMode]} <span style={{ color: '#9aa5c4' }}>Set the mode back to Normal to switch it off.</span>
                 </div>
               )}
-              <CheckInCard checkin={pendingCheckin} onAnswer={answerCheckin} onDismiss={() => answerCheckin('other')} />
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
                   introSeen('chat')
@@ -2695,6 +2717,9 @@ export default function App() {
                     </div>
                   </div>
                 )}
+                {/* The question card sits at the end of the thread, like a new message (2026-10-30:
+                    drawn above the thread it went unseen on a phone with a long conversation). */}
+                {pendingCheckin && <CheckInCard checkin={pendingCheckin} onAnswer={answerCheckin} onDismiss={() => answerCheckin('other')} />}
                 <div ref={conversationEndRef} />
               </div>
               {showScrollButton && (

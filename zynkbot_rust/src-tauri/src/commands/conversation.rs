@@ -253,11 +253,12 @@ pub async fn seal_signer_key() -> Result<String, String> {
 /// answer. Without this the answer was on screen and nowhere else, and gone after a
 /// restart. Not in HIPAA mode, which keeps no thread.
 #[tauri::command]
-pub async fn log_web_search_answer(session_id: String, user_id: String, query: String, answer: String, backend: String, containment_mode: String) -> Result<(), String> {
+pub async fn log_web_search_answer(session_id: String, user_id: String, query: String, answer: String, backend: String, containment_mode: String, sources: Option<serde_json::Value>) -> Result<(), String> {
     if containment_mode.eq_ignore_ascii_case("hipaa") { return Ok(()); }
     let pool = crate::db::create_pool().await.map_err(|e| format!("Database error: {}", e))?;
     let user_line = format!("Web search: \"{}\"", query);
-    let result = conversation_history::log_exchange(&pool, &session_id, &user_id, &user_line, &answer, &backend, &containment_mode, true, "typed").await;
+    // The sources go on the row too (0028), so the list under the answer survives a restart.
+    let result = conversation_history::log_exchange_with_sources(&pool, &session_id, &user_id, &user_line, &answer, &backend, &containment_mode, true, "typed", sources.as_ref()).await;
     pool.close().await;
     result.map_err(|e| format!("Could not log the searched answer: {}", e))
 }

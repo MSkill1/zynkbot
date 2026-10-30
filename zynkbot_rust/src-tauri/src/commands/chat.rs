@@ -131,6 +131,9 @@ pub async fn send_message_with_memory(
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
     mode: Option<String>,
+    // The page's own web search results when this call writes the answer from them
+    // ({ query, results }), so they are saved with the answer (2026-10-30).
+    web_sources: Option<serde_json::Value>,
 ) -> Result<ReplyResponse, String> {
     let sink: std::sync::Arc<dyn crate::response_sink::ResponseSink> =
         std::sync::Arc::new(crate::response_sink::TauriSink::new(app));
@@ -140,6 +143,7 @@ pub async fn send_message_with_memory(
         kb_enabled, user_query, image_data,
         false, // hands_free: this is the in-app path
         mode,
+        web_sources,
     )
     .await
 }
@@ -177,6 +181,9 @@ pub async fn generate_reply(
     hands_free: bool,
     // A conversation mode's name (chat_modes.rs), None for normal.
     mode: Option<String>,
+    // Sources the caller already has for this answer (a typed search the page ran, or the
+    // hands-free search below): shown under the answer and saved with it (0028).
+    page_sources: Option<serde_json::Value>,
 ) -> Result<ReplyResponse, String> {
     use crate::conversation_engine::ConversationEngine;
 
@@ -1168,10 +1175,10 @@ pub async fn generate_reply(
         if let Some(answer) = provider_answer {
             // Its words already went to the sink while the provider wrote them.
             if containment_mode.to_lowercase() != "hipaa" {
-                let (s, u, m, a, b, c) = (session_id.clone(), user_id.clone(), query.clone(), answer.clone(), forced_backend.clone(), containment_mode.clone());
+                let (s, u, m, a, b, c, src) = (session_id.clone(), user_id.clone(), query.clone(), answer.clone(), forced_backend.clone(), containment_mode.clone(), web_sources.clone());
                 tokio::spawn(async move {
                     if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
-                        if let Err(e) = crate::conversation_history::log_exchange(&pool, &s, &u, &m, &a, &b, &c, true, "hands_free").await {
+                        if let Err(e) = crate::conversation_history::log_exchange_with_sources(&pool, &s, &u, &m, &a, &b, &c, true, "hands_free", src.as_ref()).await {
                             eprintln!("[ConvHistory] ⚠️ Failed to log searched answer: {}", e);
                         }
                     }
@@ -1189,7 +1196,7 @@ pub async fn generate_reply(
         }
         let synthesized = Box::pin(generate_reply(
             sink.clone(), prompt, user_id.clone(), session_id.clone(), forced_backend.clone(), containment_mode.clone(),
-            None, Some(true), Some(true), Some(kb_enabled), Some(query.clone()), None, true, None,
+            None, Some(true), Some(true), Some(kb_enabled), Some(query.clone()), None, true, None, web_sources.clone(),
         )).await?;
         return Ok(ReplyResponse { original_query: Some(query.clone()), pre_search_reply: first_answer, web_search_results: web_sources, ..synthesized });
     }
@@ -1442,6 +1449,9 @@ pub async fn generate_reply(
 
     println!("[⏱️ PERF] Total request time: {:.2}s", request_start.elapsed().as_secs_f32());
 
+    // Pages the model read for this answer, else what the caller searched (0028).
+    let answer_sources: Option<serde_json::Value> = read_sources.or(page_sources);
+
     // STEP 9: RETURN RESPONSE IMMEDIATELY (before memory processing)
     let immediate_response = ReplyResponse {
         reply_text: final_reply_text.clone(),
@@ -1456,7 +1466,7 @@ pub async fn generate_reply(
         original_query: Some(query.clone()),
         pre_search_reply: None,
         kb_note: kb_note.clone(),
-        web_search_results: read_sources,
+        web_search_results: answer_sources.clone(),
     };
 
     // STEP 10: LOG EXCHANGE TO CONVERSATION HISTORY (non-blocking, skipped in HIPAA mode,
@@ -1482,14 +1492,16 @@ pub async fn generate_reply(
         // (2026-09-08). Fragments and NO_QUERY turns never reach this point anyway.
         let ch_name_thread = true;
         let ch_hands_free = hands_free;
+        let ch_sources = answer_sources.clone();
         tokio::spawn(async move {
             { let db_url = crate::db::get_db_url();
                 match sqlx::SqlitePool::connect(&db_url).await {
                     Ok(pool) => {
-                        if let Err(e) = crate::conversation_history::log_exchange(
+                        if let Err(e) = crate::conversation_history::log_exchange_with_sources(
                             &pool, &ch_session, &ch_user, &ch_message,
                             &ch_reply, &ch_backend, &ch_mode, ch_name_thread,
                             if ch_hands_free { "hands_free" } else { "typed" },
+                            ch_sources.as_ref(),
                         ).await {
                             eprintln!("[ConvHistory] ⚠️ Failed to log exchange: {}", e);
                         }

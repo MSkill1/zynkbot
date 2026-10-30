@@ -1133,6 +1133,9 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 ) : (
                   <div className="memory-details-content">
                     <div className="detail-row">
+                      <strong>ID:</strong> {selectedMemory.id}
+                    </div>
+                    <div className="detail-row">
                       <strong>Namespace:</strong> {selectedMemory.namespace}
                     </div>
                     <div className="detail-row">
@@ -1156,7 +1159,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         </div>
                       </div>
                     )}
-                    {selectedMemory.expires_at && (
+                    {selectedMemory.expires_at && !selectedMemory.temporal_status && (
                       <div className="detail-row">
                         <strong>Status:</strong> {passingText(selectedMemory)}
                         <div style={{ marginTop: '6px' }}>
@@ -1608,7 +1611,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         </button>
                       </div>
                     )}
-                    {selectedMemory.expires_at && (
+                    {selectedMemory.expires_at && !selectedMemory.temporal_status && (
                       <div className="detail-row">
                         <strong>Status:</strong> {passingText(selectedMemory)}{' '}
                         <button type="button" onClick={() => handleKeep(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="Keep this memory: it stops expiring and stays in recall">

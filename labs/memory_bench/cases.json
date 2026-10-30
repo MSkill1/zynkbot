@@ -1569,7 +1569,7 @@
    ],
    "expected": {
     "memory_id": 101,
-    "type": "updates"
+    "type": "contradicts"
    }
   },
   {

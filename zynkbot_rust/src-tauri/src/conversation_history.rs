@@ -39,6 +39,9 @@ pub struct ConversationMessage {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub model_backend: Option<String>,
     pub containment_mode: Option<String>,
+    /// Sources behind a searched or page-read answer (0028), JSON text or NULL.
+    #[sqlx(default)]
+    pub sources_json: Option<String>,
 }
 
 // ============================================================================
@@ -165,6 +168,27 @@ pub async fn log_exchange(
     name_thread: bool,
     input_mode: &str,
 ) -> Result<(), sqlx::Error> {
+    log_exchange_with_sources(pool, session_id, user_id, user_message, assistant_message,
+        model_backend, containment_mode, name_thread, input_mode, None).await
+}
+
+/// `sources`: the search results or pages the answer was built from, in the shape the
+/// page renders ({ query, results: [{title, url, snippet}] }), kept on the assistant row so
+/// the "View n search sources" list comes back with the thread (2026-10-30; before this it
+/// was page state only and gone after a restart).
+#[allow(clippy::too_many_arguments)]
+pub async fn log_exchange_with_sources(
+    pool: &SqlitePool,
+    session_id: &str,
+    user_id: &str,
+    user_message: &str,
+    assistant_message: &str,
+    model_backend: &str,
+    containment_mode: &str,
+    name_thread: bool,
+    input_mode: &str,
+    sources: Option<&serde_json::Value>,
+) -> Result<(), sqlx::Error> {
     // A thread deleted on this or another device stays deleted: saving into it would
     // recreate the row and sync the ghost back out (D13, 2026-10-06). The screen is
     // told to close such a thread; this covers the reply already in flight.
@@ -227,14 +251,15 @@ pub async fn log_exchange(
 
     sqlx::query(
         "INSERT OR IGNORE INTO conversation_messages
-             (session_id, user_id, role, content, model_backend, containment_mode, created_at, input_mode)
-         VALUES (?, ?, 'assistant', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), 'system')",
+             (session_id, user_id, role, content, model_backend, containment_mode, created_at, input_mode, sources_json)
+         VALUES (?, ?, 'assistant', ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%S+00:00','now'), 'system', ?)",
     )
     .bind(session_id)
     .bind(user_id)
     .bind(assistant_message)
     .bind(model_backend)
     .bind(containment_mode)
+    .bind(sources.map(|v| v.to_string()))
     .execute(pool)
     .await?;
 
@@ -294,7 +319,7 @@ pub async fn get_messages(
 ) -> Result<Vec<ConversationMessage>, sqlx::Error> {
     sqlx::query_as::<_, ConversationMessage>(
         "SELECT id, session_id, user_id, role, content, created_at,
-                model_backend, containment_mode
+                model_backend, containment_mode, sources_json
          FROM conversation_messages
          WHERE session_id = ?
          ORDER BY created_at ASC, id ASC",

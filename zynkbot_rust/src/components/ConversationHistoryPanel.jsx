@@ -287,6 +287,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                     role: m.role,
                     content: m.content,
                     timestamp: m.created_at,
+                    sources_json: m.sources_json, // the page turns it back into the sources list
                   })),
                 });
                 onClose();

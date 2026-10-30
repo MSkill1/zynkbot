@@ -72,11 +72,11 @@ on conversation start (desktop: app open; phone: app to the front), once per day
         passing = true
         and expires_at within the last 7 days or the next 2 days
         and original_text matches an intention pattern
-        and not yet asked (memory_checkins has no row for it)
+        and not yet asked (checkin_asked_at on the memory is empty)
         and no newer memory links to it (updates / related)
         and (mode != hipaa or not health-related)
     if none: return
-    insert memory_checkins (memory_id, asked_at)
+    set checkin_asked_at = now on the memory (syncs with it)
     question = model phrases it from a template:
         "A while back you mentioned {original_text, trimmed}. Did that happen?"
         (template used as-is when the model is unavailable)
@@ -93,8 +93,10 @@ on the user's next message, if a check-in is pending:
     clear the pending check-in either way
 ```
 
-New storage: one table `memory_checkins (memory_id, asked_at, answer)` and one new
-`temporal_status` value, `completed`. Both sync like any other memory change. Recall,
+New storage: two columns on the memory row, `checkin_asked_at` and `checkin_answer`
+(moved there on 2026-10-30 from a per-device table, so the mark syncs and a question is
+asked once across all devices), and one new `temporal_status` value, `completed`. Both
+sync like any other memory change. Recall,
 Memory Manager and the "coming up" answer treat `completed` exactly like `superseded`,
 with a different label.
 

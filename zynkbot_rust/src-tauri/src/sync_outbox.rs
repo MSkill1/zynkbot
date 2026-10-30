@@ -166,7 +166,7 @@ async fn load_memories(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
                 embedding, link_count, is_ephemeral, expires_at, sentiment_score, sentiment_label,
                 event_type, event_date, entities_detected, original_text,
                 collection_id, memory_placement, external_id, temporal_status, provenance_json,
-                tags, sync_id
+                tags, sync_id, checkin_asked_at, checkin_answer
          FROM memories WHERE sync_id IN ({})", in_clause);
     let mut q = sqlx::query(&sql);
     for s in sync_ids { q = q.bind(s); }
@@ -207,6 +207,8 @@ async fn load_memories(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
             provenance_json: row.get("provenance_json"),
             tags: row.get("tags"),
             sync_id: row.get("sync_id"),
+            checkin_asked_at: row.get("checkin_asked_at"),
+            checkin_answer: row.get("checkin_answer"),
         }
     }).collect())
 }
@@ -241,7 +243,7 @@ async fn load_messages(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
     let in_clause = sync_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
         "SELECT session_id, user_id, role, content, created_at,
-                model_backend, containment_mode, entry_hash, prev_hash, sync_id
+                model_backend, containment_mode, entry_hash, prev_hash, sync_id, sources_json
          FROM conversation_messages WHERE sync_id IN ({}) ORDER BY created_at ASC, id ASC", in_clause);
     let mut q = sqlx::query(&sql);
     for s in sync_ids { q = q.bind(s); }
@@ -257,6 +259,7 @@ async fn load_messages(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
         entry_hash: row.get("entry_hash"),
         prev_hash: row.get("prev_hash"),
         sync_id: row.get("sync_id"),
+        sources_json: row.get("sources_json"),
     }).collect())
 }
 
@@ -740,7 +743,7 @@ async fn apply_memory(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, m: 
                     embedding = ?, is_ephemeral = ?, expires_at = ?, sentiment_score = ?, sentiment_label = ?,
                     event_type = ?, event_date = ?, entities_detected = ?, original_text = ?,
                     collection_id = ?, memory_placement = ?, external_id = ?, temporal_status = ?,
-                    provenance_json = ?, tags = ?
+                    provenance_json = ?, tags = ?, checkin_asked_at = ?, checkin_answer = ?
                  WHERE id = ?")
                 .bind(&m.session_id).bind(&m.content).bind(&m.title).bind(&m.source_type)
                 .bind(m.created_at).bind(m.updated_at.unwrap_or(m.created_at))
@@ -752,6 +755,7 @@ async fn apply_memory(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, m: 
                 .bind(m.entities_detected.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "[]".into()))
                 .bind(&m.original_text).bind(&m.collection_id).bind(&m.memory_placement).bind(&m.external_id)
                 .bind(&m.temporal_status).bind(&m.provenance_json).bind(&tags)
+                .bind(&m.checkin_asked_at).bind(&m.checkin_answer)
                 .bind(id)
                 .execute(&mut **tx).await.map_err(|e| format!("outbox: update memory: {}", e))?;
             Ok(true)
@@ -773,8 +777,8 @@ async fn apply_memory(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, m: 
                     embedding, is_ephemeral, expires_at, sentiment_score, sentiment_label,
                     event_type, event_date, entities_detected, original_text,
                     collection_id, memory_placement, external_id, temporal_status, provenance_json,
-                    tags, sync_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                    tags, sync_id, checkin_asked_at, checkin_answer)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(local_user_id).bind(&m.session_id).bind(&m.content).bind(&m.title).bind(&m.source_type)
                 .bind(m.created_at).bind(m.updated_at.unwrap_or(m.created_at))
                 .bind(m.parent_scroll_id).bind(m.chunk_index).bind(&m.namespace).bind(m.is_syncable)
@@ -785,6 +789,7 @@ async fn apply_memory(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, m: 
                 .bind(m.entities_detected.as_ref().map(|v| v.to_string()).unwrap_or_else(|| "[]".into()))
                 .bind(&m.original_text).bind(&m.collection_id).bind(&m.memory_placement).bind(&m.external_id)
                 .bind(&m.temporal_status).bind(&m.provenance_json).bind(&tags).bind(sync_id)
+                .bind(&m.checkin_asked_at).bind(&m.checkin_answer)
                 .execute(&mut **tx).await.map_err(|e| format!("outbox: insert memory: {}", e))?;
             Ok(true)
         }
@@ -861,10 +866,10 @@ async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, ms
         Some(id) => {
             sqlx::query(
                 "UPDATE conversation_messages SET content = ?, model_backend = ?, containment_mode = ?,
-                    entry_hash = ?, prev_hash = ?
+                    entry_hash = ?, prev_hash = ?, sources_json = COALESCE(?, sources_json)
                  WHERE id = ?")
                 .bind(&msg.content).bind(&msg.model_backend).bind(&msg.containment_mode)
-                .bind(&msg.entry_hash).bind(&msg.prev_hash).bind(id)
+                .bind(&msg.entry_hash).bind(&msg.prev_hash).bind(&msg.sources_json).bind(id)
                 .execute(&mut **tx).await.map_err(|e| format!("outbox: update message: {}", e))?;
             Ok(true)
         }
@@ -878,11 +883,11 @@ async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, ms
             sqlx::query(
                 "INSERT INTO conversation_messages
                      (session_id, user_id, role, content, created_at,
-                      model_backend, containment_mode, entry_hash, prev_hash, sync_id)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                      model_backend, containment_mode, entry_hash, prev_hash, sync_id, sources_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&msg.session_id).bind(local_user_id).bind(&msg.role).bind(&msg.content).bind(msg.created_at)
                 .bind(&msg.model_backend).bind(&msg.containment_mode).bind(&msg.entry_hash).bind(&msg.prev_hash)
-                .bind(sync_id)
+                .bind(sync_id).bind(&msg.sources_json)
                 .execute(&mut **tx).await.map_err(|e| format!("outbox: insert message: {}", e))?;
             Ok(true)
         }

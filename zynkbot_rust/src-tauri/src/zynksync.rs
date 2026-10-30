@@ -89,6 +89,11 @@ pub struct SyncMemory {
     /// JSON array text, as stored (0011). Travels since the outbox rebuild (KI-030).
     #[serde(default)]
     pub tags: Option<String>,
+    /// Check-in mark (0027): when this memory was asked about and what the user answered.
+    #[serde(default)]
+    pub checkin_asked_at: Option<String>,
+    #[serde(default)]
+    pub checkin_answer: Option<String>,
     /// The row's name on every device (0013).
     #[serde(default)]
     pub sync_id: Option<String>,
@@ -147,6 +152,9 @@ pub struct SyncConversationMessage {
     pub containment_mode: Option<String>,
     pub entry_hash: Option<String>,
     pub prev_hash: Option<String>,
+    /// Sources behind a searched or page-read answer, JSON text (0028).
+    #[serde(default)]
+    pub sources_json: Option<String>,
     /// The row's name on every device (0013).
     #[serde(default)]
     pub sync_id: Option<String>,

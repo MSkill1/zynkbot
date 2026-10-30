@@ -255,6 +255,7 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
             None, // image_data
             true, // hands_free
             None, // mode: hands-free has none
+            None, // page_sources: a hands-free search builds its own
         )
         .await
     });

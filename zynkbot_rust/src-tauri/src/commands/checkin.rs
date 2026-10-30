@@ -4,6 +4,8 @@
 //! at the start of a conversation. The user closes it: done, not yet, or never mind.
 //! Life plans are never asked about because extraction does not mark them passing.
 //! Experimental in beta 5; the switch is on the System Controls page.
+//! The "asked" mark lives on the memory row (checkin_asked_at, checkin_answer; 0027) so it
+//! syncs with the memory and a question is asked once across all of the user's devices.
 
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -31,6 +33,7 @@ pub fn intention_text(text: &str) -> bool {
 /// The sentence of the user's words that carries the intention, if any: the question quotes
 /// that sentence, not a whole message. A question mark anywhere in the sentence rules it out.
 pub fn intention_sentence(text: &str) -> Option<String> {
+    let mut previous: Option<&str> = None;
     for raw in text.split(|c: char| matches!(c, '.' | '!' | '?' | '\n')) {
         let sentence = raw.trim();
         if sentence.is_empty() { continue; }
@@ -39,9 +42,17 @@ pub fn intention_sentence(text: &str) -> Option<String> {
             // A question ends the sentence with "?", which split() removed; look it up in the text.
             let start = text.find(sentence).unwrap_or(0);
             let end = start + sentence.len();
-            if text[end..].trim_start().starts_with('?') { continue; }
-            return Some(sentence.to_string());
+            if text[end..].trim_start().starts_with('?') { previous = Some(sentence); continue; }
+            // Dictation often splits one thought over a full stop ("We need to keep the
+            // accounts open. that I should ask at the bank"): a sentence that starts in
+            // lower case takes the one before it along, so the quote reads whole.
+            let starts_lower = sentence.chars().next().map(|c| c.is_lowercase()).unwrap_or(false);
+            return Some(match (starts_lower, previous) {
+                (true, Some(p)) => format!("{}. {}", p, sentence),
+                _ => sentence.to_string(),
+            });
         }
+        previous = Some(sentence);
     }
     None
 }
@@ -110,7 +121,7 @@ async fn next_checkin(pool: &SqlitePool, user_id: &str, containment_mode: &str, 
     let mode = containment_mode.to_lowercase();
     if mode == "child" || mode == "hipaa" { return Ok(None); }
     // One a day.
-    let today: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memory_checkins WHERE asked_at > datetime('now', '-1 day')")
+    let today: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE checkin_asked_at > datetime('now', '-1 day')")
         .fetch_one(pool).await.map_err(|e| e.to_string())?;
     if today > 0 && !force { return Ok(None); }
     // Passing facts at their expiry (a week past to two days ahead), never asked before.
@@ -119,20 +130,29 @@ async fn next_checkin(pool: &SqlitePool, user_id: &str, containment_mode: &str, 
          WHERE user_id = ? AND is_ephemeral = 1 AND expires_at IS NOT NULL AND temporal_status IS NULL \
            AND namespace != '_zynkbot' \
            AND (? OR date(substr(expires_at, 1, 10)) BETWEEN date('now', '-7 days') AND date('now', '+2 days')) \
-           AND id NOT IN (SELECT memory_id FROM memory_checkins) \
+           AND checkin_asked_at IS NULL \
          ORDER BY expires_at ASC LIMIT 40")
         .bind(user_id).bind(force).fetch_all(pool).await.map_err(|e| e.to_string())?;
     for (id, content, original) in rows {
         if !fact_is_intention(&content) { continue; }
         let words = original.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| content.clone());
         let Some(said) = intention_sentence(&words) else { continue };
-        // A later memory linked to it means the user is still on it: no need to ask.
+        // A later mention means the user is still on it: an "updates" link at any time, or a
+        // "related" memory made at least a day later. Facts from the same conversation are
+        // linked "related" to each other within minutes; those are siblings, not mentions
+        // (the first version counted them and never asked anything, 2026-10-29).
         let newer: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM memory_links WHERE relation_type IN ('updates', 'related') \
-             AND ((target_memory_id = ? AND source_memory_id > ?) OR (source_memory_id = ? AND target_memory_id > ?))")
-            .bind(id).bind(id).bind(id).bind(id).fetch_one(pool).await.unwrap_or(0);
+            "SELECT COUNT(*) FROM memory_links l \
+             JOIN memories m ON m.id = CASE WHEN l.target_memory_id = ? THEN l.source_memory_id ELSE l.target_memory_id END \
+             WHERE (l.target_memory_id = ? OR l.source_memory_id = ?) AND m.id != ? \
+               AND (l.relation_type = 'updates' \
+                    OR (l.relation_type = 'related' \
+                        AND m.created_at > datetime((SELECT created_at FROM memories WHERE id = ?), '+1 day')))")
+            .bind(id).bind(id).bind(id).bind(id).bind(id).fetch_one(pool).await.unwrap_or(0);
         if newer > 0 { continue; }
-        sqlx::query("INSERT INTO memory_checkins (memory_id) VALUES (?)").bind(id)
+        // No updated_at bump: being asked is not an edit. The row still syncs (any update
+        // queues it), and a peer applies a row whose updated_at equals its own.
+        sqlx::query("UPDATE memories SET checkin_asked_at = datetime('now'), checkin_answer = NULL WHERE id = ?").bind(id)
             .execute(pool).await.map_err(|e| e.to_string())?;
         println!("[Check-in] Asking about memory #{}", id);
         return Ok(Some(json!({ "memory_id": id, "question": question_for(&said), "said": said })));
@@ -150,10 +170,10 @@ pub async fn answer_memory_checkin(memory_id: i32, answer: String) -> Result<Str
             "Noted as done. It stays in Memory Manager as history."
         }
         "later" => {
-            // Another two weeks, and it may be asked about once more at the end of them.
-            sqlx::query("UPDATE memories SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+14 days'), updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            // Another two weeks, and it may be asked about once more at the end of them:
+            // the asked mark is cleared, on this device and, through sync, on the others.
+            sqlx::query("UPDATE memories SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+14 days'), checkin_asked_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
                 .bind(memory_id).execute(&pool).await.map_err(|e| e.to_string())?;
-            sqlx::query("DELETE FROM memory_checkins WHERE memory_id = ?").bind(memory_id).execute(&pool).await.map_err(|e| e.to_string())?;
             "Kept for another two weeks."
         }
         "never" => {
@@ -164,7 +184,7 @@ pub async fn answer_memory_checkin(memory_id: i32, answer: String) -> Result<Str
         }
         _ => "Left as it is.",
     };
-    sqlx::query("UPDATE memory_checkins SET answer = ?, answered_at = datetime('now') WHERE memory_id = ?")
+    sqlx::query("UPDATE memories SET checkin_answer = ? WHERE id = ?")
         .bind(&answer).bind(memory_id).execute(&pool).await.map_err(|e| e.to_string())?;
     pool.close().await;
     println!("[Check-in] memory #{}: {}", memory_id, answer);
@@ -184,8 +204,32 @@ mod tests {
         assert!(!intention_text("Had chicken wings last night."));
         assert!(!intention_text("Do I need to get a water filter?"));
         assert_eq!(intention_sentence("Let's forget about going out. I need to get a water filter. Anyway.").as_deref(), Some("I need to get a water filter"));
+        assert_eq!(intention_sentence("We need to keep the accounts open.  that I should ask at the bank. Fine.").as_deref(), Some("We need to keep the accounts open. that I should ask at the bank"));
         assert!(fact_is_intention("User needs to get a water filter for the kitchen sink."));
         assert!(!fact_is_intention("User is conducting a test to receive a response."));
+    }
+
+    /// Runs the real selection against a copy of a database, read-only for the original.
+    ///   CHECKIN_DB_COPY=/path/copy.db CHECKIN_USER=<user id> cargo test --lib checkin_against_copy -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn checkin_against_copy() {
+        let path = std::env::var("CHECKIN_DB_COPY").expect("CHECKIN_DB_COPY");
+        let user = std::env::var("CHECKIN_USER").expect("CHECKIN_USER");
+        let pool = SqlitePool::connect(&format!("sqlite://{}?mode=rwc", path)).await.expect("open copy");
+        sqlx::migrate!("./migrations").run(&pool).await.expect("migrate copy");
+        let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, content, original_text FROM memories WHERE user_id = ? AND is_ephemeral = 1 AND expires_at IS NOT NULL AND temporal_status IS NULL AND namespace != '_zynkbot' AND checkin_asked_at IS NULL ORDER BY expires_at ASC LIMIT 40")
+            .bind(&user).fetch_all(&pool).await.expect("rows");
+        println!("[checkin_against_copy] {} passing rows", rows.len());
+        for (id, content, original) in &rows {
+            let words = original.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| content.clone());
+            println!("  #{} fact_ok={} sentence={:?}", id, fact_is_intention(content), intention_sentence(&words));
+        }
+        let out = next_checkin(&pool, &user, "sovereign", true).await;
+        println!("[checkin_against_copy] forced: {:?}", out);
+        let out2 = next_checkin(&pool, &user, "sovereign", false).await;
+        println!("[checkin_against_copy] unforced after one ask: {:?}", out2);
     }
 
     #[test]
