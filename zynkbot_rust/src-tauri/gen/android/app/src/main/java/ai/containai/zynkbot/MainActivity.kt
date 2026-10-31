@@ -63,6 +63,9 @@ class MainActivity : TauriActivity() {
         // The Voice-settings dictation engine, mirrored out of localStorage by
         // ZynkbotPathsBridge.setVoiceInputSource so the native assistant session —
         // which never runs the WebView — can honour it too (2026-09-08).
+        private const val POWER_PREFS = "zynkbot_power"
+        private const val POWER_PREFS_STARTS = "starts"
+        private const val POWER_PREFS_ASKED = "battery_exemption_asked"
         private const val VOICE_PREFS = "zynkbot_voice"
         private const val VOICE_PREFS_INPUT_SOURCE = "input_source"
         private val VOICE_INPUT_SOURCES = setOf("vosk", "openai")
@@ -122,40 +125,87 @@ class MainActivity : TauriActivity() {
         wv.post { wv.evaluateJavascript(script, null) }
     }
 
-    // File picker for adding files into ZynkbotShare
-    private val pickFileLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
+    // "Move to…" on the Current Model page (2026-10-23): the system "save as" picker chooses
+    // where a model file goes, the file is streamed there, and the original is removed.
+    // Android gives an app no other way to write outside its own storage without a
+    // storage permission. A 2.5 GB model takes a minute or so; the page shows progress.
+    private var pendingMoveSource: File? = null
+    private val moveFileLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
     ) { uri ->
         val wv = webViewRef?.get() ?: return@registerForActivityResult
-        if (uri == null) {
+        val src = pendingMoveSource
+        pendingMoveSource = null
+        val js = { s: String -> wv.post { wv.evaluateJavascript(s, null) } }
+        if (uri == null || src == null) {
+            js("window.__zmvReject&&window.__zmvReject('cancelled');window.__zmvResolve=null;window.__zmvReject=null;")
+            return@registerForActivityResult
+        }
+        Thread {
+            try {
+                contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
+                    ?: throw IllegalStateException("could not open the destination")
+                if (!src.delete()) Log.w("Zynkbot", "Model moved but the original could not be removed: ${src.name}")
+                val escaped = uri.toString().replace("\\", "\\\\").replace("'", "\\'")
+                js("window.__zmvResolve&&window.__zmvResolve('$escaped');window.__zmvResolve=null;window.__zmvReject=null;")
+            } catch (e: Exception) {
+                try { android.provider.DocumentsContract.deleteDocument(contentResolver, uri) } catch (_: Exception) {}
+                val msg = (e.message ?: "failed").replace("\\", "\\\\").replace("'", "\\'")
+                js("window.__zmvReject&&window.__zmvReject('$msg');window.__zmvResolve=null;window.__zmvReject=null;")
+            }
+        }.start()
+    }
+
+    // File picker for adding files into ZynkbotShare
+    // Add Files in the share browser: the phone's document picker in multi mode (long-press
+    // the first file, tap the rest, then the picker's Select). Single-file until 2026-10-24,
+    // when the first tap returned and the picker closed (Matt). Every chosen file is copied
+    // into ZynkbotShare on a background thread; the page gets the count.
+    private val pickFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        val wv = webViewRef?.get() ?: return@registerForActivityResult
+        if (uris.isNullOrEmpty()) {
             wv.post { wv.evaluateJavascript(
                 "window.__zfpReject&&window.__zfpReject('cancelled');window.__zfpResolve=null;window.__zfpReject=null;", null) }
             return@registerForActivityResult
         }
-        // Copy the file into ZynkbotShare on a background thread
         Thread {
-            try {
-                val destDir = zynkShareDir()
-                destDir.mkdirs()
-                // Resolve a display name for the file
-                val fileName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    cursor.moveToFirst()
-                    if (nameIndex >= 0) cursor.getString(nameIndex) else null
-                } ?: uri.lastPathSegment ?: "file"
-                val dest = File(destDir, fileName)
-                contentResolver.openInputStream(uri)?.use { input ->
-                    dest.outputStream().use { output -> input.copyTo(output) }
-                }
-                val escaped = dest.absolutePath.replace("\\", "\\\\").replace("'", "\\'")
-                wv.post { wv.evaluateJavascript(
-                    "window.__zfpResolve&&window.__zfpResolve('$escaped');window.__zfpResolve=null;window.__zfpReject=null;", null) }
-            } catch (e: Exception) {
-                val msg = (e.message ?: "copy failed").replace("'", "\\'")
-                wv.post { wv.evaluateJavascript(
-                    "window.__zfpReject&&window.__zfpReject('$msg');window.__zfpResolve=null;window.__zfpReject=null;", null) }
+            var added = 0
+            var lastError: String? = null
+            for (uri in uris) {
+                try { copyPickedIntoShare(uri); added++ } catch (e: Exception) { lastError = e.message ?: "copy failed" }
             }
+            if (added > 0) ZynkShareProvider.notifyFilesApp(this@MainActivity)
+            val script = if (added == 0) {
+                val msg = (lastError ?: "copy failed").replace("'", "\\'")
+                "window.__zfpReject&&window.__zfpReject('$msg');window.__zfpResolve=null;window.__zfpReject=null;"
+            } else {
+                "window.__zfpResolve&&window.__zfpResolve('$added');window.__zfpResolve=null;window.__zfpReject=null;"
+            }
+            wv.post { wv.evaluateJavascript(script, null) }
         }.start()
+    }
+
+    /** One picked document copied into ZynkbotShare, never replacing a file already there
+     *  ("(2)" it, as the Share receiver does). A file picked from the Zynkbot location itself
+     *  is handed back as is: copying it onto itself emptied it (two 0-byte files on the
+     *  Pixel, 2026-09-20), because the write truncates before the read starts. */
+    private fun copyPickedIntoShare(uri: Uri): File {
+        val destDir = zynkShareDir()
+        destDir.mkdirs()
+        if (uri.authority == ZynkShareProvider.AUTHORITY) {
+            val existing = File(destDir, android.provider.DocumentsContract.getDocumentId(uri))
+            if (existing.isFile && existing.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) return existing
+        }
+        val fileName = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+            cursor.moveToFirst()
+            if (nameIndex >= 0) cursor.getString(nameIndex) else null
+        } ?: uri.lastPathSegment ?: "file"
+        val dest = ZynkShareProvider.uniqueFile(destDir, fileName)
+        contentResolver.openInputStream(uri)?.use { input -> dest.outputStream().use { output -> input.copyTo(output) } }
+        return dest
     }
 
     // Multi-select pickers for chat attachments. The generic "get content" route the
@@ -221,6 +271,63 @@ class MainActivity : TauriActivity() {
     }
 
     inner class ZynkbotPathsBridge {
+        /** A peer download or ➕ Add file landed in the share folder: refresh the Files app view. */
+        @JavascriptInterface
+        fun shareFileWritten(path: String) { ZynkShareProvider.notifyFilesApp(this@MainActivity) }
+
+        /**
+         * Put a copy of an image from the share folder into the photo gallery
+         * (Pictures/Zynkbot). The share folder is app storage, which the gallery never
+         * indexes, so this is offered after an image download. No permission needed:
+         * an app may add its own media on Android 10+. Returns "" on success or an error.
+         */
+        @JavascriptInterface
+        fun saveToGallery(path: String): String {
+            return try {
+                val src = File(path)
+                if (!src.isFile) return "file not found"
+                val ext = src.name.substringAfterLast('.', "").lowercase()
+                val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "image/*"
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, src.name)
+                    put(android.provider.MediaStore.Images.Media.MIME_TYPE, mime)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Zynkbot")
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+                val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                    android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                else android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                val uri = contentResolver.insert(collection, values) ?: return "could not create gallery entry"
+                contentResolver.openOutputStream(uri)?.use { out -> src.inputStream().use { it.copyTo(out) } }
+                    ?: return "could not write gallery entry"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    contentResolver.update(uri, android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+                }
+                ""
+            } catch (e: Exception) { e.message ?: "failed" }
+        }
+
+        /**
+         * A picture the page holds in memory (a thumbnail in the thread, 2026-10-28) saved to
+         * the gallery on a long press: written to a temp file, then the same path as above.
+         * Returns "" on success, else the reason.
+         */
+        @JavascriptInterface
+        fun saveImageBase64ToGallery(base64: String, mime: String): String {
+            return try {
+                val ext = when (mime.lowercase()) { "image/png" -> "png"; "image/webp" -> "webp"; else -> "jpg" }
+                val name = "Zynkbot_" + java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date()) + "." + ext
+                val tmp = File(cacheDir, name)
+                tmp.writeBytes(android.util.Base64.decode(base64, android.util.Base64.DEFAULT))
+                val r = saveToGallery(tmp.absolutePath)
+                tmp.delete()
+                r
+            } catch (e: Exception) { e.message ?: "failed" }
+        }
+
         /** Voice settings selector ('vosk' | 'openai'); anything else is ignored. */
         @JavascriptInterface
         fun setVoiceInputSource(src: String) {
@@ -253,6 +360,28 @@ class MainActivity : TauriActivity() {
             }
             runOnUiThread { startActivity(Intent.createChooser(send, "Send wake-word clips")) }
             return true
+        }
+
+        /** Current Model page "Move to…": open the system save-as picker for this model
+         *  file; the page waits on window.__zmvResolve / __zmvReject. */
+        @JavascriptInterface
+        fun moveFileTo(path: String): Boolean {
+            val f = File(path)
+            if (!f.isFile) return false
+            pendingMoveSource = f
+            runOnUiThread { moveFileLauncher.launch(f.name) }
+            return true
+        }
+
+        /** Hold the screen on while a large ZynkLink transfer runs, either direction, so the
+         *  app stays in front and the transfer is not frozen with the screen (2026-10-23: a
+         *  2.5 GB model transfer died when the phones went dark). Released when it ends. */
+        @JavascriptInterface
+        fun keepScreenOn(on: Boolean) {
+            runOnUiThread {
+                val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                if (on) window.addFlags(flag) else window.clearFlags(flag)
+            }
         }
 
         @JavascriptInterface
@@ -294,6 +423,111 @@ class MainActivity : TauriActivity() {
                 val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return ""
                 android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
             } catch (e: Exception) { "" }
+        }
+
+        /** Does this zip hold an entry of that name? Reads entry headers only. */
+        private fun zipHolds(uri: Uri, entry: String): Boolean = try {
+            contentResolver.openInputStream(uri)?.use { s ->
+                java.util.zip.ZipInputStream(s).use { z ->
+                    generateSequence { z.nextEntry }.any { it.name == entry }
+                }
+            } ?: false
+        } catch (_: Exception) { false }
+
+        /** What a picked file is, from its own first bytes: image / pdf / doc / docx / text / binary.
+         *  A gallery photo Android could not name was read as text and sent as megabytes
+         *  of garbage (2026-10-25); the name and the provider's type are not enough. */
+        @JavascriptInterface
+        fun probeFile(uriStr: String): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                val head = contentResolver.openInputStream(uri)?.use { s -> val b = ByteArray(4096); val n = s.read(b); if (n <= 0) ByteArray(0) else b.copyOf(n) } ?: return "{\"kind\":\"binary\"}"
+                fun ascii(off: Int, len: Int) = if (head.size >= off + len) String(head, off, len, Charsets.US_ASCII) else ""
+                val kind = when {
+                    head.size >= 3 && head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte() -> "image"
+                    head.size >= 4 && head[0] == 0x89.toByte() && ascii(1, 3) == "PNG" -> "image"
+                    ascii(0, 4) == "GIF8" -> "image"
+                    ascii(0, 4) == "RIFF" && ascii(8, 4) == "WEBP" -> "image"
+                    ascii(0, 2) == "BM" -> "image"
+                    ascii(4, 4) == "ftyp" -> "image"   // HEIC / HEIF / AVIF containers
+                    ascii(0, 4) == "%PDF" -> "pdf"
+                    // Word (2026-10-27): the old binary format has the OLE signature; the new
+                    // one is a zip that holds word/document.xml.
+                    head.size >= 8 && head[0] == 0xD0.toByte() && head[1] == 0xCF.toByte() && head[2] == 0x11.toByte() && head[3] == 0xE0.toByte() -> "doc"
+                    ascii(0, 2) == "PK" && zipHolds(uri, "word/document.xml") -> "docx"
+                    else -> {
+                        val decodable = try {
+                            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
+                            o.outWidth > 0
+                        } catch (_: Exception) { false }
+                        if (decodable) "image" else {
+                            val nul = head.any { it == 0.toByte() }
+                            val text = String(head, Charsets.UTF_8)
+                            val bad = text.count { it == '\uFFFD' }
+                            if (nul || bad * 10 > text.length.coerceAtLeast(1)) "binary" else "text"
+                        }
+                    }
+                }
+                "{\"kind\":\"$kind\"}"
+            } catch (e: Exception) { "{\"kind\":\"binary\"}" }
+        }
+
+        /** The picture decoded by Android itself (JPEG, PNG, HEIC, whatever the phone can
+         *  open), turned the right way up, scaled so the long side is at most maxSide, and
+         *  returned as a JPEG in base64. "" if Android cannot decode it. */
+        @JavascriptInterface
+        fun readImageJpegBase64(uriStr: String, maxSide: Int): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return ""
+                var sample = 1
+                while ((bounds.outWidth / sample) > maxSide * 2 || (bounds.outHeight / sample) > maxSide * 2) sample *= 2
+                val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+                var bmp = contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) } ?: return ""
+                val longSide = maxOf(bmp.width, bmp.height)
+                if (longSide > maxSide) {
+                    val scale = maxSide.toFloat() / longSide
+                    bmp = android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * scale).toInt().coerceAtLeast(1), (bmp.height * scale).toInt().coerceAtLeast(1), true)
+                }
+                val rotation = try {
+                    contentResolver.openInputStream(uri)?.use { stream ->
+                        when (android.media.ExifInterface(stream).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL)) {
+                            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90
+                            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180
+                            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270
+                            else -> 0
+                        }
+                    } ?: 0
+                } catch (_: Exception) { 0 }
+                if (rotation != 0) {
+                    val mx = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
+                    bmp = android.graphics.Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, mx, true)
+                }
+                val out = java.io.ByteArrayOutputStream()
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+            } catch (e: Exception) { android.util.Log.w("AndroidPaths", "readImageJpegBase64: ${e.message}"); "" }
+        }
+
+        /** Copy a picked file into the app cache so Rust can read it by path (PDF text). */
+        @JavascriptInterface
+        fun copyToCache(uriStr: String): String {
+            return try {
+                val uri = Uri.parse(uriStr)
+                val name = getFileName(uriStr).ifBlank { "attachment" }.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                val f = File(cacheDir, "attach_${System.currentTimeMillis()}_$name")
+                contentResolver.openInputStream(uri)?.use { i -> FileOutputStream(f).use { o -> i.copyTo(o) } } ?: return ""
+                f.absolutePath
+            } catch (e: Exception) { "" }
+        }
+
+        /** MIME type the file's provider reports (e.g. "image/jpeg"), or "" if unknown. */
+        @JavascriptInterface
+        fun getMimeType(uriStr: String): String {
+            return try { contentResolver.getType(Uri.parse(uriStr)) ?: "" } catch (e: Exception) { "" }
         }
 
         @JavascriptInterface
@@ -366,95 +600,62 @@ class MainActivity : TauriActivity() {
             } catch (e: Exception) { "" }
         }
 
+        /** Open the Files app on the Zynkbot location (ZynkShareProvider). */
         @JavascriptInterface
         fun openShareFolder() {
-            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val dir = File(downloads, "ZynkbotShare").also { it.mkdirs() }
             runOnUiThread {
-                var opened = false
-
-                // Android 10+: raw: URI via Downloads provider
-                if (!opened && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    try {
-                        val uri = DocumentsContract.buildDocumentUri(
-                            "com.android.providers.downloads.documents",
-                            "raw:${dir.absolutePath}"
-                        )
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "vnd.android.document/directory")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        startActivity(intent)
-                        opened = true
-                    } catch (_: Exception) {}
+                val flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                val attempts = listOf(
+                    // What Settings → Storage uses to open a location in the Files app. A plain
+                    // ACTION_VIEW of the root "succeeded" but the Files app ignored it and
+                    // showed the last folder instead (Pixel, 2026-09-20).
+                    Intent("android.provider.action.BROWSE").apply {
+                        setDataAndType(DocumentsContract.buildRootUri(ZynkShareProvider.AUTHORITY, ZynkShareProvider.ROOT_ID),
+                            DocumentsContract.Root.MIME_TYPE_ITEM)
+                        addFlags(flags)
+                    },
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(DocumentsContract.buildRootUri(ZynkShareProvider.AUTHORITY, ZynkShareProvider.ROOT_ID),
+                            DocumentsContract.Root.MIME_TYPE_ITEM)
+                        addFlags(flags)
+                    },
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(DocumentsContract.buildDocumentUri(ZynkShareProvider.AUTHORITY, ZynkShareProvider.ROOT_DOC_ID),
+                            DocumentsContract.Document.MIME_TYPE_DIR)
+                        addFlags(flags)
+                    },
+                    Intent("android.intent.action.VIEW_DOWNLOADS").apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) },
+                )
+                for (intent in attempts) {
+                    try { startActivity(intent); return@runOnUiThread } catch (_: Exception) {}
                 }
-
-                // Android 10+: external storage provider fallback
-                // (Skipped on API <= 28 because documentsui on those versions crashes on this URI format)
-                if (!opened && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    try {
-                        val uri = DocumentsContract.buildDocumentUri(
-                            "com.android.externalstorage.documents",
-                            "primary:Download/ZynkbotShare"
-                        )
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "vnd.android.document/directory")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        startActivity(intent)
-                        opened = true
-                    } catch (_: Exception) {}
-                }
-
-                // Fallback: launch a file manager app
-                if (!opened) {
-                    try {
-                        val intent = packageManager.getLaunchIntentForPackage("com.sec.android.app.myfiles")
-                            ?: packageManager.getLaunchIntentForPackage("com.google.android.apps.nbu.files")
-                            ?: packageManager.getLaunchIntentForPackage("com.android.documentsui")
-                            ?: Intent(Intent.ACTION_VIEW).apply { type = "resource/folder" }
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        startActivity(intent)
-                    } catch (_: Exception) {}
-                }
+                android.widget.Toast.makeText(this@MainActivity, "Open the Files app and choose Zynkbot", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
 
     inner class VoskBridge {
-        @Volatile private var voskModel: org.vosk.Model? = null
-        @Volatile private var speechService: org.vosk.android.SpeechService? = null
-        private val accumulated = StringBuilder()
+        // The page's mic button (2026-10-20 rebuild): one Dictation fed from the
+        // wake-word service's stream when Hey Zynk is on, else from a stream of its
+        // own. Live text (everything finished so far plus the utterance in progress)
+        // on every change; the full text when the user taps stop. Since 2026-10-28 the
+        // engine follows the Voice settings selector: OpenAI (streamed live through
+        // OpenAiRealtime, with the clip upload as fallback) when selected and a key is on
+        // file, else Vosk. Before that the page recorded OpenAI dictation itself through
+        // getUserMedia and uploaded the clip on stop, with no live text.
+        @Volatile private var dictation: Dictation? = null
+        private var ownStream: MicStream? = null
 
-        private val listener = object : org.vosk.android.RecognitionListener {
-            override fun onPartialResult(h: String?) {
-                if (h.isNullOrBlank()) return
-                val partial = try { org.json.JSONObject(h).optString("partial", "") } catch (_: Exception) { "" }
-                if (partial.isNotBlank()) fire("window.__voskPartial&&window.__voskPartial('${esc(partial)}');")
+        private val listener = object : Dictation.Listener {
+            override fun onPartial(text: String) {
+                fire("window.__voskLive&&window.__voskLive('${esc(text)}');")
+                fire("window.__voskPartial&&window.__voskPartial('${esc(text)}');")
             }
-            override fun onResult(h: String?) {
-                val t = parseText(h)
-                if (t.isNotEmpty()) synchronized(accumulated) {
-                    if (accumulated.isNotEmpty()) accumulated.append(" ")
-                    accumulated.append(t)
-                }
-            }
-            override fun onFinalResult(h: String?) {
-                val last = parseText(h)
-                val full = synchronized(accumulated) {
-                    buildString {
-                        append(accumulated)
-                        if (accumulated.isNotEmpty() && last.isNotEmpty()) append(" ")
-                        append(last)
-                    }.trim().also { accumulated.clear() }
-                }
-                fire("window.__voskResult&&window.__voskResult('${esc(full)}');")
-            }
-            override fun onError(e: Exception?) {
-                fire("window.__voskError&&window.__voskError('${esc(e?.message ?: "recognition error")}');")
-            }
-            override fun onTimeout() {
-                fire("window.__voskError&&window.__voskError('timeout');")
+            override fun onFinal(text: String?) {
+                ownStream?.close(); ownStream = null
+                dictation = null
+                if (text == null) fire("window.__voskError&&window.__voskError('recognition error');")
+                else fire("window.__voskResult&&window.__voskResult('${esc(text)}');")
             }
         }
 
@@ -478,36 +679,42 @@ class MainActivity : TauriActivity() {
                 return
             }
             Thread {
-                try {
-                    val modelDir = File(filesDir, "vosk-model")
-                    if (!modelDir.exists()) {
-                        fire("window.__voskError&&window.__voskError('Voice model not downloaded yet');")
-                        return@Thread
-                    }
-                    if (voskModel == null) voskModel = org.vosk.Model(modelDir.absolutePath)
-                    WakeWordService.sharedVoskModel = voskModel // share with screen-off dictation
-                    val rec = org.vosk.Recognizer(voskModel, 16000.0f)
-                    runOnUiThread {
-                        try {
-                            speechService = org.vosk.android.SpeechService(rec, 16000.0f)
-                            speechService!!.startListening(listener)
-                            fire("window.__voskStarted&&window.__voskStarted();")
-                        } catch (e: Exception) {
-                            fire("window.__voskError&&window.__voskError('${esc(e.message ?: "start failed")}');")
-                        }
-                    }
-                } catch (e: Exception) {
-                    fire("window.__voskError&&window.__voskError('${esc(e.message ?: "model load failed")}');")
+                val source = voiceInputSource(this@MainActivity)
+                val key = if (source == "openai") OpenAiDictation.apiKey(this@MainActivity) else null
+                if (source == "openai" && key == null) {
+                    fire("window.__voskError&&window.__voskError('No OpenAI API key — add one in Settings, or choose offline dictation');")
+                    return@Thread
                 }
+                val engine = if (key != null) Dictation.Engine.WHISPER else Dictation.Engine.VOSK
+                val model = if (engine == Dictation.Engine.VOSK) Dictation.voskModel(this@MainActivity) else null
+                if (engine == Dictation.Engine.VOSK && model == null) {
+                    fire("window.__voskError&&window.__voskError('Voice model not downloaded yet');")
+                    return@Thread
+                }
+                Log.i("VoskBridge", "Dictation engine=${engine.name.lowercase()}")
+                val d = Dictation(engine, model, key, timers = false, listener = listener,
+                    stream = OpenAiDictation.streamingEnabled(this@MainActivity))
+                dictation?.cancel()
+                dictation = d
+                // Step 2 of the rebuild feeds this from the wake-word service's stream
+                // (WakeWordService.instance?.dictate(d, ownsTurn = false)). Until the page
+                // stops calling WakeWordBridge.stop() when dictation starts, that would
+                // abort the dictation; so for now the mic button keeps a stream of its own.
+                val s = MicStream("VoskBridge")
+                s.sink = d
+                if (!s.open()) {
+                    dictation = null
+                    fire("window.__voskError&&window.__voskError('Microphone busy');")
+                    return@Thread
+                }
+                ownStream = s
+                fire("window.__voskStarted&&window.__voskStarted();")
             }.start()
         }
 
         @JavascriptInterface
         fun stopListening() {
-            runOnUiThread {
-                speechService?.stop()
-                speechService = null
-            }
+            dictation?.stop()
         }
 
         @JavascriptInterface
@@ -577,7 +784,8 @@ class MainActivity : TauriActivity() {
             return try { org.json.JSONObject(h).optString("text", "").trim() } catch (_: Exception) { "" }
         }
 
-        private fun esc(s: String) = s.replace("\\", "\\\\").replace("'", "\\'")
+        // Newlines too: the cloud model's text can hold one, which would end the JS string.
+        private fun esc(s: String) = s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
 
         private fun fire(js: String) {
             val wv = webViewRef?.get() ?: return
@@ -588,12 +796,34 @@ class MainActivity : TauriActivity() {
     inner class WakeWordBridge {
         private val modelDir get() = File(filesDir, "wake-word-models")
 
+        /** Current mic state (see MicState): the page shows "starting up" while the models
+         *  load, so nobody says "Hey Zynk" into a detector that is not up yet (2026-10-25). */
+        @JavascriptInterface
+        fun wakeState(): String = WakeWordService.instance?.stateName() ?: "off"
+
+        /** The page answered a "Hey Zynk" question: label the trigger clip real, as the
+         *  screen-off path does, so the clip count grows from ordinary use (2026-09-20). */
+        @JavascriptInterface
+        fun markAnswered() { WakeWordService.reportOutcome(true) }
+
+        /** Voice enrollment (2026-10-22): the Voice page's "Teach Zynkbot your voice" card.
+         *  Status is {state: none|active|paused|done, count, needed, enforcing, profile}. */
+        @JavascriptInterface
+        fun enrollmentStatus(): String = WakeWordService.enrollmentStatus(this@MainActivity).toString()
+        @JavascriptInterface
+        fun startEnrollment() { WakeWordService.startEnrollment(this@MainActivity) }
+        @JavascriptInterface
+        fun pauseEnrollment(paused: Boolean) { WakeWordService.setEnrollmentPaused(this@MainActivity, paused) }
+
         // The three ONNX models ship inside the APK under assets/wake-word-models/
         // (~3 MB). They are copied out to filesDir rather than read in place because
         // ONNX Runtime's createSession needs a real filesystem path, and assets live
         // inside the APK archive. Bundling means wake word works offline on first
         // launch instead of requiring a network fetch from a GitHub release.
-        private val modelFiles = listOf("melspectrogram.onnx", "embedding_model.onnx", "hey_zynk.onnx")
+        // silero_vad.onnx (speech-or-not gate, 2026-10-19) and generic_negatives.json (the
+        // on-phone verifier trainer's shipped negative set) ride along; an older install
+        // that lacks them is "not ready" and gets them extracted the same way.
+        private val modelFiles = listOf("melspectrogram.onnx", "embedding_model.onnx", "hey_zynk.onnx", "silero_vad.onnx", "generic_negatives.json")
 
         private fun modelsPresent(): Boolean =
             modelFiles.all { val f = File(modelDir, it); f.exists() && f.length() > 0L }
@@ -633,6 +863,10 @@ class MainActivity : TauriActivity() {
         @JavascriptInterface
         fun isNativeSpeaking(): Boolean = NativeVoiceAnswerer.speaking
 
+        /** The listener's state: off, loading, listening, dictating, turn, paused. */
+        @JavascriptInterface
+        fun state(): String = WakeWordService.instance?.state()?.name?.lowercase() ?: "off"
+
         /** Hands-free exchanges finished since the page last asked, as a JSON array of
          *  {sessionId, question, answer, at}. The page appends those belonging to the
          *  thread on screen. Nudged via window.__nativeTurns when one completes, and
@@ -658,6 +892,11 @@ class MainActivity : TauriActivity() {
                 fire("window.__nativeSpeaking&&window.__nativeSpeaking(${if (on) "true" else "false"});")
             }
             NativeVoiceAnswerer.onTurnCompleted = { fire("window.__nativeTurns&&window.__nativeTurns();") }
+            // The listener's state, pushed on every change (2026-10-20 rebuild).
+            WakeWordService.onStateChanged = { s -> fire("window.__wakeWordState&&window.__wakeWordState('$s');") }
+            ZynkTimer.onChanged = { fire("window.__timerChanged&&window.__timerChanged();") }
+            WakeBoot.setHeyZynkEnabled(this@MainActivity, true, threshold)
+            WakeBoot.cancelNotice(this@MainActivity)
             val intent = Intent(this@MainActivity, WakeWordService::class.java).apply {
                 putExtra("threshold", threshold)
                 putExtra("modelDir", modelDir.absolutePath)
@@ -676,8 +915,13 @@ class MainActivity : TauriActivity() {
 
         @JavascriptInterface
         fun stop() {
+            WakeBoot.setHeyZynkEnabled(this@MainActivity, false, 0.72f)
             stopService(Intent(this@MainActivity, WakeWordService::class.java))
         }
+
+        /** "Start listening when the phone starts" (Voice page). */
+        @JavascriptInterface fun startOnBoot(): Boolean = WakeBoot.startOnBoot(this@MainActivity)
+        @JavascriptInterface fun setStartOnBoot(on: Boolean) { WakeBoot.setStartOnBoot(this@MainActivity, on) }
 
         // Kept under its original name because App.jsx calls WakeWordBridge.downloadModels().
         // Nothing is downloaded in the normal path any more — the models are unpacked from
@@ -739,62 +983,38 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    /** Typed or dictated clock commands from the page. Since 2026-10-25 they run through
+     *  VoiceCommands/ZynkTimer, the same code as hands-free, and each call returns the
+     *  line to show (and speak) in the chat. */
     inner class VoiceCommandBridge {
+        private fun run(cmd: VoiceCommands.Cmd): String {
+            val ok = VoiceCommands.execute(this@MainActivity, cmd)
+            return if (ok) VoiceCommands.confirmation(this@MainActivity, cmd) else VoiceCommands.FAILED_LINE
+        }
+        @JavascriptInterface fun setTimer(seconds: Int): String = run(VoiceCommands.Cmd.Timer(seconds))
+        @JavascriptInterface fun setAlarm(hour: Int, minute: Int, label: String): String = run(VoiceCommands.Cmd.Alarm(hour, minute))
+        @JavascriptInterface fun startStopwatch(): String = run(VoiceCommands.Cmd.Stopwatch)
+        @JavascriptInterface fun cancelTimer(seconds: Int): String = run(VoiceCommands.Cmd.CancelTimer(seconds))
+        @JavascriptInterface fun cancelTimerById(id: Int) { ZynkTimer.cancelById(this@MainActivity, "timer", id) }
+        @JavascriptInterface fun cancelAlarm(hour: Int, minute: Int): String = run(VoiceCommands.Cmd.CancelAlarm(hour, minute))
+        @JavascriptInterface fun cancelAlarmById(id: Int) { ZynkTimer.cancelById(this@MainActivity, "alarm", id) }
+        @JavascriptInterface fun checkAlarm(): String = run(VoiceCommands.Cmd.CheckAlarm)
+        @JavascriptInterface fun checkTimer(): String = run(VoiceCommands.Cmd.CheckTimer)
+        @JavascriptInterface fun stopStopwatch(): String = run(VoiceCommands.Cmd.StopwatchStop)
+        @JavascriptInterface fun resetStopwatch(): String = run(VoiceCommands.Cmd.StopwatchReset)
+        @JavascriptInterface fun checkStopwatch(): String = run(VoiceCommands.Cmd.CheckStopwatch)
+        @JavascriptInterface fun stopRinging() { ZynkTimer.stopRinging(this@MainActivity) }
+        @JavascriptInterface fun timerState(): String = ZynkTimer.stateJson(this@MainActivity)
+        @JavascriptInterface fun canScheduleExact(): Boolean = ZynkTimer.canScheduleExact(this@MainActivity)
+        /** The "Alarms & reminders" switch for this app (Android 12+). */
         @JavascriptInterface
-        fun setTimer(seconds: Int) {
+        fun openExactAlarmSettings() {
             runOnUiThread {
                 try {
-                    val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
-                        putExtra(AlarmClock.EXTRA_LENGTH, seconds)
-                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-                        putExtra(AlarmClock.EXTRA_MESSAGE, "Zynkbot")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        startActivity(Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, android.net.Uri.parse("package:$packageName")))
                     }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    android.util.Log.e("VoiceCmd", "setTimer failed: ${e.message}")
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun setAlarm(hour: Int, minute: Int, label: String) {
-            runOnUiThread {
-                try {
-                    val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                        putExtra(AlarmClock.EXTRA_HOUR, hour)
-                        putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                        putExtra(AlarmClock.EXTRA_MESSAGE, label)
-                        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    android.util.Log.e("VoiceCmd", "setAlarm failed: ${e.message}")
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun startStopwatch() {
-            runOnUiThread {
-                var launched = false
-                // ACTION_START_STOPWATCH string literal (added API 33; use literal to avoid SDK floor issue)
-                if (!launched) try {
-                    val i = Intent("android.intent.action.START_STOPWATCH").apply {
-                        putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    startActivity(i); launched = true
-                } catch (_: Exception) {}
-                // Fallback: open Google Clock or system clock
-                if (!launched) try {
-                    val i = packageManager.getLaunchIntentForPackage("com.google.android.deskclock")
-                        ?: packageManager.getLaunchIntentForPackage("com.android.deskclock")
-                        ?: Intent(Intent.ACTION_MAIN).apply { addCategory("android.intent.category.APP_CLOCK") }
-                    i.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    startActivity(i)
-                } catch (_: Exception) {}
+                } catch (e: Exception) { android.util.Log.w("VoiceCmd", "exact alarm settings: ${e.message}") }
             }
         }
     }
@@ -907,10 +1127,66 @@ class MainActivity : TauriActivity() {
         }
     }
 
+    // Back used to finish the activity, and Tauri's Android runtime then exits the whole
+    // process — taking the sync server and the hands-free service's Rust side with it, so
+    // the phone neither served nor synced until the app was opened again (first outbox
+    // device pass, 2026-10-01). Send the app to the background instead, as Home does; the
+    // foreground service and the server keep running.
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!moveTaskToBack(true)) super.onBackPressed()
+    }
+
+    /**
+     * Ask once, from the second start onward, to leave Zynkbot out of battery
+     * optimisation. Without it Android (OnePlus/ColorOS most of all) freezes or kills
+     * the app a few hours after it leaves the screen, and sync stops until it is
+     * opened again: on 2026-10-07 the OnePlus logged nothing from 07:55 to 10:21 UTC
+     * and no other device could reach it (KI-087). "Unrestricted" only lets the app
+     * keep doing what it does on screen — three small sync requests a minute — it
+     * does not make it do more. The second start, not the first, so onboarding's own
+     * permission dialogs are not crowded. The system dialog does the explaining;
+     * declining is remembered and never asked again (Settings → Battery can change it).
+     * Google Play restricts REQUEST_IGNORE_BATTERY_OPTIMIZATIONS to apps whose core
+     * function needs it; sync between the user's own devices is that case, and it goes
+     * on the Play declaration list with the foreground-service types (roadmap).
+     */
+    private fun maybeAskBatteryExemption() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val prefs = getSharedPreferences(POWER_PREFS, Context.MODE_PRIVATE)
+        val starts = prefs.getInt(POWER_PREFS_STARTS, 0) + 1
+        prefs.edit().putInt(POWER_PREFS_STARTS, starts).apply()
+        if (prefs.getBoolean(POWER_PREFS_ASKED, false) || starts < 2) return
+        val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        prefs.edit().putBoolean(POWER_PREFS_ASKED, true).apply()
+        try {
+            @Suppress("BatteryLife")
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+            Log.i(TAG_LIFECYCLE, "battery exemption: asked (start #$starts)")
+        } catch (e: Exception) {
+            Log.w(TAG_LIFECYCLE, "battery exemption: could not open the system dialog: $e")
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        // Coming back from another app the keyboard was up over the settings (Matt,
+        // 2026-10-25): drop focus so it stays down until the message box is tapped.
+        try { webViewRef?.get()?.evaluateJavascript("document.activeElement&&document.activeElement.blur&&document.activeElement.blur();window.__zynkResumed&&window.__zynkResumed();", null) } catch (_: Exception) {}
         Log.i(TAG_LIFECYCLE, "onResume — isInForeground=true")
+        ZynkNotify.cancel(this)
+        maybeAskBatteryExemption()
+        // A file arrived through the Files app or the Share button while we were away.
+        if (ZynkShareProvider.takeChanged(this)) {
+            webViewRef?.get()?.let { wv ->
+                wv.post { wv.evaluateJavascript("window.__zynkShareChanged&&window.__zynkShareChanged();", null) }
+            }
+        }
         // Android may have destroyed and recreated this window's surface while we
         // were in another activity (16 s in Settings during onboarding did it — the
         // window came back NO_SURFACE -> DRAW_PENDING). Tauri's base activity only
@@ -1018,11 +1294,14 @@ class MainActivity : TauriActivity() {
         webView.addJavascriptInterface(VoskBridge(), "VoskBridge")
         webView.addJavascriptInterface(WakeWordBridge(), "WakeWordBridge")
         webView.addJavascriptInterface(VoiceCommandBridge(), "VoiceCommandBridge")
+        ZynkTimer.onChanged = { val wv = webView; wv.post { wv.evaluateJavascript("window.__timerChanged&&window.__timerChanged();", null) } }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // Rust posts the memory-card notification through this bridge (2026-10-26).
+        try { ZynkCore.nativeInit(applicationContext) } catch (e: Throwable) { Log.w(TAG_LIFECYCLE, "nativeInit: ${e.message}") }
         // Reserve the status bar and the gesture bar. Edge-to-edge is mandatory on
         // Android 15+ (targetSdk 36), and the page cannot pad for them itself:
         // env(safe-area-inset-top) is 0 on a phone without a display cutout, so
@@ -1199,17 +1478,46 @@ class MainActivity : TauriActivity() {
         }
     }
 
-    private fun zynkShareDir(): File {
-        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val dir = File(downloads, "ZynkbotShare")
-        if (!dir.mkdirs() && !dir.exists()) {
-            error("Could not create ZynkbotShare in Downloads — check storage permissions")
-        }
-        return dir
-    }
+    /** The share folder is Zynkbot's own storage location now (ZynkShareProvider, KI-015). */
+    private fun zynkShareDir(): File = ZynkShareProvider.shareDir(this)
 
     private fun ensureShareDir() {
         zynkShareDir()
+        migrateOldShareFolder()
+        // A .gguf in the Zynkbot folder stays there (2026-10-23). Until then it was moved
+        // into the models folder at startup, which took it out of the share and made it
+        // impossible to pass on over Wi-Fi (Matt). "Add to my models" in the ZynkLink
+        // file list links it into the models folder instead (Rust add_model_from_file).
+    }
+
+    /**
+     * Until 2026-09-19 the share folder was Download/ZynkbotShare. Move the files we
+     * own there into the new location once. Files other apps had put there were never
+     * visible to us and cannot be moved; the user re-adds them. The page repoints the
+     * share record itself when it sees the new path (ZynkLinkPanel).
+     */
+    private fun migrateOldShareFolder() {
+        val prefs = getSharedPreferences("zynkbot_share", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("old_share_migrated", false)) return
+        Thread {
+            try {
+                val old = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ZynkbotShare")
+                val dest = zynkShareDir()
+                var moved = 0
+                for (f in old.listFiles() ?: emptyArray()) {
+                    if (!f.isFile || f.name.endsWith(".part")) continue
+                    val target = ZynkShareProvider.uniqueFile(dest, f.name)
+                    val ok = f.renameTo(target) || try {
+                        f.inputStream().use { i -> target.outputStream().use { o -> i.copyTo(o) } }; f.delete(); true
+                    } catch (_: Exception) { target.delete(); false }
+                    if (ok) moved++
+                }
+                if (moved > 0) { Log.i("Zynkbot", "Share: moved $moved file(s) from Download/ZynkbotShare"); ZynkShareProvider.markChanged(this) }
+            } catch (e: Exception) {
+                Log.w("Zynkbot", "Share migration skipped: ${e.message}")
+            }
+            prefs.edit().putBoolean("old_share_migrated", true).apply()
+        }.start()
     }
 
     private fun requestNotificationPermissionIfNeeded() {

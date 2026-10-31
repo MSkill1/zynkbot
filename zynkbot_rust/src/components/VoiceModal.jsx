@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import PageIntro from './PageIntro';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 // Offline Vosk dictation ships for Android, Linux desktop and Windows desktop.
 // macOS is still excluded: libvosk.dylib is not bundled, so the offline option is
@@ -120,9 +122,16 @@ const FLAT_COMMANDS = [
   { cmd: '"Hey Zynk"', desc: 'One question per wake. Wait for the tone, then speak. Zynkbot answers, then waits for the next "Hey Zynk" — it never listens on its own.' },
   { cmd: 'Tap the Z', desc: 'If you woke it by accident: tapping the green Z cancels listening or stops the reply without sending anything.' },
   { cmd: '"Stop"', desc: 'Typed or dictated in the app, stops a spoken reply. Hands-free, the microphone is off while Zynkbot speaks, so use the Stop button or tap the Z instead.' },
-  { cmd: '"Set a timer for 10 minutes"', desc: 'Works with any duration — seconds, minutes, or hours.' },
-  { cmd: '"Set an alarm for 7:30 AM"', desc: 'Sets a system alarm.' },
-  { cmd: '"Start stopwatch"', desc: 'Starts the device stopwatch.' },
+  { cmd: '"Set a timer for 10 minutes"', desc: 'Zynkbot\'s own timer: it rings and tells you with the phone asleep or the app closed. Any duration in seconds, minutes or hours. Set as many as you like; each shows above the message box.' },
+  { cmd: '"Stop timer" / "Cancel timer"', desc: 'Cancels the timer. With several running it names them; say "cancel the 10 minute timer".' },
+  { cmd: '"Check timer"', desc: 'Says how much time is left on each.' },
+  { cmd: 'When it rings', desc: 'Say "Hey Zynk", tap Stop on the notification, or tap Stop in the app. It rings for 30 seconds, then stops on its own.' },
+  { cmd: '"Set an alarm for 7:30 AM"', desc: 'Zynkbot\'s own alarm, same as the timer. If Zynkbot is not allowed exact alarms on this phone, the clock app takes it instead.' },
+  { cmd: '"Cancel alarm"', desc: 'Removes the alarm. With several set it names them; say "cancel the 7 30 alarm".' },
+  { cmd: '"Check alarms"', desc: 'Says which alarms are set.' },
+  { cmd: '"Start stopwatch"', desc: 'Starts Zynkbot\'s stopwatch.' },
+  { cmd: '"Stop stopwatch" / "Reset stopwatch"', desc: 'Stops it, keeping the time; reset clears it.' },
+  { cmd: '"Check stopwatch" / "Check stopwatch time"', desc: 'Says the time on the stopwatch.' },
 ];
 
 function VoiceCommandsModal({ onClose }) {
@@ -180,28 +189,41 @@ export default function VoiceModal({
   fruitlessTone,
   onFruitlessToneChange,
   wakeWordModelReady,
+  wakeState = '',
   wakeWordDownloadProgress,
   wakeWordDownloadError,
   onDownloadModels,
   ttsEnabled,
   onTtsEnabledChange,
-  webSearchAutoExecute,
-  onWebSearchAutoExecuteChange,
   keepScreenAwake,
   onKeepScreenAwakeChange,
 }) {
   const [showCommands, setShowCommands] = useState(false);
-  // Wake-clip counts for the export button (Android only; null elsewhere).
-  const [wakeClipStats, setWakeClipStats] = useState(null);
-  // Re-read every time the modal opens: it stays mounted while hidden, so a
-  // mount-only read showed "0 of 30" forever (OnePlus, 2026-09-13).
+  const [exactAllowed, setExactAllowed] = useState(true);
+  const [startOnBoot, setStartOnBoot] = useState(() => { try { return window.WakeWordBridge?.startOnBoot ? !!window.WakeWordBridge.startOnBoot() : true; } catch (_) { return true; } });
   useEffect(() => {
     if (!isOpen) return;
-    try {
-      const raw = window.AndroidPaths?.getWakeClipStats?.();
-      if (raw) setWakeClipStats(JSON.parse(raw));
-    } catch (_) {}
+    try { if (window.VoiceCommandBridge?.canScheduleExact) setExactAllowed(!!window.VoiceCommandBridge.canScheduleExact()); } catch (_) {}
   }, [isOpen]);
+
+  // Voice enrollment card (Android): the wake service's status, re-read while the
+  // modal is open so the count moves as the clips come in.
+  const [enroll, setEnroll] = useState(null);
+  const readEnroll = () => {
+    try {
+      const raw = window.WakeWordBridge?.enrollmentStatus?.();
+      if (raw) setEnroll(JSON.parse(raw));
+    } catch (_) {}
+  };
+  useEffect(() => {
+    if (!isOpen || !window.WakeWordBridge?.enrollmentStatus) return;
+    readEnroll();
+    const t = setInterval(readEnroll, 1500);
+    return () => clearInterval(t);
+  }, [isOpen]);
+  const enrollCall = (fn) => () => { try { fn(); } catch (_) {} readEnroll(); };
+  // The explanation shown before teaching starts: 'start' (first time) or 'again'.
+  const [teachInfo, setTeachInfo] = useState(null);
 
   if (!isOpen) return null;
 
@@ -215,88 +237,10 @@ export default function VoiceModal({
         <div style={{ marginBottom: '8px' }}>
           <h2 style={{ margin: 0, color: '#8be9fd', fontSize: '1.2rem' }}>🎙️ Voice Settings</h2>
         </div>
+        <PageIntro introKey="voice" accent="#8be9fd">Dictation types what you say into the message box. "Hey Zynk" asks a question hands-free: one question per wake, and it never listens on its own. Spoken replies read the answers aloud. <b>Try this:</b> turn on Hey Zynk and wait a few seconds for the microphone to turn green and shrink to a dot. Then say it, wait for the tone, and ask something short.</PageIntro>
 
-        {/* How It Works */}
-        {!!window.WakeWordBridge && (
-          <div style={{
-            background: '#1e1f29',
-            border: '1px solid #44475a',
-            borderRadius: '8px',
-            padding: '12px 14px',
-            marginTop: '12px',
-            marginBottom: '4px',
-          }}>
-            <p style={{ ...sectionHeadingStyle, margin: '0 0 8px 0' }}>How It Works</p>
-            <ol style={{ margin: 0, paddingLeft: '18px', color: '#9aa5c4', fontSize: '0.84rem', lineHeight: '1.6' }}>
-              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> and wait for the tone before speaking.</li>
-              <li>Speak your question or command.</li>
-              <li>Stop talking. After 1.5 seconds of silence you'll hear a second tone confirming your message was sent.</li>
-              <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> again after each response to continue the conversation.</li>
-            </ol>
-          </div>
-        )}
-
-        {/* Dictation */}
-        <p style={{ ...sectionHeadingStyle, marginTop: '12px' }}>Dictation Engine</p>
-
-        <div
-          style={{
-            padding: '10px',
-            background: effectiveSource === 'vosk' ? '#1e1f29' : 'transparent',
-            borderRadius: '6px',
-            border: effectiveSource === 'vosk' ? '1px solid #44475a' : '1px solid transparent',
-            marginBottom: '6px',
-            cursor: voskAvailable ? 'pointer' : 'default',
-            opacity: voskAvailable ? 1 : 0.5,
-          }}
-          onClick={() => voskAvailable && onVoiceSourceChange('vosk')}
-        >
-          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: voskAvailable ? 'pointer' : 'default' }}>
-            <input
-              type="radio"
-              name="voiceSource"
-              value="vosk"
-              checked={effectiveSource === 'vosk'}
-              disabled={!voskAvailable}
-              onChange={() => onVoiceSourceChange('vosk')}
-              style={{ accentColor: '#8be9fd', cursor: voskAvailable ? 'pointer' : 'default' }}
-            />
-            <div>
-              <div style={{ ...labelStyle, fontWeight: '500' }}>
-                Offline — Vosk
-                {!voskAvailable && <span style={{ color: '#6272a4', fontWeight: '400' }}> (not available on macOS)</span>}
-              </div>
-              <div style={mutedStyle}>Runs on device. No internet needed. Produces no punctuation; large language models do not need punctuation to understand a request.</div>
-            </div>
-          </label>
-        </div>
-
-        <div
-          style={{
-            padding: '10px',
-            background: effectiveSource === 'openai' ? '#1e1f29' : 'transparent',
-            borderRadius: '6px',
-            border: effectiveSource === 'openai' ? '1px solid #44475a' : '1px solid transparent',
-            cursor: 'pointer',
-          }}
-          onClick={() => onVoiceSourceChange('openai')}
-        >
-          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-            <input
-              type="radio"
-              name="voiceSource"
-              value="openai"
-              checked={effectiveSource === 'openai'}
-              onChange={() => onVoiceSourceChange('openai')}
-              style={{ accentColor: '#8be9fd', cursor: 'pointer' }}
-            />
-            <div>
-              <div style={{ ...labelStyle, fontWeight: '500' }}>OpenAI Whisper</div>
-              <div style={mutedStyle}>Cloud transcription with punctuation. Requires OPENAI_API_KEY. Audio is sent to OpenAI; its API policy says it is not used for training and the transcription service keeps no audio for abuse monitoring (policy read 2026-09-09).</div>
-            </div>
-          </label>
-        </div>
-
+        {/* Hey Zynk first: the switch people open this screen for was below the fold,
+            behind the close button (Matt, 2026-09-20). */}
         {/* Hey Zynk — only shown on Android (window.WakeWordBridge present) */}
         {!!window.WakeWordBridge && (
           <>
@@ -310,26 +254,50 @@ export default function VoiceModal({
               />
             </div>
 
-            {/* Detection framing, not "listening": the loop checks audio on-device
-                for one phrase and discards it — nothing is transcribed, stored, or
-                transmitted (a short clip is kept locally only when the word fires,
-                as verifier training data). Two facts a user should have before
-                switching this on: the detector loop costs battery, and without a
-                trained personal verifier the classifier alone fires on television
-                and other speech. Off by default for the same reasons. */}
-            <p style={{
-              color: '#9aa5c4',
-              fontSize: '0.8rem',
-              lineHeight: 1.45,
-              margin: '4px 0 0 0',
-            }}>
-              Detects the phrase "Hey Zynk" on this device. Audio is checked and
-              discarded on the phone — never recorded or sent anywhere. (When the
-              word fires, a short clip stays on your phone to improve accuracy.)
-              Running the detector shortens battery life — best while charging.
-              During beta it can also fire on a television or other voices; turn it
-              off if that happens.
-            </p>
+            {/* Status line: the models take a few seconds to load after the switch; people
+                said "Hey Zynk" at once and thought it was broken (Matt, 2026-10-25). */}
+            {heyZynkEnabled && (() => {
+              const s = wakeState;
+              const line = s === 'listening' ? ['#50fa7b', '● Listening for "Hey Zynk".']
+                : (s === 'dictating' || s === 'turn') ? ['#50fa7b', '● Hearing you.']
+                : s === 'paused' ? ['#ffb86c', 'Paused: another app is using the microphone.']
+                : ['#ffb86c', '⏳ Starting up. Give it a few seconds: the microphone turns green, then shrinks to a dot. Then say "Hey Zynk".'];
+              return <p style={{ color: line[0], fontSize: '0.82rem', lineHeight: 1.45, margin: '6px 0 0 0' }}>{line[1]}</p>;
+            })()}
+
+            {/* After a restart (2026-10-25): the assistant service tries to bring the
+                listener back at boot; if Android refuses, a notification offers a tap. */}
+            {!!window.WakeWordBridge?.startOnBoot && (
+              <div style={rowStyle}>
+                <div>
+                  <div style={labelStyle}>Start listening when the phone starts</div>
+                  <div style={mutedStyle}>If Hey Zynk was on, it comes back after a restart. If the phone does not allow it, a notification offers a tap instead.</div>
+                </div>
+                <Toggle
+                  id="start-on-boot-toggle"
+                  checked={startOnBoot}
+                  onChange={(val) => { setStartOnBoot(val); try { window.WakeWordBridge.setStartOnBoot(!!val); } catch (_) {} }}
+                />
+              </div>
+            )}
+
+            {/* How it works, right under the switch (Matt, 2026-10-25). */}
+              <div style={{
+                background: '#1e1f29',
+                border: '1px solid #44475a',
+                borderRadius: '8px',
+                padding: '12px 14px',
+                marginTop: '12px',
+                marginBottom: '4px',
+              }}>
+                <p style={{ ...sectionHeadingStyle, margin: '0 0 8px 0' }}>How It Works</p>
+                <ol style={{ margin: 0, paddingLeft: '18px', color: '#9aa5c4', fontSize: '0.84rem', lineHeight: '1.6' }}>
+                  <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> and wait for the tone before speaking.</li>
+                  <li>Speak your question or command.</li>
+                  <li>Stop talking. After 1.5 seconds of silence you'll hear a second tone confirming your message was sent.</li>
+                  <li>Say <span style={{ color: '#50fa7b', fontFamily: 'monospace' }}>"Hey Zynk"</span> again after each response to continue the conversation.</li>
+                </ol>
+              </div>
 
             <div style={rowStyle}>
               <span style={labelStyle}>Play a tone when a trigger hears nothing</span>
@@ -340,43 +308,84 @@ export default function VoiceModal({
               />
             </div>
             <p style={{ color: '#9aa5c4', fontSize: '0.8rem', lineHeight: 1.45, margin: '4px 0 0 0' }}>
-              Off: a false trigger costs one chime and then goes quiet. On: a second,
-              closing tone tells you it fired and shut down without sending anything.
+              If "Hey Zynk" fires but hears nothing, nothing is sent. With this on, a second
+              tone tells you it closed; with it off, you only hear the first chime.
             </p>
 
-            {wakeClipStats && (() => {
-              const ready = wakeClipStats.real >= wakeClipStats.needed;
+            {/* Teach Zynkbot your voice (2026-10-22): Start, then say "Hey Zynk" 20 times;
+                each one is saved as a real clip and only chimes, and until the twenty are
+                in the wake word answers nothing (paused: it does not count either). The
+                phone then trains its personal verifier from them and, if it tests well
+                enough, enforces it (WakeWordService enrollment, WakeVerifierTrainer). */}
+            {heyZynkEnabled && enroll && (() => {
+              const s = enroll.state;
+              const collecting = s === 'active' || s === 'paused';
+              const done = s === 'done' || enroll.enforcing;
+              const btn = (label, onClick, primary) => (
+                <button onClick={onClick} style={{
+                  padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', whiteSpace: 'nowrap',
+                  background: primary ? '#50fa7b' : '#44475a', color: primary ? '#282a36' : '#f8f8f2', cursor: 'pointer',
+                }}>{label}</button>
+              );
               return (
                 <div style={{ ...rowStyle, alignItems: 'center', gap: '12px' }}>
                   <div style={{ flex: 1 }}>
-                    <span style={labelStyle}>Send my wake-word clips</span>
+                    <span style={labelStyle}>{collecting ? 'Say "Hey Zynk", wait for the count, say it again' : 'Teach Zynkbot your voice'}</span>
                     <div style={mutedStyle}>
-                      {ready
-                        ? 'Enough real clips to train a voice profile.'
-                        : `Lights up at ${wakeClipStats.needed} real "Hey Zynk" clips; keep using it.`}
-                      {' '}Clips stay on this phone until you send them.
+                      {collecting
+                        ? (s === 'paused'
+                          ? 'Paused: nothing counts. Until the twenty are in, "Hey Zynk" does not answer.'
+                          : 'Move around: facing the phone, facing away, at arm\'s length, from across the room. Somewhere quiet. Until the twenty are in, "Hey Zynk" only counts; it does not answer.')
+                        : done
+                          ? (enroll.enforcing ? 'Done. A "Hey Zynk" that does not sound like you is ignored.' : 'Done. It keeps learning as you use it.')
+                          : 'Say "Hey Zynk" twenty times so it learns to tell you from the TV. Take your time; the count is kept.'}
                     </div>
                   </div>
-                  <div style={{ textAlign: 'center', minWidth: '56px' }}>
-                    <div style={{ fontSize: '1.6rem', fontWeight: 'bold', lineHeight: 1, color: ready ? '#50fa7b' : '#f8f8f2' }}>
-                      {wakeClipStats.real}
+                  {collecting && (
+                    <div style={{ textAlign: 'center', minWidth: '56px' }}>
+                      <div style={{ fontSize: '1.6rem', fontWeight: 'bold', lineHeight: 1, color: '#f8f8f2' }}>{enroll.count}</div>
+                      <div style={{ fontSize: '0.7rem', color: '#9aa5c4' }}>of {enroll.needed}</div>
                     </div>
-                    <div style={{ fontSize: '0.7rem', color: '#9aa5c4' }}>of {wakeClipStats.needed}</div>
-                  </div>
-                  <button
-                    disabled={!ready}
-                    onClick={() => { try { window.AndroidPaths?.shareWakeClips?.(); } catch (_) {} }}
-                    style={{
-                      padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', whiteSpace: 'nowrap',
-                      background: ready ? '#50fa7b' : '#44475a', color: ready ? '#282a36' : '#9aa5c4',
-                      cursor: ready ? 'pointer' : 'not-allowed',
-                    }}
-                  >
-                    Send
-                  </button>
+                  )}
+                  {s === 'active' && btn('Pause', enrollCall(() => window.WakeWordBridge.pauseEnrollment(true)), false)}
+                  {s === 'paused' && btn('Resume', enrollCall(() => window.WakeWordBridge.pauseEnrollment(false)), true)}
+                  {!collecting && btn(done ? 'Teach again' : 'Start', () => setTeachInfo(done ? 'again' : 'start'), !done)}
                 </div>
               );
             })()}
+
+            {/* What teaching does, before it starts. Shown over the settings; Start begins
+                counting (and, for "again", clears the clips already on the phone). */}
+            {teachInfo && (
+              <div style={{ ...overlayStyle, zIndex: 2100 }} onClick={() => setTeachInfo(null)}>
+                <div style={{ ...cardStyle, maxWidth: '380px', padding: '20px' }} onClick={(e) => e.stopPropagation()}>
+                  <h3 style={{ margin: '0 0 10px 0', color: '#8be9fd', fontSize: '1.05rem' }}>Teach Zynkbot your voice</h3>
+                  <div style={{ color: '#f8f8f2', fontSize: '0.88rem', lineHeight: 1.5 }}>
+                    <p style={{ margin: '0 0 10px 0' }}>
+                      Say "Hey Zynk" twenty times. Wait for the count to move between each one, and move
+                      around: facing the phone, facing away, from across the room.
+                    </p>
+                    <p style={{ margin: '0 0 10px 0' }}>
+                      When the twenty are in, Zynkbot builds a profile of your voice and starts ignoring
+                      wake words that do not sound like you. It keeps learning from every "Hey Zynk" you
+                      use. A television may still set it off at first; that should fade as it learns.
+                    </p>
+                    <p style={{ margin: '0 0 10px 0' }}>Until the twenty are in, "Hey Zynk" will not answer questions.</p>
+                    {teachInfo === 'again' && (
+                      <p style={{ margin: '0 0 10px 0', color: '#ffb86c' }}>Starting over clears the voice clips already on this phone.</p>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' }}>
+                    <button onClick={() => setTeachInfo(null)} style={{
+                      padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', background: '#44475a', color: '#f8f8f2', cursor: 'pointer',
+                    }}>Cancel</button>
+                    <button onClick={() => { setTeachInfo(null); enrollCall(() => window.WakeWordBridge.startEnrollment())(); }} style={{
+                      padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', background: '#50fa7b', color: '#282a36', cursor: 'pointer',
+                    }}>Start</button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {heyZynkEnabled && !wakeWordModelReady && (
               <div style={{
@@ -438,6 +447,71 @@ export default function VoiceModal({
           </>
         )}
 
+        {/* Dictation */}
+        <p style={{ ...sectionHeadingStyle, marginTop: '12px' }}>Dictation Engine</p>
+
+        <div
+          style={{
+            padding: '10px',
+            background: effectiveSource === 'vosk' ? '#1e1f29' : 'transparent',
+            borderRadius: '6px',
+            border: effectiveSource === 'vosk' ? '1px solid #44475a' : '1px solid transparent',
+            marginBottom: '6px',
+            cursor: voskAvailable ? 'pointer' : 'default',
+            opacity: voskAvailable ? 1 : 0.5,
+          }}
+          onClick={() => voskAvailable && onVoiceSourceChange('vosk')}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: voskAvailable ? 'pointer' : 'default' }}>
+            <input
+              type="radio"
+              name="voiceSource"
+              value="vosk"
+              checked={effectiveSource === 'vosk'}
+              disabled={!voskAvailable}
+              onChange={() => onVoiceSourceChange('vosk')}
+              style={{ accentColor: '#8be9fd', cursor: voskAvailable ? 'pointer' : 'default' }}
+            />
+            <div>
+              <div style={{ ...labelStyle, fontWeight: '500' }}>
+                Offline — Vosk
+                {!voskAvailable && <span style={{ color: '#6272a4', fontWeight: '400' }}> (not available on macOS)</span>}
+              </div>
+              <div style={mutedStyle}>Runs on device. No internet needed. Produces no punctuation; large language models do not need punctuation to understand a request.</div>
+            </div>
+          </label>
+        </div>
+
+        <div
+          style={{
+            padding: '10px',
+            background: effectiveSource === 'openai' ? '#1e1f29' : 'transparent',
+            borderRadius: '6px',
+            border: effectiveSource === 'openai' ? '1px solid #44475a' : '1px solid transparent',
+            cursor: 'pointer',
+          }}
+          onClick={() => onVoiceSourceChange('openai')}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="voiceSource"
+              value="openai"
+              checked={effectiveSource === 'openai'}
+              onChange={() => onVoiceSourceChange('openai')}
+              style={{ accentColor: '#8be9fd', cursor: 'pointer' }}
+            />
+            <div>
+              <div style={{ ...labelStyle, fontWeight: '500' }}>OpenAI Whisper</div>
+              <div style={mutedStyle}>Cloud transcription with punctuation. Requires OPENAI_API_KEY. Audio is sent to OpenAI; its API policy says it is not used for training and the transcription service keeps no audio for abuse monitoring (policy read 2026-10-25).</div>
+              <button
+                onClick={(e) => { e.preventDefault(); openUrl('https://developers.openai.com/api/docs/guides/your-data'); }}
+                style={{ marginTop: '6px', padding: '5px 10px', borderRadius: '6px', border: '1px solid #6272a4', background: 'rgba(98,114,164,0.2)', color: '#8be9fd', fontSize: '0.8rem', cursor: 'pointer' }}
+              >Read OpenAI's data retention policy</button>
+            </div>
+          </label>
+        </div>
+
         {/* Voice Response */}
         <p style={sectionHeadingStyle}>Voice Response</p>
         <div style={rowStyle}>
@@ -458,19 +532,11 @@ export default function VoiceModal({
         </div>
 
 
-        {/* Web Search */}
-        <p style={sectionHeadingStyle}>Web Search</p>
-        <div style={{ ...rowStyle, borderBottom: 'none' }}>
-          <div>
-            <div style={labelStyle}>Auto-execute in voice sessions</div>
-            <div style={mutedStyle}>When off, Zynkbot pauses and asks before searching the web.</div>
-          </div>
-          <Toggle
-            id="web-search-auto-toggle"
-            checked={webSearchAutoExecute}
-            onChange={onWebSearchAutoExecuteChange}
-          />
-        </div>
+        {/* Web Search: the "Auto-execute in voice sessions" toggle was removed
+            2026-09-20 — hands-free always searches now, unconditionally (GitHub
+            #26: there was never a way to answer "want me to search?" by voice).
+            An "always search, skip the confirmation" setting for typed chat is a
+            different, unbuilt feature — see the roadmap. */}
 
         {/* Screen */}
         <p style={sectionHeadingStyle}>Screen</p>
@@ -485,6 +551,21 @@ export default function VoiceModal({
             onChange={onKeepScreenAwakeChange}
           />
         </div>
+
+        {/* Zynkbot's own timers and alarms need the "Alarms & reminders" switch on
+            Android 12+ (denied by default on 14+); without it the clock app takes them. */}
+        {!!window.VoiceCommandBridge?.canScheduleExact && !exactAllowed && (
+          <div style={{ ...rowStyle, alignItems: 'center', gap: '12px' }}>
+            <div style={{ flex: 1 }}>
+              <div style={labelStyle}>Let Zynkbot run its own timers and alarms</div>
+              <div style={mutedStyle}>Android needs your permission for an app to ring at an exact time. Until then timers and alarms go to the clock app, which cannot ring from the lock screen or say how long is left.</div>
+            </div>
+            <button onClick={() => { try { window.VoiceCommandBridge.openExactAlarmSettings(); } catch (_) {} }}
+              style={{ padding: '8px 14px', borderRadius: '6px', border: 'none', background: '#50fa7b', color: '#282a36', cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: 600 }}>
+              Allow
+            </button>
+          </div>
+        )}
 
         {/* Voice Commands reference */}
         <div style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid #44475a', textAlign: 'center' }}>

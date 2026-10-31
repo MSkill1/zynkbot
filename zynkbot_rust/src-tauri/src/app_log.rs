@@ -1,28 +1,146 @@
-//! In-process log capture for "Report a problem".
+//! In-process log capture for "Report a problem", and the on-disk log.
 //!
 //! Every `println!`/`eprintln!` in this crate is routed here by the macro
-//! shadows at the top of lib.rs: the line still goes to the real stdout/stderr
-//! (a terminal on desktop, logcat on Android), and a copy lands in a bounded
-//! ring buffer that the report command reads back. Nothing is written to disk
-//! and nothing leaves the process unless the user copies a report themselves.
+//! shadows at the top of lib.rs. The line goes three ways: to the real
+//! stdout/stderr (a terminal on desktop, logcat on Android); into a bounded
+//! ring buffer that the report command reads back; and, since 2026-10-06
+//! (KI-082), appended to `<app data dir>/logs/zynkbot.log` on every platform.
+//! Before that, a failure on a tester's machine left no trace once the ring
+//! buffer had cycled — a `Remember:` that stored nothing on the Windows laptop on
+//! 2026-10-05 could not be investigated.
+//!
+//! The file holds the same lines the terminal would, so it is as sensitive as
+//! the terminal: it includes what the user typed. Redaction and the user-text
+//! scrub apply to reports, which leave the device; the file does not. It
+//! rotates at `FILE_MAX_BYTES`, keeping `FILE_KEEP` generations
+//! (`zynkbot.log`, `zynkbot.log.1`, `zynkbot.log.2`).
 
 use std::collections::VecDeque;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const CAPACITY: usize = 800;
 
+/// Rotate the on-disk log when it would pass this size.
+pub const FILE_MAX_BYTES: u64 = 5 * 1024 * 1024;
+/// Generations kept on disk, the live file included.
+pub const FILE_KEEP: usize = 3;
+
 static BUFFER: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 
+/// The on-disk sink: opened on the first line, `Failed` if the folder cannot be
+/// created or the file cannot be opened (no retry per line — a full disk or a
+/// read-only folder must not turn every log line into a syscall storm).
+enum DiskState {
+    Unopened,
+    Open(FileSink),
+    Failed,
+}
+
+static DISK: Mutex<DiskState> = Mutex::new(DiskState::Unopened);
+
+/// An append-only log file that rotates by size.
+pub struct FileSink {
+    path: PathBuf,
+    file: std::fs::File,
+    written: u64,
+    max_bytes: u64,
+    keep: usize,
+}
+
+impl FileSink {
+    /// Open (or create) `path` for appending; the parent folder is created.
+    pub fn open(path: PathBuf, max_bytes: u64, keep: usize) -> std::io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+        let written = file.metadata().map(|m| m.len()).unwrap_or(0);
+        Ok(Self { path, file, written, max_bytes, keep })
+    }
+
+    /// Append one line, rotating first if the line would push the file past the limit.
+    pub fn write_line(&mut self, line: &str) -> std::io::Result<()> {
+        let bytes = line.len() as u64 + 1;
+        if self.written > 0 && self.written + bytes > self.max_bytes {
+            self.rotate()?;
+        }
+        self.file.write_all(line.as_bytes())?;
+        self.file.write_all(b"\n")?;
+        self.written += bytes;
+        Ok(())
+    }
+
+    /// `zynkbot.log.(keep-1)` is dropped, each older generation moves up one, the
+    /// live file becomes `.1`, and a fresh live file is opened.
+    fn rotate(&mut self) -> std::io::Result<()> {
+        let _ = self.file.flush();
+        let gen = |n: usize| -> PathBuf {
+            let mut p = self.path.clone().into_os_string();
+            p.push(format!(".{n}"));
+            PathBuf::from(p)
+        };
+        if self.keep > 1 {
+            let _ = std::fs::remove_file(gen(self.keep - 1));
+            for n in (1..self.keep - 1).rev() {
+                let _ = std::fs::rename(gen(n), gen(n + 1));
+            }
+            std::fs::rename(&self.path, gen(1))?;
+        } else {
+            std::fs::remove_file(&self.path)?;
+        }
+        self.file = std::fs::OpenOptions::new().create(true).append(true).open(&self.path)?;
+        self.written = 0;
+        Ok(())
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Where the on-disk log lives: `<app data dir>/logs/zynkbot.log`.
+pub fn file_path() -> PathBuf {
+    crate::db::get_app_data_dir().join("logs").join("zynkbot.log")
+}
+
+fn append_to_disk(line: &str) {
+    // Test binaries share the real data folder with a running app; they keep to
+    // stdout and the ring buffer.
+    if cfg!(test) {
+        return;
+    }
+    let Ok(mut state) = DISK.lock() else { return };
+    if matches!(*state, DiskState::Unopened) {
+        *state = match FileSink::open(file_path(), FILE_MAX_BYTES, FILE_KEEP) {
+            Ok(sink) => DiskState::Open(sink),
+            Err(_) => DiskState::Failed,
+        };
+    }
+    if let DiskState::Open(sink) = &mut *state {
+        if sink.write_line(line).is_err() {
+            *state = DiskState::Failed;
+        }
+    }
+}
+
 fn push(prefix: &str, text: &str) {
-    let stamp = chrono::Local::now().format("%H:%M:%S%.3f");
-    let line = format!("{stamp} {prefix}{text}");
+    let now = chrono::Local::now();
+    let line = format!("{} {prefix}{text}", now.format("%H:%M:%S%.3f"));
     if let Ok(mut buf) = BUFFER.lock() {
         if buf.len() >= CAPACITY {
             buf.pop_front();
         }
         buf.push_back(line);
     }
+    append_to_disk(&format!("{} {prefix}{text}", now.format("%Y-%m-%d %H:%M:%S%.3f")));
+}
+
+/// Said once at startup so the terminal (and the file itself) name the file.
+pub fn announce() {
+    line(format!("[Log] On-disk log: {} (rotates at {} MB, {} files kept)",
+        file_path().display(), FILE_MAX_BYTES / (1024 * 1024), FILE_KEEP));
 }
 
 /// Stdout line (from `println!`).
@@ -43,6 +161,31 @@ pub fn err_line(text: String) {
         let _ = writeln!(lock, "{text}");
     }
     push("[stderr] ", &text);
+}
+
+/// The last `n` lines of the on-disk log, oldest first, reaching into the
+/// previous generation when the live file is short. `None` when there is no
+/// file to read (first run, or the sink failed to open), so the caller can fall
+/// back to the ring buffer.
+pub fn recent_from_disk(n: usize) -> Option<Vec<String>> {
+    tail_lines(&file_path(), n)
+}
+
+/// `recent_from_disk` for an arbitrary path (so a test can use a temp file).
+pub fn tail_lines(path: &Path, n: usize) -> Option<Vec<String>> {
+    let live = std::fs::read_to_string(path).ok()?;
+    let mut lines: Vec<String> = live.lines().map(str::to_string).collect();
+    if lines.len() < n {
+        let mut prev = path.as_os_str().to_owned();
+        prev.push(".1");
+        if let Ok(older) = std::fs::read_to_string(PathBuf::from(prev)) {
+            let mut all: Vec<String> = older.lines().map(str::to_string).collect();
+            all.append(&mut lines);
+            lines = all;
+        }
+    }
+    let skip = lines.len().saturating_sub(n);
+    Some(lines.into_iter().skip(skip).collect())
 }
 
 /// The most recent `n` captured lines, oldest first.
@@ -104,6 +247,51 @@ mod tests {
         assert_eq!(last.len(), 3);
         assert!(last[2].ends_with(&format!("line {}", CAPACITY + 19)));
         assert!(last[0].ends_with(&format!("line {}", CAPACITY + 17)));
+    }
+
+    #[test]
+    fn disk_log_rotates_by_size_and_keeps_three_generations() {
+        let dir = std::env::temp_dir().join(format!("zynkbot-applog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("logs").join("zynkbot.log");
+        // 100-byte limit, 3 files: lines of 40 bytes (+ newline) → two per file.
+        let mut sink = FileSink::open(path.clone(), 100, 3).expect("open");
+        assert!(path.exists(), "the logs folder is created on open");
+        for i in 0..7 {
+            sink.write_line(&format!("{i:0>40}")).expect("write");
+        }
+        let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
+        let has = |p: &Path, i: usize| read(p).lines().any(|l| l == format!("{i:0>40}"));
+        let g1 = PathBuf::from(format!("{}.1", path.display()));
+        let g2 = PathBuf::from(format!("{}.2", path.display()));
+        let g3 = PathBuf::from(format!("{}.3", path.display()));
+        assert!(has(&path, 6) && read(&path).lines().count() == 1, "newest line alone in the live file: {}", read(&path));
+        assert!(has(&g1, 4) && has(&g1, 5), "{}", read(&g1));
+        assert!(has(&g2, 2) && has(&g2, 3), "{}", read(&g2));
+        assert!(!g3.exists(), "only three generations are kept");
+        assert!(!has(&g2, 0) && !has(&g2, 1) && !has(&g1, 1), "the oldest lines are gone");
+        // Reopening picks up the existing size, so the next rotation is on time.
+        let sink2 = FileSink::open(path.clone(), 100, 3).expect("reopen");
+        assert_eq!(sink2.written, read(&path).len() as u64);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn report_tail_comes_from_the_file_and_reaches_into_the_previous_generation() {
+        let dir = std::env::temp_dir().join(format!("zynkbot-applog-tail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("zynkbot.log");
+        assert!(tail_lines(&path, 5).is_none(), "no file yet → None, so the report falls back to memory");
+        let mut sink = FileSink::open(path.clone(), 100, 3).expect("open");
+        for i in 0..5 {
+            sink.write_line(&format!("{i:0>40}")).expect("write");
+        }
+        // Live file holds line 4 alone; .1 holds 2 and 3; .2 holds 0 and 1.
+        let tail = tail_lines(&path, 3).expect("file exists");
+        assert_eq!(tail, vec![format!("{:0>40}", 2), format!("{:0>40}", 3), format!("{:0>40}", 4)]);
+        let one = tail_lines(&path, 1).expect("file exists");
+        assert_eq!(one, vec![format!("{:0>40}", 4)]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

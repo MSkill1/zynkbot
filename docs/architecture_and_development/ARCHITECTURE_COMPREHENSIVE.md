@@ -316,7 +316,7 @@ Depending on model (local GGUF 5-60s, API 1-30s)
    ↓
 [19] Update Timestamps for ZynkSync
     • Update updated_at on all involved memories
-    • Triggers ZynkSync to detect changes and sync to paired devices
+    • The write itself queues the change (sync_outbox triggers); the drain carries it to paired devices within a cycle
    ↓
 [20] Background Task Complete
     • Close database connection
@@ -460,30 +460,37 @@ pub async fn run_ensemble(
 
 ### 4. ZynkSync (Device-to-Device Memory Sync)
 
-**Location**: `src-tauri/src/zynksync.rs`
+**Location**: `src-tauri/src/sync_outbox.rs` (queue, drain, receiver), `src-tauri/src/zynksync.rs` (service, pairing, routes), `src-tauri/src/transport.rs` (identity, mTLS, device registry, shared with ZynkLink and ZChat)
 
-**Purpose**: Sync memories across user's devices over local network
+**Purpose**: Keep memories, conversation history, memory links and keys identical across a user's devices over the local network, including devices that were off.
 
-**Architecture**:
+**Architecture** (outbox, since October 2026):
 ```
-Device A (192.168.1.100:57963)
-   ↓ HTTP POST /api/zynksync/push-memories
-   ↓ {user_id, memories: [...], relationships: [...]}
-   ↓
-Device B (192.168.1.101:57963)
-   → Receives memories
-   → Checks for conflicts (last-write-wins by timestamp)
-   → Inserts/updates local database
-   → Returns {memories_received, conflicts_resolved}
+any write to memories / conversation_sessions / conversation_messages / memory_links / sync_secrets
+   ↓ SQLite trigger (migrations 0013–0016)
+sync_outbox (id, table_name, row_sync_id, op, payload, created_at)
+   ↓ once a minute, per paired peer, from the peer's cursor
+drain: collapse to one entry per row, load each live row with every column, ≤ 300 rows
+   ↓ HTTPS POST /api/zynksync/outbox   (mTLS, pinned certs, x-target-device-id)
+receiver: one transaction under sync_suppress
+   → upsert by sync_id (newest updated_at wins), delete by sync_id, tombstone for memories
+   → unknown sync_id: match by content (memory) / 0011 key (message) / (source,target,relation) (link), adopt the name
+   → records sync_inbox_cursor[sender] = batch.through
+   ← OutboxReceipt { through, applied, known_before }
+sender: sync_outbox_cursor[peer] = through  (or start the peer over if known_before < cursor)
 ```
+`sync_bidirectional` is a drain to the peer followed by `/api/zynksync/outbox/pull`, which asks the peer to drain to us.
+
+**First contact and recovery**: a peer with no cursor row, a peer whose cursor points before the oldest queued row, or a peer that reports knowing less than our cursor says, is sent the live tables — sessions, memories, messages, links, in a fixed order, 300 rows per cycle, all keys in the first slice — after which the queue takes over.
+
+**Identity**: `x-device-id`, `x-device-name`, `x-device-port` headers on every request; `require_verified_device` rejects a request addressed to another device (421); `inject_verified_device` corrects a known device's address and port from the connection. `device-<id>.enc` in the R2 backup holds identity, certificate, key and peers; `restore_device_identity` makes a fresh install that device again.
 
 **Key Features**:
-- **Port 57963** for HTTP communication
-- **6-digit pairing codes** (10-minute expiry)
-- **Bidirectional pairing** - both devices add each other automatically
-- **Selective sync** - only `is_syncable=true` memories
-- **Namespace support** - sync specific folders (personal/work)
-- **Complete data sync** - embeddings, entities, relationships all synced
+- **Port 57963**, mutual TLS, certificate pinned on both sides
+- **6-digit pairing codes** (10-minute expiry); a joining device adopts the host's user id and re-keys its existing rows to it
+- **Keys as rows** (`sync_secrets`): newest `updated_at` per key wins
+- **Retention**: rows every peer acknowledged are pruned; 7 days maximum
+- **One auto-sync loop per service**; offline peers skipped for two minutes after a refused connection
 
 ---
 

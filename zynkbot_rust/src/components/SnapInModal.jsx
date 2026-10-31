@@ -146,6 +146,14 @@ export default function SnapInModal({ isOpen, onClose, userId }) {
               <div style={{marginBottom: '25px', padding: '15px', background: '#44475a', borderRadius: '8px'}}>
                 <h4 style={{color: '#ffb86c', marginTop: 0, marginBottom: '10px'}}>⚠️ Current Status: Proof-of-Concept</h4>
                 <p style={{color: '#f8f8f2', lineHeight: '1.7', margin: 0, fontSize: '0.9rem'}}>
+                  A complete snap-in bundles seven things: a workspace page, a knowledge base folder, a memory
+                  namespace of its own, a <strong>mode</strong> that shapes every reply while it is active (a legal
+                  snap-in brings a Legal mode; a journal snap-in brings a Journal mode), <strong>tools</strong> the
+                  model may ask to run with your say-so (add to a timeline, draft from a template, check a citation),
+                  optional one-question-a-day check-ins, and a policy: which containment mode it requires and what
+                  you consent to at install. The design is in <code>labs/snapin_platform</code> in the repository.
+                </p>
+                <p style={{color: '#f8f8f2', lineHeight: '1.6'}}>
                   The snap-in architecture exists, but only a <strong>sample therapist journal</strong> is implemented.
                   This demonstrates how snap-ins organize information using the existing knowledge base (RAG) system
                   with logical folder structures.

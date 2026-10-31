@@ -175,6 +175,19 @@ fn sig_v4_headers(
     access_key: &str,
     secret_key: &str,
 ) -> BTreeMap<String, String> {
+    sig_v4_headers_q(method, host, path, "", payload, access_key, secret_key)
+}
+
+/// As above, with a canonical query string (already sorted and URL-encoded) for a LIST.
+fn sig_v4_headers_q(
+    method: &str,
+    host: &str,
+    path: &str,
+    query: &str,
+    payload: &[u8],
+    access_key: &str,
+    secret_key: &str,
+) -> BTreeMap<String, String> {
     let now = Utc::now();
     let datetime = now.format("%Y%m%dT%H%M%SZ").to_string();
     let date = now.format("%Y%m%d").to_string();
@@ -189,8 +202,8 @@ fn sig_v4_headers(
     let signed_headers = "host;x-amz-content-sha256;x-amz-date";
 
     let canonical_request = format!(
-        "{}\n{}\n\n{}\n{}\n{}",
-        method, path, canonical_headers, signed_headers, payload_hash
+        "{}\n{}\n{}\n{}\n{}\n{}",
+        method, path, query, canonical_headers, signed_headers, payload_hash
     );
 
     let credential_scope = format!("{}/{}/{}/aws4_request", date, REGION, SERVICE);
@@ -273,7 +286,15 @@ async fn r2_get(cfg: &R2Config, object_key: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("Failed to read R2 response: {}", e))
 }
 
-// --- Tauri commands ---
+
+// --- Device identity and the backup (KI-050, KI-092) ---
+//
+// A reinstalled phone mints a new device id, so it reappears on every peer beside its
+// old entry, which the peers show as "(old)". For six days in October 2026 the identity
+// (ids, name, TLS certificate and key, known peers) rode in the backup as
+// `device-<device_id>.enc` so a restored install was the old device; that was withdrawn
+// on 2026-10-08 (1d180cc): Restore restores memories, nothing else, and a reinstall
+// pairs again by code. The backup is one object, `backup.enc`.
 
 #[tauri::command]
 pub async fn get_r2_config_status() -> Result<serde_json::Value, String> {
@@ -399,7 +420,6 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     let encrypted = encrypt_bytes(&key, &payload)?;
 
     r2_put(&cfg, "backup.enc", encrypted).await?;
-
     println!("[Backup] Backed up {} memories, {} sessions, {} messages for user {}",
         count, session_count, message_count, user_id);
     Ok(serde_json::json!({
@@ -436,92 +456,11 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
     let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await
         .map_err(|e| format!("DB connect failed: {}", e))?;
 
-    let mut inserted = 0usize;
-    let mut skipped = 0usize;
-    let mut restored_hashes: Vec<String> = Vec::new();
+    let RestoredMemories { inserted, skipped, deleted_since } = restore_memories_into(&pool, &user_id, &memories).await;
     let mut sessions_inserted = 0usize;
     let mut sessions_skipped = 0usize;
     let mut messages_inserted = 0usize;
     let mut messages_skipped = 0usize;
-
-    for mem in &memories {
-        let content = match mem["content"].as_str() {
-            Some(c) if !c.is_empty() => c.to_string(),
-            _ => { skipped += 1; continue; }
-        };
-
-        let exists: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM memories WHERE content = ? AND user_id = ?"
-        )
-        .bind(&content)
-        .bind(&user_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(false);
-
-        if exists { skipped += 1; continue; }
-
-        // Resolve embedding: use the backup's embedding_b64 if present; otherwise
-        // regenerate locally from content so semantic recall works after restore.
-        let embedding_bytes: Option<Vec<u8>> = mem["embedding_b64"]
-            .as_str()
-            .and_then(|s| BASE64.decode(s).ok())
-            .or_else(|| {
-                match crate::llm::local_embeddings::generate_local_embedding(&content) {
-                    Ok(vec) => Some(vec.iter().flat_map(|f| f.to_le_bytes()).collect()),
-                    Err(e) => {
-                        eprintln!("[Backup] Embedding regen failed for restored memory: {}", e);
-                        None
-                    }
-                }
-            });
-
-        let now = Utc::now().to_rfc3339();
-        let result = sqlx::query(
-            "INSERT INTO memories (
-                title, content, source_type, session_id, user_id, namespace,
-                is_syncable, is_shareable, is_ephemeral, entities_detected,
-                event_type, original_text, created_at, updated_at, embedding
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        )
-        .bind(mem["title"].as_str())
-        .bind(&content)
-        .bind(mem["source_type"].as_str())
-        .bind(mem["session_id"].as_str())
-        .bind(mem["user_id"].as_str().unwrap_or(&user_id))
-        .bind(mem["namespace"].as_str().unwrap_or("general"))
-        .bind(mem["is_syncable"].as_bool().unwrap_or(true))
-        .bind(mem["is_shareable"].as_bool().unwrap_or(false))
-        .bind(mem["is_ephemeral"].as_bool().unwrap_or(false))
-        .bind(mem["entities_detected"].as_str())
-        .bind(mem["event_type"].as_str())
-        .bind(mem["original_text"].as_str())
-        .bind(mem["created_at"].as_str())
-        .bind(&now)
-        .bind(&embedding_bytes)
-        .execute(&pool)
-        .await;
-
-        match result {
-            Ok(_) => {
-                let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
-                restored_hashes.push(hash);
-                inserted += 1;
-            }
-            Err(e) => eprintln!("[Backup] Insert failed for memory: {}", e),
-        }
-    }
-
-    // Clear local tombstones for restored memories so sync doesn't re-delete them.
-    if !restored_hashes.is_empty() {
-        for hash in &restored_hashes {
-            let _ = sqlx::query("DELETE FROM deleted_memory_hashes WHERE content_hash = ?")
-                .bind(hash)
-                .execute(&pool)
-                .await;
-        }
-        println!("[Backup] Cleared local tombstones for {} restored memories", restored_hashes.len());
-    }
 
     // Restore conversation sessions (skip if session_id already exists).
     for sess in &sessions {
@@ -629,9 +568,8 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
             guard.as_ref().map(std::sync::Arc::clone)
         };
         if let Some(service) = service_opt {
-            let cleared = service.clear_tombstones_on_peers(&restored_hashes).await;
-            println!("[Backup] Cleared tombstones on {} peer(s)", cleared);
-
+            // Restored rows keep the backup's time. A peer that deleted one of them
+            // after the backup holds a later tombstone and refuses it: deletions win.
             let peers = service.get_peers().await;
             for peer in peers.iter().filter(|p| p.paired) {
                 match service.sync_bidirectional(&peer.device_id, &user_id).await {
@@ -643,20 +581,172 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
     }
 
     println!(
-        "[Backup] Restored {} memories ({} skipped), {} sessions ({} skipped), {} messages ({} skipped) for user {}",
-        inserted, skipped, sessions_inserted, sessions_skipped, messages_inserted, messages_skipped, user_id
+        "[Backup] Restored {} memories ({} skipped, {} deleted since the backup), {} sessions ({} skipped), {} messages ({} skipped) for user {}",
+        inserted, skipped, deleted_since, sessions_inserted, sessions_skipped, messages_inserted, messages_skipped, user_id
     );
+    let deleted_note = if deleted_since > 0 {
+        format!(", {} deleted since the backup stayed deleted", deleted_since)
+    } else { String::new() };
     Ok(serde_json::json!({
         "success": true,
         "inserted": inserted,
         "skipped": skipped,
+        "deleted_since_backup": deleted_since,
         "sessions_inserted": sessions_inserted,
         "sessions_skipped": sessions_skipped,
         "messages_inserted": messages_inserted,
         "messages_skipped": messages_skipped,
         "message": format!(
-            "Restored {} memories ({} existed), {} conversations ({} messages)",
-            inserted, skipped, sessions_inserted, messages_inserted
+            "Restored {} memories ({} already here{}), {} conversations ({} messages)",
+            inserted, skipped, deleted_note, sessions_inserted, messages_inserted
         )
     }))
+}
+
+/// What restoring the memories of a backup did.
+#[derive(Debug, Default, PartialEq)]
+pub struct RestoredMemories {
+    pub inserted: usize,
+    /// Already on this device (same text), or unusable.
+    pub skipped: usize,
+    /// In the backup, but deleted on this device after it was taken: left deleted.
+    pub deleted_since: usize,
+}
+
+/// Put a backup's memories into the database. The restore brings back what the backup
+/// holds minus anything deleted since it was taken: a memory with a tombstone here is
+/// skipped and counted, never revived (Matt, 2026-10-14, reversing the 10-08 call that
+/// restored rows should win; J39 showed two deleted memories returning to every device).
+/// Restored rows keep the backup's created_at as their updated_at, so a peer's later
+/// deletion outranks them when they sync out.
+pub async fn restore_memories_into(pool: &sqlx::SqlitePool, user_id: &str, memories: &[serde_json::Value]) -> RestoredMemories {
+    let mut out = RestoredMemories::default();
+    for mem in memories {
+        let content = match mem["content"].as_str() {
+            Some(c) if !c.is_empty() => c.to_string(),
+            _ => { out.skipped += 1; continue; }
+        };
+
+        let exists: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM memories WHERE content = ? AND user_id = ?"
+        )
+        .bind(&content)
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+        if exists { out.skipped += 1; continue; }
+
+        // Deleted here after it was made: stays deleted. A memory made again after the
+        // deletion (same text, later created_at) is not the one that was deleted.
+        let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let deleted_at: Option<String> = sqlx::query_scalar(
+            "SELECT deleted_at FROM deleted_memory_hashes WHERE content_hash = ?"
+        )
+        .bind(&hash)
+        .fetch_optional(pool)
+        .await
+        .unwrap_or(None);
+        if let Some(deleted_at) = deleted_at {
+            let made = mem["created_at"].as_str().and_then(|t| t.parse::<chrono::DateTime<Utc>>().ok());
+            let deleted = deleted_at.parse::<chrono::DateTime<Utc>>().ok();
+            let made_after = matches!((made, deleted), (Some(m), Some(d)) if m > d);
+            if !made_after { out.deleted_since += 1; continue; }
+        }
+
+        // Resolve embedding: use the backup's embedding_b64 if present; otherwise
+        // regenerate locally from content so semantic recall works after restore.
+        let embedding_bytes: Option<Vec<u8>> = mem["embedding_b64"]
+            .as_str()
+            .and_then(|s| BASE64.decode(s).ok())
+            .or_else(|| {
+                match crate::llm::local_embeddings::generate_local_embedding(&crate::memory::embedding_text(mem["title"].as_str(), &content)) {
+                    Ok(vec) => Some(vec.iter().flat_map(|f| f.to_le_bytes()).collect()),
+                    Err(e) => {
+                        eprintln!("[Backup] Embedding regen failed for restored memory: {}", e);
+                        None
+                    }
+                }
+            });
+
+        let now = Utc::now().to_rfc3339();
+        let created_at = mem["created_at"].as_str().map(String::from).unwrap_or_else(|| now.clone());
+        let result = sqlx::query(
+            "INSERT INTO memories (
+                title, content, source_type, session_id, user_id, namespace,
+                is_syncable, is_shareable, is_ephemeral, entities_detected,
+                event_type, original_text, created_at, updated_at, embedding
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(mem["title"].as_str())
+        .bind(&content)
+        .bind(mem["source_type"].as_str())
+        .bind(mem["session_id"].as_str())
+        .bind(mem["user_id"].as_str().unwrap_or(user_id))
+        .bind(mem["namespace"].as_str().unwrap_or("general"))
+        .bind(mem["is_syncable"].as_bool().unwrap_or(true))
+        .bind(mem["is_shareable"].as_bool().unwrap_or(false))
+        .bind(mem["is_ephemeral"].as_bool().unwrap_or(false))
+        .bind(mem["entities_detected"].as_str().unwrap_or("[]"))   // NOT NULL; absent from some backups
+        .bind(mem["event_type"].as_str())
+        .bind(mem["original_text"].as_str())
+        .bind(&created_at)
+        .bind(&created_at)
+        .bind(&embedding_bytes)
+        .execute(pool)
+        .await;
+
+        match result {
+            Ok(_) => out.inserted += 1,
+            Err(e) => eprintln!("[Backup] Insert failed for memory: {}", e),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn pool() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    fn backed_up(content: &str) -> serde_json::Value {
+        serde_json::json!({
+            "content": content, "title": content, "created_at": "2026-10-01T12:00:00+00:00",
+            "embedding_b64": BASE64.encode([0u8; 8]),
+        })
+    }
+
+    /// A memory deleted after the backup was taken stays deleted; the rest come back
+    /// with the backup's time, not now.
+    #[tokio::test]
+    async fn restore_leaves_what_was_deleted_since_the_backup_deleted() {
+        let pool = pool().await;
+        let deleted = "My favourite colour is orange";
+        sqlx::query("INSERT INTO deleted_memory_hashes (content_hash) VALUES (?)")
+            .bind(format!("{:x}", Sha256::digest(deleted.as_bytes()))).execute(&pool).await.unwrap();
+        let backup = vec![backed_up("The spare key is with the neighbour"), backed_up(deleted), backed_up("")];
+
+        let r = restore_memories_into(&pool, "u1", &backup).await;
+        assert_eq!(r, RestoredMemories { inserted: 1, skipped: 1, deleted_since: 1 });
+
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT content, updated_at FROM memories").fetch_all(&pool).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "The spare key is with the neighbour");
+        assert!(rows[0].1.starts_with("2026-10-01T12:00:00"), "restored row must keep the backup's time, got {}", rows[0].1);
+        // The tombstone is untouched: a second restore skips it again.
+        let again = restore_memories_into(&pool, "u1", &backup).await;
+        assert_eq!(again, RestoredMemories { inserted: 0, skipped: 2, deleted_since: 1 });
+
+        // The same text made again after the deletion is a new memory and comes back.
+        let mut remade = backed_up(deleted);
+        remade["created_at"] = serde_json::json!("2099-01-01T00:00:00+00:00");
+        let r = restore_memories_into(&pool, "u1", &[remade]).await;
+        assert_eq!(r, RestoredMemories { inserted: 1, skipped: 0, deleted_since: 0 });
+    }
 }

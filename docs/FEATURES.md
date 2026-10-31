@@ -10,16 +10,17 @@
 
 Zynkbot uses a local SQLite database for persistent, semantic memory that learns and grows over time.
 
-**How it works:**
-1. Every conversation is embedded as a 384-dimensional vector
-2. Stored in a local database on your machine
-3. Retrieved via semantic similarity and entities when relevant
-4. Transparent recall: see exactly which memories influenced each response
+**How it works (since 2026-10-24):**
+1. After each reply, Zynkbot decides whether your message held a personal fact: a cloud model says yes or no in a hidden line at the end of its reply; a local model is asked directly in the next step
+2. On yes, a separate background call lists the facts in the message, up to three, each with a title and the date it happened when you said one. Each fact becomes its own memory, written in the third person in your own words; your message is kept with it as what you said, never stored as a memory by itself
+3. Each memory is embedded as a 384-dimensional vector and stored in a local database on your machine; a third call links it to the memories it updates, contradicts or relates to, and facts from one message are linked to each other
+4. Retrieved via semantic similarity and entities when relevant; facts that came from one message are shown to the model together with what you said
+5. Transparent recall: see exactly which memories influenced each response
 
 **Memory Types:**
 - **User Memories**: Your personal conversations and preferences
-- **Foundational Memories**: System-level knowledge about Zynkbot (searched only when your query mentions "Zynkbot")
-- **Knowledge Base**: Documents you import (text files, markdown, JSON, code, PDF) for RAG retrieval — stored separately from personal memories.
+- **Foundational Memories**: System-level knowledge about Zynkbot (searched when your question is about Zynkbot itself: the word Zynkbot or a feature name such as ZynkSync, ZynkLink, Memory Manager, Ensemble, Knowledge Base or Hey Zynk, and dictation's "zinc" spellings). Since 2026-10-26 the built-in user guides are indexed on the device and searched the same way, and they are the main source for such questions.
+- **Knowledge Base**: Documents you import (text files, markdown, JSON, code, PDF, HTML, Word .docx and .doc) for RAG retrieval — stored separately from personal memories.
 
 **Features:**
 - ✅ Remembers context across sessions
@@ -76,9 +77,9 @@ Multiple safety modes with category-based filtering.
 
 | Mode | Safety Level | Use Case | Blocked Categories |
 |------|-------------|----------|-------------------|
-| **Guardian** | Moderate (default) | General use, blocks severe harm | Violence, sexual, self-harm, weapons |
+| **Guardian** | Moderate | General use, blocks severe harm | Violence, sexual, self-harm, weapons |
 | **Child** | Strict | For minors, blocks all unsafe content | All unsafe categories |
-| **Sovereign** | Warnings only | Warns but doesn't block | None (warnings only) |
+| **Sovereign** | Warnings only (default since beta 3) | Warns but doesn't block | None (warnings only) |
 | **Witness** | No filtering | Full freedom, no restrictions | None |
 | **HIPAA** | Healthcare compliance | PHI protection, blocks medical advice | Custom PHI + medical content rules |
 
@@ -108,22 +109,28 @@ Multiple safety modes with category-based filtering.
 
 Zynkbot supports multiple LLM backends with mid-conversation switching via the UI.
 
+The API Keys page (Settings → API Keys) lists one fold per provider, closed until you tap it; the header already says "Configured" or "Not set", so you can check every key without opening anything. The Web search fold (Brave key, SearXNG address) is only needed for searches made with a local model.
+
 <img src="../assets/settings.png" alt="Settings and API configuration">
 
 #### Option 1: Local Inference (Default, Privacy-First)
 
 **How it works:**
-- Place `.gguf` model files in `zynkbot_rust/src-tauri/models/user/` directory
-- Models are auto-discovered and appear in Settings panel
+- Desktop: place `.gguf` model files in the models folder (`Add Models` on the Current Model page opens it)
+- Phone: put the `.gguf` in the Zynkbot folder (Files app or Share sheet), open the ZynkLink file list and tap **→ Models**; the file stays in the folder so it can be passed on
+- From a linked device over Wi-Fi: browse its share in ZynkLink and tap **→ Models** on the `.gguf`; no internet involved
+- The Current Model page lists the model files on this device with their sizes, with **Move to…** and **Remove** for each (added 2026-10-23)
+- Models are auto-discovered and appear in the model picker
 - No API key needed - runs completely offline
+- A fresh install offers the Zynkbot model at the end of setup, on every platform (2.4 GB download from Hugging Face, checksum verified, resumable); "Later" leaves a Download button on the Current Model page
 
 **Recommended models:**
-- **Llama 3.2 3B Instruct** (2.0GB) - Fast, balanced performance
-- **Qwen 2.5 7B Instruct** (4.4GB) - Best coding and reasoning
-- **Dolphin Mistral 7B** (4.1GB) - Uncensored, creative responses
+- **Zynkbot model: Qwen3-4B-Instruct-2507, Q4_0** (2.4GB) - The model Zynkbot is built around; phone-sized and fast; the exact unsloth file (a Q4_K_M of the same model from elsewhere scored lower and read prompts 40% slower on a Pixel)
+- **Qwen3 8B** (5.0GB) - Larger all-around model for a desktop with the RAM
+- **DeepSeek R1 Distill Llama 8B** (4.7GB) and **Llama 3.1 8B Lexi Uncensored** (4.9GB) - alternatives offered by the installers
 
 **Download:**
-- `install.bat` offers to download automatically during installation
+- The setup wizard offers the Zynkbot model at first run; `install.sh` and `install.bat` offer it and the three larger models during a source install
 - Or download manually from [Hugging Face](https://huggingface.co/models?library=gguf)
 
 **Performance:**
@@ -189,6 +196,22 @@ Every completed exchange is automatically saved to a local database. Conversatio
 
 ---
 
+### 🎭 Conversation modes
+
+A conversation mode is a short set of instructions put in front of the prompt for the conversation you are in. It changes how the model answers, not what it can see. The **Mode** control sits to the right of the conversation title; it opens a list with one line on each mode. While a mode other than Normal is on, a line under the title says what it does. The mode applies until you set it back to Normal or reload the app.
+
+| Mode | What it does |
+|---|---|
+| Normal | The usual Zynkbot: warm, direct and honest. Nothing extra is sent. |
+| Tool | Does what is asked and nothing more. No commentary, no suggestions. |
+| Debate | Challenges weak reasoning and names the weakest point; argues the other side when asked. |
+| Premise | Takes what you state as true for this conversation and reasons from it, no fact-checking. |
+| Editing | Fixes grammar, spelling and clarity only; keeps your wording, tone and meaning. |
+
+Conversation modes are not containment modes (the safety layer above). A mode is prompt text; containment is enforced in code.
+
+---
+
 ### 📚 Knowledge Base
 
 <img src="../assets/Kbase.png" alt="Knowledge Base interface">
@@ -202,6 +225,8 @@ Adding a document only puts the file in Zynkbot's folder. Before Zynkbot can tal
 - JSON files (.json)
 - Code files (any language)
 - PDF documents
+- HTML pages saved from a browser
+- Word documents (.docx and .doc)
 
 **How it works:**
 1. Index files via Settings → Knowledge Base
@@ -226,6 +251,17 @@ Adding a document only puts the file in Zynkbot's folder. Before Zynkbot can tal
 
 ---
 
+### 🔎 Web Search
+
+When a question needs current information, the model says so and a card offers the search with a query you can edit; nothing is searched until you tap it. Hands-free, the search runs without asking. Where the search goes depends on the model you are using (since 2026-10-27):
+
+- **Claude, OpenAI, Grok or Mistral**: the search runs through that provider's own web search tool, on your key, and the reply is that model's answer with the pages it used listed under "View sources". The provider bills it per search (Anthropic: $10 per 1,000 searches, plus the tokens of the search content; the others on their own price lists).
+- **A local model, or a cloud model without its key**: results come from the first of these that is set up in Keys and servers: a Brave Search API key; the address of a SearXNG search server (your own, or one you trust); or, with neither, DuckDuckGo. DuckDuckGo blocks a burst of searches from one network for a few minutes, and Zynkbot says so instead of answering "no results".
+
+The query leaves your device in every case; nothing else does. The pages fetched for a local-model search are read on your device.
+
+**Reading a page you point at.** A web address in your message ("what does containai.ai say about pricing?") makes Zynkbot fetch that page on your device, pull out its readable text, and answer from it, with the page listed under "View sources". No search is involved. Up to two addresses per message; a page built entirely in the browser may show little text, and a site that refuses automated visits is reported as such rather than guessed at. Works with every backend, local models included.
+
 ### 🎛️ Memory Manager
 
 <img src="../assets/MemManager.png" alt="Memory Manager interface" width="800">
@@ -237,6 +273,8 @@ Professional database-style interface for managing your memories.
 - **Inline Editing**: Edit memories directly in the UI
 - **Bulk Operations**: Delete multiple memories at once
 - **Database-style UI**: No SQL knowledge required
+- **Grouped by message** (2026-10-26): the facts taken from one message sit under "What I said" with the day above; tap the quote to read the whole message, editable from any of its facts
+- **EXPIRED and Keep**: a passing fact (a parking level, an errand) leaves recall two weeks after its day and stays listed as EXPIRED with a Keep button; a replaced memory is tagged REPLACED with "Undo replacement"; a plan you confirmed as done (see Check-in questions) is tagged DONE and its detail view has "Not done after all", which brings it back into recall
 
 **Access:**
 - Click 🧠 **Memory Manager** button in header
@@ -251,6 +289,12 @@ Professional database-style interface for managing your memories.
 
 ---
 
+### ✅ Check-in questions (experimental, beta 5)
+
+When something you said you would do (an errand, a purchase, a chore) is about to leave memory after its two weeks, Zynkbot asks once whether it happened, quoting your own words: "A while back you said "I need to get a water filter". Did that happen?" The question appears above the conversation at the start of a session, at most once a day, and only when nothing is typed and no other card is open. Three answers: **Done** keeps the memory as history (tagged DONE in Memory Manager, out of recall), **Not yet** keeps it for two more weeks, **Never mind** deletes it; ✕ leaves it alone. Long-term plans are never asked about, only facts Zynkbot already treats as passing. Not asked in Child or HIPAA mode. The mark that a memory has been asked about syncs with the memory, so the question is asked on one device, not each. Switch it off, or ask the next question now, under System Controls → Experimental → "Ask about old plans".
+
+---
+
 ### 🪞 About me (memory report)
 
 Tap **About me** in Memory Manager for a report of what Zynkbot knows about you. It is read straight from the local database with no model call, and nothing leaves the device. <!-- added by Claude 2026-09-09, review -->
@@ -259,9 +303,9 @@ Tap **About me** in Memory Manager for a report of what Zynkbot knows about you.
 
 ---
 
-### 🗓️ What the decision call records about each memory
+### 🗓️ What the extraction call records about each memory
 
-The same model call that decides whether a message is worth remembering also returns, with no extra request: the **event date** (when the thing happened, only if the message states or implies it; the value is kept only if it parses, is not before 1900 or more than about two years ahead, and is not a January 1 placeholder), a **category** from the fixed namespace list above, up to five lowercase **tags**, the user's **tone** (positive, neutral, negative, frustrated, anxious or excited, stored as a sentiment label and score) and the **named entities** mentioned, each as a person, place, organisation or thing. Values the model omits or gets wrong fall back to the local NLP guess. Memories from hands-free turns are marked with source type `hands_free`. <!-- added by Claude 2026-09-09, review -->
+The call that lists the facts in a message (call 2 of the memory pipeline, since 2026-10-24; before that, the single decision call) also returns, with no extra request: the **event date** (when the thing happened, only if the message states or implies it; the value is kept only if it parses, is not before 1900, is not in the future (a future date is never a day something happened; KI-066), and is not a January 1 placeholder), a **category** from the fixed namespace list above, up to five lowercase **tags**, the user's **tone** (positive, neutral, negative, frustrated, anxious or excited, stored as a sentiment label and score) and the **named entities** mentioned, each as a person, place, organisation or thing. Values the model omits or gets wrong fall back to the local NLP guess. Memories from hands-free turns are marked with source type `hands_free`. <!-- added by Claude 2026-09-09, review -->
 
 **Older memories** stored before these fields existed are filled in by a background pass that starts automatically after launch: one memory every 1.5 seconds, up to 2000 per run, content and title untouched, each stamped so it is never revisited. If the model backend is unusable it stops after a run of failures and tries again on a later launch. About me shows how many are still pending. <!-- added by Claude 2026-09-09, review -->
 
@@ -273,7 +317,7 @@ Foundational memories are system-level entries stored with `user_id='system'` an
 
 **How they work:**
 - Automatically excluded from the Memory Manager UI (to keep your personal memories view clean)
-- Automatically included in semantic search during conversations alongside your personal memories when you mention "Zynkbot"
+- Automatically included in semantic search during conversations alongside your personal memories when your question is about Zynkbot itself (the word Zynkbot or a feature name; see Memory Types above)
 - Stored in the same local database as your memories, filtered out of the user-facing view
 
 **Viewing system memories (direct database access):**
@@ -354,9 +398,22 @@ See [NETWORKING_FEATURES.md](NETWORKING_FEATURES.md) for detailed documentation:
 
 ---
 
+### ⏱️ Timer, alarm and stopwatch
+
+Zynkbot's own, on Android since 2026-10-25: "set a timer for ten minutes", "set an alarm for 7 30 AM", "start stopwatch", typed or hands-free after "Hey Zynk". A timer rings with the screen off or the app closed, says what it is, and rings for 30 seconds unless stopped (say "Hey Zynk", tap the Stop button, or Stop on the notification). Several at once; each shows as a chip above the message box and a notification, both with Cancel. "Check timer", "cancel timer" (or "cancel the ten minute timer"), "check alarms", "cancel the 7 30 alarm", "stop stopwatch", "reset stopwatch", "check stopwatch". Needs Android's "Alarms & reminders" switch for Zynkbot, offered on the Voice page; without it the phone's clock app takes the command. On the desktop, timers run inside the app and ring only while it is open; alarms are phone-only. Details: `docs/ANDROID_USER_GUIDE.md` section 4, `docs/architecture_and_development/ANDROID_ARCHITECTURE.md` section 6a.
+
+### 🎤 Dictation
+
+The mic button turns speech into text in the message box. Two engines, chosen on the Voice page under System Controls:
+
+- **Offline — Vosk** (default): runs on the device, no internet, no audio leaves it. Lowercase text, no punctuation.
+- **OpenAI**: the recording goes to OpenAI (model `gpt-4o-mini-transcribe`) and comes back with punctuation and capitals. Needs an OpenAI key. On the Linux desktop the words appear while you speak; after Stop the app waits up to 8 seconds for the last of them, then the final text replaces the live words. If the live connection cannot be opened, the recording is sent when you stop, as before.
+
 ### 🤝 Ensemble Mode
 
 Query multiple AI models simultaneously and synthesize their responses into a consensus answer. Works with any combination of local and API models — no network required.
+
+On the desktop the Ensemble button opens whatever model you are using; the window lists the local model beside the cloud ones. On a phone with a local model selected, the button says "Ensemble needs cloud models" and does not open. Not available in Child mode.
 
 **Best for:** fact-checking, catching hallucinations, contested questions, and any decision where you want more than one AI perspective before acting.
 
@@ -408,26 +465,27 @@ Zynkbot uses parallel entity-based + semantic search for optimal memory retrieva
 
 ### Fact Extraction
 
-Automatically extracts personal facts from conversations for memory storage.
+Personal facts are taken from your messages by a separate model call after the reply, not by the reply itself (since 2026-10-24).
 
 **Extraction pipeline:**
-1. Conversation analyzed after each exchange
-2. Personal facts identified using LLM-based extraction
-3. Each fact stored with:
-   - Content (third-person): "User studied abroad in Tokyo in 2019"
-   - First-person form: "I studied abroad in Tokyo in 2019"
-   - Title: "Studied abroad in Tokyo"
-   - Namespace: personal, work, travel, etc.
-   - Tags: ["travel", "japan", "education"]
-   - Confidence: 0.0-1.0
+1. The reply says whether the message held anything to store (cloud models: a hidden `MEMORY: yes|no` line; local models: the next step decides)
+2. A background call lists the personal facts in the message, up to three, one sentence each in the third person, keeping your words and every detail (names, places, dates, numbers); `NONE` when there is nothing
+3. Each fact is stored as its own memory with:
+   - Content (third-person): "Matt studied abroad in Tokyo in 2019"
+   - Your message, kept as `original_text` (what you said)
+   - Title: up to 50 characters
+   - Event date, when the message says or clearly implies one
+   - Namespace, tags, tone and the named things in it (from the same call on a cloud model; from the on-device name finder on a local model)
+4. A third call classifies how the fact relates to similar memories already stored; facts from one message are linked to each other
 
-**Extraction rules:**
-- Only extracts facts stated BY THE USER
-- Focuses on facts that are personal to the user
-- Each fact is a complete, standalone statement
-- Questions are processed — personal facts embedded in questions are extracted (e.g., "my sister in Portland" from "What should I get my sister in Portland?")
-- Each message is split into clauses at contrasting conjunctions (but, however) and each clause is checked independently
-- Empty array if no personal facts present
+**Extraction rules (as the prompt states them):**
+- Only what the message states, nothing guessed
+- One thing with its details is one fact: "I'm flying to Denver Thursday for my nephew's wedding" is one fact, not three
+- What you ask is not a fact, but what you state while asking is ("Raspberry pie is my favorite. What's a good recipe?" holds one fact)
+- Nothing from text you quote, paste, or ask to translate, rewrite, reprint or proofread; greetings and thanks are not facts
+- Feelings count ("I've been feeling worn out this week" is stored)
+
+**Guards against invention (small local models):** a fact that shares no content word with your message is dropped, as is a restatement of a fact already taken from the same message or a near-duplicate of one; a message produces at most three memories. Measured on the project's memory bench (2026-10-24): the on-device model found 66 of 69 expected facts with no junk memory from 26 no-fact messages; Claude found all 69.
 
 ---
 
@@ -440,10 +498,10 @@ Automatically detects when new information contradicts existing memories.
 **How it works:**
 1. New memory compared against existing memories semantically
 2. If high similarity but conflicting content detected
-3. **Contradiction Resolution Modal** appears
+3. **Contradiction Resolution Modal** appears, as a card that waits until it is answered: it shows on the next open or return to the app, and on a phone a notification "Zynkbot has a question about a memory" is posted when the app is off screen (2026-10-26). A likely update ("I traded the Civic in") asks "Is this an update?" instead
 4. User chooses:
    - Keep old memory (discard new)
-   - Keep new memory (discard old)
+   - Keep new memory (the old one is kept as history, out of recall, and can be brought back with "Undo replacement")
    - Not a contradiction (both are true and unrelated — removes the contradiction edge)
    - Accept the contradiction (keeps both with the contradiction edge intact)
    - Resolve with explanation (stores an explanation memory linked to both via `resolves` edges)
@@ -530,13 +588,14 @@ Native desktop application with OS integration:
 
 **Data flows:**
 - Memories: Local database (never sent to cloud)
+- Deletion: a deleted conversation or memory is overwritten in the database file at the moment of deletion (SQLite secure_delete), not left in free space until the file is compacted
 - Embeddings: Generated locally (Candle framework)
 - API calls: Only when YOU choose API models
 - Safety filtering: Local TinyBERT (no cloud)
 
 **What leaves your device (only if YOU enable):**
 - Conversation prompts (if using API models like GPT-4, Claude)
-- Web searches (if using web search)
+- Web search queries, only when you tap a search (to your model's provider, Brave, your search server or DuckDuckGo)
 - Voice dictation audio (only if using OpenAI Whisper cloud engine — Vosk offline mode sends nothing)
 
 **What NEVER leaves your device:**

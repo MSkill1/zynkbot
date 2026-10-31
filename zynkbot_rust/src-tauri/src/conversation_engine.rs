@@ -25,15 +25,81 @@ pub struct Memory {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f64>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// The day the thing happened, when the memory has one (2026-10-26).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_date: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub struct ConversationEngine {
+    /// The on-phone GGUF model (2026-10-22): answer-only reply prompt, date after the
+    /// conversation, four memories, history window in blocks. False for the cloud models
+    /// and for a "custom" endpoint, which is another machine's model and keeps the
+    /// MEMORY_EXTRACT flow.
+    on_device: bool,
+}
+
+/// What the model is shown for one memory: the stored fact, then "(you said: …)" when
+/// the user's own words differ from it. Capped so a long dictation does not crowd out
+/// the other memories.
+/// The event's day, printed only when it is not the day the memory was stored: the
+/// model read "driving to the funeral on September 24" as a plan when the line carried
+/// only the stored date (Matt, 2026-10-26).
+pub fn event_note(mem: &Memory) -> Option<String> {
+    let ev = mem.event_date?;
+    if ev.date_naive() == mem.created_at.date_naive() {
+        return None;
+    }
+    Some(ev.format("%B %-d, %Y").to_string())
+}
+
+pub fn memory_line(content: &str, original_text: Option<&str>) -> String {
+    let normalise = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    match original_text {
+        Some(said) if !said.trim().is_empty() && normalise(said) != normalise(content) => {
+            let said = said.trim();
+            let short: String = said.chars().take(200).collect();
+            let ellipsis = if short.chars().count() < said.chars().count() { "…" } else { "" };
+            format!("{} (you said: \"{}{}\")", content, short, ellipsis)
+        }
+        _ => content.to_string(),
+    }
+}
+
+/// On-device prompt budget (2026-10-24). The phone reads the prompt at ~37 tokens/s on a
+/// Pixel 10 and ~50 on a OnePlus 12R, so every token in front of the question is time.
+pub const ON_DEVICE_MESSAGE_CHARS: usize = 400;
+pub const ON_DEVICE_MEMORY_CHARS: usize = 300;
+pub const ON_DEVICE_HISTORY_BLOCK: usize = 4;
+
+/// The first `max` characters of `text`, with an ellipsis when something was cut.
+/// Character-based, never a byte slice (a multi-byte character would panic).
+/// A stored reply without its memory marker: own-line "MEMORY: no" lines dropped, a
+/// marker glued to the last sentence cut off.
+pub fn strip_memory_marker(text: &str) -> String {
+    let mut lines: Vec<String> = text.lines().filter(|l| {
+        let t = l.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
+        let rest = t.strip_prefix("memory").or_else(|| t.strip_prefix("remember")).map(|r| r.trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—')).trim_end_matches(|c: char| matches!(c, '.' | '!' | ' ')));
+        !matches!(rest, Some("yes") | Some("no"))
+    }).map(str::to_string).collect();
+    if let Some(last) = lines.iter().rposition(|l| !l.trim().is_empty()) {
+        if let Some((_, rest)) = crate::commands::chat::split_inline_memory_marker(&lines[last]) { lines[last] = rest; }
+    }
+    lines.join("\n").trim_end().to_string()
+}
+
+pub fn cut_chars(text: &str, max: usize) -> String {
+    let t = text.trim();
+    if t.chars().count() <= max { return t.to_string(); }
+    format!("{}…", t.chars().take(max).collect::<String>().trim_end())
 }
 
 impl ConversationEngine {
     pub fn new() -> Self {
-        Self {}
+        Self { on_device: false }
     }
+
+    /// Mark this engine as building prompts for the on-phone GGUF model.
+    pub fn with_on_device(mut self, on_device: bool) -> Self { self.on_device = on_device; self }
 
     /// Determine if user input is memory-worthy
     /// Filters out conversational filler and acknowledgments
@@ -101,7 +167,10 @@ impl ConversationEngine {
         }
 
         // Adaptive context limits
-        let max_messages = if is_api_model { 40 } else { 8 };
+        // On-device: 8 messages (was 12, 2026-10-24), each cut to ON_DEVICE_MESSAGE_CHARS.
+        // Nothing capped a message's length before; a thread with a few long replies put
+        // 2,617 tokens in front of a one-line question on the Pixel (70 s at 37 tokens/s).
+        let max_messages = if is_api_model { 40 } else if self.on_device { 8 } else { 8 };
 
         println!(
             "[Engine] Using {} model context limits: {} messages",
@@ -110,21 +179,34 @@ impl ConversationEngine {
         );
 
         // Take most recent messages
-        let recent_history: Vec<&ConversationTurn> = conversation_history
-            .iter()
-            .rev()
-            .take(max_messages)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+        // On-device model (2026-10-22): the window moves in blocks of six messages, not one
+        // at a time. The engine keeps the part of the prompt that is identical to the
+        // previous turn; a window that slid by one message every turn changed the text
+        // right after the voice instructions and threw the whole conversation away each
+        // time (only the 260-token voice part was kept on the Pixel). With blocks, the
+        // start of the history stays put for three exchanges, then jumps.
+        // Blocks of four since 2026-10-24 (were six with a 12-message window): the window
+        // holds five to eight messages and its start stays put for two exchanges.
+        let start = if !self.on_device {
+            conversation_history.len().saturating_sub(max_messages)
+        } else if conversation_history.len() <= max_messages {
+            0
+        } else {
+            let over = conversation_history.len() - max_messages;
+            over.div_ceil(ON_DEVICE_HISTORY_BLOCK) * ON_DEVICE_HISTORY_BLOCK
+        };
+        let recent_history: Vec<&ConversationTurn> = conversation_history[start..].iter().collect();
 
         println!("[Engine] Including {} recent conversation turns", recent_history.len());
 
         let mut context = String::from("RECENT CONVERSATION:\n");
         for turn in recent_history {
             let role = turn.role.to_uppercase();
-            context.push_str(&format!("{}: {}\n", role, turn.content));
+            // A reply that kept its hidden "MEMORY: yes|no" (stored before the inline
+            // fix of 2026-10-25) must not teach the next model to write one.
+            let content = if turn.role.eq_ignore_ascii_case("assistant") { strip_memory_marker(&turn.content) } else { turn.content.clone() };
+            let content = if self.on_device { cut_chars(&content, ON_DEVICE_MESSAGE_CHARS) } else { content };
+            context.push_str(&format!("{}: {}\n", role, content));
         }
         context.push('\n');
 
@@ -150,7 +232,13 @@ impl ConversationEngine {
             .collect();
 
         // Adaptive context limits
-        let max_memories = if is_api_model { 20 } else { 7 };
+        // Local: 4 (was 7, 2026-10-22). The recalled memories are the part of the prompt a
+        // local model has to read anew every turn, at ~40 tokens/s.
+        // On-device 4, the fact only: the "you said" text doubled each line and the fact is
+        // what the model needs. (3 for an afternoon on 2026-10-24: the fourth memory held
+        // the answer to the second test question, and 100 tokens more is fine; Matt.)
+        // Cloud: 30, matching the search limit (was 20; 2026-10-28, Matt).
+        let max_memories = if is_api_model { 30 } else if self.on_device { 4 } else { 7 };
 
         // Limit based on model type
         let limited_memories: Vec<&Memory> = if useful_memories.len() > max_memories {
@@ -169,12 +257,51 @@ impl ConversationEngine {
             return String::new();
         }
 
+        // Facts that came from the same message are written as one block: the message the
+        // user said, then its facts (Matt, 2026-10-24: "if multiple memories tie to one
+        // thing, it's worth the AI getting the full context it came from"). Since call 2
+        // makes one memory per fact, three siblings used to carry the same "you said" quote
+        // three times; now once. A fact with no recalled sibling is a line as before.
+        let normalise = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        let mut groups: Vec<(Option<String>, Vec<&Memory>)> = Vec::new();
+        for mem in &limited_memories {
+            let key = mem.original_text.as_deref().filter(|t| !t.trim().is_empty()).map(normalise);
+            match key.as_ref().and_then(|k| groups.iter_mut().find(|(gk, _)| gk.as_ref() == Some(k))) {
+                Some((_, members)) => members.push(mem),
+                None => groups.push((key, vec![mem])),
+            }
+        }
+        let quote_chars = if self.on_device { ON_DEVICE_MEMORY_CHARS } else { 400 };
         let mut context = String::from("USER'S STORED MEMORIES:\n");
-        for (idx, mem) in limited_memories.iter().enumerate() {
-            // Use original_text if available (for tone preservation), otherwise use content
-            let text_for_llm = mem.original_text.as_ref().unwrap_or(&mem.content);
-            let date_str = mem.created_at.format("%B %-d, %Y").to_string();
-            context.push_str(&format!("{}. ({}) {}\n", idx + 1, date_str, text_for_llm));
+        let mut idx = 0;
+        for (_, members) in &groups {
+            idx += 1;
+            if members.len() >= 2 {
+                let first = members[0];
+                let date_str = first.created_at.format("%B %-d, %Y").to_string();
+                let said = cut_chars(first.original_text.as_deref().unwrap_or(""), quote_chars);
+                context.push_str(&format!("{}. ({}) You said: \"{}\"\n", idx, date_str, said));
+                for mem in members {
+                    match event_note(mem) {
+                        Some(d) => context.push_str(&format!("   - {} (about {})\n", cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS), d)),
+                        None => context.push_str(&format!("   - {}\n", cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS))),
+                    }
+                }
+                println!("[Engine]   Including a group of {} facts from one message", members.len());
+                continue;
+            }
+            let mem = members[0];
+            // The content is the fact as stored, from a photo, an attachment or an
+            // inference as much as from words; original_text is what the user said.
+            // Showing the words alone left the model unable to name the furniture oils
+            // the content held ("I saved a note but don't know what the item was",
+            // 2026-10-08): the fact goes first, the user's words after it when they differ.
+            let text_for_llm = if self.on_device { cut_chars(&mem.content, ON_DEVICE_MEMORY_CHARS) } else { memory_line(&mem.content, mem.original_text.as_deref()) };
+            let date_str = match event_note(mem) {
+                Some(d) => format!("{}; about {}", mem.created_at.format("%B %-d, %Y"), d),
+                None => mem.created_at.format("%B %-d, %Y").to_string(),
+            };
+            context.push_str(&format!("{}. ({}) {}\n", idx, date_str, text_for_llm));
             // Character-based, not byte-based: a byte slice panics inside a multi-byte
             // character (an em dash at bytes 59..62 killed a Spanish translation
             // request on 2026-09-13 — the request died with no reply).
@@ -206,11 +333,19 @@ impl ConversationEngine {
         let today = Local::now().format("%A, %B %-d, %Y at %-I:%M %p %Z").to_string();
         let subject_label = user_name.unwrap_or("User");
 
+        let opening = if self.on_device {
+            // "Background, not the topic" (Matt, 2026-10-25): the phone's model answered
+            // "his most notable achievement" about France because a recalled memory
+            // about France sat in the prompt and it took that for the subject.
+            "Answer the newest message. The recent conversation and the memories below are background; use them only when they bear on the question. If they do not hold the number or date asked for, say you do not have it; never put another figure in its place. A memory dated before today describes something that has already happened; 'about' gives the day it happened. Keep it short: a few sentences, unless they ask for more.\n\n".to_string()
+        } else {
+            format!("Today's date is {today}.\n\n")
+        };
         let mut system_prompt = if is_api_model {
             format!("Today's date is {today}.\n\nYou are Zynkbot, a personal AI companion.
 
 COMPANION VOICE — always observe these regardless of what the user asks:
-- You are a long-term companion that serves the user's autonomy and genuine interests. Be warm, calm, and genuinely present — never claim or imply that you are human, or that your relationship with the user replaces the people in their life.
+- You are a long-term companion that serves the user's autonomy and genuine interests. Be warm, calm, direct and genuinely present — no cheering the user on, no therapy language — and never claim or imply that you are human, or that your relationship with the user replaces the people in their life.
 - Be honest when you are uncertain or do not know something. Say so plainly rather than guessing with false confidence.
 - Do not flatter or validate automatically. If the user is factually wrong about something that matters, say so respectfully and clearly.
 - Do not encourage dependency. Reserve suggestions to seek professional help for situations with real clinical or legal stakes — persistent symptoms, medical decisions, crisis, legal matters. Ordinary emotional experiences — relationship frustration, grief, everyday stress — are part of what a companion is for. Engage with those directly.
@@ -220,6 +355,7 @@ COMPANION VOICE — always observe these regardless of what the user asks:
 - It is legitimate and good for someone to feel less alone talking to you. You do not need to undercut that — just never actively cultivate it beyond what is true.
 - Use stored memories to be helpful and contextual — not to demonstrate that you are tracking everything. Memory is a tool for the user's benefit, not a surveillance record.
 - Keep responses proportionate. Answer what was asked. Do not pad, lecture, or moralize unless the user explicitly asks for that perspective.
+- If one or two missing details would change your answer, ask for them first, briefly. Otherwise answer, and say what you assumed.
 - The user's data belongs to them entirely.
 
 Below you have access to stored personal memories that were recalled from the user's memory database based on semantic similarity and entity matching. These memories represent experiences, knowledge, and information from the user's past.
@@ -227,6 +363,7 @@ Below you have access to stored personal memories that were recalled from the us
 When responding:
 - Use these memories to provide personalized, contextual answers about the user's life and experiences
 - Reference the memories naturally and conversationally when they're relevant
+- When you list things the user has planned, has coming up or meant to do, give the date each one was mentioned (the date in front of the memory), so they can see how old it is
 - For general knowledge questions unrelated to the stored memories, answer from your training data without mentioning the memories
 - Be helpful, accurate, and maintain appropriate context when discussing personal information
 
@@ -249,67 +386,41 @@ IMPORTANT: Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal 
 After you indicate a web search is needed, the user will be shown your suggested query (which they can edit before running) and can decide whether to run the search.
 
 ")
+        } else if self.on_device {
+            // On-device (2026-10-24): about 85 words. The companion voice in four sentences,
+            // the memories line and the web-search rule; the explanations around them went,
+            // and the "ask for missing details first" line (2026-10-20, written for GPT) is
+            // left out so a 4B model answers rather than questions back.
+            format!("{opening}You are Zynkbot, a warm, honest, direct companion. Never claim to be human or to replace the people in the user's life. Say so when you are unsure. Do not flatter; no cheering on, no therapy language. When someone shares grief or frustration, acknowledge it before solutions.\n\nStored memories below are the user's own history; treat them as facts about their life. When you list plans or things coming up, say when each was mentioned (the date in front of the memory).\n\nFor news, weather, prices or recent events, output: WEB_SEARCH_NEEDED: [query]. Never for the date or time, or for the user's own history.\n\n")
         } else {
             // Slim prompt for local models: task-first framing so fact extraction (PART 1)
             // is understood as a primary output requirement, not an afterthought.
-            format!("Today's date is {today}.\n\nYour output has two parts, always in this order:\nPART 1 — if the user stated personal facts: a MEMORY_EXTRACT line (see instructions below)\nPART 2 — your response as Zynkbot\n\nAs Zynkbot, be warm, calm, and genuinely present. Never claim to be human or to replace people in the user's life. Be honest when uncertain. Don't flatter or validate automatically. Don't encourage dependency; reserve professional-help suggestions for real clinical/legal stakes. When someone shares grief or frustration, acknowledge it before solutions. Keep responses proportionate. The user's data belongs to them.\n\nStored memories below are the user's own personal history — treat them as facts about their life and experiences. Reference them when relevant; answer general questions from training otherwise.\n\nThe current date and time are stated above — answer those directly, never search for them. For other real-time info (news, weather, prices, recent events) output: WEB_SEARCH_NEEDED: [query]. Questions using words like 'latest', 'recent', or 'news' require WEB_SEARCH_NEEDED — do not answer those from training data. Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history or memories.\n\n")
+            format!("{opening}As Zynkbot, be warm, calm, direct and genuinely present. Never claim to be human or to replace people in the user's life. Be honest when uncertain. Don't flatter or validate automatically; no cheering on, no therapy language. Don't encourage dependency; reserve professional-help suggestions for real clinical/legal stakes. When someone shares grief or frustration, acknowledge it before solutions. Keep responses proportionate. If one or two missing details would change your answer, ask for them first, briefly; otherwise answer and say what you assumed. The user's data belongs to them.\n\nStored memories below are the user's own personal history — treat them as facts about their life and experiences. Reference them when relevant; answer general questions from training otherwise. When listing plans or things coming up, give the date in front of each memory. You cannot change a memory yourself: when the user corrects one, say the correction will be checked against the stored memories and that they can edit any memory in Memory Manager; never say you have updated it.\n\nThe current date and time are stated above — answer those directly, never search for them. For other real-time info (news, weather, prices, recent events) output: WEB_SEARCH_NEEDED: [query]. Questions using words like 'latest', 'recent', or 'news' require WEB_SEARCH_NEEDED — do not answer those from training data. Do NOT use WEB_SEARCH_NEEDED for questions about the user's personal history or memories.\n\n")
         };
 
         // If we know the user's name, tell the LLM so it can use it instead of "User"
         // in MEMORY_EXTRACT lines and in conversational replies. Same line in both modes.
         if let Some(name) = user_name {
             system_prompt.push_str(&format!(
-                "The user's name is {name}. Use their name occasionally and naturally — not at the start of every reply. Do not address them by name as the first word of your response. Use it mid-sentence or when it adds warmth, the same way a friend would. Always use it in MEMORY_EXTRACT lines.\n\n"
+                "The user's name is {name}. Use their name occasionally and naturally — not at the start of every reply. Do not address them by name as the first word of your response. Use it mid-sentence or when it adds warmth, the same way a friend would.{extract_note}\n\n",
+                extract_note = ""
             ));
         }
 
-        if is_api_model {
-            system_prompt.push_str(&format!(r#"HOW TO SAVE PERSONAL FACTS
-Examine every clause in the user's message — whether phrased as a statement, question, or aside — for personal facts the user is stating or implying. A question can contain a fact just as clearly as a statement.
+        // Call 1 of the memory pipeline (2026-10-24, Matt's design): the reply says only
+        // whether the message holds anything to store. On yes, a separate call lists the
+        // facts (memory_prompts.rs); on no, nothing runs. Until today the cloud reply carried
+        // the fact itself as a MEMORY_EXTRACT line and a second call decided again on the
+        // raw message, storing it verbatim when the line was missing. The on-device model
+        // gets no marker (it stops answering when asked for one); its call 2 decides.
+        if !self.on_device {
+            system_prompt.push_str(&format!(r#"MEMORY LINE
+End every reply with one final line, exactly "MEMORY: yes" or "MEMORY: no", and nothing else on that line.
+- yes: the user's message states a personal fact about {subject_label}: their life, people, pets, work, home, health, feelings, plans, possessions, likes or dislikes. A fact stated inside a question counts ("Raspberry pie is my favorite. What's a good recipe?" is yes).
+- no: a question alone, chit-chat, general knowledge, a request about their stored memories, text they ask you to translate or that they quote from someone else, or a message only about Zynkbot itself.
+Do not write the fact in your reply; the line is only yes or no.
 
-To save a fact, include this line at the end of your response:
-MEMORY_EXTRACT: [all personal facts combined into one third-person statement starting with "{subject_label}"]
-
-Rules:
-- At most ONE MEMORY_EXTRACT line per message. Combine all facts into a single statement.
-- That line must begin with the exact text MEMORY_EXTRACT: — never write any other label or heading (such as "FACT EXTRACTION" or "PART 1") in your reply.
-- Omit MEMORY_EXTRACT entirely if no personal facts are present — this is the expected outcome for most messages.
-- Do NOT emit for: general knowledge, chitchat, current events, or messages that are only asking about the user's existing memories with no new fact stated.
-
-When to extract:
-- Direct statement: "I have a golden retriever named Max who's 3." → MEMORY_EXTRACT: {subject_label} has a 3-year-old golden retriever named Max.
-- Implied by question: "Raspberry pie is my favorite. What's a good recipe?" → MEMORY_EXTRACT: {subject_label} likes raspberry pie.
-- Family/people: "My nephews John and Jack are 8 and 9 — coming to my sister Janet's birthday Tuesday." → MEMORY_EXTRACT: {subject_label} has nephews John (8) and Jack (9) coming to sister Janet's birthday.
-- Emotional state: "I've been feeling really down lately." → MEMORY_EXTRACT: {subject_label} has been feeling down lately. (Tracking emotional patterns over time is valuable — always extract clear emotional states.)
-- Goals/plans: "I'm going to start a book series." → MEMORY_EXTRACT: {subject_label} plans to start a book series.
-
-When NOT to extract:
-- Recall question: "What theories have I come up with?" — answer from stored memories instead.
-- Chitchat: "How are you?" / "Good morning."
-- General knowledge: "What's the capital of France?"
-- Current events: "What's in the news today?"
-
-"#
-            ));
-        } else {
-            system_prompt.push_str(&format!(r#"PART 1 — MEMORY_EXTRACT
-Scan the user's message for personal facts (name, age, job, location, family, pets, feelings, preferences, plans, health). If ANY personal facts are present, the VERY FIRST LINE of your output MUST be:
-MEMORY_EXTRACT: [one third-person statement combining all facts, starting with "{subject_label}"]
-
-Output MEMORY_EXTRACT before your conversational response. If no personal facts exist, omit it entirely and go straight to PART 2. Write that line exactly as shown, beginning with MEMORY_EXTRACT: — do not write any other label or heading (such as "FACT EXTRACTION") in your reply.
-
-Examples (first line of output when facts are present):
-- "I have a dog named Rex." → MEMORY_EXTRACT: {subject_label} has a dog named Rex.
-- "I'm 34 and work as a physical therapist." → MEMORY_EXTRACT: {subject_label} is 34 years old and works as a physical therapist.
-- "I've been feeling down lately." → MEMORY_EXTRACT: {subject_label} has been feeling down lately.
-- "I'm starting a book series." → MEMORY_EXTRACT: {subject_label} plans to start a book series.
-
-Do NOT extract for: chitchat, general knowledge, recall questions about stored memories, or current events.
-
-PART 2 — your Zynkbot response follows on the next line.
-
-"#
-            ));
+"#, subject_label = subject_label));
         }
 
         // Build conversation history context
@@ -326,11 +437,27 @@ PART 2 — your Zynkbot response follows on the next line.
             String::new()
         };
 
-        // Combine all parts
-        let prompt = format!(
-            "{}{}{}USER'S QUESTION: {}\n\nYOUR RESPONSE:",
-            system_prompt, history_context, memory_context, user_input
-        );
+        // Combine all parts. For a local model the date and time come after the voice and
+        // the conversation so far (2026-10-22): the engine keeps the part of the prompt that
+        // is identical to the previous turn, and a time stamp at the top changed every
+        // minute and threw all of it away.
+        let prompt = if !self.on_device {
+            format!(
+                "{}{}{}USER'S QUESTION: {}\n\nYOUR RESPONSE:",
+                system_prompt, history_context, memory_context, user_input
+            )
+        } else {
+            // Phone order (Matt, 2026-10-25): memories before the conversation, so what the
+            // model reads last before the question is the thread, not a recalled fact. A
+            // recalled France memory next to "his most notable achievement" had won over the
+            // Obama turns. The engine's prompt cache now keeps only the instructions between
+            // turns (the memories change with every question); measured on the test phones
+            // before this stays.
+            format!(
+                "{}{}{}Today's date is {today}.\n\nUSER'S QUESTION: {}\n\nYOUR RESPONSE:",
+                system_prompt, memory_context, history_context, user_input
+            )
+        };
 
         prompt
     }
@@ -396,6 +523,23 @@ mod tests {
         assert!(context.contains("USER: Hello"));
     }
 
+    /// The stored fact reaches the model; the user's words ride along only when they
+    /// add something (2026-10-08, the furniture-oil memory).
+    #[test]
+    fn memory_line_shows_the_fact_and_the_users_words_only_when_they_differ() {
+        assert_eq!(
+            memory_line("Howard Feed-N-Wax and Restor-A-Finish, the furniture oils to reorder",
+                        Some("Remember what this is - I need to order it again")),
+            "Howard Feed-N-Wax and Restor-A-Finish, the furniture oils to reorder (you said: \"Remember what this is - I need to order it again\")");
+        assert_eq!(memory_line("Bins go out on Tuesday", Some("  bins go  out on Tuesday ")), "Bins go out on Tuesday");
+        assert_eq!(memory_line("Bins go out on Tuesday", None), "Bins go out on Tuesday");
+        assert_eq!(memory_line("Bins go out on Tuesday", Some("   ")), "Bins go out on Tuesday");
+        let long = "x".repeat(300);
+        let line = memory_line("A fact", Some(&long));
+        assert!(line.ends_with("…\")"), "a long dictation is cut: {}", line);
+        assert!(line.chars().count() < 230);
+    }
+
     #[test]
     fn test_is_api_model() {
         assert!(ConversationEngine::is_api_model("anthropic"));
@@ -418,7 +562,7 @@ mod tests {
             original_text: None,
             title: Some("Location".to_string()),
             similarity: Some(0.85),
-            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(), event_date: None,
         };
 
         let linked = Memory {
@@ -427,7 +571,7 @@ mod tests {
             original_text: None,
             title: Some("Previous location".to_string()),
             similarity: Some(0.42),
-            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(), event_date: None,
         };
 
         let entity_matched_only = Memory {
@@ -436,7 +580,7 @@ mod tests {
             original_text: None,
             title: Some("Texas trip".to_string()),
             similarity: Some(0.28),
-            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap_or_default(), event_date: None,
         };
 
         // Replicate the fixed engine_memories assembly: recalled + linked only
@@ -456,5 +600,146 @@ mod tests {
             "Graph-linked memory should be in prompt");
         assert!(!prompt.contains(&entity_matched_only.content),
             "Entity-matched-only memory must NOT appear in prompt");
+    }
+}
+
+#[cfg(test)]
+mod on_device_prompt_tests {
+    use super::*;
+
+    fn turns(n: usize) -> Vec<ConversationTurn> {
+        (0..n).map(|i| ConversationTurn {
+            role: if i % 2 == 0 { "user".into() } else { "assistant".into() },
+            content: format!("message {i}"),
+        }).collect()
+    }
+    fn first_included(ctx: &str) -> usize {
+        // "USER: message 7" -> 7
+        let i = ctx.find("message ").unwrap() + "message ".len();
+        ctx[i..].split_whitespace().next().unwrap().parse().unwrap()
+    }
+
+    #[test]
+    fn on_device_history_window_moves_in_blocks_of_four() {
+        let e = ConversationEngine::new().with_on_device(true);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(8), false)), 0);
+        // One over the window: jump a whole block, not one message.
+        assert_eq!(first_included(&e.build_conversation_context(&turns(9), false)), 4);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(12), false)), 4);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(13), false)), 8);
+    }
+    #[test]
+    fn on_device_messages_are_cut_to_400_characters_custom_endpoint_not() {
+        let long = "x".repeat(1000);
+        let t = vec![ConversationTurn { role: "assistant".into(), content: long.clone() }];
+        let on = ConversationEngine::new().with_on_device(true).build_conversation_context(&t, false);
+        assert!(on.contains(&format!("{}…", "x".repeat(400))));
+        assert!(!on.contains(&"x".repeat(401)));
+        let custom = ConversationEngine::new().build_conversation_context(&t, false);
+        assert!(custom.contains(&long));
+    }
+    #[test]
+    fn on_device_memory_lines_carry_the_fact_only() {
+        let mems = vec![Memory { id: 1, content: "Matt has a cat named Louie.".into(), original_text: Some("I have a cat named Louie and he is orange".into()), title: None, similarity: Some(0.9), created_at: chrono::Utc::now(), event_date: None }];
+        let on = ConversationEngine::new().with_on_device(true).build_memory_context(&mems, "q", false);
+        assert!(on.contains("Matt has a cat named Louie.") && !on.contains("you said"));
+        let custom = ConversationEngine::new().build_memory_context(&mems, "q", false);
+        assert!(custom.contains("you said"));
+    }
+    #[test]
+    fn facts_from_one_message_are_written_as_one_block_with_the_quote_once() {
+        let said = "I have a cat named Louie and I'm flying to Denver Thursday for my nephew's wedding.";
+        let m = |id: i32, content: &str, said: Option<&str>| Memory { id, content: content.into(), original_text: said.map(str::to_string), title: None, similarity: Some(0.9), created_at: chrono::Utc::now(), event_date: None };
+        let mems = vec![
+            m(1, "Matt has a cat named Louie.", Some(said)),
+            m(2, "Matt's dentist is Dr. Patel.", Some("I switched my dentist to Dr. Patel last week.")),
+            m(3, "Matt is flying to Denver on Thursday for his nephew's wedding.", Some(said)),
+        ];
+        for engine in [ConversationEngine::new(), ConversationEngine::new().with_on_device(true)] {
+            let ctx = engine.build_memory_context(&mems, "q", false);
+            assert_eq!(ctx.matches("Denver Thursday for my nephew's wedding").count(), 1, "the quote appears once: {}", ctx);
+            assert!(ctx.contains("   - Matt has a cat named Louie.") && ctx.contains("   - Matt is flying to Denver"), "{}", ctx);
+            assert!(ctx.contains("Matt's dentist is Dr. Patel."), "the single fact stays a line: {}", ctx);
+            assert!(ctx.contains("1. ") && ctx.contains("2. ") && !ctx.contains("3. "), "two items, not three: {}", ctx);
+        }
+    }
+
+    /// A memory about a day other than the one it was stored on says so, in the group
+    /// and alone; the same day prints nothing extra (2026-10-26, the funeral read as a plan).
+    #[test]
+    fn memory_lines_carry_the_event_day_when_it_differs() {
+        let stored = chrono::DateTime::parse_from_rfc3339("2026-09-20T15:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let event = chrono::DateTime::parse_from_rfc3339("2026-09-24T00:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let said = "I'm driving to my uncle's funeral on the 24th, and my cousin Ann is coming too.";
+        let m = |id: i32, content: &str, said: Option<&str>, ev: Option<chrono::DateTime<chrono::Utc>>| Memory { id, content: content.into(), original_text: said.map(str::to_string), title: None, similarity: Some(0.9), created_at: stored, event_date: ev };
+        let lone = vec![m(1, "Matt is driving to his uncle's funeral.", Some(said), Some(event))];
+        let ctx = ConversationEngine::new().with_on_device(true).build_memory_context(&lone, "q", false);
+        assert!(ctx.contains("1. (September 20, 2026; about September 24, 2026) Matt is driving"), "{}", ctx);
+        let same_day = vec![m(1, "Matt is driving to his uncle's funeral.", Some(said), Some(stored))];
+        let ctx = ConversationEngine::new().build_memory_context(&same_day, "q", false);
+        assert!(ctx.contains("1. (September 20, 2026) Matt is driving"), "{}", ctx);
+        let group = vec![m(1, "Matt is driving to his uncle's funeral.", Some(said), Some(event)), m(2, "Matt's cousin Ann is coming to the funeral.", Some(said), None)];
+        let ctx = ConversationEngine::new().build_memory_context(&group, "q", false);
+        assert!(ctx.contains("   - Matt is driving to his uncle's funeral. (about September 24, 2026)\n   - Matt's cousin Ann is coming to the funeral.\n"), "{}", ctx);
+        let p = ConversationEngine::new().with_on_device(true).build_prompt("q", None, None, false, Some("Matt"));
+        assert!(p.contains("already happened"));
+    }
+
+    #[test]
+    fn history_never_carries_the_marker() {
+        assert_eq!(strip_memory_marker("Fine answer.\n\nMEMORY: no"), "Fine answer.");
+        assert_eq!(strip_memory_marker("It can take you places. MEMORY: no"), "It can take you places.");
+        assert_eq!(strip_memory_marker("Plain reply with no marker."), "Plain reply with no marker.");
+    }
+
+    #[test]
+    fn on_device_instructions_stay_short() {
+        let e = ConversationEngine::new().with_on_device(true);
+        let p = e.build_prompt("hello", Some(&turns(2)), None, false, Some("Matt"));
+        let instructions = &p[..p.find("RECENT CONVERSATION").unwrap()];
+        // 140 until 2026-10-25; the "background, not the topic" line (Matt) added about twenty words on purpose.
+        // 165 → 190 on 2026-10-26 for the "say you do not have it" line (Matt); 190 → 210 the same day
+        // for the "already happened" line (the funeral read as a plan). 210 → 225 on 2026-10-29 for
+        // the "give the date in front of each memory" line when listing plans (Matt).
+        assert!(instructions.split_whitespace().count() < 225, "{} words", instructions.split_whitespace().count());
+        assert!(p.contains("WEB_SEARCH_NEEDED"));
+    }
+    #[test]
+    fn custom_endpoint_history_window_slides_by_one() {
+        let e = ConversationEngine::new();
+        assert_eq!(first_included(&e.build_conversation_context(&turns(9), false)), 1);
+        assert_eq!(first_included(&e.build_conversation_context(&turns(10), false)), 2);
+    }
+    #[test]
+    fn on_device_prompt_asks_only_for_the_answer_and_dates_after_the_conversation() {
+        let e = ConversationEngine::new().with_on_device(true);
+        let p = e.build_prompt("What is the capital of France?", Some(&turns(4)), None, false, Some("Matt"));
+        assert!(!p.contains("MEMORY_EXTRACT"), "no extraction instruction for the on-device model");
+        assert!(!p.contains("PART 1"));
+        assert!(!p.contains("REMEMBER:"));
+        assert!(p.contains("Keep it short"));
+        let date = p.find("Today's date is").expect("date present");
+        let history = p.find("RECENT CONVERSATION").expect("history present");
+        assert!(date > history, "the date comes after the conversation so the kept context survives the clock");
+    }
+    #[test]
+    fn custom_and_cloud_prompts_ask_for_the_memory_line_only() {
+        let e = ConversationEngine::new();
+        let p = e.build_prompt("I have a dog named Rex.", None, None, false, Some("Matt"));
+        assert!(p.contains("MEMORY: yes"), "the yes/no marker instruction is missing");
+        assert!(!p.contains("MEMORY_EXTRACT"), "the fact line must not be asked for any more");
+        assert!(p.starts_with("Today's date is"));
+        let api = e.build_prompt("I have a dog named Rex.", None, None, true, Some("Matt"));
+        assert!(api.contains("MEMORY: yes") && !api.contains("MEMORY_EXTRACT"));
+        let on = ConversationEngine::new().with_on_device(true).build_prompt("hi", None, None, false, None);
+        assert!(!on.contains("MEMORY:"), "the on-device model is not asked for a marker");
+    }
+    #[test]
+    fn on_device_recalls_four_memories() {
+        let e = ConversationEngine::new().with_on_device(true);
+        let mems: Vec<Memory> = (0..7).map(|i| Memory { id: i, content: format!("fact number {i}"), original_text: None, title: None, similarity: Some(0.9), created_at: chrono::Utc::now(), event_date: None }).collect();
+        let ctx = e.build_memory_context(&mems, "question", false);
+        assert_eq!(ctx.matches("fact number").count(), 4);
+        assert_eq!(ConversationEngine::new().build_memory_context(&mems, "question", false).matches("fact number").count(), 7);
     }
 }

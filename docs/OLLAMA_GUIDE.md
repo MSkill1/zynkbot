@@ -31,7 +31,7 @@ GPU acceleration (NVIDIA CUDA) is automatically used by Ollama when available �
 
 ### 3. Configure in Zynkbot
 
-1. Open **Settings → API Keys**
+1. Open **System Controls → Current Model** (the API keys are entered on that page)
 2. Scroll to **Custom / Ollama**
 3. Enter the URL: `http://localhost:11434/v1`
 4. Leave the API key field blank — Ollama doesn't require one
@@ -49,12 +49,12 @@ When your Android phone is paired with your desktop via ZynkSync, the desktop ac
 ### Setup
 
 1. Make sure Ollama is running and configured on your desktop (steps above)
-2. Pair your phone and desktop via **Settings → ZynkSync** on both devices
-3. On Android, open **Settings → API Keys → Ollama (Local AI)**
+2. Pair your phone and desktop via **System Controls → ZynkSync** on both devices
+3. On Android, open **System Controls → Current Model → Ollama (Local AI)**
 4. Tap **"Connect to Ollama on [your PC name]"** — Zynkbot auto-detects paired desktops
 
 There is no model picker on the phone. The desktop decides: whichever model is selected
-under **Settings → API Keys → Custom / Ollama** on the desktop is the one every connected
+under **System Controls → Current Model → Custom / Ollama** on the desktop is the one every connected
 phone uses, and changing it there takes effect on the phone's next message. If the desktop
 has no model selected, the phone gets a clear "No Ollama model selected on the desktop" error.
 
@@ -72,7 +72,7 @@ Zynkbot's custom endpoint works with any server that implements the OpenAI chat 
 | LM Studio | `http://localhost:1234/v1` |
 | llama-server (llama.cpp) | `http://localhost:8080/v1` |
 
-Enter the URL in Settings → API Keys → Custom / Ollama. Leave the API key blank unless your server requires one.
+Enter the URL in System Controls → Current Model → Custom / Ollama. Leave the API key blank unless your server requires one.
 
 ---
 

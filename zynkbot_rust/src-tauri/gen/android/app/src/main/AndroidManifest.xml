@@ -13,6 +13,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Zynkbot's own timer and alarm (ZynkTimer, 2026-10-25): exact alarms so they ring
+         with the phone asleep; a short foreground service rings for 30 s; put back after a reboot. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SHORT_SERVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Asked once from the second start: without it ColorOS freezes the app in the background and sync stops (KI-087). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Android 11+ package visibility: an app can only see, resolve, or bind to other
@@ -117,12 +124,15 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.app"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <!-- The local-model engine's OpenCL backend (a loadable module) uses the phone's own
+             OpenCL driver when there is one. Android 12+ hides vendor libraries from an app
+             unless declared here; optional, so phones without one run on the CPU (2026-10-23). -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
-            android:windowSoftInputMode="adjustResize"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -141,6 +151,27 @@
             android:name=".WakeWordService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- After an update: restart the Hey Zynk listener and say if the Z needs the assistant re-selected (KI-101). -->
+        <receiver
+            android:name=".PackageReplacedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <!-- Zynkbot's own timer/alarm: the exact-alarm receiver and the 30 s ring service. -->
+        <receiver
+            android:name=".TimerReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name=".TimerRingService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
 
         <!-- Digital-assistant role (Settings -> Apps -> Default apps -> Digital
              assistant app). Both services must be exported and guarded by
@@ -172,7 +203,44 @@
             <intent-filter>
                 <action android:name="android.speech.RecognitionService" />
             </intent-filter>
+            <meta-data
+                android:name="android.speech"
+                android:resource="@xml/recognition_service" />
         </service>
+
+        <!-- Zynkbot as a storage location: the "Zynkbot" entry in the Files app drawer
+             and in any app's file picker (KI-015, 2026-09-19). Guarded by MANAGE_DOCUMENTS
+             so only the system's documents UI can talk to it. -->
+        <provider
+            android:name=".ZynkShareProvider"
+            android:authorities="ai.containai.zynkbot.share"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
+        <!-- "Share to Zynkbot" from any app's Share menu: copies into the share folder. -->
+        <activity
+            android:name=".ShareReceiverActivity"
+            android:label="Zynkbot"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
 
         <provider
           android:name="androidx.core.content.FileProvider"

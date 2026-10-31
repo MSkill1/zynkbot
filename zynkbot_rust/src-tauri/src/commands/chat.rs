@@ -24,24 +24,69 @@ async fn build_custom_client(base_url: &str) -> reqwest::Client {
     crate::llm::openai::default_client(true)
 }
 
+/// Can the "local" backend (or this .gguf path) actually answer on this device?
+/// On Android too since 2026-10-22 (the engine builds for the phone; a model file in
+/// the phone's models folder is all it takes).
+fn local_backend_usable(backend: &str) -> bool {
+    if backend.ends_with(".gguf") {
+        return std::path::Path::new(backend).is_file();
+    }
+    crate::llm::local_models::resolve_default_model_path().is_ok()
+}
+
+/// Order: custom endpoint, a downloaded local model, then any API provider with a key
+/// (same provider order as the hands-free path). None only when nothing can answer.
 fn get_best_available_backend() -> Option<String> {
     let custom_url = std::env::var("CUSTOM_API_URL").unwrap_or_default();
     let custom_model = std::env::var("CUSTOM_MODEL").unwrap_or_default();
     if !custom_url.is_empty() && !custom_model.is_empty() {
         return Some("custom".to_string());
     }
-    let models_dir = crate::db::get_models_dir().join("user");
-    if let Ok(entries) = std::fs::read_dir(&models_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && path.extension().map(|e| e.eq_ignore_ascii_case("gguf")).unwrap_or(false)
-            {
-                return Some(path.to_string_lossy().to_string());
+    if !cfg!(target_os = "android") {
+        let models_dir = crate::db::get_models_dir().join("user");
+        if let Ok(entries) = std::fs::read_dir(&models_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && path.extension().map(|e| e.eq_ignore_ascii_case("gguf")).unwrap_or(false)
+                {
+                    return Some(path.to_string_lossy().to_string());
+                }
             }
         }
     }
+    for (var, name) in [
+        ("ANTHROPIC_API_KEY", "anthropic"),
+        ("OPENAI_API_KEY", "openai"),
+        ("XAI_API_KEY", "xai"),
+        ("MISTRAL_API_KEY", "mistral"),
+    ] {
+        if !std::env::var(var).unwrap_or_default().is_empty() {
+            return Some(name.to_string());
+        }
+    }
     None
+}
+
+#[cfg(test)]
+mod backend_fallback_tests {
+    use super::local_backend_usable;
+
+    #[test]
+    fn a_gguf_path_that_does_not_exist_is_not_usable() {
+        assert!(!local_backend_usable("/definitely/not/here/model.gguf"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn a_gguf_file_that_exists_is_usable_on_desktop() {
+        let dir = std::env::temp_dir().join(format!("zb_gguf_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("tiny.gguf");
+        std::fs::write(&file, b"not a real model").unwrap();
+        assert!(local_backend_usable(file.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 fn format_api_error(backend: &str, raw: &str) -> String {
@@ -57,6 +102,10 @@ fn format_api_error(backend: &str, raw: &str) -> String {
         format!("❌ Your {} account doesn't have access to this model. Try selecting a different model in Settings → API Keys.", provider)
     } else if raw.contains("429") || raw.contains("rate_limit") || raw.contains("quota") {
         format!("❌ {} rate limit reached. Wait a moment and try again.", provider)
+    } else if raw.contains("529") || raw.contains("overloaded") {
+        format!("❌ {} is overloaded right now. Wait a moment and try again.", provider)
+    } else if raw.contains("empty reply") {
+        format!("❌ {} returned an empty reply. Try again.", provider)
     } else if raw.contains("connect") || raw.contains("timeout") || raw.contains("dns") || raw.contains("network") {
         format!("❌ Can't reach {}. Check your internet connection.", provider)
     } else {
@@ -81,6 +130,10 @@ pub async fn send_message_with_memory(
     kb_enabled: Option<bool>,
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
+    mode: Option<String>,
+    // The page's own web search results when this call writes the answer from them
+    // ({ query, results }), so they are saved with the answer (2026-10-30).
+    web_sources: Option<serde_json::Value>,
 ) -> Result<ReplyResponse, String> {
     let sink: std::sync::Arc<dyn crate::response_sink::ResponseSink> =
         std::sync::Arc::new(crate::response_sink::TauriSink::new(app));
@@ -89,6 +142,8 @@ pub async fn send_message_with_memory(
         conversation_history, skip_containment, skip_memory_storage,
         kb_enabled, user_query, image_data,
         false, // hands_free: this is the in-app path
+        mode,
+        web_sources,
     )
     .await
 }
@@ -99,6 +154,17 @@ pub async fn send_message_with_memory(
 /// JNI-backed sink so this can run and speak a reply with no WebView present.
 /// No Flask dependency — handles everything in Rust.
 #[allow(clippy::too_many_arguments)]
+/// What the screen says while the app waits for the cloud model's first word.
+fn waiting_text(backend: &str) -> String {
+    let b = backend.to_lowercase();
+    let who = if b.contains("anthropic") || b.contains("claude") { "Claude" }
+        else if b.contains("openai") || b.contains("gpt") { "OpenAI" }
+        else if b.contains("xai") || b.contains("grok") { "Grok" }
+        else if b.contains("mistral") { "Mistral" }
+        else { "the model" };
+    format!("Waiting for {}…", who)
+}
+
 pub async fn generate_reply(
     sink: std::sync::Arc<dyn crate::response_sink::ResponseSink>,
     message: String,
@@ -113,6 +179,11 @@ pub async fn generate_reply(
     user_query: Option<String>,
     image_data: Option<Vec<crate::llm::ImageAttachment>>,
     hands_free: bool,
+    // A conversation mode's name (chat_modes.rs), None for normal.
+    mode: Option<String>,
+    // Sources the caller already has for this answer (a typed search the page ran, or the
+    // hands-free search below): shown under the answer and saved with it (0028).
+    page_sources: Option<serde_json::Value>,
 ) -> Result<ReplyResponse, String> {
     use crate::conversation_engine::ConversationEngine;
 
@@ -125,10 +196,20 @@ pub async fn generate_reply(
 
     let request_start = std::time::Instant::now();
     println!("[⏱️ PERF] Request start");
+    // Time to the first word is logged, and the screen is told what the wait is for.
+    // A nested call (the second pass of a hands-free search) is already wrapped.
+    let sink: std::sync::Arc<dyn crate::response_sink::ResponseSink> =
+        std::sync::Arc::new(crate::response_sink::TimedSink::new(sink, request_start));
+    sink.event("chat-status", serde_json::json!("Looking through your memories…"));
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  💬 NEW CHAT REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
-    println!("▶ {}", message);
+    {
+        // A picked photo once arrived as megabytes of text and went into the log whole
+        // (2026-10-25): show the first 1,500 characters and the size.
+        let n = message.chars().count();
+        if n > 1500 { println!("▶ {} … ({} characters)", message.chars().take(1500).collect::<String>(), n); } else { println!("▶ {}", message); }
+    }
     println!();
     println!("[RUST] Backend: {}", backend);
 
@@ -154,7 +235,15 @@ pub async fn generate_reply(
             b if b.contains("mistral") => {
                 !std::env::var("MISTRAL_API_KEY").unwrap_or_default().is_empty()
             }
-            _ => true, // local / custom — assume present until actually tried
+            // "local" is what a fresh install stores before anything is chosen. A phone
+            // has no local models at all, and a desktop may have nothing downloaded, so
+            // treat a local backend that cannot load like a provider with no key and fall
+            // through to whatever can answer, as the hands-free path already does
+            // (android_jni::resolve_voice_backend). A lone phone with a typed-in OpenAI
+            // key answered "Hey Zynk" but showed "Local models not supported on Android"
+            // for every typed message (tester, Pixel 7a, 2026-09-22).
+            b if b.contains("local") || b.ends_with(".gguf") => local_backend_usable(b),
+            _ => true, // custom — assume present until actually tried
         };
 
         if !has_key {
@@ -193,6 +282,43 @@ pub async fn generate_reply(
         }
     }
 
+    // Weather (2026-10-25, Matt): a weather question is answered from Open-Meteo here,
+    // before containment and before any model call. If the lookup fails (offline,
+    // unknown place) the question goes on to the model as usual.
+    if image_data.is_none() && explicit_remember(&query).is_none() && !skip_containment.unwrap_or(false) {
+        if let Some(ask) = crate::weather::detect(&query) {
+            match crate::weather::answer(&ask, &user_id).await {
+                Ok(text) => {
+                    println!("[Weather] answered from Open-Meteo ({:?}, place {:?})", ask.when, ask.place);
+                    sink.token(&text);
+                    if containment_mode.to_lowercase() != "hipaa" {
+                        if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                            if let Err(e) = crate::conversation_history::log_exchange(&pool, &session_id, &user_id, &query, &text, "weather", &containment_mode, !hands_free, if hands_free { "hands_free" } else { "typed" }).await {
+                                eprintln!("[ConvHistory] ⚠️ Failed to log weather exchange: {}", e);
+                            }
+                        }
+                    }
+                    return Ok(ReplyResponse {
+                        reply_text: text,
+                        picture_note: None,
+                        recalled_memories: None,
+                        model_backend: Some("weather".to_string()),
+                        containment_mode: Some(containment_mode),
+                        schema: None,
+                        blocked: None,
+                        web_search_needed: None,
+                        web_search_query: None,
+                        original_query: None,
+                        pre_search_reply: None,
+                        kb_note: None,
+                        web_search_results: None,
+                    });
+                }
+                Err(e) => println!("[Weather] {} — asking the model instead", e),
+            }
+        }
+    }
+
     // STEP 1: Safety check via containment layer (skip for internal operations like web search synthesis)
     let mut warning_prefix: Option<String> = None;
 
@@ -211,6 +337,7 @@ pub async fn generate_reply(
                     println!("[⏱️ PERF] OpenAI moderation check: {:.3}s", step_start.elapsed().as_secs_f32());
                     return Ok(ReplyResponse {
                         reply_text: block_message,
+                        picture_note: None,
                         recalled_memories: None,
                         model_backend: Some(forced_backend),
                         containment_mode: Some(containment_mode),
@@ -219,7 +346,9 @@ pub async fn generate_reply(
                         web_search_needed: None,
                         web_search_query: None,
                         original_query: None,
+                        pre_search_reply: None,
                         kb_note: None,
+                        web_search_results: None,
                     });
                 }
                 Ok(None) => {
@@ -234,6 +363,7 @@ pub async fn generate_reply(
                             "I'm having trouble checking if this is safe for Child Mode. Please try again later.\n\nError: {}",
                             e
                         ),
+                        picture_note: None,
                         recalled_memories: None,
                         model_backend: Some(forced_backend),
                         containment_mode: Some(containment_mode),
@@ -242,7 +372,9 @@ pub async fn generate_reply(
                         web_search_needed: None,
                         web_search_query: None,
                         original_query: None,
+                        pre_search_reply: None,
                         kb_note: None,
+                        web_search_results: None,
                     });
                 }
             }
@@ -264,6 +396,7 @@ pub async fn generate_reply(
                         println!("[RUST] 🛑 Content BLOCKED by containment layer");
                         return Ok(ReplyResponse {
                             reply_text: message,
+                            picture_note: None,
                             recalled_memories: None,
                             model_backend: Some(forced_backend),
                             containment_mode: Some(containment_mode),
@@ -272,7 +405,9 @@ pub async fn generate_reply(
                             web_search_needed: None,
                             web_search_query: None,
                             original_query: None,
+                            pre_search_reply: None,
                         kb_note: None,
+                        web_search_results: None,
                         });
                     }
                 }
@@ -356,7 +491,13 @@ pub async fn generate_reply(
 
     // HYBRID SEARCH: Use hybrid_search for weighted entity + semantic scoring
     // Search limit matches build_memory_context caps: API gets more headroom, local stays lean
-    let memory_search_limit = if ConversationEngine::is_api_model(&forced_backend) { 15 } else { 10 };
+    // The web-search answer pass carries the fetched pages; for a local model it does not
+    // also carry recalled memories (18 were recalled for "the weather in Morocco" and read
+    // at 20 tokens/s on a warm phone, 2026-10-22).
+    let search_pass = message.starts_with("Answer the user's question using the web search results");
+    // Cloud: 30 (was 15 until 2026-10-28). The bench's short no-name questions ranked their
+    // memory 16th and 29th; a memory line is 60-100 tokens, so 30 is ~1,500 tokens more.
+    let memory_search_limit = if search_pass && !ConversationEngine::is_api_model(&forced_backend) { 0 } else { if ConversationEngine::is_api_model(&forced_backend) { 30 } else { 10 } };
 
     // Smart namespace filtering: search ONLY system memories if query is about Zynkbot
     let is_zynkbot_query = crate::is_query_about_zynkbot(&query);
@@ -388,8 +529,8 @@ pub async fn generate_reply(
     };
 
     // ONE-HOP GRAPH TRAVERSAL: For each recalled memory, pull in all directly
-    // linked memories regardless of relation type (supports, reminds_of, elaborates,
-    // contradicts, resolves, related, etc.). Links are sorted by confidence so the
+    // linked memories regardless of relation type (related, contradicts, updates,
+    // resolves), skipping memories a newer one has replaced. Links are sorted by confidence so the
     // strongest associations are included first. Capped at 8 hop-memories total to
     // bound prompt size; build_memory_context enforces the final per-model limit.
     const MAX_HOP_MEMORIES: usize = 8;
@@ -421,6 +562,9 @@ pub async fn generate_reply(
                         continue;
                     }
                     if let Ok(Some(linked_mem)) = crate::memory::get_memory(&db_pool, linked_id).await {
+                        if matches!(linked_mem.temporal_status.as_deref(), Some("superseded") | Some("completed")) {
+                            continue;
+                        }
                         if already_included_content.contains(&linked_mem.content) {
                             continue;
                         }
@@ -470,9 +614,13 @@ pub async fn generate_reply(
         // - 10 chunks (comprehensive coverage)
         // - 15% threshold (cast wide net - user knows what they're looking for)
         // - below the threshold, the 5 best chunks are still shown but labelled weak
-        let kb_chunk_limit = 10;
+        // On-device model (2026-10-22): four chunks, not ten. Ten chunks were 5,649
+        // characters, and with the rest of the prompt that was 4,212 tokens in a 4K
+        // window: "Prompt too long" instead of an answer.
+        let on_device = forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local");
+        let kb_chunk_limit = if on_device { 4 } else { 10 };
         let kb_similarity_threshold = 0.15;
-        let kb_weak_limit = 5;
+        let kb_weak_limit = if on_device { 2 } else { 5 };
 
         println!(
             "[KB RAG] 🔍 EXPLICIT KB SEARCH ({} chunks, {:.0}% threshold)",
@@ -507,21 +655,66 @@ pub async fn generate_reply(
     // LLM can address them by name and use the name in MEMORY_EXTRACT lines.
     let user_display_name = crate::memory::get_user_display_name(&db_pool, &user_id).await;
 
+    // A question about Zynkbot itself: consult the built-in user guides, indexed under the
+    // `_system` knowledge-base user, the way the KB button consults the user's own
+    // documents (Matt, 2026-10-26). Not when the KB button is on, which asks for the
+    // user's documents. Fewer passages on the phone, where the prompt is tight.
+    // Runs here, before the pool closes: until 2026-10-27 it ran after the close and
+    // every guide search failed with "attempted to acquire a connection on a closed pool".
+    let mut guide_block: Option<String> = None;
+    if is_zynkbot_query && !kb_enabled {
+        let guide_limit = if is_api_model { 5 } else { 3 };
+        match crate::kb_rag::search_kb_chunks(&db_pool, "_system", &query, guide_limit, false).await {
+            Ok(hits) => match crate::kb_prompt::build_guides(&hits, 0.30, guide_limit) {
+                Some(block) => {
+                    println!("[System KB] {} guide passages added for a Zynkbot question (best {:.0}%)",
+                        hits.iter().filter(|h| h.similarity_score > 0.30).count().min(guide_limit),
+                        hits.first().map(|h| h.similarity_score * 100.0).unwrap_or(0.0));
+                    guide_block = Some(block);
+                }
+                None => println!("[System KB] no guide passage matched the Zynkbot question (best {:.0}%)",
+                    hits.first().map(|h| h.similarity_score * 100.0).unwrap_or(0.0)),
+            },
+            Err(e) => eprintln!("[System KB] guide search failed (non-fatal): {}", e),
+        }
+    }
+
     // Close database connection
     db_pool.close().await;
 
     // STEP 5: Build prompt using conversation engine
-    let engine = ConversationEngine::new();
+    let engine = ConversationEngine::new()
+        .with_on_device(forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local"));
 
     // Convert conversation history to conversation engine format
     let engine_history: Option<Vec<crate::conversation_engine::ConversationTurn>> = conversation_history.as_ref().map(|hist| {
         hist.iter().map(|turn| {
-            crate::conversation_engine::ConversationTurn {
-                role: turn.role.clone(),
-                content: turn.content.clone(),
-            }
+            let mut content = history_turn_for_model(&turn.role, &turn.content);
+            if turn.images.as_ref().map_or(false, |v| !v.is_empty()) { content.push_str(" [sent with a picture]"); }
+            crate::conversation_engine::ConversationTurn { role: turn.role.clone(), content }
         }).collect()
     });
+
+    // Pictures from earlier turns of this thread, oldest first, the newest three at most
+    // (2026-10-28): the page keeps them while the thread is open and sends them again, so
+    // "which looks better?" after two photos has both to look at. Before this, a picture
+    // lived only in the message it came with and the next turn could not see it.
+    let earlier_pictures: Vec<(String, crate::llm::ImageAttachment)> = {
+        let mut v: Vec<(String, crate::llm::ImageAttachment)> = conversation_history.as_ref().map(|hist| {
+            hist.iter().filter(|t| t.role == "user").flat_map(|t| {
+                let said: String = t.content.lines().next().unwrap_or("").chars().take(80).collect();
+                t.images.clone().unwrap_or_default().into_iter().map(move |img| (said.clone(), img))
+            }).collect()
+        }).unwrap_or_default();
+        let keep = v.len().saturating_sub(3);
+        v.drain(..keep);
+        v
+    };
+    let vision_images: Option<Vec<crate::llm::ImageAttachment>> = {
+        let mut all: Vec<crate::llm::ImageAttachment> = earlier_pictures.iter().map(|(_, i)| i.clone()).collect();
+        all.extend(image_data.clone().unwrap_or_default());
+        if all.is_empty() || !is_api_model { None } else { Some(all) }
+    };
 
     // Convert recalled memories to conversation engine format
     // Include semantic results AND one-hop graph-linked memories only.
@@ -537,6 +730,7 @@ pub async fn generate_reply(
             title: mem.title.clone(),  // Already Option<String>, no need to wrap in Some()
             similarity: mem.similarity,
             created_at: mem.created_at,
+            event_date: mem.event_date,
         })
         .collect();
 
@@ -549,16 +743,82 @@ pub async fn generate_reply(
         user_display_name.as_deref(),
     );
 
+    // The conversation mode's block goes in front of everything (2026-10-28).
+    if let Some(b) = crate::chat_modes::block(mode.as_deref()) {
+        println!("[Mode] {}", mode.as_deref().unwrap_or(""));
+        full_prompt = format!("{}\n\n{}", b, full_prompt);
+    }
+
     // Prepend KB context if available
     if !kb_context.is_empty() {
         full_prompt = format!("{}{}", kb_context, full_prompt);
         println!("[KB RAG] Added {} chars of KB context to prompt", kb_context.len());
     }
 
+    // The guide passages found before the pool closed (see above the close).
+    if let Some(block) = guide_block {
+        full_prompt = format!("{}{}", block, full_prompt);
+    }
+
+    // A web address in the message: the page itself is read, on this device, and its text
+    // goes in front of the prompt (Matt, 2026-10-27: "can you scan that page"). A search
+    // engine returns its index; this returns the page the user is looking at. Works for
+    // every backend. Less text on the phone, where the prompt is tight.
+    let mut read_sources: Option<serde_json::Value> = None;
+    let page_urls = crate::web_read::find_urls(&query);
+    if !page_urls.is_empty() {
+        sink.event("chat-status", serde_json::json!("Reading the page…"));
+        let cap = if is_api_model { 8000 } else { 3000 };
+        let mut pages = Vec::new();
+        let mut failures: Vec<(String, String)> = Vec::new();
+        for url in page_urls.iter().take(2) {
+            match crate::web_read::read_page(url, cap).await {
+                Ok(p) => {
+                    println!("[WebRead] {}: {} chars read{}", url, p.text.chars().count(), if p.cut > 0 { ", cut to fit" } else { "" });
+                    pages.push(p);
+                }
+                Err(e) => {
+                    println!("[WebRead] {}: {}", url, e);
+                    failures.push((url.clone(), e));
+                }
+            }
+        }
+        full_prompt = format!("{}{}", crate::web_read::build_block(&pages, &failures), full_prompt);
+        if !pages.is_empty() {
+            read_sources = Some(serde_json::json!({
+                "query": format!("Read: {}", pages.iter().map(|p| crate::llm::xai::host_of(&p.url)).collect::<Vec<_>>().join(", ")),
+                "results": pages.iter().map(|p| serde_json::json!({
+                    "title": if p.title.is_empty() { crate::llm::xai::host_of(&p.url) } else { p.title.clone() },
+                    "url": p.url,
+                    "snippet": p.text.chars().take(160).collect::<String>(),
+                })).collect::<Vec<_>>(),
+                "num_results": pages.len(),
+            }));
+        }
+    }
+
+    // What each picture is, and the one-line record asked for (2026-10-28).
+    if let Some(ref imgs) = vision_images {
+        let now = image_data.as_ref().map_or(0, |v| v.len());
+        let mut block = String::from("\n\nPictures attached, in order:");
+        for (n, (said, _)) in earlier_pictures.iter().enumerate() {
+            block.push_str(&format!("\n- Picture {}: sent earlier in this thread with the message \"{}\".", n + 1, said));
+        }
+        for n in 0..now {
+            block.push_str(&format!("\n- Picture {}: sent with this message.", earlier_pictures.len() + n + 1));
+        }
+        if now > 0 {
+            block.push_str("\nAt the very end of your reply, on its own last line, write PICTURE: followed by one plain sentence saying what the picture sent with this message shows (who or what, where; no opinion). That line is the thread's record of the picture and is not part of your answer.");
+        }
+        let _ = imgs;
+        full_prompt.push_str(&block);
+    }
+
     // STEP 6: Call LLM based on backend (use forced_backend for Child mode)
     // All API backends use SSE streaming so the frontend can display tokens as they arrive.
     // Local GGUF models are blocking and cannot stream, so they continue to return all at once.
     let _api_start = std::time::Instant::now();
+    sink.event("chat-status", serde_json::json!(waiting_text(&forced_backend)));
 
 
     let reply_text = if forced_backend.to_lowercase().contains("anthropic") || forced_backend.to_lowercase().contains("claude") {
@@ -572,7 +832,7 @@ pub async fn generate_reply(
 
         let sink_c = sink.clone();
 
-        if let Some(ref imgs) = image_data {
+        if let Some(ref imgs) = vision_images {
             println!("[⏱️ PERF] Calling Anthropic API ({}) with vision streaming...", model_name);
             let response = crate::llm::anthropic::send_vision_streaming(
                 &api_key,
@@ -613,7 +873,7 @@ pub async fn generate_reply(
 
         let sink_c = sink.clone();
 
-        if let Some(ref imgs) = image_data {
+        if let Some(ref imgs) = vision_images {
             println!("[⏱️ PERF] Calling OpenAI API ({}) with vision streaming...", model_name);
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
@@ -661,7 +921,7 @@ pub async fn generate_reply(
         let xai_model = xai_model_owned.as_str();
         let sink_c = sink.clone();
 
-        if let Some(ref imgs) = image_data {
+        if let Some(ref imgs) = vision_images {
             println!("[⏱️ PERF] Calling xAI API ({}) with vision streaming...", xai_model);
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
@@ -699,7 +959,7 @@ pub async fn generate_reply(
         let mistral_model = mistral_model_owned.as_str();
         let sink_c = sink.clone();
 
-        if let Some(ref imgs) = image_data {
+        if let Some(ref imgs) = vision_images {
             println!("[⏱️ PERF] Calling Mistral API ({}) with vision streaming...", mistral_model);
             let response = crate::llm::openai::send_vision_streaming(
                 &api_key,
@@ -785,9 +1045,17 @@ pub async fn generate_reply(
 
         let model_path_clone = model_path.clone();
         let inference_start = std::time::Instant::now();
+        // The user's turn comes first: background memory calls step aside while this
+        // guard is held (local_models "foreground first", 2026-10-22).
+        let foreground = crate::llm::local_models::ForegroundGuard::new();
+        let sink_local = sink.clone();
         let response = tokio::task::spawn_blocking(move || {
+            let _hold = foreground;
             crate::llm::local_models::with_cached_session(&model_path_clone, |session| {
-                session.generate(messages, Some(4096), None, None)
+                // Streams like the cloud paths do (2026-10-22): each piece of text goes to the
+                // page as it is written.
+                let mut emit = |t: &str| sink_local.token(t);
+                session.generate_streaming(messages, Some(4096), None, None, Some(&mut emit))
             })
         })
         .await
@@ -804,34 +1072,137 @@ pub async fn generate_reply(
         ));
     };
 
+    // An empty reply is a failure, not an answer. On 2026-10-21 Anthropic closed four
+    // streams with no text (an error event the client then ignored) and the page
+    // showed an empty bubble each time. The page renders an Err as an error message.
+    if reply_text.trim().is_empty() {
+        println!("[RUST] ✗ {} returned an empty reply", forced_backend);
+        return Err(format_api_error(&forced_backend, "empty reply"));
+    }
+
     println!("[RUST] ✅ Pure Rust conversation complete");
 
     // Extract recalled memory IDs for later use
     let _recalled_memory_ids: Vec<i32> = recalled_memories.iter().map(|m| m.id).collect();
 
-    // STEP 6.5: Check if LLM requested a web search
-    let web_search_detected = reply_text.contains("WEB_SEARCH_NEEDED:");
-    let web_search_query = if web_search_detected {
+    // STEP 6.5: Check if LLM requested a web search. Tolerant of how small models write
+    // the marker: Qwen3-4B wrote `Web search needed: "current weather in Lima, Peru"` on
+    // 2026-10-22 and the search never ran.
+    let web_search_marker = find_web_search_marker(&reply_text);
+    let web_search_detected = web_search_marker.is_some();
+    let web_search_query = if let Some((_, after_pos)) = web_search_marker {
         println!("[RUST] LLM detected need for web search");
-
-        // Extract the suggested search query
-        if let Some(marker_pos) = reply_text.find("WEB_SEARCH_NEEDED:") {
-            let after_marker = &reply_text[marker_pos + 18..]; // Skip "WEB_SEARCH_NEEDED:"
-            let query_end = after_marker.find('\n').unwrap_or(after_marker.len());
-            let query = after_marker[..query_end].trim().to_string();
-            println!("[RUST] Suggested search query: {}", query);
-            Some(query)
-        } else {
-            None
-        }
+        let after_marker = &reply_text[after_pos..];
+        let query_end = after_marker.find('\n').unwrap_or(after_marker.len());
+        let query = after_marker[..query_end].trim().trim_matches(|c: char| matches!(c, '"' | '\'' | '“' | '”' | '[' | ']' | '*')).trim().to_string();
+        println!("[RUST] Suggested search query: {}", query);
+        if query.is_empty() { None } else { Some(query) }
     } else {
         None
     };
 
+    // Hands-free always searches, never asks first (Matt, 2026-09-20, GitHub #26):
+    // "want me to search?" has no way to be answered by voice — there is no button off
+    // screen, and a spoken "yes" just looked like a new, unrelated question, which the
+    // model sometimes "answered" by inventing a search for the word "yes" itself. The
+    // synthesis below is a second, memory-free turn; its reply is what the user hears.
+    if hands_free && web_search_query.is_some() {
+        let search_query = web_search_query.clone().unwrap_or_default();
+        sink.event("web-search", serde_json::json!({ "query": search_query }));
+        sink.event("chat-status", serde_json::json!("Searching the web…"));
+        println!("[RUST] Hands-free auto search: {}", search_query);
+        let mut context = format!("Here are the web search results for \"{}\":\n\n", search_query);
+        // The sources go back with the reply so the chat can show the same "View n
+        // search sources" drop-down a typed search gets; page bodies stay out of it.
+        let mut web_sources: Option<serde_json::Value> = None;
+        // A cloud model's own search tool comes back with the answer written (2026-10-27);
+        // that answer is the reply, with no synthesis call after it.
+        let mut provider_answer: Option<String> = None;
+        let streaming_sink = sink.clone();
+        match crate::web_search::search_with_content_streaming(&search_query, 5, 3, Some(&forced_backend), &move |t: &str| streaming_sink.token(t)).await {
+            Ok(results) if results.answer.is_some() => {
+                provider_answer = results.answer.clone();
+                web_sources = Some(serde_json::json!({
+                    "query": search_query,
+                    "results": results.results.iter().map(|r| serde_json::json!({
+                        "title": r.title, "url": r.url, "snippet": r.snippet,
+                    })).collect::<Vec<_>>(),
+                    "num_results": results.results.len(),
+                }));
+            }
+            Ok(results) if !results.results.is_empty() => {
+                for (i, r) in results.results.iter().enumerate() {
+                    context.push_str(&format!("Source {}: {}\nURL: {}\n", i + 1, r.title, r.url));
+                    if !r.snippet.is_empty() { context.push_str(&format!("Summary: {}\n", r.snippet)); }
+                    // A local model reads at ~40 tokens/s: 800 characters a page made the second
+                    // pass a 1,850-token, 64 s read on 2026-10-22. Half that for local models.
+                    let body_chars = if ConversationEngine::is_api_model(&forced_backend) { 800 } else { 300 };
+                    if let Some(body) = r.content.as_deref() { context.push_str(&format!("Content: {}\n", body.chars().take(body_chars).collect::<String>())); }
+                    context.push('\n');
+                }
+                web_sources = Some(serde_json::json!({
+                    "query": search_query,
+                    "results": results.results.iter().map(|r| serde_json::json!({
+                        "title": r.title, "url": r.url, "snippet": r.snippet,
+                    })).collect::<Vec<_>>(),
+                    "num_results": results.results.len(),
+                }));
+            }
+            Ok(_) => context.push_str("No results found.\n"),
+            Err(e) => context.push_str(&format!("The search failed: {}\n", e)),
+        }
+        let prompt = format!(
+            "Answer the user's question using the web search results below. Be direct and concise — do not explain your reasoning process, do not narrate what you are doing, just answer.\n\nQuestion: \"{}\"\n\n{}\n\nAnswer directly based on the search results. If the results don't contain enough information, say so briefly.",
+            query, context);
+        // What the model said before it decided to search is often worth keeping (a
+        // partial answer, a caveat). It stays as its own turn, on screen and in the
+        // history, and the searched answer follows it (Matt, 2026-09-20). The page
+        // does the same for a screen-on search.
+        let first_answer = strip_web_search_marker(&reply_text);
+        let first_answer = if first_answer.is_empty() { None } else { Some(first_answer) };
+        if let Some(first) = first_answer.clone() {
+            if containment_mode.to_lowercase() != "hipaa" {
+                let (s, u, m, b, c) = (session_id.clone(), user_id.clone(), query.clone(), forced_backend.clone(), containment_mode.clone());
+                tokio::spawn(async move {
+                    if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        if let Err(e) = crate::conversation_history::log_exchange(&pool, &s, &u, &m, &first, &b, &c, true, "hands_free").await {
+                            eprintln!("[ConvHistory] ⚠️ Failed to log pre-search answer: {}", e);
+                        }
+                    }
+                });
+            }
+        }
+        if let Some(answer) = provider_answer {
+            // Its words already went to the sink while the provider wrote them.
+            if containment_mode.to_lowercase() != "hipaa" {
+                let (s, u, m, a, b, c, src) = (session_id.clone(), user_id.clone(), query.clone(), answer.clone(), forced_backend.clone(), containment_mode.clone(), web_sources.clone());
+                tokio::spawn(async move {
+                    if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        if let Err(e) = crate::conversation_history::log_exchange_with_sources(&pool, &s, &u, &m, &a, &b, &c, true, "hands_free", src.as_ref()).await {
+                            eprintln!("[ConvHistory] ⚠️ Failed to log searched answer: {}", e);
+                        }
+                    }
+                });
+            }
+            return Ok(ReplyResponse {
+                reply_text: answer,
+                model_backend: Some(forced_backend.clone()),
+                containment_mode: Some(containment_mode.clone()),
+                original_query: Some(query.clone()),
+                pre_search_reply: first_answer,
+                web_search_results: web_sources,
+                ..Default::default()
+            });
+        }
+        let synthesized = Box::pin(generate_reply(
+            sink.clone(), prompt, user_id.clone(), session_id.clone(), forced_backend.clone(), containment_mode.clone(),
+            None, Some(true), Some(true), Some(kb_enabled), Some(query.clone()), None, true, None, web_sources.clone(),
+        )).await?;
+        return Ok(ReplyResponse { original_query: Some(query.clone()), pre_search_reply: first_answer, web_search_results: web_sources, ..synthesized });
+    }
+
     // Parse MEMORY_EXTRACT facts from the LLM response — fires for any message type,
     // no is_question gate. Both API and local models use the same MEMORY_EXTRACT marker.
-    let msg_lower = message.to_lowercase();
-    let is_api = ConversationEngine::is_api_model(&forced_backend);
 
     let mut extracted_facts: Vec<String> = Vec::new();
 
@@ -841,6 +1212,35 @@ pub async fn generate_reply(
     // parser and display stay in step.
     let reply_lines: Vec<&str> = reply_text.lines().collect();
     let mut consumed_extract_lines: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // Call 1 of the memory pipeline (2026-10-24): cloud and custom replies end with
+    // "MEMORY: yes|no" (conversation_engine); "REMEMBER:" is the older spelling. Taken from
+    // the last such line, hidden from the display, and only when the word stands alone
+    // ("Remember no matter what..." is prose). None when the model wrote none: on the cloud
+    // that means nothing is stored, logged below; the on-device model is not asked for a
+    // marker and its call 2 decides.
+    let mut memory_flag: Option<bool> = None;
+    for (idx, line) in reply_lines.iter().enumerate().rev() {
+        let t = line.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
+        if let Some(rest) = t.strip_prefix("memory").or_else(|| t.strip_prefix("remember")) {
+            let word = rest.trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—'))
+                .trim_end_matches(|c: char| matches!(c, '.' | '!' | ' '));
+            if word == "yes" { memory_flag = Some(true); consumed_extract_lines.insert(idx); break; }
+            if word == "no" { memory_flag = Some(false); consumed_extract_lines.insert(idx); break; }
+        }
+    }
+    // The marker glued to the end of the last sentence instead of on its own line
+    // ("...enjoy the game. MEMORY: no"): a Pixel hands-free reply showed and spoke it
+    // (Matt, 2026-10-25). Taken from the last non-empty line and cut off it for display.
+    let mut inline_marker_line: Option<(usize, String)> = None;
+    if memory_flag.is_none() {
+        if let Some((idx, line)) = reply_lines.iter().enumerate().rev().find(|(_, l)| !l.trim().is_empty()) {
+            if let Some((flag, rest)) = split_inline_memory_marker(line) {
+                memory_flag = Some(flag);
+                inline_marker_line = Some((idx, rest));
+            }
+        }
+    }
+    if let Some(flag) = memory_flag { println!("[RUST] MEMORY line: {}", if flag { "yes" } else { "no" }); }
     let mut heading_without_fact = false;
     let mut li = 0;
     while li < reply_lines.len() {
@@ -873,95 +1273,10 @@ pub async fn generate_reply(
         println!("[RUST] ⚠️ Reply had a fact-extraction heading but no fact after it — nothing stored (model formatting, KI-049)");
     }
 
-    // Stopwords excluded from both safety filters — too common to serve as grounding evidence.
-    let filter_stopwords: std::collections::HashSet<&str> = [
-        "about", "some", "what", "your", "their", "that", "this", "with", "from",
-        "have", "been", "they", "them", "will", "would", "could", "should", "does",
-        "just", "more", "also", "when", "where", "there", "here", "very", "much",
-        "good", "well", "like", "make", "time", "know", "want", "need", "back",
-        "into", "over", "then", "than", "even", "only", "such", "each", "both",
-    ].iter().copied().collect();
-
-    // Build a shared set of content words from the user's message (>3 chars, not stopwords).
-    // Used by both safety filters below.
-    let msg_content_words: std::collections::HashSet<&str> = msg_lower
-        .split(|c: char| !c.is_alphabetic())
-        .filter(|w| w.len() > 3 && !filter_stopwords.contains(w))
-        .collect();
-
-    if !extracted_facts.is_empty() {
-        // Safety filter 1 — rephrasing guard: only applied to longer messages (≥8 content
-        // words) where the heuristic is reliable. On shorter messages it produces false
-        // rejections — "I've been feeling burnt out lately" → "Albert has been feeling burnt
-        // out lately" shares 80% of words yet is a correct extraction. Threshold raised to
-        // 75% (was 50%) for the same reason.
-        if msg_content_words.len() >= 8 {
-            extracted_facts.retain(|fact| {
-                let fact_lower = fact.to_lowercase();
-                let overlap = msg_content_words.iter()
-                    .filter(|w| fact_lower.contains(*w))
-                    .count();
-                let keep = (overlap as f32 / msg_content_words.len() as f32) < 0.75;
-                if !keep {
-                    println!("[RUST] ⚠️ Discarding MEMORY_EXTRACT that rephrases the message: {}", fact.chars().take(80).collect::<String>());
-                }
-                keep
-            });
-        }
-
-        // Safety filter 2 — hallucination guard: the extracted fact must share at least one
-        // content word with the user's message. A model that emits MEMORY_EXTRACT for
-        // "How are you today?" and returns "Albert has been thinking about educational
-        // pursuits" is hallucinating — nothing in the message grounds that claim.
-        // This catches weak local models that fire on chitchat and invent the content.
-        if !msg_content_words.is_empty() {
-            extracted_facts.retain(|fact| {
-                let fact_lower = fact.to_lowercase();
-                let grounded = msg_content_words.iter().any(|w| fact_lower.contains(*w));
-                if !grounded {
-                    println!("[RUST] ⚠️ Discarding MEMORY_EXTRACT: fact shares no words with message — likely hallucination: {}", fact.chars().take(80).collect::<String>());
-                }
-                grounded
-            });
-        }
-
-        // Safety filter 3 — meta-question guard: local models (especially Qwen) sometimes
-        // emit MEMORY_EXTRACT for questions, e.g. "Albert asked about the capital of France."
-        // The rephrasing guard misses this on short questions (<8 content words) because the
-        // threshold requires a longer message to be reliable. Explicitly reject facts that
-        // describe the user asking rather than stating a personal fact.
-        let meta_question_patterns = [
-            "asked about", "asked what", "asked how", "asked why",
-            "asked when", "asked where", "asked if", "asked whether",
-            "wants to know", "inquired about", "is wondering",
-            "wondered about", "is curious about", "was asking",
-        ];
-        extracted_facts.retain(|fact| {
-            let fact_lower = fact.to_lowercase();
-            let is_meta = meta_question_patterns.iter().any(|p| fact_lower.contains(p));
-            if is_meta {
-                println!("[RUST] ⚠️ Discarding meta-question MEMORY_EXTRACT: {}", fact.chars().take(80).collect::<String>());
-            }
-            !is_meta
-        });
-    }
-
-    if !extracted_facts.is_empty() {
-        println!("[RUST] 💡 LLM extracted {} fact(s) from message", extracted_facts.len());
-    }
-
-    // Replace the generic "User" placeholder with the person's actual name.
-    // Post-processing is more reliable than prompting — the LLM consistently
-    // writes "User has a dog" as a placeholder regardless of prompt instructions.
-    if let Some(ref name) = user_display_name {
-        extracted_facts = extracted_facts
-            .into_iter()
-            .map(|fact| {
-                fact.replace("User's ", &format!("{}'s ", name))
-                    .replace("User ", &format!("{} ", name))
-            })
-            .collect();
-    }
+    // An old-style MEMORY_EXTRACT line (a model keeping the June habit) counts as a yes;
+    // its text is not stored, call 2 extracts the facts like for any other message.
+    let legacy_fact_line = !extracted_facts.is_empty();
+    if legacy_fact_line { println!("[RUST] Reply carried a MEMORY_EXTRACT line (older prompt habit); treated as MEMORY: yes"); }
 
     // STEP 8: Convert memory::Memory to lib.rs Memory for response
     // Include linked memories in UI display so user can see what was pulled in via graph traversal
@@ -991,17 +1306,12 @@ pub async fn generate_reply(
         })
         .collect();
 
-    // Strip WEB_SEARCH_NEEDED marker (and everything after it) from displayed text.
-    // The marker is for internal detection only - users should see clean prose up to that point.
-    let reply_text = if web_search_detected {
-        if let Some(pos) = reply_text.find("WEB_SEARCH_NEEDED:") {
-            reply_text[..pos].trim().to_string()
-        } else {
-            reply_text
-        }
-    } else {
-        reply_text
-    };
+    // Strip the WEB_SEARCH_NEEDED marker line from the displayed text; the marker is for
+    // internal detection only. Text on either side of it is kept: until 2026-10-20 everything
+    // after the marker was dropped, and GPT had started writing the marker first and the
+    // useful answer (a drafted email, a partial answer) after it, so the answer the user
+    // watched stream in vanished when the stream ended (Matt, 2026-10-20).
+    let reply_text = if web_search_detected { strip_web_search_marker(&reply_text) } else { reply_text };
 
     // Strip <think>...</think> blocks produced by reasoning models (DeepSeek R1, Qwen3).
     // Three cases:
@@ -1061,8 +1371,14 @@ pub async fn generate_reply(
                 // Lines the tolerant parser consumed (marker, echoed heading, or the fact
                 // line under a bare label) never reach the display (KI-049).
                 if consumed_extract_lines.contains(&idx) { return None; }
+                if let Some((mi, ref rest)) = inline_marker_line { if mi == idx { return Some(rest.clone()); } }
                 let t = line.trim_start();
                 if t.contains("MEMORY_EXTRACT:") { return None; }
+                // The indices above were taken before the web-search marker and any
+                // <think> block were cut out, which moves every line after them up. A
+                // "MEMORY: no" under a web-search line reached the screen on the Pixel on
+                // 2026-10-27. The marker line is known by its own text as well.
+                if is_memory_flag_line(line) { return None; }
                 // Handle "PART N — ..." lines from local models following the two-part format.
                 // If content follows the separator, keep it. If it's just a header, drop the line.
                 // Case-insensitive and colon-tolerant: Mistral 7B spoke "Part 2: This is a test
@@ -1107,10 +1423,13 @@ pub async fn generate_reply(
 
     // Prepend Sovereign mode warning if present (with proper spacing)
     // Add medical disclaimer for HIPAA mode if health-related content detected
-    let mut final_reply_text = if let Some(warning) = warning_prefix {
-        format!("{}\n\n{}", warning, reply_text)
-    } else {
-        reply_text
+    // A NO_QUERY verdict (hands-free fragment the model judged not a request) gets
+    // no warning: there is nothing to warn about, and the prefix would hide the
+    // verdict from every `starts_with("NO_QUERY")` check — the Pixel read the warning
+    // aloud over a flagged TV line on 2026-10-20 16:18.
+    let mut final_reply_text = match warning_prefix {
+        Some(warning) if !reply_text.trim().starts_with("NO_QUERY") => format!("{}\n\n{}", warning, reply_text),
+        _ => reply_text,
     };
 
     // HIPAA Mode: Auto-add medical disclaimer if health-related terms detected
@@ -1125,11 +1444,18 @@ pub async fn generate_reply(
         }
     }
 
+    let picture_note = if image_data.is_some() { take_picture_line(&mut final_reply_text) } else { None };
+    if let Some(ref n) = picture_note { println!("[Picture] note kept with the message: {}", n); }
+
     println!("[⏱️ PERF] Total request time: {:.2}s", request_start.elapsed().as_secs_f32());
+
+    // Pages the model read for this answer, else what the caller searched (0028).
+    let answer_sources: Option<serde_json::Value> = read_sources.or(page_sources);
 
     // STEP 9: RETURN RESPONSE IMMEDIATELY (before memory processing)
     let immediate_response = ReplyResponse {
         reply_text: final_reply_text.clone(),
+        picture_note: picture_note.clone(),
         recalled_memories: Some(response_memories.clone()),
         model_backend: Some(forced_backend.clone()),
         containment_mode: Some(containment_mode.clone()),
@@ -1138,7 +1464,9 @@ pub async fn generate_reply(
         web_search_needed: web_search_query.as_ref().map(|_| true),
         web_search_query: web_search_query.clone(),
         original_query: Some(query.clone()),
+        pre_search_reply: None,
         kb_note: kb_note.clone(),
+        web_search_results: answer_sources.clone(),
     };
 
     // STEP 10: LOG EXCHANGE TO CONVERSATION HISTORY (non-blocking, skipped in HIPAA mode,
@@ -1148,8 +1476,14 @@ pub async fn generate_reply(
     if containment_mode.to_lowercase() != "hipaa" && !is_no_query {
         let ch_session = session_id.clone();
         let ch_user = user_id.clone();
-        let ch_message = query.clone();  // Store clean question, not file dump
-        let ch_reply = final_reply_text.clone();
+        // Store clean question, not file dump; the picture's one-line record goes under it.
+        let ch_message = match &picture_note { Some(n) => format!("{}\n[Picture: {}]", query, n), None => query.clone() };
+        // A reply that was only the WEB_SEARCH_NEEDED marker is empty once the marker is
+        // stripped; an empty assistant turn sat in History as a blank bubble (2026-09-20).
+        let ch_reply = match (&web_search_query, final_reply_text.trim().is_empty()) {
+            (Some(q), true) => format!("Web search needed: \"{}\"", q),
+            _ => final_reply_text.clone(),
+        };
         let ch_backend = forced_backend.clone();
         let ch_mode = containment_mode.clone();
         // Any real exchange may name the thread, hands-free included. The old rule
@@ -1158,14 +1492,16 @@ pub async fn generate_reply(
         // (2026-09-08). Fragments and NO_QUERY turns never reach this point anyway.
         let ch_name_thread = true;
         let ch_hands_free = hands_free;
+        let ch_sources = answer_sources.clone();
         tokio::spawn(async move {
             { let db_url = crate::db::get_db_url();
                 match sqlx::SqlitePool::connect(&db_url).await {
                     Ok(pool) => {
-                        if let Err(e) = crate::conversation_history::log_exchange(
+                        if let Err(e) = crate::conversation_history::log_exchange_with_sources(
                             &pool, &ch_session, &ch_user, &ch_message,
                             &ch_reply, &ch_backend, &ch_mode, ch_name_thread,
                             if ch_hands_free { "hands_free" } else { "typed" },
+                            ch_sources.as_ref(),
                         ).await {
                             eprintln!("[ConvHistory] ⚠️ Failed to log exchange: {}", e);
                         }
@@ -1199,25 +1535,25 @@ pub async fn generate_reply(
         println!("[KB RAG] memory extraction skipped: the knowledge base had no real match for this question");
     }
 
-    // Explicit "Remember:" commands always store verbatim — override any LLM MEMORY_EXTRACT.
-    if let Some(remember_content) = explicit_remember_content {
-        if !remember_content.is_empty() {
-            println!("[RUST] 📌 Explicit Remember: command — storing verbatim content");
-            extracted_facts = vec![remember_content];
-        }
+    // Gate 1: pure trivia (single-word acks, filler phrases) never reaches a model.
+    // Explicit "Remember:" bypasses it.
+    // A request to translate, reprint, rewrite or proofread carries someone else's words;
+    // nothing in it is learned about the user (Matt, 2026-10-26). "Remember:" still stores.
+    let rewrite_request = !is_explicit_remember && crate::memory_extras::is_rewrite_request(&query);
+    if rewrite_request { println!("[RUST] Translate/rewrite request: no memory extraction for this message"); }
+    let memory_gate_passed = is_explicit_remember || (engine.is_memory_worthy(&query) && !rewrite_request);
+    let on_device_flow = forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local");
+    // Call 1's answer. Cloud and custom: the MEMORY line, or an old-style fact line, says
+    // yes; no line at all means no memory. On-device: no marker is asked for, so every
+    // non-trivial message goes to call 2, which decides (an explicit "no" is honoured).
+    let remember_content: Option<String> = explicit_remember_content.filter(|t| !t.is_empty());
+    let call1_yes = if is_explicit_remember { true }
+        else if on_device_flow { memory_flag != Some(false) }
+        else { memory_flag == Some(true) || legacy_fact_line };
+    if !is_explicit_remember && !on_device_flow && memory_flag.is_none() && !legacy_fact_line && memory_gate_passed {
+        println!("[RUST] Reply carried no MEMORY line; nothing stored (call 1 of the memory pipeline)");
     }
-
-    // Gate 1: Reject pure trivial content (single-word acks, filler phrases, <3 words).
-    // Everything else goes to the LLM — it decides what's actually worth storing.
-    // Explicit "Remember:" commands always bypass this check.
-    let memory_gate_passed = is_explicit_remember || engine.is_memory_worthy(&query);
-
-    // MEMORY_EXTRACT text (if any) is carried into the background task — NOT stored immediately.
-    // Storage happens only after contradiction detection completes.
-    let bg_extracted_text: Option<String> = extracted_facts.into_iter().next();
-
-    if !effective_skip_memory && (memory_gate_passed || bg_extracted_text.is_some()) {
-        // Clone data needed for background task
+    if !effective_skip_memory && memory_gate_passed && call1_yes {
         let bg_message = query.clone();  // Store clean question in memories, not file dump
         let bg_user_id = user_id.clone();
         let bg_session_id = session_id.clone();
@@ -1228,461 +1564,35 @@ pub async fn generate_reply(
         let bg_source_type: &'static str = if hands_free { "hands_free" } else { "conversation" };
         let bg_containment_mode = containment_mode.clone();
         let bg_sink = sink.clone();
-        let bg_is_api = is_api;
         let bg_is_explicit_remember = is_explicit_remember;
-
-        // Spawn background task for memory processing
-        tokio::spawn(async move {
-            // Use extracted fact as content when MEMORY_EXTRACT fired; raw message otherwise.
-            // The extracted fact is a clean, focused statement — better for storage and search.
-            let factual_content = bg_extracted_text.clone().unwrap_or_else(|| bg_message.clone());
-
-            // Generate embedding FIRST (needed for duplicate check and storage)
-            let factual_clone = factual_content.clone();
-            let message_embedding = match tokio::task::spawn_blocking(move || {
-                crate::llm::local_embeddings::generate_local_embedding(&factual_clone)
-            })
-            .await {
-                Ok(Ok(embedding)) => embedding,
-                Ok(Err(e)) => {
-                    println!("[RUST BACKGROUND] ⚠️ Failed to generate embedding: {}", e);
-                    return;
+        let bg_user_name = user_display_name.clone();
+        // The last exchange, so call 2 can resolve "she" and "it"; facts come from the message only.
+        let bg_recent_turns = recent_turns_text(conversation_history.as_deref());
+        // The memory job queue (memory_jobs.rs, 2026-10-24): one row per message, one
+        // worker, oldest first. A spawned task per message raced the next question for the
+        // phone's one model and gave up after three interruptions.
+        let job = crate::memory_jobs::Job {
+            id: 0, session_id: bg_session_id, user_id: bg_user_id, message: bg_message, backend: bg_forced_backend,
+            source_type: bg_source_type.to_string(), containment_mode: bg_containment_mode,
+            explicit_remember: bg_is_explicit_remember, remember_text: remember_content, user_name: bg_user_name,
+            recent_turns: bg_recent_turns, query_entities: query_entities.clone(), attempts: 0,
+        };
+        crate::memory_jobs::ensure_worker(bg_sink.clone());
+        match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+            Ok(pool) => {
+                match crate::memory_jobs::enqueue(&pool, &job).await {
+                    Ok(id) => println!("[RUST] Memory job {} queued", id),
+                    Err(e) => println!("[RUST] ⚠️ Could not queue the memory job: {}", e),
                 }
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Embedding task panicked: {}", e);
-                    return;
-                }
-            };
-
-            // Emit pending indicator for Memory Manager spinner.
-            // Only fires when there is actually a memory candidate to potentially store.
-            // Local models without MEMORY_EXTRACT have no candidate and run silently.
-            let has_memory_candidate = bg_extracted_text.is_some() || bg_is_api || bg_is_explicit_remember;
-            let pending_id: u64 = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            if has_memory_candidate {
-                bg_sink.event("memory-processing-started", serde_json::json!({ "pending_id": pending_id }));
+                pool.close().await;
             }
-
-            // Reconnect to database for memory storage
-            let db_url = crate::db::get_db_url();
-
-            let db_pool = match sqlx::SqlitePool::connect(&db_url).await {
-                Ok(pool) => pool,
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Failed to connect to database: {}", e);
-                    return;
-                }
-            };
-
-            // Do a BROADER search for relationship detection (more memories, lower threshold)
-            // This ensures we catch relationships even if the memory wasn't in the top 5 for conversation
-
-            let relationship_search_results = match crate::memory::hybrid_search(
-                &db_pool,
-                message_embedding.clone(),
-                query_entities.clone(),
-                Some(&bg_user_id),
-                None,  // All sessions
-                None,  // All namespaces
-                15,    // Search more memories (15 instead of 5)
-            ).await {
-                Ok(results) => results,
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Relationship search failed: {}", e);
-                    db_pool.close().await;
-                    return;
-                }
-            };
-
-            // Filter to >35% similarity — matches the hybrid search floor. The LLM handles
-            // false candidates correctly (returns NONE), so a conservative pre-filter here
-            // only causes missed relationships like niece/nephews at the same event (41%).
-            let mut similar_memories: Vec<(i32, String, Option<String>, f32)> = relationship_search_results
-                .into_iter()
-                .filter(|m| m.similarity.unwrap_or(0.0) >= 0.35)
-                .map(|m| (m.id, m.content.clone(), m.title.clone(), m.similarity.unwrap_or(0.0) as f32))
-                .collect();
-
-            // Sort by similarity (most relevant first) for relationship classification
-            // We want the MOST similar memories, not the most recent ones
-            similar_memories.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
-
-            // API models handle larger candidate sets well; local 7B models degrade with more context
-            let relationship_candidate_limit = if bg_is_api { 10 } else { 6 };
-            similar_memories.truncate(relationship_candidate_limit);
-
-            if !similar_memories.is_empty() {
-                println!("[RUST BACKGROUND] Found {} similar memories (>35% similarity) for relationship classification", similar_memories.len());
-            }
-
-            // DUPLICATE CHECK: Check if this is a duplicate
-            // First check hybrid score (>98%), then pure cosine (>93%)
-            // Hybrid score of 1.0 = exact match even if pure cosine is slightly lower due to entity boosting
-
-            let mut is_duplicate = false;
-            for (mem_id, _mem_content, _mem_title, hybrid_score) in &similar_memories {
-                // Check 1: Very high hybrid score indicates duplicate (entity + semantic match)
-                if *hybrid_score > 0.98 {
-                    println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% hybrid similarity",
-                             mem_id, hybrid_score * 100.0);
-                    println!("[RUST BACKGROUND] Skipping memory storage for duplicate");
-                    is_duplicate = true;
-                    break;
-                }
-
-                // Check 2: Pure cosine similarity (lowered threshold to 0.93 to catch near-duplicates)
-                if let Ok(Some(candidate_mem)) = crate::memory::get_memory(&db_pool, *mem_id).await {
-                    if let Some(ref candidate_embedding_vec) = candidate_mem.embedding {
-                        let pure_similarity = crate::llm::local_embeddings::cosine_similarity(
-                            &message_embedding,
-                            candidate_embedding_vec
-                        );
-
-                        if pure_similarity > 0.93 {
-                            println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% pure cosine similarity",
-                                     mem_id, pure_similarity * 100.0);
-                            println!("[RUST BACKGROUND] Skipping memory storage for duplicate");
-                            is_duplicate = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if is_duplicate {
-                if has_memory_candidate {
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
-                }
-                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "duplicate").await;
-                db_pool.close().await;
-                return;
-            }
-
-            // Local models: only proceed when MEMORY_EXTRACT fired — that's the storage
-            // decision for local. No extracted text means nothing to store.
-            // API models: always proceed to Call 2, which makes the should_remember decision.
-            if bg_extracted_text.is_none() && !bg_is_api {
-                if has_memory_candidate {
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
-                }
-                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
-                db_pool.close().await;
-                return;
-            }
-
-            println!("[RUST BACKGROUND] ✅ Proceeding with relationship classification");
-
-            // Local: MEMORY_EXTRACT fired → relationships + title only (should_remember=true).
-            // API: full should_remember + relationship classification.
-            let (should_remember, llm_title, llm_relationships, llm_extras) = if !bg_is_api {
-                match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
-                    Ok((title, rels, extras)) => {
-                        println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
-                        (true, title, rels, extras)
-                    }
-                    Err(e) => {
-                        println!("[RUST BACKGROUND] ⚠️ Relationship classifier failed: {} — storing without links", e);
-                        let fallback = crate::generate_title_from_content(&factual_content);
-                        (true, Some(fallback), Vec::new(), crate::memory_extras::MemoryExtras::default())
-                    }
-                }
-            } else {
-                // API: ask_llm_about_memory_with_relationships (should_remember + relationships)
-                match crate::ask_llm_about_memory_with_relationships(
-                    &bg_message,
-                    "Background memory processing",
-                    &similar_memories,
-                    &bg_forced_backend,
-                ).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        println!("[RUST BACKGROUND] ⚠️ LLM call failed: {}", e);
-                        if !bg_forced_backend.contains("local") && !bg_forced_backend.ends_with(".gguf") {
-                            match crate::ask_llm_about_memory_with_relationships(
-                                &bg_message,
-                                "Background memory processing",
-                                &similar_memories,
-                                "local",
-                            ).await {
-                                Ok(result) => result,
-                                Err(e2) => {
-                                    println!("[RUST BACKGROUND] ⚠️ Fallback also failed: {}", e2);
-                                    (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
-                                }
-                            }
-                        } else {
-                            (false, None, Vec::new(), crate::memory_extras::MemoryExtras::default())
-                        }
-                    }
-                }
-            };
-
-            // Explicit "Remember:" command overrides LLM decision — user is the authority.
-            // The title comes from the user's own words too: the classifier sees the raw
-            // query, and on a dictated "remember cohen the gate code..." it titled the
-            // memory "Gate code for Cohen" (2026-09-07). The stored content is already
-            // the text after the keyword, so the title is cut from that.
-            let (should_remember, llm_title) = if bg_is_explicit_remember {
-                if !should_remember {
-                    println!("[RUST BACKGROUND] ✅ Explicit 'Remember:' command — overriding LLM decision to store");
-                }
-                let fallback_title = factual_content.chars().take(60).collect::<String>();
-                let fallback_title = if factual_content.chars().count() > 60 {
-                    format!("{}…", fallback_title)
-                } else {
-                    fallback_title
-                };
-                (true, Some(fallback_title))
-            } else {
-                (should_remember, llm_title)
-            };
-
-            if !should_remember {
-                bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
-                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
-                db_pool.close().await;
-                return;
-            }
-
-            println!("[RUST BACKGROUND] ✅ LLM decided to remember: {:?}", llm_title);
-
-            // CHECK FOR CONTRADICTIONS (BEFORE STORAGE!)
-            // If LLM detected contradiction with sufficient confidence, emit event to frontend
-            // Require >= 0.65 to avoid false positives from local models
-            let contradiction_detected = llm_relationships.iter()
-                .any(|rel| rel.relationship_type == "contradicts" && rel.confidence.unwrap_or(0.0) >= 0.65);
-
-            // An explicit "Remember:" is stored no matter what. The contradiction modal
-            // needs the page in front to be answered; hands-free there is no page, so
-            // holding the memory for it meant the fact the user just dictated was never
-            // saved while the reply said it was (OnePlus, 2026-09-07). The user has
-            // already stated the new fact; the older memory stays and can be resolved
-            // or deleted in Memory Manager.
-            if contradiction_detected && bg_is_explicit_remember {
-                println!("[RUST BACKGROUND] ⚠️ Contradiction noted, but this is an explicit Remember — storing anyway");
-            }
-            if contradiction_detected && !bg_is_explicit_remember {
-                println!("[RUST BACKGROUND] ⚠️ CONTRADICTION DETECTED - emitting event to frontend (NOT storing yet)");
-
-                // Find the contradicting relationship
-                if let Some(contradiction) = llm_relationships.iter()
-                    .find(|rel| rel.relationship_type == "contradicts") {
-
-                    // Fetch the conflicting memory details
-                    if let Ok(Some(conflicting_memory)) = crate::memory::get_memory(&db_pool, contradiction.memory_id).await {
-                        // Prepare payload for frontend (memoryA = OLD, memoryB = NEW)
-                        let payload = serde_json::json!({
-                            "memoryA": {
-                                "id": conflicting_memory.id,
-                                "content": conflicting_memory.content,
-                                "title": conflicting_memory.title,
-                                "created_at": conflicting_memory.created_at.to_rfc3339(),
-                            },
-                            "memoryB": {
-                                "content": factual_content.clone(),
-                                "title": llm_title.clone(),
-                                "created_at": chrono::Utc::now().to_rfc3339(),
-                            },
-                            "reason": contradiction.reason,
-                            "confidence": contradiction.confidence.unwrap_or(0.75),
-                            "pending_memory": {
-                                "content": factual_content.clone(),
-                                "title": llm_title.clone(),
-                                "embedding": message_embedding.clone(),
-                                "original_text": bg_message.clone(),
-                            },
-                            "relationships": llm_relationships,
-                            "user_id": bg_user_id.clone(),
-                            "session_id": bg_session_id.clone(),
-                        });
-
-                        // Emit event to frontend to show modal
-                        bg_sink.event("contradiction-detected", payload);
-                        println!("[RUST BACKGROUND] 🔔 Contradiction event emitted - modal should appear");
-
-                        // Don't store memory yet - wait for user decision via resolve_memory_conflict_v2
-                        bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
-                        crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "contradiction").await;
-                        db_pool.close().await;
-                        return;
-                    }
-                }
-            }
-
-            // HIPAA mode: Enable ephemeral memory (8-hour expiration)
-            let _is_ephemeral = bg_containment_mode == "hipaa";
-
-            // Extract entities using NLP enhancer (no tags - entities handle everything)
-            // Note: We use LLM-generated title, NLP for entities/events
-            let message_for_nlp = factual_content.clone();
-            let (entities, event_type, event_date, namespace) = match tokio::task::spawn_blocking(move || {
-                let enhancer = crate::nlp_enhancer::NLPEnhancer::new();
-
-                // Generate namespace and detect events
-                let enhancement = enhancer.enhance(&message_for_nlp);
-
-                // Extract entities (includes both proper nouns AND common nouns)
-                let ents = enhancer.extract_entities(&message_for_nlp);
-                let entities_json = serde_json::json!(ents.iter().map(|e| {
-                    serde_json::json!({
-                        "word": e.word,
-                        "label": e.label,
-                        "score": e.score,
-                        "start": e.start,
-                        "end": e.end
-                    })
-                }).collect::<Vec<_>>());
-
-                (entities_json, enhancement.event_type, enhancement.event_date, enhancement.namespace)
-            })
-            .await {
-                Ok(result) => result,
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Failed to enhance memory: {}", e);
-                    db_pool.close().await;
-                    return;
-                }
-            };
-
-            // The decision call's own fields win over the NLP guesses when present and
-            // valid (2026-09-07): a real event date, a namespace from the known list,
-            // tags, tone, and named entities. NLP stays as the fallback.
-            let today = chrono::Utc::now().date_naive();
-            let namespace = crate::memory_extras::resolve_namespace(llm_extras.namespace.as_deref(), &namespace);
-            let event_date = crate::memory_extras::validate_event_date(llm_extras.event_date.as_deref(), &bg_message, today)
-                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
-                .or(event_date);
-            let tags = crate::memory_extras::clean_tags(llm_extras.tags.as_deref());
-            let (sentiment_label, sentiment_score) = crate::memory_extras::tone_to_sentiment(llm_extras.tone.as_deref());
-            let llm_entities = crate::memory_extras::clean_entities(llm_extras.entities.as_deref());
-
-            // Store memory in database (with LLM-generated title, NLP entities, and events!)
-            let memory_id = match crate::memory::insert_memory(
-                &db_pool,
-                llm_title.as_deref(),              // title (LLM-generated!)
-                &factual_content,                  // content (factual statements only!)
-                Some(bg_source_type),              // source_type ("hands_free" for wake-word turns)
-                Some(&bg_session_id),              // session_id
-                Some(message_embedding),           // embedding
-                None,                              // parent_scroll_id
-                None,                              // chunk_index
-                Some(&bg_user_id),                 // user_id
-                &namespace,                        // namespace (NLP-detected)
-                true,                              // is_syncable
-                false,                             // is_shareable
-                Some(entities.clone()),            // entities_detected (includes proper + common nouns!)
-                event_type.as_deref(),             // event_type (auto-detected!)
-                event_date,                        // event_date (auto-extracted!)
-                Some(&bg_message),                 // original_text (FULL original user message for context!)
-            ).await {
-                Ok(id) => {
-                    println!("[RUST BACKGROUND] ✅ Memory stored with ID: {}", id);
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
-                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "stored").await;
-                    id
-                }
-                Err(e) => {
-                    println!("[RUST BACKGROUND] ⚠️ Failed to store memory: {}", e);
-                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
-                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "error").await;
-                    db_pool.close().await;
-                    return;
-                }
-            };
-
-            let _ = sqlx::query("UPDATE memories SET provenance_json = ? WHERE id = ?")
-                .bind(serde_json::json!({ "annotated": "at write", "by": bg_forced_backend.clone(), "requested": bg_is_explicit_remember }).to_string())
-                .bind(memory_id).execute(&db_pool).await;
-            if let Err(e) = crate::memory::set_memory_extras(&db_pool, memory_id, &tags, sentiment_label, sentiment_score).await {
-                println!("[RUST BACKGROUND] ⚠️ Could not save tags/tone: {}", e);
-            }
-            // Entities: the model's list when it gave one, else the name-finder's proper nouns.
-            let entity_rows: Vec<crate::memory_extras::EntityOut> = if !llm_entities.is_empty() {
-                llm_entities
-            } else {
-                entities.as_array().map(|arr| arr.iter().filter_map(|e| {
-                    let word = e.get("word")?.as_str()?.trim().to_string();
-                    let label = e.get("label")?.as_str().unwrap_or("").to_string();
-                    let score = e.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0);
-                    if word.chars().count() < 3 || word.starts_with("##") || score < 0.6 { return None; }
-                    let kind = if label.contains("PER") { "person" } else if label.contains("LOC") { "place" } else if label.contains("ORG") { "org" } else if word.chars().next().map_or(false, |c| c.is_uppercase()) { "thing" } else { return None; };
-                    Some(crate::memory_extras::EntityOut { name: word, kind: kind.to_string() })
-                }).collect()).unwrap_or_default()
-            };
-            match crate::memory::insert_memory_entities(&db_pool, memory_id, &entity_rows).await {
-                Ok(n) if n > 0 => println!("[RUST BACKGROUND] {} entit{} recorded", n, if n == 1 { "y" } else { "ies" }),
-                Ok(_) => {}
-                Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not save entities: {}", e),
-            }
-
-            // Store LLM-classified relationships (if any)
-            if !llm_relationships.is_empty() {
-                println!("[RUST BACKGROUND] Creating {} LLM-classified relationships...", llm_relationships.len());
-
-                for rel in &llm_relationships {
-                    // Skip "none" relationships
-                    if rel.relationship_type == "none" {
-                        continue;
-                    }
-
-                    // Create relationship in database
-                    match crate::memory::create_memory_link(
-                        &db_pool,
-                        memory_id,
-                        rel.memory_id,
-                        &rel.relationship_type,
-                        rel.confidence.unwrap_or(0.75),
-                        Some(&rel.reason),
-                        "llm",
-                    ).await {
-                        Ok(link_id) => {
-                            println!("[RUST BACKGROUND] ✅ Created {} relationship (link #{}): {} -> {}",
-                                     rel.relationship_type, link_id, memory_id, rel.memory_id);
-                        }
-                        Err(e) => {
-                            println!("[RUST BACKGROUND] ⚠️ Failed to create relationship: {}", e);
-                        }
-                    }
-                }
-
-                // Update timestamps to trigger sync
-                let relationship_count = llm_relationships.iter()
-                    .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
-                    .count();
-
-                if relationship_count > 0 {
-                    let memory_ids: Vec<i32> = llm_relationships.iter()
-                        .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
-                        .map(|r| r.memory_id)
-                        .chain(std::iter::once(memory_id))
-                        .collect();
-
-                    for mem_id in memory_ids {
-                        let _ = sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ?")
-                            .bind(mem_id)
-                            .execute(&db_pool)
-                            .await;
-                    }
-                    println!("[RUST BACKGROUND] ✅ Updated {} memory timestamps to trigger relationship sync", relationship_count + 1);
-                }
-            }
-
-            // Relationship classification complete
-            if !llm_relationships.is_empty() {
-                println!("[RUST BACKGROUND] ✅ Classified {} relationships", llm_relationships.len());
-            }
-
-            db_pool.close().await;
-            println!("[RUST BACKGROUND] 🏁 Memory processing complete");
-        });
+            Err(e) => println!("[RUST] ⚠️ Could not open the database for the memory job: {}", e),
+        }
     }
  else {
         // Nothing was extracted for this exchange. Record why, so "103 sessions with no
         // memories" can be told apart into gate-refused vs. deliberately skipped.
-        let reason = if effective_skip_memory { "skipped" } else { "gate_skipped" };
+        let reason = if effective_skip_memory { "skipped" } else if !memory_gate_passed { "gate_skipped" } else { "model_declined" };
         let sid = session_id.clone();
         tokio::spawn(async move {
             if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
@@ -1718,7 +1628,12 @@ pub async fn run_ensemble(
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  🔀 ENSEMBLE REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
-    println!("▶ {}", message);
+    {
+        // A picked photo once arrived as megabytes of text and went into the log whole
+        // (2026-10-25): show the first 1,500 characters and the size.
+        let n = message.chars().count();
+        if n > 1500 { println!("▶ {} … ({} characters)", message.chars().take(1500).collect::<String>(), n); } else { println!("▶ {}", message); }
+    }
     println!("  Models: {}", models.join(", "));
     println!();
     println!("[Ensemble] Running multi-model ensemble with {} models", models.len());
@@ -1927,7 +1842,7 @@ pub async fn run_ensemble(
             // Trigger web search with 5-second timeout
             match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
-                crate::web_search::search_duckduckgo(search_query, 3)
+                crate::web_search::search(search_query, 3, None)
             ).await {
                 Ok(Ok(search_response)) => {
                     println!("[Ensemble] ✅ Got {} search results", search_response.num_results);
@@ -2261,9 +2176,15 @@ pub fn explicit_remember(query: &str) -> Option<String> {
         return Some(trimmed[rest_start..].trim().to_string());
     }
 
-    // Spoken form: "remember" + one of the colon spellings + separator.
+    // Spoken form: "remember" + one of the colon spellings + separator. Dictation
+    // often puts a comma after "remember" ("remember, colon the ferry runs hourly"),
+    // and that comma made the whole command invisible: the request went to the model
+    // as chat and the extractor stored its own paraphrase instead of the words said
+    // (Matt, 2026-10-07, "User noted that the ferry runs hourly in summer").
     let after_remember = match lower.strip_prefix("remember") {
-        Some(r) if r.starts_with(char::is_whitespace) => r.trim_start(),
+        Some(r) if r.starts_with(char::is_whitespace) || r.starts_with([',', '.', ';']) => {
+            r.trim_start_matches(|c: char| c.is_whitespace() || c == ',' || c == '.' || c == ';')
+        }
         _ => return None,
     };
     for variant in SPOKEN_COLON {
@@ -2288,9 +2209,79 @@ pub fn explicit_remember(query: &str) -> Option<String> {
     None
 }
 
+/// "…enjoy the game. MEMORY: no" → (false, "…enjoy the game."). The marker must be the
+/// last thing on the line, preceded by real text; a line that is only the marker is the
+/// own-line case handled before this. Case-insensitive; markdown and end punctuation
+/// around the marker are ignored.
+pub(crate) fn split_inline_memory_marker(line: &str) -> Option<(bool, String)> {
+    let lower = line.to_lowercase();
+    let key_pos = ["memory", "remember"].iter()
+        .filter_map(|k| lower.rfind(k).map(|p| (p, k.len())))
+        .max_by_key(|(p, _)| *p)?;
+    let (pos, klen) = key_pos;
+    // A separator is required: "I remember no such thing" is prose, "MEMORY: no" is the marker.
+    let tail = lower[pos + klen..].trim_start_matches(|c: char| matches!(c, ' ' | '*' | '_' | '`'));
+    if !tail.starts_with(|c: char| matches!(c, ':' | '-' | '—')) { return None; }
+    let after = tail
+        .trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—' | '*' | '_' | '`'))
+        .trim_end_matches(|c: char| matches!(c, '.' | '!' | ' ' | '*' | '_' | '`' | ')' | ']'));
+    let flag = match after { "yes" => true, "no" => false, _ => return None };
+    let before = line[..pos].trim_end_matches(|c: char| matches!(c, '*' | '_' | '`' | '(' | '[' | ' ' | '-' | '—' | '|'));
+    let before = before.trim_end();
+    if before.is_empty() { return None; }
+    Some((flag, before.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn clock_lines_in_the_history_are_handed_over_as_app_actions() {
+        use super::history_turn_for_model as h;
+        assert_eq!(h("assistant", "⏰ Alarm set for 8 15 AM."), "[Zynkbot's own clock did this, not you: Alarm set for 8 15 AM.]");
+        assert_eq!(h("assistant", "⏱️ Timer set for ten minutes."), "[Zynkbot's own clock did this, not you: Timer set for ten minutes.]");
+        assert_eq!(h("assistant", "The 7 30 AM alarm is cancelled."), "[Zynkbot's own clock did this, not you: The 7 30 AM alarm is cancelled.]");
+        assert_eq!(h("assistant", "Stopwatch started."), "[Zynkbot's own clock did this, not you: Stopwatch started.]");
+        // The model's own words, and the user's, pass through untouched.
+        assert_eq!(h("assistant", "You drive a blue Subaru Outback."), "You drive a blue Subaru Outback.");
+        assert_eq!(h("user", "Alarm set for 8 15 AM."), "Alarm set for 8 15 AM.");
+        assert_eq!(h("assistant", "The timer on the oven is broken, you said."), "The timer on the oven is broken, you said.");
+    }
+
+    #[test]
+    fn inline_memory_marker_is_cut_off_the_last_line() {
+        use super::split_inline_memory_marker as s;
+        assert_eq!(s("Enjoy the game tonight. MEMORY: no"), Some((false, "Enjoy the game tonight.".to_string())));
+        assert_eq!(s("Got it, I'll keep that in mind. **MEMORY: yes**"), Some((true, "Got it, I'll keep that in mind.".to_string())));
+        assert_eq!(s("Sure thing — Memory: No."), Some((false, "Sure thing".to_string())));
+        assert_eq!(s("MEMORY: no"), None, "the own-line case is not this helper's");
+        assert_eq!(s("I remember no such thing."), None);
+        assert_eq!(s("I remember no."), None);
+        assert_eq!(s("Working memory: yesterday's list is gone."), None);
+    }
+
+    #[test]
+    fn web_search_marker_keeps_text_on_both_sides() {
+        use super::strip_web_search_marker as strip;
+        assert_eq!(strip("WEB_SEARCH_NEEDED: weather in Rutland"), "");
+        assert_eq!(strip("Web search needed: \"current weather in Lima, Peru\""), "");
+        assert_eq!(strip("**WEB_SEARCH_NEEDED**: news today"), "");
+        assert_eq!(super::find_web_search_marker("Web search needed: \"weather\"").map(|(a, b)| (a, &"Web search needed: \"weather\""[b..])), Some((0, "\"weather\"")));
+        assert_eq!(strip("WEB_SEARCH_NEEDED: weather\n"), "");
+        assert_eq!(strip("Here is what I know.\n\nWEB_SEARCH_NEEDED: q"), "Here is what I know.");
+        assert_eq!(strip("WEB_SEARCH_NEEDED: q\n\nMeanwhile, a draft:\nDear Senator"), "Meanwhile, a draft:\nDear Senator");
+        assert_eq!(strip("First part.\nWEB_SEARCH_NEEDED: q\nSecond part."), "First part.\n\nSecond part.");
+        assert_eq!(strip("No marker at all"), "No marker at all");
+    }
+
     use super::explicit_remember;
+
+    #[test]
+    fn a_dictated_comma_after_remember_still_makes_it_a_command() {
+        assert_eq!(explicit_remember("remember, colon the ferry runs hourly in summer").as_deref(), Some("the ferry runs hourly in summer"));
+        assert_eq!(explicit_remember("Remember. colon, the spare key is with Priya").as_deref(), Some("the spare key is with Priya"));
+        assert_eq!(explicit_remember("remember colon the library card expires in march").as_deref(), Some("the library card expires in march"));
+        assert!(explicit_remember("remember, we talked about colons in grammar").is_none());
+    }
 
     #[test]
     fn remember_keyword_is_case_insensitive() {
@@ -2341,6 +2332,101 @@ mod tests {
 /// Recognise a fact-extraction marker line tolerantly (KI-049). Returns the text after the
 /// marker; empty when the label stands alone and the fact follows on the next line.
 /// Accepts the canonical `MEMORY_EXTRACT:` and what small local models actually write:
+/// The reply without its `WEB_SEARCH_NEEDED: query` line. The marker and the rest of its
+/// line go; text before it and text after it are both kept, joined by a blank line.
+/// A reply that was only the marker becomes empty.
+/// Where the web-search marker starts and where its query begins, if a reply has one.
+/// Accepts `WEB_SEARCH_NEEDED:` and the ways small models write it: any case, spaces or
+/// underscores, markdown around it, a colon or dash after it (2026-10-22).
+/// A timer, alarm or stopwatch line in the thread was written by Zynkbot's own clock, not
+/// by the model, and is handed to the model as that. Until 2026-10-27 the line went in as
+/// the model's own words; the cloud model then read "Alarm set for 8 15 AM" as a claim it
+/// had made, and disowned it in its next reply ("I don't actually have the ability to set
+/// alarms"), while the alarm was set. The page marks these lines with ⏰ or ⏱️; the phrases
+/// are the ones VoiceCommands.kt and useVoiceSession.js speak.
+pub(crate) fn history_turn_for_model(role: &str, content: &str) -> String {
+    if role != "assistant" { return content.to_string(); }
+    let text = content.trim();
+    let after_icon = text.strip_prefix("⏰").or_else(|| text.strip_prefix("⏱️")).or_else(|| text.strip_prefix("⏱"));
+    const PHRASES: &[&str] = &[
+        "Timer set for", "Alarm set for", "Timer cancelled", "Alarm cancelled", "No timer is running",
+        "No alarm is set", "There is no alarm", "There is no ", "One alarm, at", "Stopwatch ", "The stopwatch",
+    ];
+    let is_clock_line = after_icon.is_some()
+        || PHRASES.iter().any(|p| text.starts_with(p))
+        || (text.starts_with("The ") && (text.ends_with(" timer is cancelled.") || text.ends_with(" alarm is cancelled.")))
+        || (text.starts_with("You have ") && (text.contains(" timers:") || text.contains(" alarms:")));
+    if !is_clock_line { return content.to_string(); }
+    let plain = after_icon.unwrap_or(text).trim();
+    format!("[Zynkbot's own clock did this, not you: {}]", plain)
+}
+
+/// A line that is only the call-1 marker: "MEMORY: yes", "**Memory: no**", "REMEMBER: no".
+/// The "PICTURE: …" line a vision reply ends with (2026-10-28): taken out of the reply
+/// and returned on its own. Tolerant of bold markers around the label.
+pub(crate) fn take_picture_line(reply: &mut String) -> Option<String> {
+    let mut lines: Vec<&str> = reply.lines().collect();
+    let idx = lines.iter().rposition(|l| {
+        let t = l.trim().trim_start_matches(|c: char| matches!(c, '*' | '_' | '`' | '#' | ' ')).to_uppercase();
+        t.starts_with("PICTURE:")
+    })?;
+    let raw = lines[idx].trim().trim_start_matches(|c: char| matches!(c, '*' | '_' | '`' | '#' | ' '));
+    let note = raw[raw.to_uppercase().find("PICTURE:").unwrap_or(0) + 8..].trim().trim_matches('*').trim().to_string();
+    lines.remove(idx);
+    *reply = lines.join("\n").trim_end().to_string();
+    if note.is_empty() { None } else { Some(note) }
+}
+
+#[cfg(test)]
+mod picture_line_tests {
+    use super::take_picture_line;
+
+    #[test]
+    fn the_last_line_comes_out_and_the_reply_keeps_the_rest() {
+        let mut r = "The longer cut suits you.\n\n**PICTURE:** A man with shoulder-length curly hair, indoors by a window.".to_string();
+        assert_eq!(take_picture_line(&mut r).as_deref(), Some("A man with shoulder-length curly hair, indoors by a window."));
+        assert_eq!(r, "The longer cut suits you.");
+        let mut plain = "No line here.".to_string();
+        assert!(take_picture_line(&mut plain).is_none());
+        assert_eq!(plain, "No line here.");
+    }
+}
+
+fn is_memory_flag_line(line: &str) -> bool {
+    let t = line.trim().trim_matches(|c: char| matches!(c, '*' | '`' | '_' | '#' | '-' | ' ')).to_lowercase();
+    let Some(rest) = t.strip_prefix("memory").or_else(|| t.strip_prefix("remember")) else { return false };
+    let word = rest.trim_start_matches(|c: char| matches!(c, ':' | ' ' | '-' | '—'))
+        .trim_end_matches(|c: char| matches!(c, '.' | '!' | ' '));
+    word == "yes" || word == "no"
+}
+
+fn find_web_search_marker(text: &str) -> Option<(usize, usize)> {
+    let lower = text.to_ascii_lowercase();
+    let start = ["web_search_needed", "web search needed", "web-search-needed"]
+        .iter().filter_map(|m| lower.find(m).map(|i| (i, m.len()))).min_by_key(|(i, _)| *i)?;
+    let (pos, len) = start;
+    let mut after = pos + len;
+    let bytes = text.as_bytes();
+    while after < bytes.len() && matches!(bytes[after], b' ' | b':' | b'-' | b'*' | b'_' | b'`') { after += 1; }
+    // Markdown wrappers before the marker belong to it too.
+    let mut begin = pos;
+    while begin > 0 && matches!(bytes[begin - 1], b'*' | b'_' | b'`' | b'#' | b'>' | b' ') && bytes[begin - 1] != b'\n' { begin -= 1; }
+    Some((begin, after))
+}
+
+fn strip_web_search_marker(text: &str) -> String {
+    let Some((pos, _)) = find_web_search_marker(text) else { return text.trim().to_string() };
+    let before = text[..pos].trim();
+    let rest = &text[pos..];
+    let after = match rest.find('\n') { Some(i) => rest[i + 1..].trim(), None => "" };
+    match (before.is_empty(), after.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => before.to_string(),
+        (true, false) => after.to_string(),
+        (false, false) => format!("{}\n\n{}", before, after),
+    }
+}
+
 /// markdown wrappers (`**MEMORY_EXTRACT:**`, `- MEMORY_EXTRACT:`), a space for the
 /// underscore, the prompt's own headings echoed as labels ("FACT EXTRACTION:",
 /// "PERSONAL FACT EXTRACTION:", "PART 1 — FACT EXTRACTION:"), and a bare heading with no
@@ -2369,3 +2455,625 @@ fn extract_marker_remainder(line: &str) -> Option<String> {
     }
     None
 }
+
+/// Everything the background memory task needs from the turn that spawned it.
+#[derive(Clone)]
+pub(crate) struct MemoryBg {
+    pub(crate) bg_message: String,
+    pub(crate) bg_user_id: String,
+    pub(crate) bg_session_id: String,
+    pub(crate) bg_forced_backend: String,
+    pub(crate) bg_source_type: &'static str,
+    pub(crate) bg_containment_mode: String,
+    pub(crate) bg_sink: std::sync::Arc<dyn crate::response_sink::ResponseSink>,
+    pub(crate) bg_is_explicit_remember: bool,
+    pub(crate) bg_user_name: Option<String>,
+    /// The last exchange or two, for call 2's pronouns (2026-10-24).
+    pub(crate) bg_recent_turns: Option<String>,
+    pub(crate) query_entities: Vec<String>,
+    /// Memories already stored from this same message: never call 3 candidates (they are
+    /// linked to each other by the worker; the phone called a sibling "updates" and raised
+    /// a card about it, 2026-10-24).
+    pub(crate) bg_sibling_ids: Vec<i32>,
+    /// A name correction in the message (wrong, right): memories holding the wrong name
+    /// are put in front of the relationship classifier (2026-10-25).
+    pub(crate) bg_correction: Option<(String, String)>,
+}
+
+/// The last two turns as "User: … / Zynkbot: …", each cut to 300 characters.
+fn recent_turns_text(history: Option<&[ConversationTurn]>) -> Option<String> {
+    let h = history?;
+    let start = h.len().saturating_sub(2);
+    let lines: Vec<String> = h[start..].iter().map(|t| {
+        let who = if t.role.eq_ignore_ascii_case("user") { "User" } else { "Zynkbot" };
+        format!("{}: {}", who, crate::conversation_engine::cut_chars(&t.content, 300))
+    }).collect();
+    if lines.is_empty() { None } else { Some(lines.join("\n")) }
+}
+
+/// Call 2 of the memory pipeline for one message: the facts, each with title and date, and
+/// on the cloud also tags, tone and named things (memory_prompts.rs). A local model is held
+/// to the JSON schema and gets the slim form; a cloud model answers free-form and is parsed
+/// leniently. Ok(empty) means nothing to store; Err carries "interrupted" when the user's
+/// next message took the model, so the job queue can wait instead of giving up.
+pub(crate) async fn extract_facts(bg: &MemoryBg) -> Result<Vec<crate::memory_prompts::ExtractedFact>, String> {
+    let subject = bg.bg_user_name.clone().unwrap_or_else(|| "User".to_string());
+    let today = chrono::Local::now().date_naive();
+    let on_device = bg.bg_forced_backend.ends_with(".gguf") || bg.bg_forced_backend.to_lowercase().contains("local");
+    let prompt = crate::memory_prompts::extraction_prompt_with(&bg.bg_message, &subject, bg.bg_recent_turns.as_deref(), today, on_device);
+    let schema = if on_device { crate::memory_prompts::EXTRACTION_SCHEMA_SLIM } else { crate::memory_prompts::EXTRACTION_SCHEMA };
+    let text = crate::call_backend_with_schema(&prompt, &bg.bg_forced_backend, schema).await
+        .map_err(|e| { println!("[RUST BACKGROUND] Call 2 failed: {}", e); e })?;
+    let facts = crate::memory_prompts::parse_extraction(&text, &bg.bg_message);
+    let facts = drop_near_duplicates(facts);
+    println!("[RUST BACKGROUND] Call 2: {} fact(s)", facts.len());
+    Ok(facts)
+}
+
+/// Two facts from one message that mean the same thing keep only the first: the word rule
+/// in the parser catches restatements, this catches rewordings ("I'm at 0.4" / "the reading
+/// came back point four") by embedding similarity. The threshold sits under the storage
+/// path's cross-memory duplicate check, which these pairs slipped past on 2026-10-24.
+pub(crate) const SAME_MESSAGE_DUPLICATE_SIMILARITY: f32 = 0.86;
+fn drop_near_duplicates(facts: Vec<crate::memory_prompts::ExtractedFact>) -> Vec<crate::memory_prompts::ExtractedFact> {
+    if facts.len() < 2 { return facts; }
+    let mut kept: Vec<(crate::memory_prompts::ExtractedFact, Option<Vec<f32>>)> = Vec::new();
+    for f in facts {
+        let emb = crate::llm::local_embeddings::generate_local_embedding(&f.fact).ok();
+        let dup = match &emb {
+            Some(e) => kept.iter().find(|(k, ke)| ke.as_ref().map_or(false, |ke| crate::llm::local_embeddings::cosine_similarity(e, ke) >= SAME_MESSAGE_DUPLICATE_SIMILARITY)).map(|(k, _)| k.fact.clone()),
+            None => None,
+        };
+        if let Some(d) = dup { println!("[RUST BACKGROUND] Call 2: dropped a near-duplicate of \"{}\": {}", d, f.fact); continue; }
+        kept.push((f, emb));
+    }
+    kept.into_iter().map(|(f, _)| f).collect()
+}
+
+/// Call 2's fields where it gave them, call 3's otherwise.
+fn merge_extras(a: crate::memory_extras::MemoryExtras, b: crate::memory_extras::MemoryExtras) -> crate::memory_extras::MemoryExtras {
+    crate::memory_extras::MemoryExtras {
+        event_date: a.event_date.or(b.event_date),
+        namespace: a.namespace.or(b.namespace),
+        tags: a.tags.or(b.tags),
+        tone: a.tone.or(b.tone),
+        entities: a.entities.or(b.entities),
+        passing: a.passing.or(b.passing),
+    }
+}
+
+/// The background memory pipeline for one candidate fact (or, with None, for the raw
+/// message): embedding, duplicate and contradiction checks, the memory decision,
+/// relationships, storage. Was the body of the spawned task in send_message_with_memory
+/// until 2026-10-22; lifted out so the local-model flow can run it once per fact.
+/// Returns the id of the memory it stored, None when nothing was stored (duplicate, held for a
+/// contradiction card, or an error), so the caller can link the facts of one message.
+pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prompts::ExtractedFact) -> Option<i32> {
+    let MemoryBg { bg_message, bg_user_id, bg_session_id, bg_forced_backend, bg_source_type, bg_containment_mode,
+        bg_sink, bg_is_explicit_remember, bg_user_name: _, bg_recent_turns: _, query_entities, bg_sibling_ids, bg_correction } = bg;
+            // The stored text is the fact from call 2 (or the words after "Remember:"), never
+            // the raw message: until 2026-10-24 a cloud reply with no fact line stored the
+            // user's message verbatim (219 of them in September).
+            let factual_content = fact.fact.clone();
+
+            // Generate embedding FIRST (needed for duplicate check and storage)
+            let factual_clone = factual_content.clone();
+            let message_embedding = match tokio::task::spawn_blocking(move || {
+                crate::llm::local_embeddings::generate_local_embedding(&factual_clone)
+            })
+            .await {
+                Ok(Ok(embedding)) => embedding,
+                Ok(Err(e)) => {
+                    println!("[RUST BACKGROUND] ⚠️ Failed to generate embedding: {}", e);
+                    return None;
+                }
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Embedding task panicked: {}", e);
+                    return None;
+                }
+            };
+
+            // Pending indicator for the Memory Manager spinner: every call here has a fact.
+            let has_memory_candidate = true;
+            let pending_id: u64 = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            if has_memory_candidate {
+                bg_sink.event("memory-processing-started", serde_json::json!({ "pending_id": pending_id }));
+            }
+
+            // Reconnect to database for memory storage
+            let db_url = crate::db::get_db_url();
+
+            let db_pool = match sqlx::SqlitePool::connect(&db_url).await {
+                Ok(pool) => pool,
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Failed to connect to database: {}", e);
+                    return None;
+                }
+            };
+
+            // Do a BROADER search for relationship detection (more memories, lower threshold)
+            // This ensures we catch relationships even if the memory wasn't in the top 5 for conversation
+
+            let relationship_search_results = match crate::memory::hybrid_search(
+                &db_pool,
+                message_embedding.clone(),
+                query_entities.clone(),
+                Some(&bg_user_id),
+                None,  // All sessions
+                None,  // All namespaces
+                15,    // Search more memories (15 instead of 5)
+            ).await {
+                Ok(results) => results,
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Relationship search failed: {}", e);
+                    db_pool.close().await;
+                    return None;
+                }
+            };
+
+            // Filter to >35% similarity — matches the hybrid search floor. The LLM handles
+            // false candidates correctly (returns NONE), so a conservative pre-filter here
+            // only causes missed relationships like niece/nephews at the same event (41%).
+            let mut similar_memories: Vec<(i32, String, Option<String>, f32)> = relationship_search_results
+                .into_iter()
+                .filter(|m| m.similarity.unwrap_or(0.0) >= 0.35)
+                .map(|m| (m.id, m.content.clone(), m.title.clone(), m.similarity.unwrap_or(0.0) as f32))
+                .collect();
+
+            // Sort by similarity (most relevant first) for relationship classification
+            // We want the MOST similar memories, not the most recent ones
+            similar_memories.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+
+            // API models handle larger candidate sets well; local 7B models degrade with more context
+            // Cloud 10; the phone 4 (6 until 2026-10-24), the same number as its recall, since
+            // every candidate is prompt the phone reads at ~40 tokens/s.
+            let relationship_candidate_limit = if crate::conversation_engine::ConversationEngine::is_api_model(&bg_forced_backend) { 10 } else { 4 };
+            similar_memories.retain(|(id, _, _, _)| !bg_sibling_ids.contains(id));
+            // A name correction: every memory that holds the wrong name goes first, whatever
+            // its similarity, so the classifier sees the pair that conflicts (2026-10-25).
+            if let Some((wrong, _)) = &bg_correction {
+                let held: Vec<(i32, String, Option<String>)> = sqlx::query_as(
+                    "SELECT id, content, title FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status NOT IN ('superseded', 'completed')) AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now')) AND content LIKE ? ORDER BY created_at DESC LIMIT 10")
+                    .bind(&bg_user_id).bind(format!("%{}%", wrong)).fetch_all(&db_pool).await.unwrap_or_default();
+                let mut forced: Vec<(i32, String, Option<String>, f32)> = held.into_iter().filter(|(id, _, _)| !bg_sibling_ids.contains(id)).map(|(id, content, title)| (id, content, title, 1.0)).collect();
+                println!("[RUST BACKGROUND] Name correction {} -> {}: {} memories hold the old name", wrong, bg_correction.as_ref().map(|c| c.1.as_str()).unwrap_or(""), forced.len());
+                similar_memories.retain(|(id, _, _, _)| !forced.iter().any(|(f, _, _, _)| f == id));
+                forced.extend(similar_memories.drain(..));
+                similar_memories = forced;
+            }
+            similar_memories.truncate(relationship_candidate_limit);
+
+            if !similar_memories.is_empty() {
+                println!("[RUST BACKGROUND] Found {} similar memories (>35% similarity) for relationship classification", similar_memories.len());
+            }
+
+            // DUPLICATE CHECK: Check if this is a duplicate
+            // First check hybrid score (>98%), then pure cosine (>93%)
+            // Hybrid score of 1.0 = exact match even if pure cosine is slightly lower due to entity boosting
+
+            let mut is_duplicate = false;
+            for (mem_id, _mem_content, _mem_title, hybrid_score) in &similar_memories {
+                // Check 1: Very high hybrid score indicates duplicate (entity + semantic match)
+                if *hybrid_score > 0.98 {
+                    println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% hybrid similarity",
+                             mem_id, hybrid_score * 100.0);
+                    println!("[RUST BACKGROUND] Skipping memory storage for duplicate");
+                    is_duplicate = true;
+                    break;
+                }
+
+                // Check 2: Pure cosine similarity (lowered threshold to 0.93 to catch near-duplicates)
+                if let Ok(Some(candidate_mem)) = crate::memory::get_memory(&db_pool, *mem_id).await {
+                    if let Some(ref candidate_embedding_vec) = candidate_mem.embedding {
+                        let pure_similarity = crate::llm::local_embeddings::cosine_similarity(
+                            &message_embedding,
+                            candidate_embedding_vec
+                        );
+
+                        if pure_similarity > 0.93 {
+                            println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% pure cosine similarity",
+                                     mem_id, pure_similarity * 100.0);
+                            println!("[RUST BACKGROUND] Skipping memory storage for duplicate");
+                            is_duplicate = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if is_duplicate {
+                if has_memory_candidate {
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                }
+                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "duplicate").await;
+                db_pool.close().await;
+                return None;
+            }
+
+            println!("[RUST BACKGROUND] ✅ Proceeding with relationship classification");
+
+            // Call 3: how the fact relates to the similar memories. Title, date, tags, tone and
+            // named things come from call 2 when it gave them; call 3's own are the fallback
+            // ("Remember:" skips call 2, so its title comes from here). On-device links go
+            // through the floor and the dropped-types list (lib.rs LOCAL_LINK_CONFIDENCE_FLOOR /
+            // LOCAL_DROPPED_LINK_TYPES, memory bench 2026-10-22/23) and are tagged "local_llm".
+            let bg_on_device = bg_forced_backend.ends_with(".gguf") || bg_forced_backend.to_lowercase().contains("local");
+            let link_created_by = if bg_on_device { "local_llm" } else { "llm" };
+            let (should_remember, llm_title, llm_relationships, llm_extras) = if similar_memories.is_empty() && fact.title.is_some() {
+                println!("[RUST BACKGROUND] No similar memories; call 3 skipped");
+                (true, fact.title.clone(), Vec::new(), fact.extras.clone())
+            } else if bg_on_device && fact.title.is_some() {
+                // The phone: relationships only (ask_llm_for_links_only); title and date came
+                // from call 2, tags/tone/entities from the name finder below.
+                match crate::ask_llm_for_links_only(&factual_content, &similar_memories, &bg_forced_backend).await {
+                    Ok(rels) => {
+                        let before = rels.len();
+                        let rels = crate::filter_local_links(rels);
+                        if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} link(s) from the local model (floor / dropped types)", before - rels.len()); }
+                        println!("[RUST BACKGROUND] ✅ Links (phone): {} relationships", rels.len());
+                        (true, fact.title.clone(), rels, fact.extras.clone())
+                    }
+                    Err(e) => {
+                        println!("[RUST BACKGROUND] ⚠️ Link call failed: {} — storing without links", e);
+                        (true, fact.title.clone(), Vec::new(), fact.extras.clone())
+                    }
+                }
+            } else {
+                match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
+                    Ok((title3, rels, extras3)) => {
+                        let before = rels.len();
+                        let rels = if bg_on_device { crate::filter_local_links(rels) } else { rels };
+                        if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} link(s) from the local model (floor / dropped types)", before - rels.len()); }
+                        println!("[RUST BACKGROUND] ✅ Relationship classifier: {} relationships", rels.len());
+                        (true, fact.title.clone().or(title3), rels, merge_extras(fact.extras.clone(), extras3))
+                    }
+                    Err(e) => {
+                        println!("[RUST BACKGROUND] ⚠️ Relationship classifier failed: {} — storing without links", e);
+                        let fallback = fact.title.clone().unwrap_or_else(|| crate::generate_title_from_content(&factual_content));
+                        (true, Some(fallback), Vec::new(), fact.extras.clone())
+                    }
+                }
+            };
+
+            // Explicit "Remember:" command overrides LLM decision — user is the authority.
+            // The title comes from the user's own words too: the classifier sees the raw
+            // query, and on a dictated "remember cohen the gate code..." it titled the
+            // memory "Gate code for Cohen" (2026-09-07). The stored content is already
+            // the text after the keyword, so the title is cut from that.
+            let (should_remember, llm_title) = if bg_is_explicit_remember {
+                if !should_remember {
+                    println!("[RUST BACKGROUND] ✅ Explicit 'Remember:' command — overriding LLM decision to store");
+                }
+                let fallback_title = factual_content.chars().take(60).collect::<String>();
+                let fallback_title = if factual_content.chars().count() > 60 {
+                    format!("{}…", fallback_title)
+                } else {
+                    fallback_title
+                };
+                (true, Some(fallback_title))
+            } else {
+                (should_remember, llm_title)
+            };
+
+            if !should_remember {
+                bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "skipped" }));
+                crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "model_declined").await;
+                db_pool.close().await;
+                return None;
+            }
+
+            println!("[RUST BACKGROUND] ✅ LLM decided to remember: {:?}", llm_title);
+
+            // CHECK FOR CONTRADICTIONS (BEFORE STORAGE!)
+            // If LLM detected contradiction with sufficient confidence, emit event to frontend
+            // Require >= 0.65 to avoid false positives from local models
+            let contradiction_detected = llm_relationships.iter()
+                .any(|rel| rel.relationship_type == "contradicts" && rel.confidence.unwrap_or(0.0) >= 0.65);
+
+            // An explicit "Remember:" is stored no matter what. The contradiction modal
+            // needs the page in front to be answered; hands-free there is no page, so
+            // holding the memory for it meant the fact the user just dictated was never
+            // saved while the reply said it was (OnePlus, 2026-09-07). The user has
+            // already stated the new fact; the older memory stays and can be resolved
+            // or deleted in Memory Manager.
+            if contradiction_detected && bg_is_explicit_remember {
+                println!("[RUST BACKGROUND] ⚠️ Contradiction noted, but this is an explicit Remember — storing anyway");
+            }
+            // On-device model (2026-10-23): store first, ask after. Its background pass can
+            // take minutes on a phone, the card then arrives when the user has moved on, and
+            // a memory held for an unanswered card was simply lost (the kitchen-scale test).
+            // So the new memory is stored like any other, and the card is raised afterwards
+            // about the already-stored pair (resolve_stored_conflict). Cloud models keep the
+            // ask-first card: theirs arrives in seconds.
+            let ask_after_store = contradiction_detected && !bg_is_explicit_remember && bg_on_device;
+            if ask_after_store {
+                println!("[RUST BACKGROUND] ⚠️ Contradiction from the on-device model — storing first, asking after");
+            }
+            if contradiction_detected && !bg_is_explicit_remember && !bg_on_device {
+                println!("[RUST BACKGROUND] ⚠️ CONTRADICTION DETECTED - emitting event to frontend (NOT storing yet)");
+
+                // Find the contradicting relationship
+                if let Some(contradiction) = llm_relationships.iter()
+                    .find(|rel| rel.relationship_type == "contradicts") {
+
+                    // Fetch the conflicting memory details
+                    if let Ok(Some(conflicting_memory)) = crate::memory::get_memory(&db_pool, contradiction.memory_id).await {
+                        // Prepare payload for frontend (memoryA = OLD, memoryB = NEW)
+                        let payload = serde_json::json!({
+                            "memoryA": {
+                                "id": conflicting_memory.id,
+                                "content": conflicting_memory.content,
+                                "title": conflicting_memory.title,
+                                "created_at": conflicting_memory.created_at.to_rfc3339(),
+                            },
+                            "memoryB": {
+                                "content": factual_content.clone(),
+                                "title": llm_title.clone(),
+                                "created_at": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "reason": contradiction.reason,
+                            "confidence": contradiction.confidence.unwrap_or(0.75),
+                            "pending_memory": {
+                                "content": factual_content.clone(),
+                                "title": llm_title.clone(),
+                                "embedding": message_embedding.clone(),
+                                "original_text": bg_message.clone(),
+                            },
+                            "relationships": llm_relationships,
+                            "user_id": bg_user_id.clone(),
+                            "session_id": bg_session_id.clone(),
+                        });
+
+                        // Emit event to frontend to show modal
+                        // Written down first: the window may be gone by now (migration 0024).
+                        let mut payload = payload;
+                        match crate::memory::insert_memory_card(&db_pool, &bg_user_id, &bg_session_id, &payload).await {
+                            Ok(card_id) => { payload["card_id"] = serde_json::json!(card_id); }
+                            Err(e) => eprintln!("[RUST BACKGROUND] card not saved: {}", e),
+                        }
+                        bg_sink.event("contradiction-detected", payload);
+                        bg_sink.card_notice("Zynkbot has a question about a memory", "Tap to answer it.");
+                        println!("[RUST BACKGROUND] 🔔 Contradiction event emitted - modal should appear");
+
+                        // Don't store memory yet - wait for user decision via resolve_memory_conflict_v2
+                        bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "contradiction" }));
+                        crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "contradiction").await;
+                        db_pool.close().await;
+                        return None;
+                    }
+                }
+            }
+
+            // HIPAA mode: Enable ephemeral memory (8-hour expiration)
+            let _is_ephemeral = bg_containment_mode == "hipaa";
+
+            // Extract entities using NLP enhancer (no tags - entities handle everything)
+            // Note: We use LLM-generated title, NLP for entities/events
+            let message_for_nlp = factual_content.clone();
+            let (entities, event_type, event_date, namespace) = match tokio::task::spawn_blocking(move || {
+                let enhancer = crate::nlp_enhancer::NLPEnhancer::new();
+
+                // Generate namespace and detect events
+                let enhancement = enhancer.enhance(&message_for_nlp);
+
+                // Extract entities (includes both proper nouns AND common nouns)
+                let ents = enhancer.extract_entities(&message_for_nlp);
+                let entities_json = serde_json::json!(ents.iter().map(|e| {
+                    serde_json::json!({
+                        "word": e.word,
+                        "label": e.label,
+                        "score": e.score,
+                        "start": e.start,
+                        "end": e.end
+                    })
+                }).collect::<Vec<_>>());
+
+                (entities_json, enhancement.event_type, enhancement.event_date, enhancement.namespace)
+            })
+            .await {
+                Ok(result) => result,
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Failed to enhance memory: {}", e);
+                    db_pool.close().await;
+                    return None;
+                }
+            };
+
+            // The decision call's own fields win over the NLP guesses when present and
+            // valid (2026-09-07): a real event date, a namespace from the known list,
+            // tags, tone, and named entities. NLP stays as the fallback.
+            let today = chrono::Utc::now().date_naive();
+            let namespace = crate::memory_extras::resolve_namespace(llm_extras.namespace.as_deref(), &namespace);
+            let event_date = crate::memory_extras::validate_event_date(llm_extras.event_date.as_deref(), &bg_message, today)
+                .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc())
+                .or(event_date);
+            let tags = crate::memory_extras::clean_tags(llm_extras.tags.as_deref());
+            let (sentiment_label, sentiment_score) = crate::memory_extras::tone_to_sentiment(llm_extras.tone.as_deref());
+            let llm_entities = crate::memory_extras::clean_entities(llm_extras.entities.as_deref());
+
+            // Store memory in database (with LLM-generated title, NLP entities, and events!)
+            let memory_id = match crate::memory::insert_memory(
+                &db_pool,
+                llm_title.as_deref(),              // title (LLM-generated!)
+                &factual_content,                  // content (factual statements only!)
+                Some(bg_source_type),              // source_type ("hands_free" for wake-word turns)
+                Some(&bg_session_id),              // session_id
+                Some(message_embedding),           // embedding
+                None,                              // parent_scroll_id
+                None,                              // chunk_index
+                Some(&bg_user_id),                 // user_id
+                &namespace,                        // namespace (NLP-detected)
+                true,                              // is_syncable
+                false,                             // is_shareable
+                Some(entities.clone()),            // entities_detected (includes proper + common nouns!)
+                event_type.as_deref(),             // event_type (auto-detected!)
+                event_date,                        // event_date (auto-extracted!)
+                Some(&bg_message),                 // original_text (FULL original user message for context!)
+            ).await {
+                Ok(id) => {
+                    println!("[RUST BACKGROUND] ✅ Memory stored with ID: {}", id);
+                    // A passing fact (an errand, a parking level, this week's trip) leaves recall
+                    // two weeks after its day and stays in Memory Manager with a Keep button
+                    // (Matt, 2026-10-26). Lasting facts are untouched.
+                    if llm_extras.passing == Some(true) {
+                        let until = crate::memory_extras::passing_expiry(event_date, chrono::Utc::now());
+                        match sqlx::query("UPDATE memories SET is_ephemeral = 1, expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").bind(until).bind(id).execute(&db_pool).await {
+                            Ok(_) => println!("[RUST BACKGROUND] Passing fact: memory #{} leaves recall after {}", id, until.format("%Y-%m-%d")),
+                            Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not mark memory #{} as passing: {}", id, e),
+                        }
+                    }
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "stored", "memory_id": id }));
+                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "stored").await;
+                    id
+                }
+                Err(e) => {
+                    println!("[RUST BACKGROUND] ⚠️ Failed to store memory: {}", e);
+                    bg_sink.event("memory-processing-complete", serde_json::json!({ "pending_id": pending_id, "status": "error" }));
+                    crate::conversation_history::set_extraction_outcome(&db_pool, &bg_session_id, "error").await;
+                    db_pool.close().await;
+                    return None;
+                }
+            };
+
+            let _ = sqlx::query("UPDATE memories SET provenance_json = ? WHERE id = ?")
+                .bind(serde_json::json!({ "annotated": "at write", "by": bg_forced_backend.clone(), "requested": bg_is_explicit_remember }).to_string())
+                .bind(memory_id).execute(&db_pool).await;
+            if let Err(e) = crate::memory::set_memory_extras(&db_pool, memory_id, &tags, sentiment_label, sentiment_score).await {
+                println!("[RUST BACKGROUND] ⚠️ Could not save tags/tone: {}", e);
+            }
+            // Entities: the model's list when it gave one, else the name-finder's proper nouns.
+            let entity_rows: Vec<crate::memory_extras::EntityOut> = if !llm_entities.is_empty() {
+                llm_entities
+            } else {
+                entities.as_array().map(|arr| arr.iter().filter_map(|e| {
+                    let word = e.get("word")?.as_str()?.trim().to_string();
+                    let label = e.get("label")?.as_str().unwrap_or("").to_string();
+                    let score = e.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                    if word.chars().count() < 3 || word.starts_with("##") || score < 0.6 { return None; }
+                    let kind = if label.contains("PER") { "person" } else if label.contains("LOC") { "place" } else if label.contains("ORG") { "org" } else if word.chars().next().map_or(false, |c| c.is_uppercase()) { "thing" } else { return None; };
+                    Some(crate::memory_extras::EntityOut { name: word, kind: kind.to_string() })
+                }).collect()).unwrap_or_default()
+            };
+            match crate::memory::insert_memory_entities(&db_pool, memory_id, &entity_rows).await {
+                Ok(n) if n > 0 => println!("[RUST BACKGROUND] {} entit{} recorded", n, if n == 1 { "y" } else { "ies" }),
+                Ok(_) => {}
+                Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not save entities: {}", e),
+            }
+
+            // Store LLM-classified relationships (if any)
+            if !llm_relationships.is_empty() {
+                println!("[RUST BACKGROUND] Creating {} LLM-classified relationships...", llm_relationships.len());
+
+                for rel in &llm_relationships {
+                    // Skip "none" relationships
+                    if rel.relationship_type == "none" {
+                        continue;
+                    }
+
+                    // Create relationship in database
+                    match crate::memory::create_memory_link(
+                        &db_pool,
+                        memory_id,
+                        rel.memory_id,
+                        &rel.relationship_type,
+                        rel.confidence.unwrap_or(0.75),
+                        Some(&rel.reason),
+                        link_created_by,
+                    ).await {
+                        Ok(link_id) => {
+                            println!("[RUST BACKGROUND] ✅ Created {} relationship (link #{}): {} -> {}",
+                                     rel.relationship_type, link_id, memory_id, rel.memory_id);
+                        }
+                        Err(e) => {
+                            println!("[RUST BACKGROUND] ⚠️ Failed to create relationship: {}", e);
+                        }
+                    }
+
+                    // "updates": the new memory replaces the older state of the same thing.
+                    // The older memory leaves recall and stays as history; Memory Manager
+                    // shows it as replaced with a way back (migration 0022, 2026-10-23).
+                    if rel.relationship_type == "updates" {
+                        match crate::memory::set_temporal_status(&db_pool, rel.memory_id, Some("superseded")).await {
+                            Ok(()) => {
+                                println!("[RUST BACKGROUND] 🔁 Memory #{} replaces #{}; the older one is kept as history", memory_id, rel.memory_id);
+                                bg_sink.event("memory-superseded", serde_json::json!({ "new_memory_id": memory_id, "old_memory_id": rel.memory_id }));
+                            }
+                            Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not mark memory #{} as replaced: {}", rel.memory_id, e),
+                        }
+                    }
+                }
+
+                // Update timestamps to trigger sync
+                let relationship_count = llm_relationships.iter()
+                    .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
+                    .count();
+
+                if relationship_count > 0 {
+                    let memory_ids: Vec<i32> = llm_relationships.iter()
+                        .filter(|r| r.relationship_type != "none" && r.memory_id > 0)
+                        .map(|r| r.memory_id)
+                        .chain(std::iter::once(memory_id))
+                        .collect();
+
+                    for mem_id in memory_ids {
+                        let _ = sqlx::query("UPDATE memories SET updated_at = datetime('now') WHERE id = ?")
+                            .bind(mem_id)
+                            .execute(&db_pool)
+                            .await;
+                    }
+                    println!("[RUST BACKGROUND] ✅ Updated {} memory timestamps to trigger relationship sync", relationship_count + 1);
+                }
+            }
+
+            // The on-device model's card, raised about the stored pair (see ask_after_store).
+            if ask_after_store {
+                if let Some(contradiction) = llm_relationships.iter()
+                    .find(|rel| rel.relationship_type == "contradicts") {
+                    if let Ok(Some(conflicting_memory)) = crate::memory::get_memory(&db_pool, contradiction.memory_id).await {
+                        let payload = serde_json::json!({
+                            "stored_memory_id": memory_id,
+                            "memoryA": {
+                                "id": conflicting_memory.id,
+                                "content": conflicting_memory.content,
+                                "title": conflicting_memory.title,
+                                "created_at": conflicting_memory.created_at.to_rfc3339(),
+                            },
+                            "memoryB": {
+                                "id": memory_id,
+                                "content": factual_content.clone(),
+                                "title": llm_title.clone(),
+                                "created_at": chrono::Utc::now().to_rfc3339(),
+                            },
+                            "reason": contradiction.reason,
+                            "confidence": contradiction.confidence.unwrap_or(0.75),
+                            "relationships": llm_relationships,
+                            "user_id": bg_user_id.clone(),
+                            "session_id": bg_session_id.clone(),
+                        });
+                        // Written down first: the window may be gone by now (migration 0024).
+                        let mut payload = payload;
+                        match crate::memory::insert_memory_card(&db_pool, &bg_user_id, &bg_session_id, &payload).await {
+                            Ok(card_id) => { payload["card_id"] = serde_json::json!(card_id); }
+                            Err(e) => eprintln!("[RUST BACKGROUND] card not saved: {}", e),
+                        }
+                        bg_sink.event("contradiction-detected", payload);
+                        bg_sink.card_notice("Zynkbot has a question about a memory", "Tap to answer it.");
+                        println!("[RUST BACKGROUND] 🔔 Card raised about stored memory #{} and #{}", memory_id, conflicting_memory.id);
+                    }
+                }
+            }
+
+            // Relationship classification complete
+            if !llm_relationships.is_empty() {
+                println!("[RUST BACKGROUND] ✅ Classified {} relationships", llm_relationships.len());
+            }
+
+            db_pool.close().await;
+            println!("[RUST BACKGROUND] 🏁 Memory processing complete");
+            Some(memory_id)
+}
+
+

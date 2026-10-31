@@ -9,9 +9,13 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [remoteDirs, setRemoteDirs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  // Refresh status is shown on the button itself. It used to go through `message`, which is
+  // drawn at the bottom of the panel, far from the button, and cleared after 2 s.
+  const [refreshState, setRefreshState] = useState('idle'); // 'idle' | 'busy' | 'done'
   const [newDirPath, setNewDirPath] = useState('');
   const [newShareName, setNewShareName] = useState('');
   const [browserShare, setBrowserShare] = useState(null);
+  const [showLinkedDevices, setShowLinkedDevices] = useState(false);
   const [codeToAccept, setCodeToAccept] = useState('');
   const [codeIPPart, setCodeIPPart] = useState('');
   const [codeNumPart, setCodeNumPart] = useState('');
@@ -23,7 +27,6 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   const [unreadCounts, setUnreadCounts] = useState({}); // Map of device_id -> unread count
   const [showEnterCodeInput, setShowEnterCodeInput] = useState(false); // Toggle for enter code input
   const isAndroid = !!window.AndroidPaths;
-  const [androidShareDir, setAndroidShareDir] = useState('');
 
   const fetchSharedDirectories = useCallback(async () => {
     try {
@@ -53,10 +56,10 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
   }, []);
 
   const handleRefresh = useCallback(async () => {
-    setMessage('Refreshing...');
+    setRefreshState('busy');
     await Promise.all([fetchSharedDirectories(), fetchRemoteDirectories(), fetchLinkedUsers()]);
-    setMessage('✓ Refreshed');
-    setTimeout(() => setMessage(''), 2000);
+    setRefreshState('done');
+    setTimeout(() => setRefreshState('idle'), 2000);
   }, [fetchSharedDirectories, fetchRemoteDirectories, fetchLinkedUsers]);
 
   const fetchUnreadCounts = useCallback(async () => {
@@ -117,30 +120,13 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
     };
 
     if (window.AndroidPaths) {
-      const dir = window.AndroidPaths.getShareDir();
-      setAndroidShareDir(dir);
-      // Ensure exactly one shared directory entry: remove stale entries, register if missing
-      invoke('list_my_shared_directories').then(async data => {
-        const dirs = data.shared_directories || [];
-        const stale = dirs.filter(d => d.local_path !== dir);
-        const current = dirs.find(d => d.local_path === dir);
-        // Remove any entries from old paths (e.g. after folder location changed)
-        for (const d of stale) {
-          await invoke('unshare_directory', { shareId: d.id }).catch(() => {});
-        }
-        if (!current) {
-          const res = await invoke('share_directory', {
-            localPath: dir,
-            shareName: 'ZynkbotShare',
-            isReadable: true,
-            isWritable: false
-          }).catch(() => null);
-          if (res?.success && res.share_id) {
-            invoke('scan_shared_directory', { shareId: res.share_id, maxFiles: 1000 }).catch(() => {});
-          }
-        }
-        fetchSharedDirectories();
-      }).catch(() => {});
+      // The folder path used to be kept in state for display; the redesigned panel no longer
+      // shows it. The call is kept exactly as it was.
+      window.AndroidPaths.getShareDir();
+      // App.jsx keeps the share record right (one share, at this folder) and re-indexes
+      // it; files can arrive through the Files app or the Share button at any time, so
+      // do that again whenever the panel opens.
+      Promise.resolve(window.__zynkShareChanged?.()).then(() => fetchSharedDirectories()).catch(() => {});
     }
 
     getDeviceId();
@@ -373,15 +359,16 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
       <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
         <button
           onClick={handleRefresh}
-          disabled={loading}
+          disabled={loading || refreshState === 'busy'}
+          aria-live="polite"
           style={{
             flex: 1,
             padding: '8px 16px',
-            background: '#6272a4',
-            color: '#f8f8f2',
+            background: refreshState === 'done' ? '#1e3a1e' : '#6272a4',
+            color: refreshState === 'done' ? '#50fa7b' : '#f8f8f2',
             border: 'none',
             borderRadius: '4px',
-            cursor: loading ? 'wait' : 'pointer',
+            cursor: loading || refreshState === 'busy' ? 'wait' : 'pointer',
             fontSize: '0.85rem',
             fontWeight: 'bold',
             transition: 'all 0.2s',
@@ -389,7 +376,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
           }}
           title="Refresh linked device list"
         >
-          🔄 Refresh
+          {refreshState === 'busy' ? '🔄 Refreshing...' : refreshState === 'done' ? '✓ Refreshed' : '🔄 Refresh'}
         </button>
         <button
           onClick={onOpenUserIdentity}
@@ -622,13 +609,16 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
           marginBottom: '20px',
           border: '1px solid #44475a'
         }}>
-          <div style={{ color: '#ffb86c', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: '6px' }}>
-            🔗 Linked Devices ({linkedUsers.length})
+          {/* Collapsed by default on request (Matt, 2026-09-20): the device cards are
+              tall and the folder sections below them are what people come here for. */}
+          <div
+            onClick={() => setShowLinkedDevices(v => !v)}
+            style={{ color: '#ffb86c', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: showLinkedDevices ? '10px' : 0, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+          >
+            <span>🔗 Linked Devices ({linkedUsers.length})</span>
+            <span style={{ fontSize: '0.8rem' }}>{showLinkedDevices ? '▼' : '▶'}</span>
           </div>
-          <div style={{ color: '#ff5555', fontSize: '0.8rem', marginBottom: '10px' }}>
-            Android devices are identified as "Android-XXXX" where XXXX is the last 4 digits of their device ID.
-          </div>
-          {linkedUsers.map(user => (
+          {showLinkedDevices && linkedUsers.map(user => (
             <div
               key={user.user_id}
               style={{
@@ -723,7 +713,7 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
       {isAndroid && (
         <div style={{ marginBottom: '20px' }}>
           <div style={{ color: '#f8f8f2', fontWeight: 'bold', fontSize: '0.9rem', marginBottom: '8px' }}>
-            📁 Your Zynkbot Share Folder
+            📁 My shared folder
           </div>
           <div style={{
             background: '#1e1f29',
@@ -735,53 +725,34 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
             color: '#9aa5c4',
             lineHeight: '1.6'
           }}>
-            Files here are visible to linked devices. Files you download from linked devices are saved here automatically.
-            {androidShareDir && (
-              <div style={{ marginTop: '8px', wordBreak: 'break-all', color: '#6272a4', fontSize: '0.78rem' }}>
-                📂 {androidShareDir}
-              </div>
-            )}
+            This phone now has a shared drive named Zynkbot. You can see it in your file manager, and anything you put in it can be seen by your linked devices: use the Share button in any app and pick Zynkbot, or Browse shared files on this device → Add Files. Files you save from a linked device land here too.
+
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={() => window.AndroidPaths?.openShareFolder()}
-              style={{
-                flex: 1,
-                padding: '10px',
-                background: '#8be9fd',
-                border: 'none',
-                borderRadius: '4px',
-                color: '#282a36',
-                fontSize: '0.9rem',
-                fontWeight: 'bold',
-                cursor: 'pointer'
-              }}
-            >
-              📂 Open in Files App
-            </button>
-            {(() => {
-              const zynkDir = sharedDirs.find(d => d.local_path === androidShareDir);
-              return zynkDir ? (
-                <button
-                  onClick={() => handleRescanDirectory(zynkDir.id, zynkDir.share_name)}
-                  disabled={loading}
-                  style={{
-                    padding: '10px 16px',
-                    background: '#50fa7b',
-                    border: 'none',
-                    borderRadius: '4px',
-                    color: '#282a36',
-                    fontSize: '0.9rem',
-                    fontWeight: 'bold',
-                    cursor: loading ? 'wait' : 'pointer',
-                    opacity: loading ? 0.5 : 1
-                  }}
-                  title="Rescan for new files"
-                >
-                  🔄 Rescan
-                </button>
-              ) : null;
-            })()}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {/* The in-app list, with "→ Models" on .gguf files. The old "Open folder" button
+                handed off to the phone's Files app, which has no such button; removed
+                (Matt, 2026-10-24). */}
+            {sharedDirs.length > 0 && (
+              <button
+                onClick={() => {
+                  const own = sharedDirs.find(d => d.share_name === 'ZynkbotShare') || sharedDirs[0];
+                  setBrowserShare({ shareId: own.id, deviceId: own.device_id, shareName: 'My shared folder' });
+                }}
+                style={{
+                  flex: 1,
+                  padding: '10px',
+                  background: '#6272a4',
+                  border: 'none',
+                  borderRadius: '4px',
+                  color: '#f8f8f2',
+                  fontSize: '0.9rem',
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                📋 Browse shared files on this device
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -967,10 +938,10 @@ export default function ZynkLinkPanel({ apiBaseUrl, onOpenUserIdentity, userId }
                 >
                   <div style={{ marginBottom: '8px' }}>
                     <div style={{ color: '#bd93f9', fontWeight: 'bold', marginBottom: '2px' }}>
-                      {dir.share_name || dir.local_path}
+                      Shared from {linkedUsers.find(u => u.device_id === dir.device_id)?.device_name || dir.device_id.substring(0, 8)}
                     </div>
                     <div style={{ color: '#9aa5c4', fontSize: '0.8rem' }}>
-                      From: {linkedUsers.find(u => u.device_id === dir.device_id)?.device_name || dir.device_id.substring(0, 8)}
+                      {dir.share_name || dir.local_path}
                     </div>
                     <div style={{ color: '#9aa5c4', fontSize: '0.8rem', marginBottom: '8px' }}>
                       Shared: {new Date(dir.created_at).toLocaleDateString()}

@@ -485,6 +485,13 @@ if errorlevel 1 goto cuda_none
 )
 echo.
 
+REM `goto cuda_none` above jumps here on any machine without an NVIDIA driver.
+REM The label was lost in a merge (959ed03, "Merge origin/main into voice",
+REM 2026-09-01); every run since on a non-NVIDIA machine has failed immediately
+REM with "cannot find the batch label specified", no pause, window just closes
+REM (found 2026-09-21 testing a fresh install on a no-GPU laptop).
+:cuda_none
+
 REM ============================================
 REM Step 5: Configure Environment
 REM ============================================
@@ -512,7 +519,7 @@ echo Creating .env file...
     echo XAI_API_KEY=
     echo.
     echo # Safety
-    echo ZYNK_CONTAINMENT_MODE=guardian
+    echo ZYNK_CONTAINMENT_MODE=sovereign
     echo.
     echo # ZynkSync
     echo ZYNKSYNC_AUTO_SYNC=true
@@ -635,12 +642,15 @@ echo.
 echo Would you like to download local LLM models for offline inference?
 echo.
 echo Available models:
-echo   1. Qwen3 8B (5.0GB^)                        - Best all-around; recommended for new users
-echo   2. DeepSeek R1 Distill Llama 8B (4.7GB^)  - Reasoning model; analytical tasks
-echo   3. Llama 3.1 8B Lexi Uncensored (4.9GB^)  - Creative, unfiltered responses
+echo   1. Zynkbot model: Qwen3 4B Instruct 2507 (2.4GB^) - The model Zynkbot is built around; fast, checksum verified
+echo   2. Qwen3 8B (5.0GB^)                        - Larger all-around model for a PC with the RAM
+echo   3. DeepSeek R1 Distill Llama 8B (4.7GB^)  - Reasoning model; analytical tasks
+echo   4. Llama 3.1 8B Lexi Uncensored (4.9GB^)  - Creative, unfiltered responses
+echo.
+echo The app also offers the Zynkbot model at its first start, so this step can be skipped.
 echo.
 echo Enter model numbers to download (space-separated^), or press Enter to skip
-echo Example: 1 2 3 (for all^), or just 1 (for Llama^)
+echo Example: 1 2 3 4 (for all^), or just 1 (for the Zynkbot model^)
 echo.
 set /p MODEL_CHOICES="Your choice: "
 
@@ -649,6 +659,23 @@ if not "!MODEL_CHOICES!"=="" (
 
     for %%m in (!MODEL_CHOICES!) do (
         if "%%m"=="1" (
+            echo.
+            echo Downloading the Zynkbot model (2.4GB^)...
+            wget -c "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_0.gguf" -O "Qwen3-4B-Instruct-2507-Q4_0.gguf"
+            if !errorLevel! equ 0 (
+                echo Checking the file...
+                for /f "skip=1 tokens=1" %%h in ('certutil -hashfile "Qwen3-4B-Instruct-2507-Q4_0.gguf" SHA256 ^| findstr /v "CertUtil"') do set "ZB_HASH=%%h"
+                if /i "!ZB_HASH!"=="e0ba675d86ab277c61701c6793659b2ae801d95e3be791464c321e6fbf613be2" (
+                    echo [OK] Zynkbot model downloaded and verified
+                ) else (
+                    echo [ERROR] The downloaded file did not match its checksum; removing it. Run the script again.
+                    del "Qwen3-4B-Instruct-2507-Q4_0.gguf"
+                )
+            ) else (
+                echo [ERROR] Failed to download the Zynkbot model
+            )
+        )
+        if "%%m"=="2" (
             echo.
             echo Downloading Qwen3 8B (5.0GB^)...
             wget -c "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf" -O "Qwen3-8B-Q4_K_M.gguf"
@@ -659,7 +686,7 @@ if not "!MODEL_CHOICES!"=="" (
             )
         )
 
-        if "%%m"=="2" (
+        if "%%m"=="3" (
             echo.
             echo Downloading DeepSeek R1 Distill Llama 8B (4.7GB^)...
             wget -c "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf" -O "DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf"
@@ -670,7 +697,7 @@ if not "!MODEL_CHOICES!"=="" (
             )
         )
 
-        if "%%m"=="3" (
+        if "%%m"=="4" (
             echo.
             echo Downloading Llama 3.1 8B Lexi Uncensored (4.9GB^)...
             wget -c "https://huggingface.co/bartowski/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF/resolve/main/Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf" -O "Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf"

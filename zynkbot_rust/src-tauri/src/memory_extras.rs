@@ -39,6 +39,19 @@ pub struct MemoryExtras {
     pub tone: Option<String>,
     #[serde(default)]
     pub entities: Option<Vec<EntityOut>>,
+    /// true for something over in days or weeks (an errand, a parking level, a trip,
+    /// this week's mood); false or absent for what stays true about the user (2026-10-26).
+    #[serde(default)]
+    pub passing: Option<bool>,
+}
+
+/// How long a passing fact stays in recall after its day: two weeks after the event
+/// (or after it was said, when the event day is unknown or already past).
+pub const PASSING_DAYS: i64 = 14;
+
+pub fn passing_expiry(event_date: Option<chrono::DateTime<chrono::Utc>>, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    let base = match event_date { Some(d) if d > now => d, _ => now };
+    base + chrono::Duration::days(PASSING_DAYS)
 }
 
 /// Prompt text describing the extra fields. Shared by every backend.
@@ -49,7 +62,8 @@ pub fn prompt_instructions(today: NaiveDate) -> String {
 - "namespace": one of {namespaces}. Pick the one a person would file this under; "personal" only when nothing more specific fits.
 - "tags": 1 to 3 short lowercase topic words (e.g. ["keto", "chili"], ["elden ring"]).
 - "tone": the user's tone in this message, one of "positive", "neutral", "negative", "frustrated", "anxious", "excited".
-- "entities": the people, places, organisations and named things mentioned, each as {{"name": "...", "kind": "person|place|org|thing"}}; an empty list if none."#,
+- "entities": the people, places, organisations and named things mentioned, each as {{"name": "...", "kind": "person|place|org|thing"}}; an empty list if none.
+- "passing": true when the fact is over in days or weeks (an errand, where something is parked, an appointment, a trip, how the user feels this week); false when it stays true about the user (who they are, what they own, the people in their life, habits, health, likes)."#,
         today = today.format("%Y-%m-%d"),
         namespaces = CANONICAL_NAMESPACES.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", "),
     )
@@ -61,7 +75,8 @@ pub const SCHEMA_PROPERTIES: &str = r#"
     "namespace": {"type": "string"},
     "tags": {"type": "array", "items": {"type": "string"}},
     "tone": {"type": "string"},
-    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}}"#;
+    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}},
+    "passing": {"type": "boolean"}"#;
 
 /// A model-supplied event date is kept only if it parses, is not absurd, and is
 /// not the Jan-1 placeholder unless the text itself talks about January 1 or New Year.
@@ -72,7 +87,10 @@ pub fn validate_event_date(raw: Option<&str>, text: &str, today: NaiveDate) -> O
     }
     let head: String = s.chars().take(10).collect();
     let d = NaiveDate::parse_from_str(&head, "%Y-%m-%d").ok()?;
-    if d.year() < 1900 || d > today + chrono::Duration::days(366 * 2) {
+    // `today` is the day after the memory was said (callers add one day for time
+    // zones). The model is asked for the date something HAPPENED; a future date is a
+    // hallucination (a memory from 9/5 filed under December, KI-066).
+    if d.year() < 1900 || d > today {
         return None;
     }
     if d.month() == 1 && d.day() == 1 {
@@ -156,9 +174,51 @@ pub fn clean_entities(entities: Option<&[EntityOut]>) -> Vec<EntityOut> {
     out
 }
 
+/// True when the message asks for the text to be worked on rather than says something
+/// about the user: translate, reprint, rewrite, reword, rephrase, paraphrase, proofread,
+/// or fix the grammar or spelling. Such messages carry someone else's words (a pasted
+/// conversation, a letter) and the phone's model extracted "facts" about the user from
+/// them (ice cream sales from a translation, 2026-10-25). The verb must be the request
+/// itself: at the start, after a politeness opener, or followed by its object ("translate
+/// this", "rewrite the following"). "I had to translate for my mother" is a fact, not a
+/// request, and passes (Matt, 2026-10-26).
+pub fn is_rewrite_request(message: &str) -> bool {
+    let head: String = message.trim().chars().take(160).collect::<String>().to_lowercase();
+    let head = head.replace(['\n', '\r'], " ");
+    let verbs = ["translate", "reprint", "rewrite", "re-write", "reword", "rephrase", "paraphrase", "proofread", "proof-read", "proof read"];
+    let openers = ["please ", "can you ", "could you ", "would you ", "will you ", "hey zynk, ", "hey zynk ", "zynkbot, ", "zynkbot ", "ok ", "okay ", "now "];
+    let mut start = head.as_str();
+    loop {
+        let mut stripped = false;
+        for o in openers { if let Some(rest) = start.strip_prefix(o) { start = rest.trim_start(); stripped = true; } }
+        if !stripped { break; }
+    }
+    for v in verbs {
+        if start.starts_with(v) { return true; }
+        // The verb with its object anywhere in the first 160 characters.
+        if let Some(i) = head.find(v) {
+            let after = head[i + v.len()..].trim_start();
+            if after.starts_with(':') || ["this", "that", "the following", "it", "these", "my ", "the text", "the message", "what i", "into", "to spanish", "to english", "to french", "to german", "to italian", "to portuguese", "in spanish", "in english", "in french", "in german"].iter().any(|o| after.starts_with(o)) { return true; }
+        }
+    }
+    let grammar = ["fix the grammar", "fix my grammar", "fix the spelling", "fix my spelling", "correct the grammar", "correct my grammar", "check the grammar", "check my grammar", "check the spelling", "correct the spelling", "fix the typos", "fix typos"];
+    grammar.iter().any(|g| head.contains(g))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two weeks after the event when it is ahead, two weeks from now otherwise (2026-10-26).
+    #[test]
+    fn passing_expiry_is_two_weeks_after_the_event_or_now() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-26T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let ahead = chrono::DateTime::parse_from_rfc3339("2026-11-20T00:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let past = chrono::DateTime::parse_from_rfc3339("2026-09-24T00:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert_eq!(passing_expiry(Some(ahead), now), ahead + chrono::Duration::days(PASSING_DAYS));
+        assert_eq!(passing_expiry(Some(past), now), now + chrono::Duration::days(PASSING_DAYS));
+        assert_eq!(passing_expiry(None, now), now + chrono::Duration::days(PASSING_DAYS));
+    }
 
     fn today() -> NaiveDate { NaiveDate::from_ymd_opt(2026, 9, 7).unwrap() }
 
@@ -172,6 +232,8 @@ mod tests {
         assert_eq!(validate_event_date(None, "no date", today()), None);
         assert_eq!(validate_event_date(Some("1850-03-04"), "absurd", today()), None);
         assert_eq!(validate_event_date(Some("2031-03-04"), "too far", today()), None);
+        assert_eq!(validate_event_date(Some("2026-12-05"), "spoke on 9/5 about nothing dated", today()), None, "KI-066: no future dates");
+        assert_eq!(validate_event_date(Some("2026-09-07"), "today", today()), NaiveDate::from_ymd_opt(2026, 9, 7));
         assert_eq!(validate_event_date(Some("not a date"), "x", today()), None);
     }
 
@@ -213,5 +275,30 @@ mod tests {
         assert_eq!(out[0], EntityOut { name: "Vermont".into(), kind: "place".into() });
         assert_eq!(out[1].kind, "person");
         assert_eq!(out[2].kind, "thing");
+    }
+
+    #[test]
+    fn rewrite_requests_are_recognised() {
+        for m in [
+            "Translate this to Spanish: how is selling the ice cream going?",
+            "Please translate the following into French.",
+            "Can you rewrite this so it sounds more formal?",
+            "reprint that message with: how is selling the ice cream going",
+            "Proofread: Dear Mr Jones, I am writing to ask...",
+            "Hey Zynk, reword this for me",
+            "Could you fix the grammar in this paragraph?",
+            "Paraphrase the text below in plain English",
+        ] { assert!(is_rewrite_request(m), "{m}"); }
+    }
+
+    #[test]
+    fn statements_about_the_user_pass() {
+        for m in [
+            "I had to translate for my mother at the doctor today.",
+            "My daughter is learning to translate Spanish poetry.",
+            "I rewrote my resume this weekend and sent it to three firms.",
+            "I'm flying to Denver Thursday for my nephew's wedding.",
+            "What's a good recipe for raspberry pie?",
+        ] { assert!(!is_rewrite_request(m), "{m}"); }
     }
 }

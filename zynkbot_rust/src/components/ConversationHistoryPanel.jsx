@@ -1,6 +1,16 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { confirmDialog } from '../utils/confirmDialog';
+
+// Section header colours (month groups fall back to the muted blue)
+const GROUP_COLORS = {
+  "Current thread": "#50fa7b",
+  "Pinned": "#f1fa8c",
+  "Today": "#8be9fd",
+  "Yesterday": "#bd93f9",
+  "This Week": "#ffb86c",
+};
 
 // Groups sessions by relative date for display
 function dateLabel(dateStr) {
@@ -77,6 +87,15 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
       setIsLoading(false);
     }
   }, [userId, isHipaaMode]);
+
+  // Threads changed by a sync (a deletion on another device, a renamed or new thread)
+  // show up without reopening the panel.
+  useEffect(() => {
+    let unlisten = null;
+    (async () => { unlisten = await listen("zynksync-threads-changed", () => { loadSessions(); }); })();
+    return () => { if (unlisten) unlisten(); };
+  }, [loadSessions]);
+
 
   const runSearch = useCallback(async (query, from, to) => {
     if (!userId) return;
@@ -218,7 +237,9 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     }
   };
 
-  // Rename: the title turns into a text box in place; Enter saves, Escape cancels.
+  // Rename: the title turns into a text box in place; Enter, or the pencil again, saves;
+  // Escape cancels. (Tapping the pencil a second time used to restart the edit with the
+  // old title — Matt, OnePlus, 2026-10-06.)
   const startRename = (e, session) => {
     e.stopPropagation();
     setRenaming({ id: session.session_id, value: session.title || "" });
@@ -229,6 +250,8 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     try {
       await invoke("set_session_title", { sessionId: id, userId, title: value.trim() });
       setSessions((prev) => prev.map((s) => (s.session_id === id ? { ...s, title: value.trim() } : s)));
+      // The title line above the messages follows a rename made here (App.jsx).
+      window.dispatchEvent(new CustomEvent('zynk-session-renamed', { detail: { sessionId: id, title: value.trim() } }));
     } catch (err) {
       console.error("[History] rename failed:", err);
     }
@@ -264,6 +287,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                     role: m.role,
                     content: m.content,
                     timestamp: m.created_at,
+                    sources_json: m.sources_json, // the page turns it back into the sources list
                   })),
                 });
                 onClose();
@@ -363,7 +387,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
             )}
             {!isLoading && Object.entries(groups).map(([label, group]) => (
               <div key={label}>
-                <div style={{ padding: "6px 16px 4px", fontSize: "0.75rem", color: "#a4acd0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                <div style={{ padding: "6px 16px 4px", fontSize: "0.75rem", fontWeight: 600, color: GROUP_COLORS[label] || "#a4acd0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                   {label}
                 </div>
                 {group.map((session) => (
@@ -411,8 +435,9 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                       </div>
                     </div>
                     <button
-                      onClick={(e) => startRename(e, session)}
-                      title="Rename"
+                      onPointerDown={(e) => { if (renaming?.id === session.session_id) e.preventDefault(); }}
+                      onClick={(e) => { e.stopPropagation(); if (renaming?.id === session.session_id) { commitRename(); } else { startRename(e, session); } }}
+                      title={renaming?.id === session.session_id ? "Save name" : "Rename"}
                       style={{ background: "none", border: "none", color: "#f8f8f2", cursor: "pointer", fontSize: "1.05rem", padding: "0 0 0 8px", flexShrink: 0 }}
                     >
                       ✏️

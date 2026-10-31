@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import MemoryManagerModal from "./MemoryManagerModal";
 import "../styles/MemoryManager.css";
 
-const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref) => {
+const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode, onOpenConversation }, ref) => {
   const isHipaaMode = containmentMode === 'hipaa';
   const [showModal, setShowModal] = useState(false);
   const [memories, setMemories] = useState([]);
@@ -85,7 +85,10 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
     close: () => setShowModal(false),
   }));
 
-  if (isLoading) {
+  // Only the first load shows the placeholder. Every background store refreshes this
+  // list, and returning the placeholder here unmounted the Memory Manager window too:
+  // it reopened at the top with a flash each time a memory landed (Matt, 2026-10-24).
+  if (isLoading && memories.length === 0) {
     return (
       <div className="memory-manager">
         <h3>Recent Memories</h3>
@@ -256,6 +259,7 @@ const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode }, ref)
         onClose={() => setShowModal(false)}
         userId={user_id}
         onMemoriesChanged={fetchMemories}
+        onOpenConversation={onOpenConversation}
       />
     </>
   );

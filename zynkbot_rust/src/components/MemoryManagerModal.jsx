@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import MemoryReportModal from './MemoryReportModal';
 import MemoryGraphModal from "./MemoryGraphModal";
+import CloudBackupSettings from "./CloudBackupSettings";
 import "../styles/MemoryManagerModal.css";
 import { confirmDialog } from '../utils/confirmDialog';
 
@@ -26,7 +27,40 @@ const CANONICAL_NAMESPACES = [
   'achievements', 'biography'
 ];
 
-export default function MemoryManagerModal({ isOpen, onClose, userId, onMemoriesChanged }) {
+// Facts that came from one message share its text in original_text (call 2 stores one
+// memory per fact, 2026-10-24). The list shows them as one card per message under a day
+// header, so a couple of hundred facts read as the conversations they came from instead
+// of a pile of fragments (Matt, 2026-10-26). Same key as the prompt builder uses.
+function groupByDay(list) {
+  const normalise = (t) => t.split(/\s+/).join(' ').toLowerCase();
+  const days = [];
+  for (const mem of list) {
+    const d = new Date(mem.created_at);
+    const dayKey = isNaN(d) ? 'unknown' : d.toDateString();
+    let day = days.length && days[days.length - 1].key === dayKey ? days[days.length - 1] : null;
+    if (!day) { day = { key: dayKey, date: d, groups: [] }; days.push(day); }
+    const said = (mem.original_text || '').trim();
+    const gkey = said ? normalise(said) : `id:${mem.id}`;
+    let group = said ? day.groups.find(g => g.key === gkey) : null;
+    if (!group) { group = { key: gkey, said, items: [] }; day.groups.push(group); }
+    group.items.push(mem);
+  }
+  return days;
+}
+function dayLabel(date) {
+  if (isNaN(date)) return '';
+  return date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+function oneLine(text, max) {
+  const t = text.split(/\s+/).join(' ');
+  return t.length > max ? t.substring(0, max).trimEnd() + '…' : t;
+}
+
+export default function MemoryManagerModal({ isOpen, onClose, userId, onMemoriesChanged, onOpenConversation }) {
+  // On the on-device model, memories arrive minutes after the reply (the phone's queue,
+  // 2026-10-24); the header says so. Read when the window opens.
+  const onDeviceModel = (() => { try { return (localStorage.getItem('zynkbot_preferred_model') || '').endsWith('.gguf'); } catch (_) { return false; } })();
+  const onDeviceNote = 'With the on-device model, new memories can take a few minutes to appear.';
   const [memories, setMemories] = useState([]);
   const [selectedMemory, setSelectedMemory] = useState(null);
   const [relationships, setRelationships] = useState([]);
@@ -42,6 +76,9 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [dateToDisplay, setDateToDisplay] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [backupStatus, setBackupStatus] = useState(null); // null | 'busy' | 'ok' | 'error'
+  const [showStorage, setShowStorage] = useState(false); // backup storage details, folded under the header
+  const [openSaid, setOpenSaid] = useState(() => new Set()); // message groups whose full text is shown (tap the quote)
+  const toggleSaid = (key) => setOpenSaid(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
   const [backupMsg, setBackupMsg] = useState('');
   const [keyStatus, setKeyStatus] = useState(null); // null | { key: string, acknowledged: boolean }
   const [showKeySaveModal, setShowKeySaveModal] = useState(false);
@@ -126,13 +163,29 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     doBackup();
   };
 
+  // Restore means one thing: bring back the memories and history from the most recent
+  // cloud backup. It has nothing to do with adding a device — a fresh install, reinstall
+  // or new phone, pairs with a code and receives everything from its peers (Matt,
+  // 2026-10-07, KI-092). The "Which device is this?" picker that briefly lived here is gone.
+  const doRestoreData = async () => {
+    const res = await invoke('restore_memories_from_r2', { userId });
+    fetchMemories();
+    return res;
+  };
   const handleRestore = async () => {
-    if (!await confirmDialog('Restore memories from cloud backup? Memories already on this device will be skipped.')) return;
-    setBackupStatus('busy'); setBackupMsg('Restoring…');
+    setBackupStatus('busy'); setBackupMsg('Checking the backup…');
     try {
-      const res = await invoke('restore_memories_from_r2', { userId });
+      const r2 = await invoke('get_r2_config_status');
+      if (!r2?.configured) {
+        setBackupStatus('error');
+        setBackupMsg('Cloud backup is not set up on this device. Tap Storage above and add the storage details, or pair this device with one that has your memories.');
+        setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 8000);
+        return;
+      }
+      if (!await confirmDialog('Restore memories from your most recent cloud backup? Memories already on this device are skipped, and anything deleted since the backup stays deleted.')) { setBackupStatus(null); setBackupMsg(''); return; }
+      setBackupMsg('Restoring…');
+      const res = await doRestoreData();
       setBackupStatus('ok'); setBackupMsg(res.message);
-      fetchMemories();
     } catch (err) { setBackupStatus('error'); setBackupMsg(String(err)); }
     setTimeout(() => { setBackupStatus(null); setBackupMsg(''); }, 5000);
   };
@@ -177,7 +230,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         dateTo: filterDateTo || null
       });
       console.log('Fetched memories:', result);
-      setMemories(result);
+      // KI-059: the "Remembered on request" filter reads mem.requested, which this
+      // fetch never set (only the sidebar list asked for the ids), so it matched nothing.
+      let requestedIds = new Set();
+      try { requestedIds = new Set(await invoke('list_requested_memory_ids', { userId })); } catch (_) {}
+      setMemories((result || []).map(m => ({ ...m, requested: requestedIds.has(m.id) })));
     } catch (error) {
       console.error('Failed to fetch memories:', error);
       alert(`Error fetching memories: ${error}`);
@@ -315,6 +372,52 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   };
 
   // Delete relationship
+  // A replaced memory becomes current again; both memories then stand (2026-10-23).
+  const handleMakeCurrent = async (memoryId) => {
+    try {
+      await invoke('restore_memory', { memoryId });
+      await fetchMemories();
+      setSelectedMemory(prev => (prev && prev.id === memoryId) ? { ...prev, temporal_status: null } : prev);
+      if (onMemoriesChanged) {
+        onMemoriesChanged();
+      }
+    } catch (error) {
+      console.error('Failed to restore memory:', error);
+      alert(`Error restoring memory: ${error}`);
+    }
+  };
+
+  // A passing fact (an errand, a parking level, a trip) expires two weeks after its day
+  // and leaves recall; it stays here with a Keep button (2026-10-26).
+  const expiryDate = (mem) => {
+    if (!mem || !mem.expires_at) return null;
+    const d = new Date(String(mem.expires_at).replace(' UTC', 'Z').replace(' ', 'T'));
+    return isNaN(d.getTime()) ? null : d;
+  };
+  const passingState = (mem) => {
+    const d = expiryDate(mem);
+    if (!d) return null;
+    return d.getTime() < Date.now() ? 'expired' : 'passing';
+  };
+  const passingText = (mem) => {
+    const d = expiryDate(mem);
+    if (!d) return '';
+    return passingState(mem) === 'expired'
+      ? `a passing fact; expired on ${d.toLocaleDateString()} and left out of recall.`
+      : `a passing fact; leaves recall after ${d.toLocaleDateString()}.`;
+  };
+  const handleKeep = async (memoryId) => {
+    try {
+      await invoke('keep_memory', { memoryId });
+      await fetchMemories();
+      setSelectedMemory(prev => (prev && prev.id === memoryId) ? { ...prev, expires_at: null, is_ephemeral: false } : prev);
+      if (onMemoriesChanged) onMemoriesChanged();
+    } catch (error) {
+      console.error('Failed to keep memory:', error);
+      alert(`Error keeping memory: ${error}`);
+    }
+  };
+
   const handleDeleteRelationship = async (linkId) => {
     if (!await confirmDialog('Are you sure you want to delete this relationship?')) {
       return;
@@ -421,7 +524,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     setEditFormData({
       title: memory.title || '',
       content: memory.content || '',
-      namespace: memory.namespace || 'personal'
+      namespace: memory.namespace || 'personal',
+      original: memory.original_text || ''
     });
     console.log('[MemoryManager] Edit mode enabled, form data set');
   };
@@ -459,12 +563,19 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
       console.log('[Save] Update successful');
 
+      // "What I said" is shared by every fact from that message; the command rewrites all of them.
+      const newOriginal = (editFormData.original || '').trim();
+      if (newOriginal !== (selectedMemory.original_text || '').trim()) {
+        await invoke('update_memory_original_text', { memoryId: selectedMemory.id, originalText: newOriginal });
+      }
+
       // Update the selected memory locally with the new data
       setSelectedMemory({
         ...selectedMemory,
         title: editFormData.title || null,
         content: editFormData.content,
-        namespace: editFormData.namespace
+        namespace: editFormData.namespace,
+        original_text: newOriginal || null
       });
 
       // Exit edit mode
@@ -547,6 +658,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     (mem.title && mem.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
     (mem.tags && searchQuery && mem.tags.toLowerCase().includes(searchQuery.toLowerCase().replace(/^#/, '')))
   ));
+  const groupedDays = groupByDay(filteredMemories);
   const requestedToggle = (
     <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: '#bd93f9', cursor: 'pointer', margin: '0 0 8px 0' }}
       title='Only memories you stored with "Remember: ..." (typed or spoken)'>
@@ -672,6 +784,116 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   ) : null;
 
   // ── Mobile layout ─────────────────────────────────────────────────────────
+  // One fact as a card (alone) or as a row inside its message's card (inGroup).
+  const renderPhoneFact = (mem, inGroup) => (
+    <div key={mem.id} style={inGroup
+      ? { borderTop: '1px solid #44475a', padding: '8px 0 6px' }
+      : { background: '#1e1f29', border: `1px solid ${selectedMemoryIds.includes(mem.id) ? '#ff5555' : '#44475a'}`, borderRadius: '8px', padding: '12px', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px', gap: '8px' }}>
+        <span style={{ background: '#bd93f9', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', flexShrink: 0 }}>
+          {mem.namespace.toUpperCase()}
+        </span>
+        {mem.temporal_status === 'superseded' && (
+          <span title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
+            REPLACED
+          </span>
+        )}
+        {mem.temporal_status === 'completed' && (
+          <span title="You said this was done; it is kept as history and left out of recall" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
+            DONE
+          </span>
+        )}
+        {passingState(mem) === 'expired' && (
+          <span title="A passing fact whose time has passed; it is left out of recall" style={{ background: '#44475a', color: '#f8f8f2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', flexShrink: 0 }}>
+            EXPIRED
+          </span>
+        )}
+        <span style={{ color: '#6272a4', fontSize: '0.75rem', flex: 1 }}>
+          {inGroup ? '' : new Date(mem.created_at).toLocaleDateString()}
+        </span>
+        <input
+          type="checkbox"
+          checked={selectedMemoryIds.includes(mem.id)}
+          onChange={() => toggleMemorySelection(mem.id)}
+          onClick={(e) => e.stopPropagation()}
+          style={{ width: '20px', height: '20px', cursor: 'pointer', flexShrink: 0, accentColor: '#ff5555' }}
+        />
+      </div>
+      <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
+        {mem.title && (
+          <div style={{ color: '#8be9fd', fontWeight: '600', fontSize: '0.95rem', marginBottom: '4px' }}>
+            {mem.title}
+          </div>
+        )}
+        <div style={{ color: '#a0a0a0', fontSize: '0.85rem', lineHeight: '1.4' }}>
+          {mem.content.substring(0, 100)}{mem.content.length > 100 ? '…' : ''}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Desktop: the same fact as a list item or as a row inside its message's card.
+  const renderDesktopFact = (mem, inGroup) => (
+    <div
+      key={mem.id}
+      className={`memory-list-item ${inGroup ? 'in-group' : ''} ${selectedMemory?.id === mem.id ? 'selected' : ''}`}
+    >
+      <div className="memory-list-item-header">
+        <label
+          style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', marginRight: '8px' }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={selectedMemoryIds.includes(mem.id)}
+            onChange={() => toggleMemorySelection(mem.id)}
+            style={{ cursor: 'pointer', marginRight: '8px' }}
+          />
+        </label>
+        <div style={{ flex: 1 }} onClick={() => setSelectedMemory(mem)}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <span className="memory-namespace-badge">
+                {mem.namespace.toUpperCase()}
+              </span>
+              {mem.temporal_status === 'superseded' && (
+                <span className="memory-namespace-badge" title="A newer memory replaced this one; it is kept as history" style={{ background: '#44475a' }}>
+                  REPLACED
+                </span>
+              )}
+              {mem.temporal_status === 'completed' && (
+                <span className="memory-namespace-badge" title="You said this was done; it is kept as history and left out of recall" style={{ background: '#44475a' }}>
+                  DONE
+                </span>
+              )}
+              {passingState(mem) === 'expired' && (
+                <span className="memory-namespace-badge" title="A passing fact whose time has passed; it is left out of recall" style={{ background: '#44475a' }}>
+                  EXPIRED
+                </span>
+              )}
+            </div>
+            {!inGroup && (
+              <span className="memory-date">
+                {new Date(mem.created_at).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
+        {mem.title && (
+          <div className="memory-list-item-title">
+            {mem.title.length > 60 ? mem.title.substring(0, 60) + '...' : mem.title}
+          </div>
+        )}
+        <div className="memory-list-item-content">
+          {mem.content.substring(0, mem.title ? 80 : 100)}
+          {mem.content.length > (mem.title ? 80 : 100) && '...'}
+        </div>
+      </div>
+    </div>
+  );
+
   if (isMobile) {
     return (
       <div data-modal="" style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -695,28 +917,34 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
           ) : (
             <>
               <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: '1 1 100%' }}>Memory Manager</h2>
-              {/* One tidy grid of equal buttons under the title; the old right-aligned
-                  wrap left a ragged two-row cluster beside the heading (2026-09-08). */}
+              {onDeviceModel && <div style={{ flex: '1 1 100%', fontSize: '0.8rem', color: '#9aa5c4', margin: '2px 0 4px' }}>{onDeviceNote}</div>}
+              {/* About me across the top; Backup, Restore and Storage on one row under it.
+                  The key and Clear All live inside the Storage panel, out of the way of a
+                  stray tap (Matt, 2026-10-25). */}
+              <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
+                style={{ width: '100%', background: '#bd93f9', border: 'none', color: '#282a36', fontSize: '0.9rem', fontWeight: 'bold', padding: '10px', borderRadius: '6px', cursor: 'pointer', minHeight: '44px' }}>
+                🧠 About me
+              </button>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px', width: '100%' }}>
-                <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
-                  style={{ background: '#bd93f9', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>
-                  🧠 About me
-                </button>
                 <button onClick={handleBackup} disabled={backupStatus === 'busy'}
-                  style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  style={{ background: backupStatus === 'ok' ? '#50fa7b' : '#6272a4', border: 'none', color: backupStatus === 'ok' ? '#282a36' : '#fff', fontSize: '0.8rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
                   {backupStatus === 'busy' ? '…' : '☁ Backup'}
                 </button>
                 <button onClick={handleRestore} disabled={backupStatus === 'busy'}
-                  style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
+                  style={{ background: '#44475a', border: 'none', color: '#fff', fontSize: '0.8rem', padding: '5px 10px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', minWidth: '44px', minHeight: '44px' }}>
                   Restore
                 </button>
-                <button onClick={handleCopyKey}
-                  style={{ background: '#ffb86c', border: 'none', color: '#282a36', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}
-                  title="Copy encryption key — store it somewhere safe">
-                  🔑 Key
+                <button onClick={() => setShowStorage(v => !v)}
+                  style={{ background: showStorage ? '#8be9fd' : '#44475a', border: 'none', color: showStorage ? '#282a36' : '#fff', fontSize: '0.8rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}
+                  title="Where the cloud backup is stored, the key, and clearing memories">
+                  Storage {showStorage ? '▴' : '▾'}
                 </button>
-                <button onClick={handleClearAllMemories} style={{ background: 'none', border: '1px solid #ff5555', color: '#ff5555', fontSize: '0.75rem', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', minWidth: '44px', minHeight: '44px' }}>Clear All</button>
               </div>
+              {showStorage && (
+                <div style={{ flex: '1 1 100%', marginTop: '8px' }}>
+                  <CloudBackupSettings onShowKey={handleCopyKey} onClearAll={handleClearAllMemories} />
+                </div>
+              )}
             </>
           )}
         </div>
@@ -767,7 +995,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               {requestedToggle}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <select value={filterNamespace} onChange={(e) => setFilterNamespace(e.target.value)} className="filter-select" style={{ flex: 1 }}>
-                  <option value="all">All Namespaces</option>
+                  <option value="all">Categories</option>
                   {namespaces.map((ns) => (
                     <option key={ns} value={ns}>{ns.charAt(0).toUpperCase() + ns.slice(1)}</option>
                   ))}
@@ -829,35 +1057,18 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                   {searchQuery ? 'No memories match your search' : 'No memories found'}
                 </div>
               ) : (
-                filteredMemories.map((mem) => (
-                  <div key={mem.id} style={{ background: '#1e1f29', border: `1px solid ${selectedMemoryIds.includes(mem.id) ? '#ff5555' : '#44475a'}`, borderRadius: '8px', padding: '12px', marginBottom: '10px' }}>
-                    {/* Badge + date + checkbox */}
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '6px', gap: '8px' }}>
-                      <span style={{ background: '#bd93f9', color: '#fff', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 'bold', flexShrink: 0 }}>
-                        {mem.namespace.toUpperCase()}
-                      </span>
-                      <span style={{ color: '#6272a4', fontSize: '0.75rem', flex: 1 }}>
-                        {new Date(mem.created_at).toLocaleDateString()}
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={selectedMemoryIds.includes(mem.id)}
-                        onChange={() => toggleMemorySelection(mem.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ width: '20px', height: '20px', cursor: 'pointer', flexShrink: 0, accentColor: '#ff5555' }}
-                      />
-                    </div>
-                    {/* Title + preview — tap to open detail */}
-                    <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
-                      {mem.title && (
-                        <div style={{ color: '#8be9fd', fontWeight: '600', fontSize: '0.95rem', marginBottom: '4px' }}>
-                          {mem.title}
-                        </div>
-                      )}
-                      <div style={{ color: '#a0a0a0', fontSize: '0.85rem', lineHeight: '1.4' }}>
-                        {mem.content.substring(0, 100)}{mem.content.length > 100 ? '…' : ''}
+                groupedDays.map((day) => (
+                  <div key={day.key}>
+                    <div style={{ color: '#bd93f9', fontSize: '0.8rem', fontWeight: 'bold', margin: '6px 0 8px', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{dayLabel(day.date)}</div>
+                    {day.groups.map((group) => group.items.length < 2 ? (
+                      group.items.map((mem) => renderPhoneFact(mem, false))
+                    ) : (
+                      <div key={group.key} style={{ background: '#1e1f29', border: '1px solid #44475a', borderRadius: '8px', padding: '10px 12px', marginBottom: '10px' }}>
+                        <div style={{ color: '#6272a4', fontSize: '0.75rem', marginBottom: '2px' }}>What I said · {group.items.length} memories</div>
+                        <div onClick={() => toggleSaid(group.key)} title={openSaid.has(group.key) ? 'Tap to shorten' : 'Tap to read the whole message'} style={{ color: '#f8f8f2', fontSize: '0.9rem', fontStyle: 'italic', lineHeight: 1.35, marginBottom: '8px', cursor: 'pointer', whiteSpace: openSaid.has(group.key) ? 'pre-wrap' : 'normal' }}>“{openSaid.has(group.key) ? group.said : oneLine(group.said, 110)}”</div>
+                        {group.items.map((mem) => renderPhoneFact(mem, true))}
                       </div>
-                    </div>
+                    ))}
                   </div>
                 ))
               )}
@@ -911,19 +1122,76 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         onChange={(e) => setEditFormData({ ...editFormData, content: e.target.value })}
                         rows={8} />
                     </div>
+                    <div className="detail-section">
+                      <strong>What I said:</strong>
+                      <div style={{ color: '#6272a4', fontSize: '0.8rem', margin: '2px 0 4px' }}>Shared by every memory from this message; a change applies to all of them.</div>
+                      <textarea className="edit-textarea" value={editFormData.original}
+                        onChange={(e) => setEditFormData({ ...editFormData, original: e.target.value })}
+                        rows={4} />
+                    </div>
                   </div>
                 ) : (
                   <div className="memory-details-content">
+                    <div className="detail-row">
+                      <strong>ID:</strong> {selectedMemory.id}
+                    </div>
                     <div className="detail-row">
                       <strong>Namespace:</strong> {selectedMemory.namespace}
                     </div>
                     <div className="detail-row">
                       <strong>Created:</strong> {new Date(selectedMemory.created_at).toLocaleString()}
                     </div>
+                    {selectedMemory.temporal_status === 'completed' && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> done, by your answer to a check-in question. Kept as history and left out of recall.{' '}
+                        <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="Not done after all: this memory is current again">
+                          Not done after all
+                        </button>
+                      </div>
+                    )}
+                    {selectedMemory.temporal_status === 'superseded' && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> replaced by a newer memory. Kept as history and left out of recall.
+                        <div style={{ marginTop: '6px' }}>
+                          <button type="button" className="edit-button" style={{ height: '36px', padding: '0 14px' }} title="This memory becomes current again; both are kept" onClick={() => handleMakeCurrent(selectedMemory.id)}>
+                            Undo replacement
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {selectedMemory.expires_at && !selectedMemory.temporal_status && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> {passingText(selectedMemory)}
+                        <div style={{ marginTop: '6px' }}>
+                          <button type="button" className="edit-button" style={{ height: '36px', padding: '0 14px' }} title="Keep this memory: it stops expiring and stays in recall" onClick={() => handleKeep(selectedMemory.id)}>
+                            Keep
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {selectedMemory.session_id && onOpenConversation && (
+                      <div className="detail-row">
+                        <button
+                          type="button"
+                          className="edit-button"
+                          style={{ height: '36px', padding: '0 14px' }}
+                          title="Open the conversation this memory came from, at the exchange that produced it"
+                          onClick={() => onOpenConversation(selectedMemory)}
+                        >💬 Open conversation</button>
+                      </div>
+                    )}
                     <div className="detail-section">
                       <strong>Content:</strong>
                       <div className="content-box">{selectedMemory.content}</div>
                     </div>
+                    {selectedMemory.original_text && (
+                      <div className="detail-section">
+                        <strong>What I said:</strong>
+                        <div className="content-box" style={{ color: '#9aa5c4', fontStyle: 'italic' }}>
+                          {selectedMemory.original_text}
+                        </div>
+                      </div>
+                    )}
                     {selectedMemory.entities_detected && selectedMemory.entities_detected.length > 0 && (
                       <div className="detail-row">
                         <strong>Entities:</strong>
@@ -966,6 +1234,15 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                             {rel.relation_type}
                           </span>
                           <span style={{ color: '#f1fa8c', fontWeight: 'bold' }}>{rel.direction === 'outgoing' ? '→' : '←'}</span>
+                          {rel.relation_type === 'updates' && rel.direction === 'outgoing' && (
+                            <button
+                              type="button"
+                              className="edit-button"
+                              style={{ height: '26px', padding: '0 10px', fontSize: '0.78rem' }}
+                              title="The memory this one replaced becomes current again; both are kept"
+                              onClick={() => handleMakeCurrent(rel.related_memory_id)}
+                            >Revert to previous</button>
+                          )}
                           <button
                             onClick={() => handleDeleteRelationship(rel.id)}
                             style={{ marginLeft: 'auto', background: '#ff5555', border: 'none', color: '#fff', borderRadius: '4px', width: '26px', height: '26px', cursor: 'pointer', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
@@ -1039,6 +1316,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
         {/* Header */}
         <div className="modal-header">
           <h2>Memory Manager</h2>
+          {onDeviceModel && <div style={{ fontSize: '0.85rem', color: '#9aa5c4', flex: '1 1 100%' }}>{onDeviceNote}</div>}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
               style={{ background: '#bd93f9', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
@@ -1054,18 +1332,10 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               style={{ background: '#44475a', border: 'none', color: '#fff', padding: '8px 14px', borderRadius: '4px', cursor: backupStatus === 'busy' ? 'wait' : 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
               Restore
             </button>
-            <button onClick={handleCopyKey}
-              title="Copy your encryption key — store it somewhere safe. Without it, backups cannot be recovered."
-              style={{ background: '#ffb86c', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
-              🔑 Key
-            </button>
-            <button
-              onClick={handleClearAllMemories}
-              className="delete-button"
-              style={{ backgroundColor: '#ff5555', padding: '8px 16px', fontSize: '14px' }}
-              title="Clear all memories for this user"
-            >
-              🗑️ Clear All
+            <button onClick={() => setShowStorage(v => !v)}
+              title="Where the cloud backup is stored, the key, and clearing memories"
+              style={{ background: showStorage ? '#8be9fd' : '#44475a', border: 'none', color: showStorage ? '#282a36' : '#fff', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
+              Storage {showStorage ? '▴' : '▾'}
             </button>
             {backupMsg && (
               <span style={{ fontSize: '0.8rem', color: backupStatus === 'error' ? '#ff5555' : '#50fa7b' }}>
@@ -1074,6 +1344,11 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             )}
             <button onClick={onClose} className="close-button">✕</button>
           </div>
+          {showStorage && (
+            <div style={{ flex: '1 1 100%', marginTop: '10px' }}>
+              <CloudBackupSettings onShowKey={handleCopyKey} onClearAll={handleClearAllMemories} />
+            </div>
+          )}
         </div>
 
         {/* Controls */}
@@ -1091,7 +1366,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             onChange={(e) => setFilterNamespace(e.target.value)}
             className="filter-select"
           >
-            <option value="all">All Namespaces</option>
+            <option value="all">Categories</option>
             {namespaces.map((ns) => (
               <option key={ns} value={ns}>
                 {ns.charAt(0).toUpperCase() + ns.slice(1)}
@@ -1192,47 +1467,18 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               </div>
             ) : (
               <div className="memory-list-scroll">
-                {filteredMemories.map((mem) => (
-                  <div
-                    key={mem.id}
-                    className={`memory-list-item ${selectedMemory?.id === mem.id ? 'selected' : ''}`}
-                  >
-                    <div className="memory-list-item-header">
-                      <label
-                        style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', marginRight: '8px' }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedMemoryIds.includes(mem.id)}
-                          onChange={() => toggleMemorySelection(mem.id)}
-                          style={{ cursor: 'pointer', marginRight: '8px' }}
-                        />
-                      </label>
-                      <div style={{ flex: 1 }} onClick={() => setSelectedMemory(mem)}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                            <span className="memory-namespace-badge">
-                              {mem.namespace.toUpperCase()}
-                            </span>
-                          </div>
-                          <span className="memory-date">
-                            {new Date(mem.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
+                {groupedDays.map((day) => (
+                  <div key={day.key} className="memory-day">
+                    <div className="memory-day-label">{dayLabel(day.date)}</div>
+                    {day.groups.map((group) => group.items.length < 2 ? (
+                      group.items.map((mem) => renderDesktopFact(mem, false))
+                    ) : (
+                      <div key={group.key} className="memory-group">
+                        <div className="memory-group-said-label">What I said · {group.items.length} memories</div>
+                        <div className={`memory-group-said ${openSaid.has(group.key) ? 'open' : ''}`} onClick={() => toggleSaid(group.key)} title={openSaid.has(group.key) ? 'Click to shorten' : 'Click to read the whole message'}>“{openSaid.has(group.key) ? group.said : oneLine(group.said, 140)}”</div>
+                        {group.items.map((mem) => renderDesktopFact(mem, true))}
                       </div>
-                    </div>
-                    <div onClick={() => setSelectedMemory(mem)} style={{ cursor: 'pointer' }}>
-                      {mem.title && (
-                        <div className="memory-list-item-title">
-                          {mem.title.length > 60 ? mem.title.substring(0, 60) + '...' : mem.title}
-                        </div>
-                      )}
-                      <div className="memory-list-item-content">
-                        {mem.content.substring(0, mem.title ? 80 : 100)}
-                        {mem.content.length > (mem.title ? 80 : 100) && '...'}
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -1318,6 +1564,16 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                         rows={8}
                       />
                     </div>
+                    <div className="detail-section">
+                      <strong>What I said:</strong>
+                      <div style={{ color: '#6272a4', fontSize: '0.8rem', margin: '2px 0 4px' }}>Shared by every memory from this message; a change applies to all of them.</div>
+                      <textarea
+                        className="edit-textarea"
+                        value={editFormData.original}
+                        onChange={(e) => setEditFormData({ ...editFormData, original: e.target.value })}
+                        rows={4}
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className="memory-details-content">
@@ -1339,10 +1595,39 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     <div className="detail-row">
                       <strong>Source:</strong> {selectedMemory.source_type || 'N/A'}
                     </div>
-                    {selectedMemory.session_id && (
+                    {selectedMemory.temporal_status === 'completed' && (
                       <div className="detail-row">
-                        <strong>Session:</strong>{' '}
-                        {selectedMemory.session_id.substring(0, 8)}...
+                        <strong>Status:</strong> done, by your answer to a check-in question. Kept as history and left out of recall.{' '}
+                        <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="Not done after all: this memory is current again">
+                          Not done after all
+                        </button>
+                      </div>
+                    )}
+                    {selectedMemory.temporal_status === 'superseded' && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> replaced by a newer memory. Kept as history and left out of recall.{' '}
+                        <button type="button" onClick={() => handleMakeCurrent(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="This memory becomes current again; both are kept">
+                          Undo replacement
+                        </button>
+                      </div>
+                    )}
+                    {selectedMemory.expires_at && !selectedMemory.temporal_status && (
+                      <div className="detail-row">
+                        <strong>Status:</strong> {passingText(selectedMemory)}{' '}
+                        <button type="button" onClick={() => handleKeep(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="Keep this memory: it stops expiring and stays in recall">
+                          Keep
+                        </button>
+                      </div>
+                    )}
+                    {selectedMemory.session_id && onOpenConversation && (
+                      <div className="detail-row">
+                        <button
+                          type="button"
+                          className="edit-button"
+                          style={{ height: '36px', padding: '0 14px' }}
+                          title="Open the conversation this memory came from, at the exchange that produced it"
+                          onClick={() => onOpenConversation(selectedMemory)}
+                        >💬 Open conversation</button>
                       </div>
                     )}
                     <div className="detail-section">
@@ -1353,7 +1638,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     </div>
                     {selectedMemory.original_text && (
                       <div className="detail-section">
-                        <strong>Original:</strong>
+                        <strong>What I said:</strong>
                         <div className="content-box" style={{ color: '#9aa5c4', fontStyle: 'italic' }}>
                           {selectedMemory.original_text}
                         </div>
@@ -1434,17 +1719,25 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                             onChange={(e) => handleUpdateRelationType(rel.id, e.target.value)}
                             title="Change relationship type"
                           >
-                            <option value="supports">supports</option>
+                            <option value="related">related</option>
                             <option value="contradicts">contradicts</option>
-                            <option value="elaborates">elaborates</option>
-                            <option value="reminds_of">reminds_of</option>
-                            <option value="caused_by">caused_by</option>
-                            <option value="quotes">quotes</option>
+                            <option value="updates">updates</option>
                             <option value="resolves">resolves</option>
                           </select>
                           <span className="relationship-direction">
                             {rel.direction === 'outgoing' ? '→' : '←'}
                           </span>
+                          {rel.relation_type === 'updates' && rel.direction === 'outgoing' && (
+                            <button
+                              type="button"
+                              className="edit-button"
+                              style={{ height: '28px', padding: '0 10px', fontSize: '0.8rem' }}
+                              title="The memory this one replaced becomes current again; both are kept"
+                              onClick={() => handleMakeCurrent(rel.related_memory_id)}
+                            >
+                              Revert to previous
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDeleteRelationship(rel.id)}
                             className="delete-rel-button"

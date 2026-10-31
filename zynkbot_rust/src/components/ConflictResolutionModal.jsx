@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import "../styles/ConflictResolutionModal.css";
+import VoiceButton from "./VoiceButton";
 
 export default function ConflictResolutionModal({ isOpen, conflict, onResolve, onClose }) {
   const [selectedOption, setSelectedOption] = useState(null);
@@ -8,6 +9,10 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
   if (!isOpen || !conflict) return null;
 
   const { memoryA, memoryB, sharedEntities } = conflict;
+  // On a phone the local model's "updates" answers arrive as a question for the user,
+  // with the reason prefixed "Possibly an update" (lib.rs filter_local_links, 2026-10-23).
+  // The same card then asks the real question instead of calling it a contradiction.
+  const isUpdate = typeof conflict.reason === 'string' && conflict.reason.startsWith('Possibly an update');
 
   if (!memoryA || !memoryB) return null;
 
@@ -50,21 +55,21 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
   };
 
   return (
-    <div className="modal-overlay">
+    <div className="modal-overlay" style={{ zIndex: 3000 }}>
       <div className="modal-content conflict-resolution">
         <button className="modal-close" onClick={handleCancel}>×</button>
 
-        <h2>⚠️ Possible Conflict Detected</h2>
+        <h2>{isUpdate ? '🔁 Is this an update?' : '⚠️ Possible Conflict Detected'}</h2>
         <p className="conflict-subtitle">
-          Two memories may contradict each other
+          {isUpdate ? 'The new statement may replace an older memory' : 'Two memories may contradict each other'}
           {sharedEntities && sharedEntities.length > 0 && <> about <strong>{sharedEntities.join(", ")}</strong></>}.
-          Choose how to resolve it.
+          {isUpdate ? ' Say which it is.' : ' Choose how to resolve it.'}
         </p>
 
         <div className="conflict-layout">
           {/* Left column: memory boxes */}
           <div className="conflict-left">
-            <h3>Conflicting Memories</h3>
+            <h3>{isUpdate ? 'Older and newer' : 'Conflicting Memories'}</h3>
             <div className="conflict-memories">
               <div className="conflict-memory memory-a">
                 <div className="memory-header">
@@ -103,8 +108,8 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                   onChange={() => handleOptionChange(keepOldValue)}
                 />
                 <span className="option-label">
-                  <strong>Keep old memory #{oldMemory.id}</strong>
-                  <span className="option-description">Discard the new statement — the older memory is correct</span>
+                  <strong>{isUpdate ? 'No, the old memory still stands' : `Keep old memory #${oldMemory.id}`}</strong>
+                  <span className="option-description">{isUpdate ? 'Drop the new statement' : 'Discard the new statement — the older memory is correct'}</span>
                 </span>
               </label>
 
@@ -118,8 +123,8 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                   onChange={() => handleOptionChange(keepNewValue)}
                 />
                 <span className="option-label">
-                  <strong>Keep new memory</strong>
-                  <span className="option-description">Discard the older memory — the new statement replaces it</span>
+                  <strong>{isUpdate ? 'Yes, the new one replaces it' : 'Keep new memory'}</strong>
+                  <span className="option-description">The new statement replaces the older memory, which is kept as history; "Undo replacement" in Memory Manager brings it back</span>
                 </span>
               </label>
 
@@ -133,8 +138,8 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                   onChange={() => handleOptionChange("not_a_contradiction")}
                 />
                 <span className="option-label">
-                  <strong>Not a contradiction</strong>
-                  <span className="option-description">Both are true and unrelated — keep both, remove the contradiction edge</span>
+                  <strong>{isUpdate ? 'Not related' : 'Not a contradiction'}</strong>
+                  <span className="option-description">{isUpdate ? 'Keep the new memory with no link to the old one' : 'Both are true and unrelated — keep both, remove the contradiction edge'}</span>
                 </span>
               </label>
 
@@ -148,18 +153,18 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                   onChange={() => handleOptionChange("keep_both")}
                 />
                 <span className="option-label">
-                  <strong>Accept the contradiction</strong>
-                  <span className="option-description">Keep both memories with the contradiction edge intact</span>
+                  <strong>{isUpdate ? 'No, keep both as they are' : 'Accept the contradiction'}</strong>
+                  <span className="option-description">{isUpdate ? 'Both stay current, linked as related' : 'Keep both memories with the contradiction edge intact'}</span>
                 </span>
               </label>
 
               {selectedOption === "keep_both" && (
                 <div className="contradiction-warning">
-                  <strong>⚠️ Heads up</strong>
+                  <strong>{isUpdate ? 'ℹ️ What happens' : '⚠️ Heads up'}</strong>
                   <p>
-                    Both memories will be kept with a contradiction edge (red arrow) in your memory graph.
-                    This may cause hallucinations in future responses when both memories are recalled together.
-                    You can return to resolve this conflict at any time in the Memory Manager.
+                    {isUpdate
+                      ? 'Both memories stay current and are linked as related. Nothing is recorded as a contradiction.'
+                      : 'Both memories will be kept, linked as a contradiction (the red arrow in your memory graph). When both are recalled together the model may be confused by them. You can resolve the pair later in the Memory Manager.'}
                   </p>
                 </div>
               )}
@@ -188,13 +193,22 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
                       to both, so I understand the full picture in the future.
                     </p>
                   </div>
-                  <textarea
-                    className="explanation-input"
-                    placeholder="Example: I have two dogs — Max is my golden retriever and Wendy is my new puppy"
-                    value={explanation}
-                    onChange={(e) => setExplanation(e.target.value)}
-                    rows={4}
-                  />
+                  {/* Dictation: the same 🎤 button as the chat box; spoken text is added
+                      after whatever is already typed (Matt 2026-10-17, beta 5). */}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                    <textarea
+                      className="explanation-input"
+                      placeholder="Example: I have two dogs — Max is my golden retriever and Wendy is my new puppy"
+                      value={explanation}
+                      onChange={(e) => setExplanation(e.target.value)}
+                      rows={4}
+                      style={{ flex: 1 }}
+                    />
+                    <VoiceButton
+                      onTranscript={(text) => setExplanation((prev) => (prev && !prev.endsWith(' ') ? prev + ' ' : prev) + text)}
+                      style={{ minWidth: '45px', minHeight: '45px', height: '45px' }}
+                    />
+                  </div>
                   <div className="explanation-note">
                     💡 Be specific about the context that makes both memories true
                   </div>

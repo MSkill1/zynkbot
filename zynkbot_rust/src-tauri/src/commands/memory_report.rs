@@ -90,7 +90,7 @@ async fn build(pool: &sqlx::SqlitePool, user_id: &str) -> Result<serde_json::Val
 
     let timeline: Vec<serde_json::Value> = sqlx::query(&format!(
         "SELECT m.id AS id, m.title AS title, substr(m.event_date, 1, 10) AS day, m.namespace AS namespace FROM memories m
-         WHERE {MINE} AND m.event_date IS NOT NULL ORDER BY m.event_date DESC LIMIT 30"))
+         WHERE {MINE} AND m.event_date IS NOT NULL ORDER BY m.event_date DESC LIMIT 20"))
         .bind(user_id).fetch_all(pool).await?
         .iter().map(|r| serde_json::json!({"id": n(r, "id"), "title": s(r, "title"), "day": s(r, "day"), "namespace": s(r, "namespace")})).collect();
 

@@ -39,3 +39,27 @@ Report: a table of scores per person per condition; the false-accept count at 0.
 ## Cost
 
 An afternoon with five volunteers and the two phones. No code beyond reading scores out of logcat. Worth doing before the personal-wake-phrase paid feature ships, because the marketing for that will be tempted to say "secure".
+
+## Results 2026-10-19 — the on-device recipe, checked on the desktop first
+
+Scripts next to this file: `silero_eval.py` (Silero VAD over every labelled clip) and
+`verifier_sim.py` (the phone's 192 pooled features for every clip, the shipped
+`generic_negatives.json`, and a simulation of `WakeVerifierTrainer.kt`'s gradient-descent
+logistic regression). Run with `~/wake-word-venv/bin/python -I <script> <assets/wake-word-models> <clips root> <out dir>`.
+Clips live in `~/Documents/Zynk_related/wake_verifier_clips/`, never in the repository.
+
+Silero VAD (max speech probability in the clip's last 2 s): all 41 single-labelled real wakes
+(Matt 14, Mike 27) ≥ 0.5; of 77 single-labelled false clips, 14 (all Matt's, 09-22) < 0.5 —
+the electronic/noise ones. TV dialogue (phase1/phase2 negatives) is speech and passes. So the
+speech gate costs no real wake and removes about a third of the recent false triggers.
+
+Verifier, 5-fold held out, positives = Matt's 45 real clips, negatives = 110 false clips:
+
+| threshold | Matt kept | noise stopped | Mike let through |
+|-----------|-----------|---------------|------------------|
+| 0.1 | 44/45 | 72/110 | 100% |
+| 0.3 | 41/45 | 92/110 | 93% |
+| 0.5 | 40/45 | 100/110 | 75% |
+
+Auto threshold (5th percentile of own training scores, clamped to 0.5) lands at 0.5. Same
+conclusion as 09-15: a noise/TV filter, not a voice lock. The phone ships it log-only.

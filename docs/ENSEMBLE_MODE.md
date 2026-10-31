@@ -151,5 +151,5 @@ This is more useful than asking any single model — you get the actual dispute 
 
 - Requires at least 2 configured models
 - Coordinator waits for the slowest model — one slow model delays the whole response
-- Web search is best-effort (DuckDuckGo, 5-second timeout); some queries may not return useful results
+- Web search is best-effort (Brave, a SearXNG server or DuckDuckGo, whichever is set up in Keys and servers; 5-second timeout); some queries may not return useful results
 - Synthesis quality depends on the coordinator model — a weak coordinator produces weaker synthesis

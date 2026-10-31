@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.9.6-beta2"
+version = "0.9.6-beta5"
 description = "A local-first AI companion with persistent memory"
 authors = ["ContainAI"]
 license-file = "../../LICENSE"
@@ -44,10 +44,10 @@ reqwest = { version = "0.12", features = ["json", "blocking", "stream", "rustls-
 futures = "0.3"  # Stream processing for SSE token streaming
 
 # Environment variable loading
-dotenv = "0.15"
 
 # Async runtime (needed for reqwest)
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }  # OpenAI Realtime transcription: live dictation text on the desktop (2026-10-28)
 
 # Directory walking for knowledge base
 walkdir = "2"
@@ -62,6 +62,7 @@ hmac = "0.12"   # HMAC-SHA256 for AWS Sig V4 signing (R2 backup)
 aes-gcm = "0.10" # AES-256-GCM encryption for cloud backup
 hex = "0.4"     # Hex encode/decode for backup key and signatures
 argon2 = "0.5"  # Argon2id passphrase-derived backup key
+ed25519-dalek = { version = "2", features = ["rand_core"] }  # signing a sealed thread export (2026-10-27)
 
 # Database (SQLite)
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite", "chrono", "uuid", "json"] }
@@ -71,6 +72,8 @@ regex = "1.10"
 
 # PDF text extraction for Knowledge Base
 pdf-extract = "0.7"
+zip = { version = "8", default-features = false, features = ["deflate"] }  # .docx is a zip: Knowledge Base Word documents (2026-10-27)
+cfb = "0.7"  # .doc is an OLE compound file: Knowledge Base Word documents (2026-10-27)
 
 # Web search (HTML parsing)
 scraper = "0.20"
@@ -113,9 +116,15 @@ hf-hub = "0.4"
 tokenizers = { version = "0.20", default-features = false, features = ["onig", "progressbar"] }
 ndarray = "0.16"
 
-# Local LLM inference (GGUF models) - desktop only; Android uses API backends (Phase 2)
+# Local LLM inference (GGUF models) on every platform. Android since 2026-10-22 (branch
+# local-model): llama-cpp-sys-2's build script compiles llama.cpp for aarch64-linux-android
+# with the NDK's CMake toolchain when ANDROID_NDK (or NDK_HOME via the SDK) is set.
+# Pinned at the version whose llama.cpp knows Gemma 4 and Qwen3.5 (0.1.160, 2026-10-15).
+# Declared per platform below: Android builds the engine's backends as loadable modules
+# (the OpenCL GPU backend was tried on 2026-10-23/24 and dropped; see the Android section).
+
 [target.'cfg(not(target_os = "android"))'.dependencies]
-llama-cpp-2 = "0.1"
+llama-cpp-2 = "0.1.160"
 # Cross-platform mic capture, bypassing WebView getUserMedia (broken on Linux Tauri).
 cpal = "0.15"
 
@@ -185,6 +194,14 @@ opt-level = 3
 opt-level = 3
 
 [target.'cfg(target_os = "android")'.dependencies]
+# `dynamic-backends`: the engine's CPU variants are separate .so files loaded at start-up by
+# name (local_models.rs). The OpenCL GPU backend was built and measured on 2026-10-23/24 and
+# dropped: on the Adreno 740 it read prompts at a third of the CPU's speed, and the engine
+# refuses the Pixel's PowerVR outright. The Hexagon NPU is the next Snapdragon path.
+llama-cpp-2 = { version = "0.1.160", features = ["dynamic-backends"] }
+# Same crate llama-cpp-2 builds on; declared here so local_models.rs can call
+# ggml_backend_load by module name (llama-cpp-2 only offers loading by folder).
+llama-cpp-sys-2 = "0.1.160"
 openssl = { version = "0.10", features = ["vendored"] }
 # Matches the version Tauri's Android layer already pulls in (see Cargo.lock) so
 # there is a single jni in the tree. Used by android_jni.rs for the ZynkCore door.

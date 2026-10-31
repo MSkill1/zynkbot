@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import '../styles/KnowledgeBaseManager.css';
 import { confirmDialog } from '../utils/confirmDialog';
 
-export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
+export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded = false }) {
   const [documents, setDocuments] = useState([]);
   const [availableFiles, setAvailableFiles] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -85,11 +85,11 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
   };
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen || embedded) {
       loadData();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, userId]);
+  }, [isOpen, embedded, userId]);
 
   useEffect(() => {
     let unlisten;
@@ -98,6 +98,32 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
       setIndexingProgress({ current, total });
     }).then(fn => { unlisten = fn; });
     return () => { if (unlisten) unlisten(); };
+  }, []);
+
+  // A file sent here from a linked device ("→ KB" in the file browser) is indexed in
+  // the background after the transfer, minutes for a big one. Until it is done it
+  // sat under Available Files as if nothing were happening (Matt, 2026-09-20). Show
+  // it as indexing, with the count, from the download's own progress events.
+  const [remoteIndexing, setRemoteIndexing] = useState({}); // file name -> { done, total }
+  // The listeners below are registered once, so they must not capture this render's
+  // loadData (it closes over userId). They call the latest one through this ref.
+  const loadDataRef = useRef(null);
+  useEffect(() => {
+    const offs = [];
+    listen('zynklink:download:indexing', (event) => {
+      const { relative_path, done, total } = event.payload || {};
+      if (!relative_path) return;
+      const name = relative_path.replace(/\\/g, '/').split('/').pop();
+      setRemoteIndexing(prev => ({ ...prev, [name]: { done: done ?? 0, total: total ?? 0 } }));
+    }).then(fn => offs.push(fn));
+    listen('zynklink:download:complete', (event) => {
+      const { relative_path } = event.payload || {};
+      if (!relative_path) return;
+      const name = relative_path.replace(/\\/g, '/').split('/').pop();
+      setRemoteIndexing(prev => { const next = { ...prev }; delete next[name]; return next; });
+      Promise.resolve(loadDataRef.current?.()).catch(() => {});
+    }).then(fn => offs.push(fn));
+    return () => { offs.forEach(fn => fn()); };
   }, []);
 
   const loadData = async () => {
@@ -119,6 +145,9 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
       setIsLoading(false);
     }
   };
+
+  // Keep the ref pointing at this render's loadData (see loadDataRef above).
+  useEffect(() => { loadDataRef.current = loadData; });
 
   const loadIndexedDocuments = async () => {
     try {
@@ -289,6 +318,28 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
     }
   };
 
+  // Delete the file itself, not just its index (2026-09-20).
+  const handleDeleteFile = async (filePath, fileName) => {
+    // confirmDialog, not window.confirm: on Windows a synchronous confirm returns true before
+    // the user has answered (KI-047), so this deleted the file first and only then showed the
+    // dialog, and Cancel could not stop it.
+    const confirmed = await confirmDialog(
+      `Delete "${fileName}" from the Knowledge Base?\n\n` +
+      `This removes it from the index and deletes the copy in the Knowledge Base folder. ` +
+      `A copy in the Zynkbot share folder or elsewhere is not touched.`
+    );
+    if (!confirmed) return;
+    try {
+      await invoke('delete_kb_file', { userId, filePath });
+      const freshDocs = await loadIndexedDocuments();
+      await scanKBFolder(kbFolderPath, freshDocs);
+      console.log('[KB Manager] Deleted file:', fileName);
+    } catch (error) {
+      console.error('[KB Manager] Error deleting file:', error);
+      alert(`Failed to delete the file: ${error}`);
+    }
+  };
+
   const handleReindexDocument = async (doc) => {
     const confirmed = await confirmDialog(
       `Re-index "${doc.file_name}"?\n\n` +
@@ -376,9 +427,16 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
                   <button
                     onClick={() => handleRemoveDocument(doc)}
                     className="kb-action-btn kb-delete-btn"
-                    title="Remove from index"
+                    title="Remove from index (keep the file)"
                   >
                     🗑️
+                  </button>
+                  <button
+                    onClick={() => handleDeleteFile(doc.file_path, doc.file_name)}
+                    className="kb-action-btn kb-delete-btn"
+                    title="Delete the file from the Knowledge Base"
+                  >
+                    ✕ Delete
                   </button>
                 </div>
               </div>
@@ -400,15 +458,18 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  if (!isOpen) return null;
+  if (!isOpen && !embedded) return null;
 
+  // Embedded (ui-redo, 2026-10-25): the manager is the Knowledge Base page itself,
+  // so no overlay, heading or close button; the page's shell provides those.
   return (
-    <div className="kb-manager-overlay" onClick={onClose}>
-      <div className="kb-manager-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
+    <div className={embedded ? 'kb-manager-embedded' : 'kb-manager-overlay'} onClick={embedded ? undefined : onClose}>
+      <div className={embedded ? 'kb-manager-embedded-body' : 'kb-manager-modal'} onClick={(e) => e.stopPropagation()}>
+        {!embedded && (
         <div className="kb-manager-header">
           <h2>Knowledge Base Document Manager</h2>
         </div>
+        )}
 
         {/* Loading State */}
         {isLoading ? (
@@ -452,6 +513,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
               <div className="kb-section-header">
                 <h3>Indexed Documents ({documents.length})</h3>
               </div>
+              <p className="kb-hint" style={{ margin: '0 0 10px' }}>Zynkbot's own user guides are indexed too, and are read whenever you ask about Zynkbot itself.</p>
 
               {documents.length === 0 ? (
                 <div className="kb-empty-state">
@@ -541,6 +603,15 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
                           </div>
                         </div>
                       </div>
+                      <div className="kb-doc-actions" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                      {remoteIndexing[file.name] ? (
+                        <div className="kb-file-meta" style={{ minWidth: '160px' }}>
+                          <div>⚙ Indexing{remoteIndexing[file.name].total > 0 ? ` ${remoteIndexing[file.name].done} / ${remoteIndexing[file.name].total} chunks` : '…'}</div>
+                          <div style={{ height: '4px', background: '#44475a', borderRadius: '2px', marginTop: '4px' }}>
+                            <div style={{ height: '4px', background: '#50fa7b', borderRadius: '2px', width: `${remoteIndexing[file.name].total > 0 ? Math.min(100, remoteIndexing[file.name].done / remoteIndexing[file.name].total * 100) : 5}%` }} />
+                          </div>
+                        </div>
+                      ) : (
                       <button
                         onClick={() => handleIndexFile(file.path, file.name)}
                         disabled={isIndexing}
@@ -548,6 +619,16 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
                       >
                         Index
                       </button>
+                      )}
+                      <button
+                        onClick={() => handleDeleteFile(file.path, file.name)}
+                        disabled={isIndexing}
+                        className="kb-action-btn kb-delete-btn"
+                        title="Delete the file from the Knowledge Base"
+                      >
+                        ✕ Delete
+                      </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -571,6 +652,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
       </div>
 
       {/* Floating close button - bottom right, like settings panel */}
+      {!embedded && (
       <button
         onClick={onClose}
         style={{
@@ -582,6 +664,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId }) {
           zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}
       >✕</button>
+      )}
     </div>
   );
 }

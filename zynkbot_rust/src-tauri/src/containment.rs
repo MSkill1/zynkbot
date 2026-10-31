@@ -704,6 +704,8 @@ impl ContainmentLayer {
 
     /// Pattern-based harmful instruction detection
     ///
+    /// Matches whole words: see `contains_word`.
+    ///
     /// Detects requests that ask "how to" do something harmful.
     /// This catches instruction harm that TinyBERT misses (TinyBERT is trained for toxicity, not instruction harm).
     ///
@@ -727,7 +729,7 @@ impl ContainmentLayer {
 
         let is_instruction = instruction_patterns
             .iter()
-            .any(|pattern| text.contains(pattern));
+            .any(|pattern| contains_word(text, pattern));
 
         if !is_instruction {
             return false; // Not asking for instructions
@@ -750,7 +752,7 @@ impl ContainmentLayer {
 
         harmful_subjects
             .iter()
-            .any(|subject| text.contains(subject))
+            .any(|subject| contains_word(text, subject))
     }
 
     /// Simple keyword-based unsafe content detection (fallback if safety_classifier fails)
@@ -771,7 +773,7 @@ impl ContainmentLayer {
             "suicide",
         ];
 
-        unsafe_keywords.iter().any(|keyword| text.contains(keyword))
+        unsafe_keywords.iter().any(|keyword| contains_word(text, keyword))
     }
 
     /// Stricter detection for child mode
@@ -800,14 +802,45 @@ impl ContainmentLayer {
 
         strict_keywords
             .iter()
-            .any(|keyword| text.contains(keyword))
+            .any(|keyword| contains_word(text, keyword))
     }
 
+}
+
+/// `needle` occurs in `haystack` bounded by non-letters on both sides, so a word list
+/// cannot match inside another word: "meth" no longer matches "something" (a message
+/// about posting a plush toy was flagged as a harmful instruction request on
+/// 2026-10-21) and "gun" no longer matches "begun". Multi-word needles such as
+/// "how to" still match across their own spaces.
+pub(crate) fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() { return false; }
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let begin = start + pos;
+        let end = begin + needle.len();
+        let before_ok = !haystack[..begin].chars().next_back().map_or(false, |c| c.is_alphanumeric());
+        let after_ok = !haystack[end..].chars().next().map_or(false, |c| c.is_alphanumeric());
+        if before_ok && after_ok { return true; }
+        start = begin + needle.chars().next().map_or(1, |c| c.len_utf8());
+    }
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn word_lists_match_whole_words_only() {
+        assert!(contains_word("how to make meth at home", "meth"));
+        assert!(!contains_word("maybe she has something small", "meth"));
+        assert!(!contains_word("the game has begun", "gun"));
+        assert!(contains_word("how to build a gun", "gun"));
+        assert!(contains_word("tell me how to do it", "how to"));
+        assert!(contains_word("meth", "meth"));
+        assert!(contains_word("he took an overdose.", "overdose"));
+        assert!(!contains_word("the pharmacy is closed", "harm"));
+    }
 
     #[tokio::test]
     async fn test_witness_mode_allows_everything() {

@@ -14,7 +14,63 @@ macro_rules! eprintln {
 }
 
 // Module declarations
-pub mod app_log;            // In-memory log tail for bug reports
+pub mod app_log;            // In-memory log tail for bug reports, and the on-disk log
+pub mod env_file;           // The .env settings file: quoting, tolerant loading (KI-083)
+#[cfg(test)]
+mod sync_harness_tests; // two-peer ZynkSync harness (docs/TESTING.md)
+#[cfg(test)]
+mod chat_harness_tests; // the chat path end to end against a pretend model
+#[cfg(test)]
+mod memory_bench; // which model makes the right memories: labs/memory_bench
+#[cfg(test)]
+mod recall_bench; // does recall find the right memory: labs/recall_bench
+#[cfg(test)]
+mod finetune_export; // the app's own prompts as training input: labs/finetune
+#[cfg(test)]
+mod memory_refactor; // one-off: old composite memories into facts (2026-10-25)
+
+/// Seconds and RMS level (0..1) of a 16-bit mono 16 kHz WAV as the page encodes it.
+fn wav_duration_and_rms(wav: &[u8]) -> (f32, f32) {
+    if wav.len() <= 44 { return (0.0, 0.0); }
+    let pcm = &wav[44..];
+    let n = pcm.len() / 2;
+    if n == 0 { return (0.0, 0.0); }
+    let mut sum = 0f64;
+    for s in pcm.chunks_exact(2) {
+        let v = i16::from_le_bytes([s[0], s[1]]) as f64 / 32768.0;
+        sum += v * v;
+    }
+    (n as f32 / 16000.0, (sum / n as f64).sqrt() as f32)
+}
+
+/// What Whisper says when it hears nothing.
+/// OpenAI's transcription model for dictation on every platform (the phone's
+/// OpenAiDictation.kt names the same one).
+pub const DICTATION_MODEL: &str = "gpt-4o-mini-transcribe";
+
+fn whisper_silence_phrase(t: &str) -> bool {
+    let w: String = t.to_lowercase().chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).collect();
+    let w = w.split_whitespace().collect::<Vec<_>>().join(" ");
+    matches!(w.as_str(), "thank you" | "thanks" | "thank you for watching" | "thanks for watching" | "bye" | "bye bye" | "goodbye" | "you" | "okay" | "ok" | "hmm" | "mm" | "uh" | "so" | "the" | "yeah" | "subtitles by the amaraorg community" | "thank you very much")
+}
+
+#[cfg(test)]
+mod dictation_guard_tests {
+    #[test]
+    fn silence_phrases_and_short_wavs() {
+        assert!(super::whisper_silence_phrase("Thank you."));
+        assert!(super::whisper_silence_phrase("Bye!"));
+        assert!(!super::whisper_silence_phrase("Thank you for the recipe, it worked."));
+        let mut wav = vec![0u8; 44];
+        wav.extend(std::iter::repeat(0u8).take(16000 * 2 / 2)); // 0.5 s of silence
+        let (s, r) = super::wav_duration_and_rms(&wav);
+        assert!((s - 0.5).abs() < 0.01 && r == 0.0);
+    }
+}
+pub mod memory_prompts; // the memory pipeline's prompts in one place (2026-10-24)
+pub mod memory_jobs;    // the memory job queue: one worker, oldest first, nothing lost (2026-10-24)
+#[cfg(test)]
+mod sync_outbox_tests; // the outbox triggers (migration 0013)
 pub mod memory_extras;      // event date / namespace / tags / tone / entities from the decision call
 pub mod commands;           // Tauri command handlers (extracted from lib.rs)
 pub mod safety_classifier;  // TinyBERT toxicity classifier (Candle-based)
@@ -31,14 +87,24 @@ mod sync_codes;  // One-time sync codes for device pairing
 mod zchat;  // Device-to-device messaging
 mod zynklink;  // Device-to-device file sharing
 mod web_search;  // DuckDuckGo web search
+mod weather;     // weather questions answered from Open-Meteo before any model call (2026-10-25)
 mod knowledge_base;  // External reference document system
 mod kb_rag;  // Knowledge Base RAG: Document chunking, indexing, semantic search
 mod kb_prompt;  // Wording of the KB prompt block by search outcome (found / weak / nothing)
+mod word_docs;  // .docx and .doc text for the Knowledge Base and attachments (2026-10-27)
+mod web_read;   // a page the user points at, read for the prompt (2026-10-27)
 mod conversation_history;  // Persistent conversation log with full-text search
+mod seal;  // a seal the user makes: one thread as a signed file (2026-10-27)
+mod chat_modes;  // a mode's block in front of the prompt (2026-10-28)
+pub mod sync_outbox;  // the ZynkSync outbox: drain and receive (step 2)
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
+mod transport; // shared peer-to-peer layer: identity, server, pinned client, registry (SDK Core)
+pub mod voice_prefs; // hands-free settings mirrored for the native path
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 mod vosk_desktop; // Offline dictation on Linux and Windows desktop (cpal + vosk)
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod openai_realtime; // Live dictation text from OpenAI's Realtime transcription session (2026-10-28)
 pub mod response_sink; // Where a chat response goes as it streams (Tauri today, native JNI later)
 #[cfg(target_os = "android")]
 mod android_jni; // ZynkCore JNI door: run the chat core natively from Kotlin
@@ -214,7 +280,7 @@ pub struct Memory {
     original_text: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct ReplyResponse {
     reply_text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -233,10 +299,24 @@ pub struct ReplyResponse {
     web_search_query: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     original_query: Option<String>,
+    /// Hands-free auto web search: what the model answered before it decided to
+    /// search, kept as its own message (2026-09-20). None when there was nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_search_reply: Option<String>,
     /// Set when the KB button was on but the search found no real match, so the
     /// UI can show that the answer is not grounded in the user's documents.
     #[serde(skip_serializing_if = "Option::is_none")]
     kb_note: Option<String>,
+    /// Hands-free auto web search: the sources the answer was built from, in the shape
+    /// ChatMessage already renders under a typed search ({ query, results: [{title, url,
+    /// snippet}] }). The typed path attaches these on the page itself; the native path
+    /// has to carry them through the reply and the native-turn queue (2026-09-22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    web_search_results: Option<serde_json::Value>,
+    /// One line the model wrote about the picture(s) sent with this message (2026-10-28),
+    /// so the thread keeps a record of what was shown after the picture itself is gone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    picture_note: Option<String>,
 }
 
 // ============================================================================
@@ -251,6 +331,10 @@ pub struct ReplyResponse {
 pub struct ConversationTurn {
     role: String,
     content: String,
+    /// Pictures that were sent with this turn, when the page still holds them
+    /// (2026-10-28): the model sees them again so it can compare or refer back.
+    #[serde(default)]
+    images: Option<Vec<crate::llm::ImageAttachment>>,
 }
 
 /// Extract only factual declarative statements from a message
@@ -434,8 +518,106 @@ pub(crate) fn generate_title_from_content(content: &str) -> String {
 // ============================================================================
 
 /// Local Call 2: classify relationships between an extracted fact and similar existing memories.
-/// Fires in the background only when MEMORY_EXTRACT produced a fact.
+/// Call 3 of the memory pipeline on the phone, after call 2 produced a fact (2026-10-24).
 /// Returns (optional_title, relationship_classifications)
+/// Call 3 on the phone (2026-10-24): relationships only. The full call writes a title and
+/// the extras too, sixty-odd tokens the 4B produces at three a second under the grammar,
+/// and since call 2 now gives the title those tokens bought nothing. Same four definitions.
+/// The first balanced `{ … }` in a text, braces inside strings ignored.
+pub(crate) fn first_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let bytes = text.as_bytes();
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        if in_str {
+            if esc { esc = false; } else if b == b'\\' { esc = true; } else if b == b'"' { in_str = false; }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => { depth -= 1; if depth == 0 { return Some(&text[start..=i]); } }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod first_json_object_tests {
+    #[test]
+    fn the_first_object_is_taken_and_a_second_one_ignored() {
+        let t = "{\"relationships\": [{\"memory_id\": 1, \"relationship_type\": \"none\"}]}\n{\"facts\": []}";
+        assert_eq!(super::first_json_object(t).unwrap(), "{\"relationships\": [{\"memory_id\": 1, \"relationship_type\": \"none\"}]}");
+        assert_eq!(super::first_json_object("text {\"a\": \"}\"} tail").unwrap(), "{\"a\": \"}\"}");
+        assert!(super::first_json_object("no braces").is_none());
+    }
+}
+
+/// The links-only prompt the phone uses (text unchanged; moved out 2026-10-28 so the
+/// fine-tuning exporter in `finetune_export.rs` writes the exact prompt the app sends).
+pub(crate) fn links_only_prompt(extracted_fact: &str, similar_memories: &[(i32, String, Option<String>, f32)]) -> String {
+    let similar_memories_text = similar_memories.iter()
+        .map(|(id, content, title, _)| format!("Memory #{}{}: {}", id, title.as_ref().map(|t| format!(" ({})", t)).unwrap_or_default(), content))
+        .collect::<Vec<_>>().join("\n");
+    format!(
+        r#"A new fact about the user and some existing memories. For each memory, say how the new fact relates to it.
+
+NEW FACT: {}
+
+EXISTING MEMORIES:
+{}
+
+Types, pick the first that fits:
+- "updates": the new fact replaces an older state of the same thing. Either the wording signals the change ("moved", "now", "switched to", "no longer"), or both are short-lived facts of the same kind that cannot both hold now, such as where the car is parked or which hotel they are in: the newer one wins. Not where someone lives or works, and not a plan or trip, without a change word (that is "contradicts"). Things done on different days (a meal, a workout, an outing) are separate facts, "none"; more detail about the same trip or errand is "related". The old memory is kept as history.
+- "contradicts": same attribute, different values, with no sign that one came after the other; or opposite claims on the same topic.
+- "related": the same specific person, pet, place, thing or habit, adding to it or confirming it.
+- "none": different things. Two facts about the same user are not related just because they are both about the user; a shared broad topic is not enough.
+
+Answer with JSON only: {{"relationships": [{{"memory_id": 123, "relationship_type": "updates|contradicts|related|none", "confidence": 0.9}}]}}"#,
+        extracted_fact, similar_memories_text)
+}
+
+pub(crate) async fn ask_llm_for_links_only(
+    extracted_fact: &str,
+    similar_memories: &[(i32, String, Option<String>, f32)],
+    backend: &str,
+) -> Result<Vec<RelationshipClassification>, String> {
+    if similar_memories.is_empty() { return Ok(Vec::new()); }
+    let prompt = links_only_prompt(extracted_fact, similar_memories);
+    let response = if backend.ends_with(".gguf") || backend == "local" {
+        call_local_for_memory_decision(&prompt, backend, Some(LINKS_SCHEMA)).await?
+    } else {
+        call_backend_with_prompt(&prompt, backend).await?
+    };
+    // The first complete JSON object: a model that writes a second object after its
+    // answer (the fine-tuned 4B did, 2026-10-28) used to fail with "trailing characters".
+    let body = first_json_object(&response).unwrap_or_else(|| response.trim());
+    #[derive(serde::Deserialize)]
+    struct Links { #[serde(default)] relationships: Vec<RelationshipClassification> }
+    let links: Links = serde_json::from_str(body).map_err(|e| format!("Failed to parse links JSON: {}", e))?;
+    Ok(links.relationships.into_iter().filter(|r| r.relationship_type != "none" && r.memory_id > 0).collect())
+}
+
+const LINKS_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "memory_id": {"type": "integer"},
+          "relationship_type": {"type": "string", "enum": ["updates", "contradicts", "related", "none"]},
+          "confidence": {"type": "number"}
+        },
+        "required": ["memory_id", "relationship_type"]
+      }
+    }
+  },
+  "required": ["relationships"]
+}"#;
+
 pub(crate) async fn ask_llm_for_relationships(
     extracted_fact: &str,
     similar_memories: &[(i32, String, Option<String>, f32)],
@@ -463,13 +645,11 @@ NEW FACT:
 SIMILAR EXISTING MEMORIES:
 {}
 
-RELATIONSHIP TYPES:
-- "contradicts": Same attribute, different values — or opposite claims on the same topic
-- "supports": Reinforces or agrees with the existing memory
-- "elaborates": Adds detail or context to the existing memory
-- "caused_by": This fact describes a cause of the existing memory's effect
-- "reminds_of": Loosely related or tangentially connected
-- "none": No meaningful relationship
+RELATIONSHIP TYPES (pick the first that fits, top to bottom):
+- "updates": The new fact REPLACES an older state of the same thing. Either the wording signals the change ("moved", "now", "switched to", "new", "no longer", "quit", "used to", "retired"), or both are short-lived facts of the same kind that cannot both hold now, such as where the car is parked or which hotel they are in: the newer one wins ("parked on level 3 at the mall" + "parked on level 5 at the airport" = updates). Not where someone lives or works, and not a plan or trip, without a change word ("lives in Rutland" + "lives in Burlington" = contradicts; "flying to Denver this weekend" + "flying to Boston this weekend" = contradicts, the user is asked which is right; "cancelled Denver, going to Boston instead" = updates). Things done on different days ("had wings last night" + "making chili tonight") are separate facts, "none"; more detail about the same trip or errand ("going to Denver this week" + "flying to Denver on Thursday for a wedding") is "related". "Matt lives in Rutland" + "Matt moved to Burlington" = updates. The old memory is kept as history.
+- "contradicts": Same attribute, different values, with NO sign that one came after the other — or opposite claims on the same topic. "Matt's cat is Milo" + "Matt's cat is Louie" = contradicts (a second cat or a mistake; the user is asked).
+- "related": The same specific subject (the same person, pet, place, thing or habit), adding to it or confirming it. "Matt has a cat" + "Matt's cat is named Louie" = related.
+- "none": Different things. Use "none" whenever they do not share a specific subject — two facts about the same user are NOT related just because they are both about the user, and a shared broad topic (both about food, both about family, both hobbies) is not enough.
 
 ⚠️ High semantic similarity does NOT mean agreement — opposite claims = contradiction.
 
@@ -481,7 +661,7 @@ Return ONLY valid JSON starting with {{:
   "relationships": [
     {{
       "memory_id": 123,
-      "relationship_type": "contradicts|supports|elaborates|caused_by|reminds_of|none",
+      "relationship_type": "contradicts|updates|related|none",
       "reason": "Brief explanation",
       "confidence": 0.95
     }}
@@ -501,6 +681,8 @@ Return ONLY valid JSON starting with {{:
         call_openai_for_memory_decision(&prompt).await?
     } else if backend.contains("xai") {
         call_xai_for_memory_decision(&prompt).await?
+    } else if backend.contains("mistral") {
+        call_mistral_for_memory_decision(&prompt).await?
     } else if backend == "custom" {
         call_custom_for_memory_decision(&prompt).await?
     } else if backend.ends_with(".gguf") {
@@ -508,12 +690,15 @@ Return ONLY valid JSON starting with {{:
         let backend_clone = backend.to_string();
         let prompt_clone = prompt.clone();
         tokio::task::spawn_blocking(move || {
-            crate::llm::local_models::with_cached_session(&backend_clone, |sess| {
-                let messages = vec![llm::Message {
-                    role: "user".to_string(),
-                    content: prompt_clone,
-                }];
-                sess.generate(messages, Some(4096), Some(0.1), Some(RELATIONSHIP_SCHEMA))
+            // Background: steps aside for a user's message and runs again after.
+            crate::llm::local_models::background_retry("Relationship classification", 3, || {
+                crate::llm::local_models::with_cached_session(&backend_clone, |sess| {
+                    let messages = vec![llm::Message {
+                        role: "user".to_string(),
+                        content: prompt_clone.clone(),
+                    }];
+                    sess.generate(messages, Some(4096), Some(0.1), Some(RELATIONSHIP_SCHEMA))
+                })
             })
         })
         .await
@@ -530,8 +715,10 @@ Return ONLY valid JSON starting with {{:
             .split("```").next().unwrap_or(&response).trim()
     } else if response.contains("```") {
         response.split("```").nth(1).unwrap_or(&response).trim()
-    } else if let Some(start) = response.find('{') {
-        &response[start..]
+    } else if let Some(obj) = first_json_object(&response) {
+        // The first complete object only: text after it (the fine-tuned 4B wrote a second
+        // object, 2026-10-28) used to fail the parse with "trailing characters".
+        obj
     } else {
         response.trim()
     };
@@ -555,129 +742,6 @@ Return ONLY valid JSON starting with {{:
         Err(e) => {
             println!("[Memory Relations] Failed to parse JSON: {} — raw: {}", e, json_str.chars().take(120).collect::<String>());
             Err(format!("Failed to parse relationship JSON: {}", e))
-        }
-    }
-}
-
-/// Helper function to ask LLM whether to create a memory and generate a title
-/// Returns (should_remember, optional_title)
-#[allow(dead_code)]
-async fn ask_llm_about_memory(
-    message: &str,
-    conversation_history: &str,
-    backend: &str,
-) -> Result<(bool, Option<String>, memory_extras::MemoryExtras), String> {
-    let extras_instructions = memory_extras::prompt_instructions(chrono::Utc::now().date_naive());
-    // Build prompt
-    let prompt = format!(
-        r#"You are a memory decision system. Analyze the user's message and decide if it should be stored as a long-term memory.
-
-CONVERSATION CONTEXT:
-{}
-
-USER MESSAGE:
-{}
-
-TASK:
-1. Decide if this message contains information worth remembering long-term
-2. If yes, generate a concise, descriptive title (max 50 characters)
-
-Remember if the message contains:
-- Personal facts (preferences, possessions, experiences)
-- Important decisions or plans (INCLUDING future intentions like "I'm going to...")
-- Significant statements about the user's life
-- Information the user might want recalled later
-- Goals, projects, or commitments the user mentions
-- Emotional states or personal struggles (e.g., "I've been feeling really down", "I think my girlfriend is cheating on me", "I'm embarrassed about something")
-- Relationship situations, tensions, or concerns the user is navigating
-
-Do NOT remember:
-- Simple questions without context
-- Short acknowledgments (ok, thanks, etc.)
-- Generic conversation without personal information
-- Commands or instructions to the assistant
-- Questions asking the user to recall their own memories, history, experiences, or achievements ("What theories have I come up with?", "What do I believe?", "What's my career been like?"). These are memory-recall requests — not new facts to store.
-
-✓ ALWAYS remember statements like:
-  • "I'm going to start a book series"
-  • "My dog's name is Max"
-  • "I'm planning to move to Boston"
-  • "I work at Google"
-  • "I graduated in 2015"
-
-{extras_instructions}
-
-⚠️ CRITICAL OUTPUT REQUIREMENTS:
-- Respond with ONLY valid JSON
-- Do NOT include any explanatory text before or after the JSON
-- Do NOT use markdown code blocks (no ```json or ```)
-- Start your response immediately with the opening brace {{
-
-OUTPUT FORMAT:
-{{
-  "should_remember": true/false,
-  "title": "Title here (only if should_remember is true)",
-  "event_date": "YYYY-MM-DD" or null,
-  "namespace": "personal",
-  "tags": ["tag1"],
-  "tone": "neutral",
-  "entities": [{{"name": "Vermont", "kind": "place"}}]
-}}
-
-Return the JSON now:"#,
-        conversation_history, message, extras_instructions = extras_instructions
-    );
-
-    // Call LLM based on backend (same backend as main conversation!)
-    let response = if backend.contains("anthropic") {
-        call_anthropic_for_memory_decision(&prompt).await?
-    } else if backend.contains("openai") {
-        call_openai_for_memory_decision(&prompt).await?
-    } else if backend.contains("xai") {
-        call_xai_for_memory_decision(&prompt).await?
-    } else if backend.contains("mistral") {
-        call_mistral_for_memory_decision(&prompt).await?
-    } else if backend.ends_with(".gguf") || backend == "local" {
-        call_local_for_memory_decision(&prompt, backend, Some(MEMORY_DECISION_SCHEMA)).await?
-    } else if backend == "custom" {
-        call_custom_for_memory_decision(&prompt).await?
-    } else {
-        println!("[Memory Decision] Unknown backend '{}' - skipping memory decision", backend);
-        return Ok((false, None, memory_extras::MemoryExtras::default()));
-    };
-
-    // Parse JSON response
-    #[derive(serde::Deserialize)]
-    struct MemoryDecision {
-        should_remember: bool,
-        title: Option<String>,
-        #[serde(flatten)]
-        extras: memory_extras::MemoryExtras,
-    }
-
-    // Try to extract JSON from response (handles cases where LLM adds extra text)
-    let json_str = if let Some(start) = response.find('{') {
-        if let Some(end) = response.rfind('}') {
-            &response[start..=end]
-        } else {
-            &response
-        }
-    } else {
-        &response
-    };
-
-    match serde_json::from_str::<MemoryDecision>(json_str) {
-        Ok(decision) => {
-            println!("[Memory Decision] LLM decision: should_remember={}, title={:?}",
-                     decision.should_remember, decision.title);
-            Ok((decision.should_remember, decision.title, decision.extras))
-        }
-        Err(e) => {
-            println!("[Memory Decision] Failed to parse LLM response: {}", e);
-            #[cfg(debug_assertions)]
-            println!("[Memory Decision] Response was: {}", response);
-            // Fallback to no memory on parse error
-            Ok((false, None, memory_extras::MemoryExtras::default()))
         }
     }
 }
@@ -853,6 +917,27 @@ async fn call_custom_for_memory_decision(prompt: &str) -> Result<String, String>
 }
 
 /// Call local GGUF model for memory decision
+/// One prompt to whichever backend `backend` names, plain text back: the memory bench
+/// (memory_bench.rs) uses it to put the same extraction task to every model. Same
+/// dispatch as the memory-decision calls above.
+#[allow(dead_code)]
+pub(crate) async fn call_backend_with_prompt(prompt: &str, backend: &str) -> Result<String, String> {
+    if backend.contains("anthropic") { call_anthropic_for_memory_decision(prompt).await }
+    else if backend.contains("openai") { call_openai_for_memory_decision(prompt).await }
+    else if backend.contains("xai") { call_xai_for_memory_decision(prompt).await }
+    else if backend.contains("mistral") { call_mistral_for_memory_decision(prompt).await }
+    else if backend == "custom" { call_custom_for_memory_decision(prompt).await }
+    else { call_local_for_memory_decision(prompt, backend, None).await }
+}
+
+/// Like call_backend_with_prompt, but a local model is held to `schema` (constrained
+/// decoding); cloud models get the prompt as is. The memory bench's call 2 goes through here.
+#[allow(dead_code)]
+pub(crate) async fn call_backend_with_schema(prompt: &str, backend: &str, schema: &'static str) -> Result<String, String> {
+    if backend.ends_with(".gguf") || backend == "local" { call_local_for_memory_decision(prompt, backend, Some(schema)).await }
+    else { call_backend_with_prompt(prompt, backend).await }
+}
+
 async fn call_local_for_memory_decision(prompt: &str, backend: &str, json_schema: Option<&'static str>) -> Result<String, String> {
     use crate::llm::Message;
 
@@ -869,21 +954,24 @@ async fn call_local_for_memory_decision(prompt: &str, backend: &str, json_schema
 
     let model_path_clone = model_path.clone();
     let response = tokio::task::spawn_blocking(move || {
-        if let Some(schema) = json_schema {
-            // Grammar-constrained: model physically cannot produce invalid JSON
-            llm::local_models::generate_with_local_model_constrained(
-                &model_path_clone,
-                messages,
-                schema,
-            )
-        } else {
-            llm::local_models::generate_with_local_model(
-                &model_path_clone,
-                messages,
-                Some(4096),
-                Some(0.3),
-            )
-        }
+        // Background: steps aside for a user's message and runs again after.
+        llm::local_models::background_retry("Memory decision", 3, || {
+            if let Some(schema) = json_schema {
+                // Grammar-constrained: model physically cannot produce invalid JSON
+                llm::local_models::generate_with_local_model_constrained(
+                    &model_path_clone,
+                    messages.clone(),
+                    schema,
+                )
+            } else {
+                llm::local_models::generate_with_local_model(
+                    &model_path_clone,
+                    messages.clone(),
+                    Some(4096),
+                    Some(0.3),
+                )
+            }
+        })
     })
     .await
     .map_err(|e| format!("Failed to run local model task: {}", e))?
@@ -922,46 +1010,6 @@ const RELATIONSHIP_SCHEMA: &str = r#"{
   "required": ["title", "relationships"]
 }"#;
 
-const MEMORY_DECISION_SCHEMA: &str = r#"{
-  "type": "object",
-  "properties": {
-    "event_date": {"type": ["string", "null"]},
-    "namespace": {"type": "string"},
-    "tags": {"type": "array", "items": {"type": "string"}},
-    "tone": {"type": "string"},
-    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}},
-    "should_remember": {"type": "boolean"},
-    "title": {"type": "string"}
-  },
-  "required": ["should_remember"]
-}"#;
-
-const MEMORY_DECISION_WITH_RELATIONSHIPS_SCHEMA: &str = r#"{
-  "type": "object",
-  "properties": {
-    "should_remember": {"type": "boolean"},
-    "title": {"type": "string"},
-    "event_date": {"type": ["string", "null"]},
-    "namespace": {"type": "string"},
-    "tags": {"type": "array", "items": {"type": "string"}},
-    "tone": {"type": "string"},
-    "entities": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "kind": {"type": "string"}}, "required": ["name"]}},
-    "relationships": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "memory_id": {"type": "integer"},
-          "relationship_type": {"type": "string"},
-          "reason": {"type": "string"},
-          "confidence": {"type": "number"}
-        },
-        "required": ["memory_id", "relationship_type"]
-      }
-    }
-  },
-  "required": ["should_remember"]
-}"#;
 
 // ============================================================================
 // ENHANCED MEMORY DECISION WITH RELATIONSHIP CLASSIFICATION
@@ -1051,284 +1099,68 @@ const EXTRAS_SCHEMA: &str = r#"{
 pub struct RelationshipClassification {
     #[serde(deserialize_with = "deserialize_memory_id")]
     memory_id: i32,
-    relationship_type: String,  // "contradicts", "supports", "elaborates", "caused_by", "reminds_of", "none"
+    relationship_type: String,  // "contradicts", "updates", "related", "none" (migration 0022)
+    // The phone's links-only call gives no reason (2026-10-24); every phone link failed to
+    // parse for an hour because this was required.
+    #[serde(default)]
     reason: String,
     confidence: Option<f32>,  // 0.0-1.0 confidence score
 }
 
-/// Enhanced memory decision that also classifies relationships with similar memories
-/// Returns (should_remember, optional_title, relationship_classifications, extras)
-pub(crate) async fn ask_llm_about_memory_with_relationships(
-    message: &str,
-    conversation_history: &str,
-    similar_memories: &[(i32, String, Option<String>, f32)],  // (id, content, title, similarity)
-    backend: &str,
-) -> Result<(bool, Option<String>, Vec<RelationshipClassification>, memory_extras::MemoryExtras), String> {
-    // If no similar memories, fall back to simple decision
-    if similar_memories.is_empty() {
-        let (should_remember, title, extras) = ask_llm_about_memory(message, conversation_history, backend).await?;
-        return Ok((should_remember, title, Vec::new(), extras));
-    }
-    let extras_instructions = memory_extras::prompt_instructions(chrono::Utc::now().date_naive());
+/// Links from the on-device model under this confidence are dropped (treated as "none").
+/// Inert at 0.0 (2026-10-22): the memory bench's sweep showed Qwen3-4B reports 0.85–0.98
+/// on every link, wrong ones included (its three links between unrelated facts came at
+/// 0.85, 0.85 and 0.92; its correct "reminds of" links at 0.92). No floor separates them
+/// without also cutting real links, so the model's own confidence is not the lever. The
+/// mechanism stays for a model whose confidence does carry information.
+pub(crate) const LOCAL_LINK_CONFIDENCE_FLOOR: f32 = 0.0;
 
-    // Build similar memories section
-    let similar_memories_text = similar_memories.iter()
-        .map(|(id, content, title, sim)| {
-            let title_str = title.as_ref().map(|t| format!(" ({})", t)).unwrap_or_default();
-            format!("Memory #{}{} (similarity: {:.1}%)\n{}", id, title_str, sim * 100.0, content)
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n");
-
-    // Build enhanced prompt
-    let prompt = format!(
-        r#"You are a memory decision and relationship classification system.
-
-CONVERSATION CONTEXT:
-{}
-
-USER MESSAGE:
-{}
-
-SIMILAR EXISTING MEMORIES:
-{}
-
-TASK:
-1. Decide if this message should be stored as a long-term memory
-2. If yes, generate a concise, descriptive title (max 50 characters)
-3. For EACH similar memory above, classify the relationship:
-
-RELATIONSHIP TYPES (in priority order):
-- "contradicts": Direct contradiction (e.g., "I believe X" vs "I don't believe X", "My dog is Max" vs "My dog is Wendy")
-  → CRITICAL: If the user affirms X but an existing memory negates X (or vice versa), it is ALWAYS a contradiction, even if they share similar topics or high semantic similarity!
-- "supports": Reinforces or agrees with the existing memory
-- "elaborates": Adds detail or context to the existing memory
-- "caused_by": This memory describes a cause of the existing memory's effect
-- "reminds_of": Loosely related or tangentially connected
-- "none": No meaningful relationship — return this if the connection is incidental
-
-⚠️ CONTRADICTION DETECTION RULES (HIGHEST PRIORITY):
-1. Focus on the MAIN CLAIM, not descriptive phrases
-2. If one memory says "I believe/have/am X" and another says "I don't believe/have/am X", that is a CONTRADICTION
-3. High semantic similarity does NOT mean agreement - opposite claims about the same topic are contradictions!
-4. Ignore negations in descriptive clauses (e.g., "not a personal deity" describes what something is)
-
-EXAMPLES OF CONTRADICTIONS:
-✓ "I believe in Spinoza's God" vs "I do not believe in Spinoza's God"
-  → Main claims oppose (belief vs disbelief)
-✓ "My dog is named Max" vs "My dog's name is Wendy"
-  → Same attribute, different values
-✓ "I live in New York" vs "I live in Boston"
-  → Same attribute (location), different values
-✓ "I'm 30 years old" vs "I am 25"
-  → Same attribute (age), different values
-✓ "I work at Google" vs "I work at Microsoft"
-  → Same attribute (employer), different values
-✓ "I'm married to Sarah" vs "My spouse is Emma"
-  → Same relationship type, different people
-✓ "I'm planning to travel to Japan this summer" vs "I traveled to Japan a couple months ago"
-  → Future plan contradicts past completion — can't be planning a trip you already took
-
-EXAMPLES OF NON-CONTRADICTIONS:
-✗ "I believe in Spinoza's God - a pantheistic view" vs "Spinoza's God is not a personal deity"
-  → Both describe the same concept, "not a personal deity" is a description
-✗ "My dog Max is 5 years old" vs "My dog's name is Max"
-  → Different details about the same subject (age vs name)
-✗ "I live in Brooklyn" vs "I live in New York City"
-  → Brooklyn is part of NYC (hierarchy, not contradiction)
-✗ "I went to Japan last year" vs "I'm traveling to Japan this summer"
-  → Two separate trips — a past visit doesn't prevent a future one
-✗ "I'm thinking about leaving my job at X" vs "I work at X"
-  → A future intention does not negate a current state — both can be true simultaneously
-
-Remember if the message contains:
-- Personal facts (preferences, possessions, experiences)
-- Important decisions or plans (INCLUDING future intentions like "I'm going to...")
-- Significant statements about the user's life
-- Information the user might want recalled later
-- Goals, projects, or commitments the user mentions
-- Emotional states or personal struggles (e.g., "I've been feeling really down", "I think my girlfriend is cheating on me", "I'm embarrassed about something")
-- Relationship situations, tensions, or concerns the user is navigating
-
-Do NOT remember:
-- Simple questions without context
-- Short acknowledgments (ok, thanks, etc.)
-- Generic conversation without personal information
-- Commands or instructions to the assistant
-- Questions asking the user to recall their own memories, history, experiences, or achievements ("What theories have I come up with?", "What do I believe?", "What's my career been like?"). These are memory-recall requests — not new facts to store.
-
-✓ ALWAYS remember statements like:
-  • "I'm going to start a book series"
-  • "My dog's name is Max"
-  • "I'm planning to move to Boston"
-  • "I work at Google"
-  • "I graduated in 2015"
-
-CRITICAL: If the message is a FACTUAL STATEMENT (even if it contradicts existing memories),
-set should_remember=true and flag the contradictions in the relationships array.
-The user will decide which memory to keep via the UI.
-
-Examples of factual statements that should ALWAYS be remembered:
-✓ "I graduated from Princeton in 1900" → should_remember=true (even if it contradicts birth year)
-✓ "My dog's name is Max" → should_remember=true (even if existing memory says "Wendy")
-✓ "I live in Boston" → should_remember=true (even if existing memory says "New York")
-✓ "I work at Google" → should_remember=true (even if existing memory says "Microsoft")
-
-The contradiction detection is SEPARATE from the should_remember decision!
-
-{extras_instructions}
-
-⚠️ CRITICAL OUTPUT REQUIREMENTS:
-- Respond with ONLY valid JSON
-- Do NOT include any explanatory text before or after the JSON
-- Do NOT use markdown code blocks (no ```json or ```)
-- Do NOT include analysis, commentary, or reasoning outside the JSON
-- Start your response immediately with the opening brace {{
-
-OUTPUT FORMAT:
-{{
-  "should_remember": true/false,
-  "title": "Title here (only if should_remember is true)",
-  "relationships": [
-    {{
-      "memory_id": 123,
-      "relationship_type": "contradicts|supports|elaborates|caused_by|reminds_of|none",
-      "reason": "Brief explanation of the relationship",
-      "confidence": 0.95
-    }}
-  ],
-  "event_date": "YYYY-MM-DD" or null,
-  "namespace": "personal",
-  "tags": ["tag1", "tag2"],
-  "tone": "neutral",
-  "entities": [{{"name": "Vermont", "kind": "place"}}]
-}}
-
-Return the JSON now:"#,
-        conversation_history, message, similar_memories_text, extras_instructions = extras_instructions
-    );
-
-    // Call LLM based on backend
-    let response = if backend.contains("anthropic") {
-        call_anthropic_for_memory_decision(&prompt).await?
-    } else if backend.contains("openai") {
-        call_openai_for_memory_decision(&prompt).await?
-    } else if backend.contains("xai") {
-        call_xai_for_memory_decision(&prompt).await?
-    } else if backend.contains("mistral") {
-        call_mistral_for_memory_decision(&prompt).await?
-    } else if backend.ends_with(".gguf") || backend == "local" {
-        call_local_for_memory_decision(&prompt, backend, Some(MEMORY_DECISION_WITH_RELATIONSHIPS_SCHEMA)).await?
-    } else if backend == "custom" {
-        call_custom_for_memory_decision(&prompt).await?
-    } else {
-        println!("[Memory Decision] Unknown backend '{}' - skipping", backend);
-        return Ok((false, None, Vec::new(), memory_extras::MemoryExtras::default()));
-    };
-
-    // Parse JSON response
-    #[derive(serde::Deserialize)]
-    struct EnhancedMemoryDecision {
-        should_remember: bool,
-        title: Option<String>,
-        relationships: Option<Vec<RelationshipClassification>>,
-        #[serde(flatten)]
-        extras: memory_extras::MemoryExtras,
-    }
-
-    // Extract JSON from response (handle markdown code blocks and raw JSON)
-    let json_str = if response.contains("```json") {
-        // Try to extract from markdown code block first
-        if let Some(start) = response.find("```json") {
-            let json_start = start + 7; // Skip past ```json
-            if let Some(end) = response[json_start..].find("```") {
-                response[json_start..json_start + end].trim()
-            } else {
-                // No closing ```, try to find JSON object
-                &response[json_start..]
-            }
-        } else {
-            &response
-        }
-    } else if response.contains("```") {
-        // Handle generic code blocks ```...```
-        if let Some(start) = response.find("```") {
-            let json_start = start + 3;
-            if let Some(end) = response[json_start..].find("```") {
-                response[json_start..json_start + end].trim()
-            } else {
-                &response[json_start..]
-            }
-        } else {
-            &response
-        }
-    } else if let Some(start) = response.find('{') {
-        // Fallback: extract raw JSON by finding braces
-        if let Some(end) = response.rfind('}') {
-            &response[start..=end]
-        } else {
-            &response
-        }
-    } else {
-        &response
-    };
-
-    // Some local models (e.g. dolphin) output double-underscored keys like memory__id
-    let json_normalized = json_str.replace("memory__id", "memory_id").replace("relationship__type", "relationship_type");
-    let json_str = json_normalized.as_str();
-
-    match serde_json::from_str::<EnhancedMemoryDecision>(json_str) {
-        Ok(decision) => {
-            let relationships = decision.relationships.unwrap_or_default();
-            println!("[Memory Decision] ✅ Successfully parsed JSON response");
-            println!("[Memory Decision] LLM decision: should_remember={}, title={:?}, {} relationships",
-                     decision.should_remember, decision.title, relationships.len());
-
-            // Log relationship classifications
-            if !relationships.is_empty() {
-                println!("[Memory Decision] Relationships classified:");
-                for rel in &relationships {
-                    if rel.relationship_type != "none" {
-                        println!("[Memory Decision]   Memory #{}: {} (confidence: {:.2}) - {}",
-                                 rel.memory_id, rel.relationship_type,
-                                 rel.confidence.unwrap_or(0.0), rel.reason);
-                    } else {
-                        println!("[Memory Decision]   Memory #{}: NONE - {}",
-                                 rel.memory_id, rel.reason);
-                    }
-                }
-            }
-
-            if decision.extras.event_date.is_some() || decision.extras.namespace.is_some() {
-                println!("[Memory Decision] extras: event_date={:?} namespace={:?} tags={:?} tone={:?} entities={}",
-                         decision.extras.event_date, decision.extras.namespace, decision.extras.tags,
-                         decision.extras.tone, decision.extras.entities.as_ref().map_or(0, |e| e.len()));
-            }
-            Ok((decision.should_remember, decision.title, relationships, decision.extras))
-        }
-        Err(e) => {
-            println!("[Memory Decision] ❌ Failed to parse JSON response: {}", e);
-            #[cfg(debug_assertions)]
-            println!("[Memory Decision] Attempted to parse: {}", json_str);
-            #[cfg(debug_assertions)]
-            println!("[Memory Decision] Full response was: {}", response);
-
-            // Fallback: try simple decision without relationships
-            println!("[Memory Decision] Falling back to simple memory decision (no relationship detection)");
-            match ask_llm_about_memory(message, conversation_history, backend).await {
-                Ok((should_remember, title, extras)) => {
-                    println!("[Memory Decision] ⚠️ Using fallback decision: should_remember={}, title={:?}",
-                             should_remember, title);
-                    Ok((should_remember, title, Vec::new(), extras))
-                },
-                Err(fallback_err) => {
-                    println!("[Memory Decision] ❌ Fallback also failed: {}", fallback_err);
-                    Ok((false, None, Vec::new(), memory_extras::MemoryExtras::default()))
-                }
-            }
-        }
-    }
+/// The relationships an on-device model's answer keeps: "none" entries pass through
+/// (they are skipped at storage anyway); a named link stays only at or above `floor`.
+/// A link with no confidence given is kept — the floor is for the model's own doubt.
+pub(crate) fn apply_link_floor(rels: Vec<RelationshipClassification>, floor: f32) -> Vec<RelationshipClassification> {
+    rels.into_iter()
+        .filter(|r| r.relationship_type == "none" || r.confidence.map_or(true, |c| c >= floor))
+        .collect()
 }
+
+/// Link types an on-device model's answer never stores. Empty since the type scheme of
+/// migration 0022 (2026-10-23): before it, "reminds_of" was listed here because all three
+/// of Qwen3-4B's wrong links in the memory bench were "reminds_of" between unrelated
+/// facts, and a wrong link keeps doing damage because graph traversal pulls the linked
+/// memory into later prompts. "reminds_of" no longer exists; the bench on the new scheme
+/// decides whether "related" from the on-device model needs the same treatment.
+pub(crate) const LOCAL_DROPPED_LINK_TYPES: &[&str] = &[];
+
+/// Everything an on-device model's relationship answer must pass before storage: the
+/// confidence floor, the dropped-types list, and "updates" turned into "contradicts" so
+/// the conflict card asks the user instead of the phone's model replacing a memory on
+/// its own. On the four-type bench (2026-10-23) Qwen3-4B called four "related" pairs
+/// "updates" (a sister visiting from where she lives, a flight on Thursday "replacing"
+/// a trip this week); each would silently have marked a true memory as replaced. The
+/// cloud models, which got all ten real updates and both traps right, keep the
+/// automatic path. Matt: "it proposes, you dispose."
+pub(crate) fn filter_local_links(rels: Vec<RelationshipClassification>) -> Vec<RelationshipClassification> {
+    apply_link_floor(rels, LOCAL_LINK_CONFIDENCE_FLOOR)
+        .into_iter()
+        .filter(|r| !LOCAL_DROPPED_LINK_TYPES.contains(&r.relationship_type.as_str()))
+        .map(|mut r| {
+            if r.relationship_type == "updates" {
+                r.relationship_type = "contradicts".to_string();
+                r.reason = format!("Possibly an update: {}", r.reason);
+            }
+            r
+        })
+        .collect()
+}
+
+#[allow(dead_code)]
+impl RelationshipClassification {
+    pub(crate) fn memory_id(&self) -> i32 { self.memory_id }
+    pub(crate) fn relationship_type(&self) -> &str { &self.relationship_type }
+    pub(crate) fn confidence(&self) -> Option<f32> { self.confidence }
+}
+
 
 pub(crate) async fn insert_memory(
     title: Option<String>,
@@ -1358,9 +1190,9 @@ pub(crate) async fn insert_memory(
         }
     };
 
-    // Generate embedding using local candle model
+    // Generate embedding using local candle model (title + content, 2026-10-25)
     println!("[Rust] Generating local embedding...");
-    let content_clone = content.clone();
+    let content_clone = crate::memory::embedding_text(title.as_deref(), &content);
     let embedding = tokio::task::spawn_blocking(move || {
         llm::local_embeddings::generate_local_embedding(&content_clone)
     })
@@ -1425,14 +1257,36 @@ pub(crate) async fn insert_memory(
 
 pub(crate) fn is_query_about_zynkbot(query: &str) -> bool {
     let q = query.to_lowercase();
-    q.contains("zynkbot") || q.contains("zynk bot")
-        || q.contains("zynksync") || q.contains("zynk sync")
-        || q.contains("zynklink") || q.contains("zynk link")
+    // Dictation hears "zinc" and "zink" for "zynk" (Matt, 2026-10-27).
+    q.contains("zynkbot") || q.contains("zynk bot") || q.contains("zinc bot") || q.contains("zincbot") || q.contains("zink bot") || q.contains("zinkbot")
+        || q.contains("zynksync") || q.contains("zynk sync") || q.contains("zinc sync") || q.contains("zink sync")
+        || q.contains("zynklink") || q.contains("zynk link") || q.contains("zinc link") || q.contains("zink link")
         || q.contains("zchat")
         || q.contains("ensemble mode") || q.contains("ensemble")
         || q.contains("containment mode") || q.contains("snap-in") || q.contains("snapin")
         || q.contains("memory manager")
         || q.contains("knowledge base")
+        || q.contains("hey zynk") || q.contains("wake word")
+}
+
+#[cfg(test)]
+mod zynkbot_gate_tests {
+    use super::is_query_about_zynkbot;
+
+    #[test]
+    fn spelled_and_misheard_names_open_the_gate() {
+        for q in ["How do I pair my phone with ZynkSync?", "how do i pair with zinc sync", "What does zinc bot remember?",
+                  "Is Zink Link the same as sync?", "What does the Keep button in Memory Manager do?"] {
+            assert!(is_query_about_zynkbot(q), "{}", q);
+        }
+    }
+
+    #[test]
+    fn ordinary_questions_do_not() {
+        for q in ["How much zinc is in oysters?", "What is on my grocery list?", "Where do I bank?"] {
+            assert!(!is_query_about_zynkbot(q), "{}", q);
+        }
+    }
 }
 
 // ============================================================================
@@ -1444,6 +1298,14 @@ pub(crate) fn is_query_about_zynkbot(query: &str) -> bool {
 /// Requires OPENAI_API_KEY in environment (loaded via dotenv at startup).
 #[tauri::command]
 async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
+    // Tapping dictation and stopping without a word sent Whisper a near-empty WAV, and
+    // Whisper answers silence with stock phrases ("Thank you.", "Bye.") (Matt, 2026-10-25).
+    // Under 0.7 s, or no sound to speak of: nothing was said, nothing is sent.
+    let (secs, rms) = wav_duration_and_rms(&audio_data);
+    if secs < 0.7 || rms < 0.004 {
+        println!("[Dictation] {:.2}s of audio, rms {:.4}: nothing said", secs, rms);
+        return Ok(String::new());
+    }
     let api_key = std::env::var("OPENAI_API_KEY")
         .map_err(|_| "OPENAI_API_KEY not set — add it to your .env file".to_string())?;
 
@@ -1452,10 +1314,13 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
         .mime_str("audio/wav")
         .map_err(|e| format!("MIME error: {e}"))?;
 
+    // gpt-4o-mini-transcribe (2026-10-28, was whisper-1): OpenAI's newer transcription
+    // model, lower latency and half the price. The wait after speaking is logged.
     let form = reqwest::multipart::Form::new()
-        .text("model", "whisper-1")
+        .text("model", DICTATION_MODEL)
         .part("file", part);
 
+    let t_upload = std::time::Instant::now();
     let client = reqwest::Client::new();
     let response = client
         .post("https://api.openai.com/v1/audio/transcriptions")
@@ -1476,24 +1341,38 @@ async fn transcribe_audio(audio_data: Vec<u8>) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to parse OpenAI response: {e}"))?;
 
-    json["text"]
-        .as_str()
-        .map(|s| s.trim().to_string())
+    let text = json["text"].as_str().map(|s| s.trim().to_string());
+    println!("[⏱️ PERF] Dictation: {:.1}s of audio transcribed in {:.2}s ({})", secs, t_upload.elapsed().as_secs_f32(), DICTATION_MODEL);
+    if let Some(t) = &text {
+        if secs < 2.5 && whisper_silence_phrase(t) {
+            println!("[Dictation] dropped Whisper's silence phrase {:?} ({:.2}s)", t, secs);
+            return Ok(String::new());
+        }
+    }
+    text
         .ok_or_else(|| "No text field in OpenAI response".to_string())
 }
 
 /// Desktop dictation — cpal mic capture, Vosk engine (Linux only).
 /// libvosk.so is only available for Linux x86_64; Windows/macOS fall back to browser audio.
 #[tauri::command]
-async fn start_vosk_recording() -> Result<(), String> {
+async fn start_vosk_recording(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
-    { return Err("Android uses the VoskBridge Kotlin interface.".to_string()); }
+    { let _ = app; return Err("Android uses the VoskBridge Kotlin interface.".to_string()); }
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
-        return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::Vosk))
+        // The words recognised so far go to the page as "dictation-live" events, so
+        // the composer can show them while the user is still speaking (2026-10-20).
+        let live: vosk_desktop::LiveSink = Box::new(move |text: String| {
+            use tauri::Emitter;
+            let _ = app.emit("dictation-live", text);
+        });
+        return tokio::task::spawn_blocking(move || vosk_desktop::start(vosk_desktop::Engine::Vosk, Some(live)))
             .await
             .map_err(|e| format!("start task join failed: {e}"))?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
+    { let _ = app; }
     #[cfg(not(any(target_os = "android", target_os = "linux", target_os = "windows")))]
     Err("Offline dictation via Vosk is not available on this platform.".to_string())
 }
@@ -1512,18 +1391,28 @@ async fn stop_vosk_recording() -> Result<String, String> {
     Err("Offline dictation via Vosk is not available on this platform.".to_string())
 }
 
-/// Desktop dictation — cpal mic capture, OpenAI Whisper cloud engine (Linux only).
+/// Desktop dictation — cpal mic capture, OpenAI cloud engine (Linux only).
 /// Bypasses the broken Linux Tauri WebView getUserMedia; Windows uses browser audio instead.
 #[tauri::command]
-async fn start_openai_recording() -> Result<(), String> {
+async fn start_openai_recording(app: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
-    { return Err("Android uses the WebAudio path for OpenAI Whisper.".to_string()); }
+    { let _ = app; return Err("Android uses the WebAudio path for OpenAI Whisper.".to_string()); }
     #[cfg(target_os = "linux")]
     {
-        return tokio::task::spawn_blocking(|| vosk_desktop::start(vosk_desktop::Engine::OpenAI))
+        // Since 2026-10-28 the audio streams to OpenAI's Realtime transcription session
+        // while the user speaks, and the words so far reach the page as the same
+        // "dictation-live" events Vosk sends (openai_realtime.rs; falls back to the
+        // one-shot upload when the socket cannot be opened or DICTATION_STREAM=0).
+        let live: vosk_desktop::LiveSink = Box::new(move |text: String| {
+            use tauri::Emitter;
+            let _ = app.emit("dictation-live", text);
+        });
+        return tokio::task::spawn_blocking(move || vosk_desktop::start(vosk_desktop::Engine::OpenAI, Some(live)))
             .await
             .map_err(|e| format!("start task join failed: {e}"))?;
     }
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
+    { let _ = app; }
     #[cfg(not(any(target_os = "android", target_os = "linux")))]
     Err("Rust mic capture is only available on Linux; use browser audio on Windows/macOS.".to_string())
 }
@@ -1706,7 +1595,7 @@ async fn load_einstein_demo_legacy(user_id: String) -> Result<serde_json::Value,
     // For demo: both content and original_text are first-person (simulates standalone conversation turns)
     let all_first_person: Vec<String> = einstein_memories
         .iter()
-        .map(|(_, content, _, _)| content.to_string())
+        .map(|(title, content, _, _)| crate::memory::embedding_text(Some(title), content))
         .collect();
 
     println!("[Rust] Generating embeddings for all {} memories from first-person text...", total_memories);
@@ -2174,8 +2063,11 @@ async fn auto_start_http_server() -> Result<(), String> {
 
     // Create ZynkSync service (but don't start auto-sync yet)
     // Use 60 second interval to match UI expectations
+    let identity = crate::zynksync::SyncIdentity::from_files()
+        .map_err(|e| format!("Failed to read identity for ZynkSync: {}", e))?;
     let service = Arc::new(ZynkSyncService::new(
-        device_id.clone(),
+        identity,
+        None, // DEFAULT_SYNC_PORT
         db_pool,
         Some(60), // 60 second sync interval
         cert_pem,
@@ -2183,8 +2075,7 @@ async fn auto_start_http_server() -> Result<(), String> {
         cert_der,
     ));
 
-    // Start HTTP server on port 57963
-    println!("[HTTP Server] Starting HTTP server on port 57963...");
+    println!("[HTTP Server] Starting HTTP server on port {}...", crate::zynksync::DEFAULT_SYNC_PORT);
     match service.clone().start_http_server().await {
         Ok(port) => {
             println!("[HTTP Server] ✅ HTTP server started on port {}", port);
@@ -2328,6 +2219,7 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            crate::app_log::announce();
             // Ensure model directories exist in user data dir (for installed binary)
             let models_dir = crate::db::get_app_data_dir();
             std::fs::create_dir_all(models_dir.join("models/system")).ok();
@@ -2337,7 +2229,7 @@ pub fn run() {
             let data_dir_env = crate::db::get_app_data_dir().join(".env");
             if data_dir_env.exists() {
                 println!("[Dotenv] Loading .env from: {}", data_dir_env.display());
-                dotenv::from_path(&data_dir_env).ok();
+                load_env_file(&data_dir_env);
             } else {
                 // Dev mode fallbacks
                 let env_paths = [
@@ -2349,7 +2241,7 @@ pub fn run() {
                 for path in &env_paths {
                     if std::path::Path::new(path).exists() {
                         println!("[Dotenv] Loading .env from: {}", path);
-                        dotenv::from_path(path).ok();
+                        load_env_file(std::path::Path::new(path));
                         break;
                     }
                 }
@@ -2359,7 +2251,7 @@ pub fn run() {
                     let env_file = current_dir.join(".env");
                     if env_file.exists() {
                         println!("[Dotenv] Found .env at: {:?}", env_file);
-                        dotenv::from_path(env_file).ok();
+                        load_env_file(&env_file);
                         break;
                     }
                     if !current_dir.pop() { break; }
@@ -2374,6 +2266,49 @@ pub fn run() {
                 let mut global_app_handle = APP_HANDLE.lock()
                     .map_err(|e| format!("APP_HANDLE mutex poisoned: {}", e))?;
                 *global_app_handle = Some(app.handle().clone());
+                // The memory job queue's worker (memory_jobs.rs): one per process, started
+                // once the window can be told about progress; pending rows from the last
+                // run are picked up here too (2026-10-24).
+                crate::memory_jobs::ensure_worker(std::sync::Arc::new(crate::response_sink::TauriSink::new(app.handle().clone())));
+                // Embedding scheme change (title + fact, 2026-10-25): re-embed once, in the background.
+                tauri::async_runtime::spawn(async {
+                    // Memories whose event_date is a bare "YYYY-MM-DD" (older builds bound the
+                    // date without a time; seven such rows reached the desktop by sync) fail the
+                    // datetime reader and emptied the Memory Manager (2026-10-26). Give them a
+                    // midnight time, once, before anything reads them.
+                    if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        // Keys this device recorded but no longer holds (a cut .env, KI-100) go
+                        // back into the environment and the file before anything needs them.
+                        match crate::sync_outbox::restore_env_from_secrets(&pool).await {
+                            Ok(n) if n > 0 => println!("[Dotenv] {} key(s) restored from this device's own records", n),
+                            Ok(_) => {}
+                            Err(e) => eprintln!("[Dotenv] could not restore keys: {}", e),
+                        }
+                        match sqlx::query("UPDATE memories SET event_date = event_date || 'T00:00:00+00:00' WHERE event_date IS NOT NULL AND length(event_date) = 10").execute(&pool).await {
+                            Ok(r) if r.rows_affected() > 0 => println!("[Memory] gave {} date-only event dates a time", r.rows_affected()),
+                            Ok(_) => {}
+                            Err(e) => eprintln!("[Memory] event_date repair: {}", e),
+                        }
+                        pool.close().await;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+                    match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+                        Ok(pool) => {
+                            if let Err(e) = crate::memory::reembed_if_scheme_changed(&pool).await { eprintln!("[Memory] re-embed: {}", e); }
+                            // Replies stored with a glued "MEMORY: yes|no" before 2026-10-25: cut it off once.
+                            for marker in ["MEMORY: no", "MEMORY: yes"] {
+                                let n = marker.len() as i64;
+                                match sqlx::query("UPDATE conversation_messages SET content = rtrim(substr(content, 1, length(content) - ?)) WHERE role = 'assistant' AND content LIKE ?")
+                                    .bind(n).bind(format!("%{}", marker)).execute(&pool).await {
+                                    Ok(r) if r.rows_affected() > 0 => println!("[ConvHistory] removed a stored {} from {} replies", marker, r.rows_affected()),
+                                    Ok(_) => {}
+                                    Err(e) => eprintln!("[ConvHistory] marker cleanup: {}", e),
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("[Memory] re-embed: db: {}", e),
+                    }
+                });
                 println!("[Tauri] ✅ App handle stored globally for event emission");
             }
 
@@ -2418,11 +2353,15 @@ pub fn run() {
                         Err(e) => eprintln!("[System] ⚠️ System memory seed error: {}", e),
                     }
 
-                    // Index system documentation (idempotent - only indexes if missing)
-                    match commands::onboarding::index_system_documentation().await {
-                        Ok(msg) => println!("[System KB] ✅ {}", msg),
-                        Err(e) => eprintln!("[System KB] ⚠️ System doc indexing error: {}", e),
-                    }
+                    // The built-in guides: copied and indexed once per shipped set, 20 s after
+                    // start so the embedding work never sits in front of the first question.
+                    tauri::async_runtime::spawn(async {
+                        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                        match commands::onboarding::index_system_documentation().await {
+                            Ok(msg) => println!("[System KB] ✅ {}", msg),
+                            Err(e) => eprintln!("[System KB] ⚠️ Built-in guide indexing error: {}", e),
+                        }
+                    });
 
                     println!("[System] 🎉 First-time initialization complete (if needed)");
                 });
@@ -2473,6 +2412,10 @@ pub fn run() {
             commands::models::open_models_folder,
             commands::models::list_user_models,
             commands::models::delete_user_model,
+            commands::models::list_local_model_files,
+            commands::models::models_user_dir,
+            commands::models::add_model_from_file,
+            commands::models::move_user_model,
             commands::models::get_api_keys,
             commands::models::set_api_key,
             commands::models::set_preferred_backend,
@@ -2491,8 +2434,15 @@ pub fn run() {
             commands::chat::cancel_generation,
             commands::chat::run_ensemble,
             commands::memory::list_memories,
+            commands::memory::find_memory_source,
             commands::memory::update_memory,
+            commands::memory::update_memory_original_text,
+            commands::memory::keep_memory,
+            commands::memory::list_pending_memory_cards,
+            commands::memory::answer_memory_card,
             commands::memory::delete_memory,
+            commands::memory::restore_memory,
+            commands::memory::resolve_stored_conflict,
             commands::memory::get_memory,
             // Onboarding
             commands::onboarding::store_onboarding_response,
@@ -2550,7 +2500,6 @@ pub fn run() {
             commands::zynksync::get_zynksync_status,
             commands::zynksync::get_zynksync_peers,
             commands::zynksync::sync_to_peer,
-            commands::zynksync::receive_sync_memories,
             commands::zynksync::request_device_pairing,
             commands::zynksync::verify_pairing_code,
             commands::zynksync::unpair_device,
@@ -2559,13 +2508,13 @@ pub fn run() {
             commands::zynksync::expel_zynksync_device,
             commands::zynksync::unsync_and_reset_identity,
             commands::zynksync::get_zynksync_pairing_code,
-            commands::zynksync::check_sync_status_with_peers,
             commands::zynksync::broadcast_sync_to_all_peers,
             commands::zynksync::get_local_ip,
             // Memory management
             commands::zynksync::clear_all_memories,
             commands::conversation::clear_conversation_history,
             commands::utils::read_text_file,
+            commands::utils::read_attachment_text,
             commands::utils::read_file_base64,
             // User identity
             commands::user_identity::get_user_identity,
@@ -2592,6 +2541,12 @@ pub fn run() {
             commands::zynklink::download_to_knowledge_base,
             commands::zynklink::download_to_custom_location,
             commands::zynklink::cancel_zynklink_download,
+            commands::zynklink::remove_shared_file,
+            commands::zynklink::move_shared_file,
+            commands::checkin::next_memory_checkin,
+            commands::checkin::answer_memory_checkin,
+            commands::checkin::get_checkin_enabled,
+            commands::checkin::set_checkin_enabled,
             commands::zynklink::get_linked_devices,
             // External file/folder opening + Knowledge Base
             commands::knowledge_base::open_external_file,
@@ -2605,14 +2560,21 @@ pub fn run() {
             commands::knowledge_base::index_kb_document,
             commands::knowledge_base::list_kb_documents,
             commands::knowledge_base::remove_kb_document,
+            commands::knowledge_base::delete_kb_file,
             commands::knowledge_base::clear_all_kb_documents,
             commands::knowledge_base::search_kb,
             commands::knowledge_base::index_snapin_notes,
             // Web search
             commands::web_search::search_web,
             commands::web_search::execute_web_search,
+            voice_prefs::set_voice_pref,
             // Conversation History
             commands::conversation::list_conversation_sessions,
+            commands::conversation::get_latest_thread,
+            commands::conversation::seal_thread,
+            commands::conversation::log_web_search_answer,
+            commands::conversation::verify_seal_file,
+            commands::conversation::seal_signer_key,
             commands::conversation::get_conversation_messages,
             commands::conversation::search_conversations,
             commands::conversation::delete_conversation_session,
@@ -2623,6 +2585,7 @@ pub fn run() {
             // Setup wizard
             commands::setup_wizard::check_needs_setup,
             commands::setup_wizard::download_system_models,
+            commands::setup_wizard::zb_model_status,
             commands::setup_wizard::download_user_model,
         ])
         .on_window_event(|_window, event| {
@@ -2694,4 +2657,42 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Read a settings file into the process environment, line by line. One line the
+/// loader cannot read is reported and skipped; the rest still load (KI-083: the
+/// `dotenv` crate stopped at the first bad line, which on Windows was line one).
+fn load_env_file(path: &std::path::Path) {
+    match crate::env_file::load(path) {
+        Ok((n, skipped)) if skipped.is_empty() => println!("[Dotenv] {} setting(s) loaded", n),
+        Ok((n, skipped)) => println!("[Dotenv] {} setting(s) loaded; could not read line(s) {:?} of {}", n, skipped, path.display()),
+        Err(e) => println!("[Dotenv] Could not read {}: {}", path.display(), e),
+    }
+}
+
+#[cfg(test)]
+mod link_floor_tests {
+    use super::*;
+    fn rel(t: &str, c: Option<f32>) -> RelationshipClassification {
+        RelationshipClassification { memory_id: 1, relationship_type: t.to_string(), reason: String::new(), confidence: c }
+    }
+    #[test]
+    fn links_under_the_floor_are_dropped_and_confident_ones_kept() {
+        let out = apply_link_floor(vec![rel("reminds_of", Some(0.4)), rel("elaborates", Some(0.9)), rel("supports", Some(0.7))], 0.7);
+        let kinds: Vec<&str> = out.iter().map(|r| r.relationship_type.as_str()).collect();
+        assert_eq!(kinds, vec!["elaborates", "supports"]);
+    }
+    #[test]
+    fn on_device_links_pass_the_dropped_types_list_and_updates_become_a_question() {
+        let out = filter_local_links(vec![rel("related", Some(0.92)), rel("updates", Some(0.9)), rel("contradicts", None), rel("none", Some(0.5))]);
+        let kinds: Vec<&str> = out.iter().map(|r| r.relationship_type.as_str()).collect();
+        let kept: Vec<&str> = ["related", "contradicts", "contradicts", "none"].into_iter().filter(|t| !LOCAL_DROPPED_LINK_TYPES.contains(t)).collect();
+        assert_eq!(kinds, kept);
+        assert!(out[1].reason.starts_with("Possibly an update"));
+    }
+    #[test]
+    fn none_and_unscored_links_pass_through() {
+        let out = apply_link_floor(vec![rel("none", Some(0.1)), rel("contradicts", None)], 0.7);
+        assert_eq!(out.len(), 2);
+    }
 }

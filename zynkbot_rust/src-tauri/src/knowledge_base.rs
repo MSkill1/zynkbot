@@ -37,6 +37,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "rs", "js", "jsx", "ts", "tsx", "py", "java", "cpp", "c", "h",
     "html", "css", "xml", "yaml", "yml", "toml",
     "pdf",
+    "docx", "doc",  // Word documents (2026-10-27)
 ];
 
 /// Check if file extension is supported

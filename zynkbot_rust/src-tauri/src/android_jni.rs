@@ -27,6 +27,32 @@ use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
 use jni::{JNIEnv, JavaVM};
 use std::sync::Arc;
 
+/// Set once by `ZynkCore.nativeInit(context)` from MainActivity.onCreate: the VM, the
+/// application context and the `ZynkNotify` class, so Rust can post a notification from
+/// any thread (a class looked up later from a native thread would not be found, since
+/// such threads see only the system class loader).
+static NOTIFY: once_cell::sync::OnceCell<(JavaVM, GlobalRef, GlobalRef)> = once_cell::sync::OnceCell::new();
+
+#[no_mangle]
+pub extern "C" fn Java_ai_containai_zynkbot_ZynkCore_nativeInit(mut env: JNIEnv, _class: JClass, context: JObject) {
+    let Ok(vm) = env.get_java_vm() else { return };
+    let Ok(class) = env.find_class("ai/containai/zynkbot/ZynkNotify") else { eprintln!("[Android] ZynkNotify class not found"); return };
+    let (Ok(class_ref), Ok(ctx_ref)) = (env.new_global_ref(class), env.new_global_ref(context)) else { return };
+    let _ = NOTIFY.set((vm, class_ref, ctx_ref));
+    println!("[Android] notification bridge ready");
+}
+
+/// Post a silent notification that opens the app; no-op until nativeInit has run.
+pub fn post_notice(title: &str, text: &str) {
+    let Some((vm, class, ctx)) = NOTIFY.get() else { eprintln!("[Android] notice dropped: bridge not initialised"); return };
+    let Ok(mut env) = vm.attach_current_thread_as_daemon() else { return };
+    let (Ok(jtitle), Ok(jtext)) = (env.new_string(title), env.new_string(text)) else { return };
+    let class: &JClass = class.as_obj().into();
+    let r = env.call_static_method(class, "post", "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+        &[JValue::Object(ctx.as_obj()), JValue::Object(&jtitle), JValue::Object(&jtext)]);
+    if let Err(e) = r { eprintln!("[Android] notice failed: {}", e); let _ = env.exception_clear(); }
+}
+
 /// Streams a reply back into a Kotlin `ZynkCore.Callback`. The sink may be invoked
 /// from a worker thread of the tokio runtime we spin up below, so every call
 /// re-attaches the current thread to the JVM (idempotent once attached).
@@ -100,7 +126,7 @@ async fn load_recent_turns(session_id: &str) -> Option<Vec<crate::ConversationTu
     Some(
         msgs[start..]
             .iter()
-            .map(|m| crate::ConversationTurn { role: m.role.clone(), content: m.content.clone() })
+            .map(|m| crate::ConversationTurn { role: m.role.clone(), content: m.content.clone(), images: None })
             .collect(),
     )
 }
@@ -228,6 +254,8 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
             Some(transcript), // user_query: the clean transcript for history/memory/KB/chat
             None, // image_data
             true, // hands_free
+            None, // mode: hands-free has none
+            None, // page_sources: a hands-free search builds its own
         )
         .await
     });

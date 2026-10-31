@@ -20,7 +20,24 @@ Models will appear in the app's model selector after placing them in this direct
 
 **Local models vs. API models:** API models (Claude, GPT-4o, Grok) produce the most consistent results for memory extraction, contradiction detection, and long-form reasoning. Local models work well for conversation but vary in how precisely they follow Zynkbot's internal structured instructions — this affects how reliably memories are created and contradictions flagged. Results depend on the model, hardware, and question type. As open-source models continue to improve, so will local model performance in Zynkbot.
 
-### 1. Qwen3 8B ⭐ **Best All-Around — Recommended Starting Point**
+**How a local model is prompted.** Any model loaded from a `.gguf` file gets a shorter prompt than a cloud model: the last 8 messages of the conversation (each cut to 400 characters), up to 4 recalled memories (each cut to 300 characters), and a shorter opening. Cloud models get 40 messages and 30 memories. This is why a local model sometimes forgets something said ten messages ago that a cloud model would still have.
+
+**Sophro (not yet shipped).** Sophro-4B-memory-v1 is a fine-tune of the Zynkbot model (Qwen3-4B) trained on memory extraction: store what was said, nothing more. Its results are in [BENCHMARKS.md](BENCHMARKS.md). It is being used day to day on the developer's devices before any decision to ship it; the installer still offers Qwen3-4B.
+
+### The Zynkbot model: Qwen3-4B-Instruct-2507 ⭐ **Recommended**
+- **Size:** 2.4GB
+- **File:** `Qwen3-4B-Instruct-2507-Q4_0.gguf`, the Q4_0 file from unsloth
+- **Use Case:** The model Zynkbot is built around. Phone-sized, fast, no key needed
+- **How you get it:** The setup wizard offers to download it at first run. On a phone it is the only model offered. A download that is interrupted continues where it stopped, and the file is checked against its checksum before it is used. If you choose Later, the download stays on the Current Model page
+- **Download by hand:**
+  ```bash
+  cd ~/zynkbot/zynkbot_rust/src-tauri/models/user
+  wget https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_0.gguf -O Qwen3-4B-Instruct-2507-Q4_0.gguf
+  ```
+
+The models below are alternatives. The setup wizard offers them on a computer, not on a phone.
+
+### 1. Qwen3 8B ⭐ **Best All-Around alternative**
 - **Size:** 5.0GB
 - **Speed:** Fast on modern CPUs; significantly faster with NVIDIA GPU + CUDA
 - **Use Case:** General conversation, memory-augmented chat, code, technical writing
@@ -265,7 +282,7 @@ For best quality responses without local downloads, use API models:
 - **GPT-4 (OpenAI)** - Strong general capabilities
 - **Grok (xAI)** - Fast, conversational
 
-Add API keys via: **⚙️ Settings → API Keys**
+Add API keys via: **⚙️ System Controls → Current Model**
 
 ---
 

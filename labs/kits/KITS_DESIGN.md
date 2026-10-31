@@ -21,10 +21,20 @@ Optional fifth part: a report section, used by the "what do you know about me" m
 
 A kit has no permissions, no network access and no code path of its own. Everything it does, the user could do by typing. That is deliberate: kits inherit the memory system's promise (local, visible, editable, deletable) without adding a trust surface.
 
+## Why someone else would write a kit (developer note, 2026-10-20)
+
+A kit is the cheapest way to give Zynkbot a job it was not built for, because it is a JSON file and needs no code. Anyone who knows a subject well can write one, and the memory system does the rest: remembers what the user told it, in the kit's own namespace, and keeps it on the device. Examples of the kind of kit a third party might write:
+
+- **A city kit, written by a local.** Someone who lives in Barcelona writes a kit for people visiting: the standing instructions carry what a visitor keeps asking (how the metro zones work, when restaurants actually open, which neighbourhoods suit which mood, a few Catalan phrases), the opening questions ask how long you are staying and what you like, and the memory holds where you have been and what you thought of it, so "where should we eat tonight" gets better each day of the trip.
+- **A club or hobby kit.** A home-brewing kit from someone who brews: it knows the vocabulary and the usual mistakes, asks what equipment you have, and remembers each batch, what you changed and how it turned out, so the next brew starts from your own history rather than a forum post.
+- **A "new to this" kit.** A first-year-allotment kit, a new-puppy kit, a first-baby kit: the author packs what they wish someone had told them, the kit remembers what the user has planted, fed or tried, and the user deletes the whole namespace the day they no longer need it.
+
+The point in each case is the same: the author supplies the knowledge once, the user's own memory supplies the rest, and nothing leaves the phone. The third-party question (signing, publishing) is still open; see the end of this document.
+
 ## How a user opts in
 
 - **End of onboarding:** one card. "Want to try Zynkbot in the kitchen? It will remember what you cook and what you like, and help you plan meals. Everything stays on this device." Buttons: *Turn on* / *Skip*. Skip is the default and nothing is created.
-- **System Controls panel:** a **Kits** section between Snap-ins and Knowledge Base (**decided**). It lists every kit with a switch. Kits that do not exist yet are shown greyed with a "future" tag so the shape of the idea is visible from day one: Kitchen (on/off), Garden (future), Workouts (future), Reading (future), Household (future). The greyed rows are labels only; nothing behind them.
+- **System Controls panel:** a **Kits** section between Snap-ins and Knowledge Base (**decided**). It lists every kit with a switch. Kits that do not exist yet are shown greyed with a "future" tag so the shape of the idea is visible from day one: Kitchen (on/off), Grocery (future), Garden (future), Workouts (future), Reading (future), Household (future). The greyed rows are labels only; nothing behind them.
 - **Turning a kit off** removes its instructions and chips immediately. Its memories stay unless the user presses *Forget everything from this kit*, which deletes the namespace.
 
 ### "Make it forget and start again"
@@ -56,7 +66,7 @@ Zero-trust is unchanged: a kit never routes anything through ContainAI; purchase
 ## What the mechanism needs from the code
 
 1. Standing-instructions tier: inject a kit's instruction block into the system prompt while the kit is on (`conversation_engine.rs::build_prompt`). The block is per-kit, short, and shown to the user in the Kits section so nothing is hidden.
-2. Namespace on write: memories extracted while a kit is on are tagged with the kit's namespace when the model says the fact belongs to it (the MEMORY_EXTRACT line gains an optional namespace hint).
+2. Namespace on write: memories extracted while a kit is on are tagged with the kit's namespace when the model says the fact belongs to it. (Status 2026-10-25: the extraction call, call 2 in `memory_prompts.rs`, already returns a `namespace` per fact on cloud backends from the canonical list; a kit would add its namespace to that list or map onto one. The MEMORY_EXTRACT line this item named no longer exists.)
 3. Opening questions: a small dialog; answers stored through the normal "Remember:" path with the kit namespace.
 4. Quick prompts: chips above the input, from the kit JSON.
 5. Kits section in System Controls; onboarding card; "forget this kit" (delete-by-namespace, which exists in the Memory Manager code path).
@@ -89,6 +99,10 @@ Estimate: two days for 1–5 with the Kitchen kit; 6–7 are shared with the mem
   "report": { "title": "Kitchen", "fields": ["meals logged", "recipes liked", "recipes to avoid", "weekly quantities"] }
 }
 ```
+
+## The Grocery kit (noted 2026-10-20, Matt)
+
+A second kit, separate from the Kitchen kit, sold as a one-time purchase. Dictate your groceries to Zynkbot and it organises the list for you. Nothing designed yet beyond that; same four-part shape as above (standing instructions, a `grocery` namespace, opening questions, quick prompts) when it is written up.
 
 ## Tester task (for the beta package)
 

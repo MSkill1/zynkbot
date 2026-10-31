@@ -22,6 +22,13 @@ pub trait ResponseSink: Send + Sync {
     /// progress or a detected contradiction. Default no-op: sinks that don't
     /// surface these (such as a bare voice reply) simply ignore them.
     fn event(&self, _name: &str, _payload: Value) {}
+
+    /// A card was raised and the user may not be looking: on Android, post a
+    /// notification that opens the app (2026-10-26). Default no-op elsewhere.
+    fn card_notice(&self, _title: &str, _text: &str) {
+        #[cfg(target_os = "android")]
+        crate::android_jni::post_notice(_title, _text);
+    }
 }
 
 /// Forwards a response to the Tauri WebView, preserving the event names the
@@ -46,6 +53,31 @@ impl ResponseSink for TauriSink {
         use tauri::Emitter;
         let _ = self.app.emit(name, payload);
     }
+}
+
+/// Wraps another sink and logs how long the first word took from the moment the request
+/// began (2026-10-28), so "it felt slow" has a number to read in the log.
+pub struct TimedSink {
+    inner: std::sync::Arc<dyn ResponseSink>,
+    start: std::time::Instant,
+    first_seen: std::sync::atomic::AtomicBool,
+}
+
+impl TimedSink {
+    pub fn new(inner: std::sync::Arc<dyn ResponseSink>, start: std::time::Instant) -> Self {
+        Self { inner, start, first_seen: std::sync::atomic::AtomicBool::new(false) }
+    }
+}
+
+impl ResponseSink for TimedSink {
+    fn token(&self, token: &str) {
+        if !token.is_empty() && !self.first_seen.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            println!("[⏱️ PERF] First word on screen: {:.2}s after the request began", self.start.elapsed().as_secs_f32());
+        }
+        self.inner.token(token);
+    }
+    fn event(&self, name: &str, payload: Value) { self.inner.event(name, payload); }
+    fn card_notice(&self, title: &str, text: &str) { self.inner.card_notice(title, text); }
 }
 
 #[cfg(test)]

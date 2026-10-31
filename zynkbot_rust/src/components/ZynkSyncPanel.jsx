@@ -5,6 +5,16 @@ import { confirmDialog } from '../utils/confirmDialog';
 
 export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, onIdentityAdopted, onMemoriesSynced }) {
   const [peers, setPeers] = useState([]);
+  // Two entries with the same name — a reinstalled phone next to its old entry — are
+  // told apart by age: the one heard from most recently keeps the name, the others are
+  // shown as "name (old)". Display only; nothing is renamed (Matt, 2026-10-07, J37).
+  const displayName = (peer) => {
+    const key = (peer.device_name || '').trim().toLowerCase(); // "OnePlus" and "Oneplus" are the same phone to a person
+    const same = peers.filter(p => (p.device_name || '').trim().toLowerCase() === key);
+    if (same.length < 2) return peer.device_name;
+    const newest = same.reduce((a, b) => (new Date(a.last_seen) >= new Date(b.last_seen) ? a : b));
+    return peer.device_id === newest.device_id ? peer.device_name : `${peer.device_name} (old)`;
+  };
   const [syncStatus, setSyncStatus] = useState('stopped');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -124,11 +134,15 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
     }
   }, [loading, syncStatus, fetchPeers, userId, onMemoriesSynced]);
 
-  // Refresh peer list (no sync)
+  // Refresh peer list (no sync). The fetch is faster than a frame, so without a
+  // held-on state the button never visibly reacted and felt dead (Matt, 2026-10-07).
+  const [refreshing, setRefreshing] = useState(false);
   const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
     setMessage('Refreshing...');
     await fetchPeers();
     setMessage('✓ Refreshed');
+    setTimeout(() => setRefreshing(false), 600);
     setTimeout(() => setMessage(''), 2000);
   }, [fetchPeers]);
 
@@ -158,6 +172,23 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       setLoading(false);
     }
   }, [onIdentityAdopted]);
+
+  // Unread chat messages per synced device (same source the Link tab uses).
+  const [unreadCounts, setUnreadCounts] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      const counts = {};
+      for (const p of peers) {
+        try { counts[p.device_id] = await invoke('zchat_get_unread_count', { fromDeviceId: p.device_id }); }
+        catch (_) { counts[p.device_id] = 0; }
+      }
+      if (!cancelled) setUnreadCounts(counts);
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [peers]);
 
   const handleExpelDevice = useCallback(async (deviceId, deviceName) => {
     if (!await confirmDialog(
@@ -414,22 +445,24 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
         {/* Refresh */}
         <button
           onClick={handleRefresh}
-          disabled={loading}
+          disabled={loading || refreshing}
           style={{
             flex: isAndroid ? '1 1 calc(50% - 4px)' : 1,
             padding: '8px 10px',
-            background: '#6272a4',
-            color: '#f8f8f2',
+            background: refreshing ? '#8be9fd' : '#6272a4',
+            color: refreshing ? '#282a36' : '#f8f8f2',
             border: 'none',
             borderRadius: '4px',
             cursor: loading ? 'wait' : 'pointer',
             fontSize: '0.82rem',
             fontWeight: 'bold',
-            opacity: loading ? 0.5 : 1
+            opacity: loading ? 0.5 : 1,
+            transform: refreshing ? 'scale(0.97)' : 'none',
+            transition: 'background 120ms, transform 120ms'
           }}
           title="Refresh peer list"
         >
-          🔄 Refresh
+          {refreshing ? '🔄 Refreshing…' : '🔄 Refresh'}
         </button>
 
         {/* Unsync */}
@@ -709,6 +742,8 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
 
       {/* Synced Devices List */}
       <div style={{ marginBottom: '15px' }}>
+        {/* Listed flat (Matt, 2026-10-25): the page has the room, and a fold-out hid
+            which devices were online. */}
         <div style={{ color: '#ffb86c', fontWeight: 'bold', marginBottom: '8px', fontSize: '0.9rem' }}>
           📡 Synced Devices ({peers.length})
         </div>
@@ -759,29 +794,68 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
                     background: peer.is_online ? '#50fa7b' : '#6272a4'
                   }} />
                   <div style={{ color: '#f8f8f2', fontWeight: 'bold', flex: 1 }}>
-                    {peer.device_name}
+                    {displayName(peer)}
                   </div>
-                  <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4' }}>
+                  <div style={{ fontSize: '0.73rem', color: peer.is_online ? '#50fa7b' : '#6272a4', textAlign: 'right' }}>
                     {peer.is_online ? 'Online' : 'Offline'}
+                    {(() => {
+                      // "Last synced" (2026-10-28): when a round with this device last finished
+                      // cleanly. Online but not synced for a while shows in amber, so a link that
+                      // is up and not carrying anything is visible within minutes.
+                      if (!peer.last_synced) return <div style={{ color: peer.is_online ? '#ffb86c' : '#6272a4' }}>Not synced since this app started</div>;
+                      const secs = Math.max(0, Math.round((Date.now() - new Date(peer.last_synced).getTime()) / 1000));
+                      const ago = secs < 10 ? 'just now' : secs < 90 ? `${secs} s ago` : secs < 5400 ? `${Math.round(secs / 60)} min ago` : `${Math.round(secs / 3600)} h ago`;
+                      const stale = peer.is_online && secs > 300;
+                      return <div style={{ color: stale ? '#ffb86c' : '#8be9fd' }}>Last synced {ago}</div>;
+                    })()}
                   </div>
+                  {/* A labelled button, not a faint ✕: Matt could not find the ✕ when
+                      removing a stale entry during the sync pass (2026-10-07). */}
                   <button
                     onClick={() => handleExpelDevice(peer.device_id, peer.device_name)}
                     title={`Remove ${peer.device_name} from the network`}
                     style={{
                       background: 'transparent',
-                      border: 'none',
-                      color: '#6272a4',
+                      border: '1px solid #6272a4',
+                      color: '#f8f8f2',
                       cursor: 'pointer',
-                      fontSize: '0.85rem',
-                      padding: '2px 5px',
+                      fontSize: '0.75rem',
+                      padding: '3px 8px',
                       borderRadius: '3px',
-                      lineHeight: 1,
+                      lineHeight: 1.2,
                       flexShrink: 0
                     }}
-                    onMouseOver={e => e.currentTarget.style.color = '#ff5555'}
-                    onMouseOut={e => e.currentTarget.style.color = '#6272a4'}
-                  >✕</button>
+                    onMouseOver={e => { e.currentTarget.style.borderColor = '#ff5555'; e.currentTarget.style.color = '#ff5555'; }}
+                    onMouseOut={e => { e.currentTarget.style.borderColor = '#6272a4'; e.currentTarget.style.color = '#f8f8f2'; }}
+                  >Remove</button>
                 </div>
+                {/* Chat with your own device: a note to the phone, a link to the PC. Any
+                    paired device can be messaged; no link pairing needed (2026-09-17). */}
+                {onOpenChat && (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const identity = await invoke('get_user_identity');
+                          onOpenChat(peer, identity.device_id);
+                        } catch (e) { console.error('[ZynkSync] could not open chat:', e); }
+                      }}
+                      style={{
+                        padding: '6px 14px',
+                        background: '#bd93f9',
+                        color: '#282a36',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        fontWeight: 'bold',
+                        flex: 1
+                      }}
+                    >
+                      💬 Chat{unreadCounts[peer.device_id] > 0 && ` (${unreadCounts[peer.device_id]})`}
+                    </button>
+                  </div>
+                )}
                 <div style={{ color: '#6272a4', fontSize: '0.72rem', marginTop: '5px', paddingLeft: '17px' }}>
                   {peer.host}
                 </div>

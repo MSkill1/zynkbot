@@ -11,10 +11,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
-import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
 import android.media.AudioRecordingConfiguration
-import android.media.AudioRecord
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
@@ -32,6 +31,7 @@ import java.util.Locale
 import java.nio.FloatBuffer
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class WakeWordService : Service() {
@@ -42,6 +42,8 @@ class WakeWordService : Service() {
         const val NOTIFICATION_ID = 1003
         const val TRANSCRIPT_NOTIFICATION_ID = 1005
         const val TAG = "WakeWordService"
+        /** Longest the listener stays paused for another recording before resuming (2026-09-20). */
+        private const val PAUSE_WATCHDOG_MS = 120_000L
 
         // openWakeWord pipeline — shapes verified empirically against the ONNX models:
         //   mel:       [1, 1280] float32  →  [1, 1, 5, 32]  (5 mel frames × 32 bins per 80ms chunk)
@@ -55,12 +57,26 @@ class WakeWordService : Service() {
         const val EMB_SIZE = 96
         const val EMB_WINDOW = 16           // embeddings the classifier expects
         const val COOLDOWN_CHUNKS = 50      // ~4 seconds before re-triggering
+        // ── 2026-10-19: the Siri-shaped fixes (Pixel log, TV on, 12:48–12:49) ──
+        const val NO_SPEECH_MS = 6000L      // chime, then nothing said → close (was: the 30 s cap; same value as ZynkAssistantSession)
+        const val WATCHDOG_MS = 60_000L     // once a minute: listener off with no reason → restart it
+        const val PLAYBACK_TAIL_MS = 1000L  // ignore detections while the phone plays audio and for this long after
+        // Silero VAD v5 (assets/wake-word-models/silero_vad.onnx): 16 kHz, 512-sample frames
+        // with 64 samples of context, state 2×1×128. A detection counts only if some frame in
+        // the last ~2 s had a voice; with no voice for 2 s the wake models are skipped.
+        const val VAD_FRAME = 512
+        const val VAD_CONTEXT = 64
+        const val VAD_STATE = 2 * 128
+        const val VAD_WINDOW_FRAMES = 62    // ~2 s of 32 ms frames
+        const val VAD_SPEECH = 0.5f         // Silero's own default; on the 2026-10-19 clip set every real wake had a frame ≥ 0.5 in its last 2 s
+        const val VAD_SKIP_AFTER_FRAMES = 62
+        const val VAD_MAX_FAILURES = 5      // consecutive gate errors before it is switched off for this run
         const val TRIGGER_CLIP_CHUNKS = 40  // ~3.2 s: covers the models' full context (~2.5 s)
         const val MAX_LISTEN_MS = 30_000L   // hard cap on one dictation, ongoing speech cannot extend it (12 s cut off dictated paragraphs; matches ZynkAssistantSession since 2026-09-12)
         const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
         const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers (phones with an enforcing verifier)
         const val TRIGGER_CLIPS_KEPT_UNVERIFIED = 60   // no verifier yet: keep enough to train one (Matt's took 33 real clips)
-        const val CLIPS_NEEDED_FOR_VERIFIER = 30       // real clips before "Send my wake-word clips" lights up
+        const val CLIPS_NEEDED_FOR_VERIFIER = 20       // real clips before "Send my wake-word clips" lights up: one taught set (ENROLL_CLIPS)
         // Detections on audio quieter than this are ignored. Set from the Pixel's log of
         // 2026-09-08: a real "Hey Zynk" from ~20 ft measured -31.5 dBFS; ten of the
         // twenty-two false firings that morning sat between -40 and -47. Stricter still
@@ -86,6 +102,20 @@ class WakeWordService : Service() {
         const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
         const val MISS_WINDOW_MS = 5 * 60_000L
         const val MISSES_TO_BACK_OFF = 3
+        /** A spoken answer alone no longer makes a clip a training positive: the owner
+         *  check must also have scored at least this. On 2026-10-31 the television got
+         *  six wakes past the 0.50 line (0.56–0.90), two were answered ("How are you?",
+         *  "Are you deaf?") and both were about to train the profile as the owner's
+         *  voice (KI-103). Clock commands stay proof at any score; enrollment clips are
+         *  labelled on their own path. */
+        const val TRAIN_REAL_MIN_SCORE = 0.80f
+        /** Strict mode (back-off after misses) is switched off as of 2026-09-20. It was not a
+         *  TV detector: three ordinary misses in five minutes (a dismissed session, a
+         *  one-word transcript, a video playing nearby) locked the owner out for ten
+         *  minutes, because four consecutive slices at 0.90 is above the detector's own
+         *  noise on a real "Hey Zynk". The code stays, gated here, in case a gentler
+         *  version is wanted later; the plan is the owner's trained verifier instead. */
+        const val STRICT_MODE_ENABLED = false
         const val BACK_OFF_MS = 10 * 60_000L
 
         /** Called by the session / answerer when a trigger ends: `useful` = a real
@@ -96,6 +126,44 @@ class WakeWordService : Service() {
          *  a real "Hey Zynk" for training purposes, but only clock commands count as
          *  proof against the TV for the strict-mode logic (2026-09-13). */
         @JvmStatic fun labelClip(real: Boolean) { instance?.labelLastClip(real) }
+
+        // ── voice enrollment (2026-10-22) ───────────────────────────────────────
+        // The Voice page's "Teach Zynkbot your voice" card: the owner taps Start and says the
+        // wake word ENROLL_CLIPS times; each wake is saved as a real clip and only chimes.
+        // Until the count is reached the wake word answers nothing; paused, it does not
+        // count either (a television cannot add to the twenty while the owner is away).
+        // The on-phone trainer builds the profile from the clips (WakeVerifierTrainer).
+        // State lives in one marker file so it survives restarts: active, paused, done; no
+        // file means never enrolled.
+        const val ENROLL_CLIPS = 20
+        private fun enrollMarker(context: Context) = File(context.filesDir, "zynkbot/wake-word-models/enrolling")
+        @JvmStatic fun enrollmentState(context: Context): String =
+            try { enrollMarker(context).readText().trim().ifEmpty { "none" } } catch (_: Exception) { "none" }
+
+        /** Begin, or begin again: the clip set, the phone's own profile and its training
+         *  state go, so the profile that comes out of this is built from these clips alone
+         *  (a wake the owner tapped away counts as "not me", which is right in use and
+         *  wrong while teaching). The profile built into the APK is untouched. */
+        @JvmStatic fun startEnrollment(context: Context) {
+            var n = 0
+            File(context.filesDir, "zynkbot/wake_triggers").listFiles()?.forEach { if (it.isFile && it.delete()) n++ }
+            val models = File(context.filesDir, "zynkbot/wake-word-models")
+            File(models, "hey_zynk_verifier.json").delete(); File(models, "verifier_training.json").delete()
+            models.mkdirs(); enrollMarker(context).writeText("active\n")
+            instance?.verifier = null   // back to the built-in profile until the trainer writes one
+            WakeLog.i(TAG, "Voice enrollment started: $n clip files removed; collecting $ENROLL_CLIPS wake clips")
+        }
+
+        @JvmStatic fun setEnrollmentPaused(context: Context, paused: Boolean) {
+            if (enrollmentState(context) in setOf("active", "paused")) enrollMarker(context).writeText(if (paused) "paused\n" else "active\n")
+        }
+
+        /** What the card shows: state, clips so far, and whether a profile enforces here. */
+        @JvmStatic fun enrollmentStatus(context: Context): org.json.JSONObject {
+            val v = WakeVerifier.load(context, quiet = true)
+            return org.json.JSONObject().put("state", enrollmentState(context)).put("count", clipStats(context).getInt("real"))
+                .put("needed", ENROLL_CLIPS).put("enforcing", v?.enforcesOn(context) == true).put("profile", v?.trained ?: "")
+        }
 
         /** Counts behind the Voice-settings "Send my wake-word clips" button. */
         @JvmStatic fun clipStats(context: Context): org.json.JSONObject {
@@ -131,17 +199,150 @@ class WakeWordService : Service() {
         // Vosk model shared from VoskBridge so screen-off dictation doesn't reload it.
         @Volatile var sharedVoskModel: org.vosk.Model? = null
 
-        // The running service, so ZynkAssistantSession can hand the microphone back
-        // and forth: the ONNX loop must release AudioRecord before Vosk opens it
-        // (a second reader on a busy mic wedged the session on the OnePlus), and
-        // can be re-armed natively when the session hides.
+        // The running service: ZynkAssistantSession, VoskBridge and NativeVoiceAnswerer
+        // reach its stream through dictate() / beginTurn() / endTurn().
         @Volatile var instance: WakeWordService? = null
+
+        // ── 2026-10-20 rebuild: one owner, one stream, one state ──────────────
+        const val TURN_MAX_MS = 180_000L       // a turn (chime → reply spoken) longer than this is closed by the watchdog
+        const val DICTATION_MAX_MS = 60_000L   // a dictation that outlives its own 30 s cap by this much is aborted
+        const val PAUSE_MAX_MS = PAUSE_WATCHDOG_MS   // paused for another recording: resume regardless after this
+        const val CHIME_SETTLE_MS = 350L       // dictation after a chime drops this much: the chime's tail reached Whisper as speech (15:07, "Beep!")
+
+        /** MainActivity sets this to push the state name into the page
+         *  (window.__wakeWordState); null when the page is not around. */
+        @Volatile var onStateChanged: ((String) -> Unit)? = null
     }
 
     private var ortEnv: OrtEnvironment? = null
     private var melSession: OrtSession? = null
     private var embSession: OrtSession? = null
     private var kwsSession: OrtSession? = null
+
+    // ── speech gate (Silero VAD, 2026-10-19) ──────────────────────────────────
+    // Optional: a missing or unloadable model logs once and the detector runs ungated.
+    private var vadSession: OrtSession? = null
+    private var vadState = FloatArray(VAD_STATE)
+    private val vadContext = FloatArray(VAD_CONTEXT)
+    private val vadCarry = FloatArray(VAD_FRAME + CHUNK_SAMPLES)
+    private var vadCarryLen = 0
+    private val vadRecent = ArrayDeque<Float>()     // last ~2 s of speech probabilities
+    private var vadFramesSinceSpeech = 0
+    private var vadSkipped = 0L
+    private var vadFailures = 0
+    private fun vadRecentMax(): Float { var m = 0f; for (p in vadRecent) if (p > m) m = p; return m }
+
+    /** Feed one 80 ms chunk to the VAD in 512-sample frames (leftover carried over). */
+    private fun runVad(env: OrtEnvironment, vad: OrtSession, audio: FloatArray) {
+        System.arraycopy(audio, 0, vadCarry, vadCarryLen, audio.size)
+        vadCarryLen += audio.size
+        var off = 0
+        val input = FloatArray(VAD_CONTEXT + VAD_FRAME)
+        while (vadCarryLen - off >= VAD_FRAME) {
+            System.arraycopy(vadContext, 0, input, 0, VAD_CONTEXT)
+            System.arraycopy(vadCarry, off, input, VAD_CONTEXT, VAD_FRAME)
+            val inT = OnnxTensor.createTensor(env, FloatBuffer.wrap(input), longArrayOf(1, (VAD_CONTEXT + VAD_FRAME).toLong()))
+            val stT = OnnxTensor.createTensor(env, FloatBuffer.wrap(vadState), longArrayOf(2, 1, 128))
+            val srT = OnnxTensor.createTensor(env, java.nio.LongBuffer.wrap(longArrayOf(SAMPLE_RATE.toLong())), longArrayOf())
+            val results = vad.run(mapOf("input" to inT, "state" to stT, "sr" to srT))
+            val p = (results[0] as OnnxTensor).floatBuffer.get(0)
+            val st = (results[1] as OnnxTensor).floatBuffer
+            val newState = FloatArray(VAD_STATE); st.get(newState); vadState = newState
+            results.close(); inT.close(); stT.close(); srT.close()
+            System.arraycopy(vadCarry, off + VAD_FRAME - VAD_CONTEXT, vadContext, 0, VAD_CONTEXT)
+            vadRecent.addLast(p)
+            while (vadRecent.size > VAD_WINDOW_FRAMES) vadRecent.removeFirst()
+            if (p >= VAD_SPEECH) vadFramesSinceSpeech = 0 else vadFramesSinceSpeech++
+            off += VAD_FRAME
+        }
+        if (off > 0) { System.arraycopy(vadCarry, off, vadCarry, 0, vadCarryLen - off); vadCarryLen -= off }
+    }
+
+    private fun resetVad() {
+        vadState = FloatArray(VAD_STATE); java.util.Arrays.fill(vadContext, 0f)
+        vadCarryLen = 0; vadRecent.clear(); vadFramesSinceSpeech = 0
+    }
+
+    // ── playback suppression (2026-10-19) ─────────────────────────────────────
+    // The phone knows when it is playing sound (a notification tone, an app's "boing",
+    // a video, our own chime or reply). A detection during playback or in the second
+    // after it is ignored: the model heard the speaker, not a person. Trade-off, stated
+    // plainly: "Hey Zynk" does not work while this phone is playing music. The echo
+    // canceller MicStream attaches is the eventual way out of that; whether
+    // this phone's actually removes the speaker signal is logged, not assumed.
+    private var playbackCallback: AudioManager.AudioPlaybackCallback? = null
+    @Volatile private var playbackActive = false
+    @Volatile private var lastPlaybackEndMs = 0L
+    private fun playbackRecently(): Boolean = playbackActive || System.currentTimeMillis() - lastPlaybackEndMs < PLAYBACK_TAIL_MS
+
+    private fun registerPlaybackWatch() {
+        if (playbackCallback != null) return
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val cb = object : AudioManager.AudioPlaybackCallback() {
+                override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
+                    val active = configs.isNotEmpty()
+                    if (playbackActive && !active) lastPlaybackEndMs = System.currentTimeMillis()
+                    playbackActive = active
+                }
+            }
+            am.registerAudioPlaybackCallback(cb, Handler(Looper.getMainLooper()))
+            playbackCallback = cb
+            playbackActive = am.activePlaybackConfigurations.isNotEmpty()
+        } catch (e: Exception) { WakeLog.w(TAG, "Playback watch unavailable: ${e.message}") }
+    }
+
+    private fun unregisterPlaybackWatch() {
+        val cb = playbackCallback ?: return
+        playbackCallback = null
+        try { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioPlaybackCallback(cb) } catch (_: Exception) {}
+    }
+
+    // ── watchdog ──────────────────────────────────────────────────────────────
+    // Once a minute: the net under the state machine. A state whose stream should be
+    // open but is not is reopened; a pause for a recording that no longer exists is
+    // lifted; a turn or a dictation that never ended is closed. In a correct run this
+    // never fires; when it does, the log line says which path failed to send its event.
+    private val watchdogHandler = Handler(Looper.getMainLooper())
+    private val watchdog = object : Runnable {
+        override fun run() {
+            try { watchdogTick() } catch (e: Exception) { WakeLog.w(TAG, "Watchdog: ${e.message}") }
+            watchdogHandler.postDelayed(this, WATCHDOG_MS)
+        }
+    }
+
+    private fun watchdogTick() {
+        val now = System.currentTimeMillis()
+        when (mic.state) {
+            MicState.State.LISTENING -> if (!stream.isOpen) {
+                WakeLog.w(TAG, "Watchdog: listening but the stream is closed — reopening")
+                events.execute { apply(MicState.Event.StreamLost) }
+            }
+            MicState.State.PAUSED -> {
+                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val others = am.activeRecordingConfigurations.filter { it.clientAudioSessionId != stream.sessionId }
+                if (others.isEmpty()) {
+                    WakeLog.w(TAG, "Watchdog: paused for a recording that no longer exists — resuming")
+                    events.execute { apply(MicState.Event.ForeignEnded) }
+                } else if (now - pausedAt > PAUSE_MAX_MS) {
+                    // A page dictation stream that broke and was never released kept this
+                    // paused for 13 minutes (Pixel, 2026-09-19). Nothing legitimately records
+                    // for that long, and Android lets one app capture twice.
+                    WakeLog.w(TAG, "Watchdog: still paused for another recording after ${PAUSE_MAX_MS / 1000} s — resuming anyway")
+                    events.execute { apply(MicState.Event.ForeignEnded) }
+                }
+            }
+            MicState.State.TURN -> if (now - turnStartedAt > TURN_MAX_MS) {
+                WakeLog.w(TAG, "Watchdog: a turn has been open for ${(now - turnStartedAt) / 1000} s — closing it")
+                events.execute { apply(MicState.Event.Expired) }
+            }
+            MicState.State.DICTATING -> if (now - (dictation?.startedAt ?: now) > DICTATION_MAX_MS) {
+                WakeLog.w(TAG, "Watchdog: a dictation has run for ${DICTATION_MAX_MS / 1000} s — aborting it")
+                events.execute { apply(MicState.Event.Expired) }
+            }
+            else -> {}
+        }
+    }
 
     private val melBuffer = ArrayDeque<FloatArray>()
     private val embBuffer = ArrayDeque<FloatArray>()
@@ -162,32 +363,45 @@ class WakeWordService : Service() {
 
     /** Stem of the newest trigger clip, so its outcome can be written next to it. */
     @Volatile private var lastClipStem: String? = null
+    @Volatile private var lastVerifierScore = -1f   // owner-check score of the trigger that went through
 
     /** Records how the newest trigger ended, next to its clip: `.real` or `.false`.
      *  Labelled clips are the training set for the personal verifier (no upload;
      *  the files stay under files/zynkbot/wake_triggers). */
-    private fun labelLastClip(real: Boolean) {
+    private fun labelLastClip(real: Boolean, proof: Boolean = false) {
         val stem = lastClipStem ?: return
         try {
             val dir = File(filesDir, "zynkbot/wake_triggers")
+            if (real && !proof && lastVerifierScore >= 0f && lastVerifierScore < TRAIN_REAL_MIN_SCORE) {
+                // Answered, but not surely the owner: left out of training either way
+                // (a stale "false" from an earlier report in the same session goes too).
+                File(dir, "$stem.false").delete()
+                WakeLog.i(TAG, "Clip not used for training: answered, but owner score %.3f < %.2f".format(lastVerifierScore, TRAIN_REAL_MIN_SCORE))
+                return
+            }
+            // A trigger reports its outcome more than once as it moves through the session
+            // (fruitless first, then answered), so the last report has to win. Without this
+            // 27 of 87 clips carried both labels and were useless for training (KI-076).
+            File(dir, "$stem.${if (real) "false" else "real"}").delete()
             File(dir, "$stem.${if (real) "real" else "false"}").writeText(if (real) "real\n" else "false\n")
-        } catch (e: Exception) { Log.w(TAG, "Could not label clip: ${e.message}") }
+        } catch (e: Exception) { WakeLog.w(TAG, "Could not label clip: ${e.message}") }
     }
 
     private fun noteOutcome(useful: Boolean) {
-        labelLastClip(useful)
+        labelLastClip(useful, proof = useful)   // only commands report useful = true: proof at any score
         val now = System.currentTimeMillis()
         synchronized(recentMisses) {
             if (useful) {
                 recentMisses.clear()
-                if (strictUntil > now) { strictUntil = 0L; Log.i(TAG, "Real question answered — leaving strict mode") }
+                if (strictUntil > now) { strictUntil = 0L; WakeLog.i(TAG, "Real question answered — leaving strict mode") }
+                trainVerifierInBackground()   // one more real clip: retrain when enough have accumulated
                 return
             }
             recentMisses.addLast(now)
             while (recentMisses.isNotEmpty() && now - recentMisses.first() > MISS_WINDOW_MS) recentMisses.removeFirst()
-            if (recentMisses.size >= MISSES_TO_BACK_OFF && strictUntil < now) {
+            if (STRICT_MODE_ENABLED && recentMisses.size >= MISSES_TO_BACK_OFF && strictUntil < now) {
                 strictUntil = now + BACK_OFF_MS
-                Log.i(TAG, "${recentMisses.size} fruitless triggers in 5 min — strict mode for 10 min (need $STRICT_HITS hits ≥ $STRICT_SCORE)")
+                WakeLog.i(TAG, "${recentMisses.size} fruitless triggers in 5 min — strict mode for 10 min (need $STRICT_HITS hits ≥ $STRICT_SCORE)")
             }
         }
     }
@@ -213,31 +427,44 @@ class WakeWordService : Service() {
         return 20.0 * Math.log10(Math.max(rms, 1e-9))
     }
 
-    @Volatile private var running = false
-    @Volatile private var audioReleased = false
+    // ── microphone ownership (2026-10-20 rebuild) ─────────────────────────────
+    // One state (MicState), one stream (MicStream), one entry point (apply). Every
+    // start, stop, pause and re-arm that used to be its own path is an event into
+    // apply(); the state machine says what to do, and this service does it. See
+    // ~/Documents/Zynk_related/claude_notes/wake_word_audit_2026-10-20.md for the
+    // fourteen paths and fifteen flags this replaced.
+    private val mic = MicState { line -> WakeLog.i(TAG, "State: $line") }
+    private val stream = MicStream(TAG)
+    private val detectorSink = MicStream.Sink { pcm, _ -> processChunk(pcm) }
+    @Volatile private var dictation: Dictation? = null
+    /** Events from Android callbacks and other threads, applied one at a time in order. */
+    private val events = Executors.newSingleThreadExecutor { r -> Thread(r, "WakeWordEvents") }
+    @Volatile private var turnStartedAt = 0L
+    @Volatile private var chimeEndedAt = 0L
+    @Volatile private var pausedAt = 0L
     @Volatile private var isForegrounded = false // guards against double startForeground on Android 14+
-    private var audioThread: Thread? = null
     private var threshold = 0.5f
-    private var lastModelDir: String? = null     // stored so background detection can restart the loop
+    private var lastModelDir: String? = null     // the page's model directory; reloaded on every page-on
     private var loadedModelDir: String? = null   // dir the resident ONNX sessions were loaded from; null = none loaded
+    // A load still in flight when the page turns Hey Zynk off sees the generation move
+    // on and discards what it loaded (KI-097).
+    private val modelLock = Any()
+    private var loadGeneration = 0
     private var wakeLock: PowerManager.WakeLock? = null      // detection wake lock (25s, screen-off flow)
-    private var audioWakeLock: PowerManager.WakeLock? = null // CPU wake lock for audio loop while screen off
+    private var audioWakeLock: PowerManager.WakeLock? = null // CPU wake lock for the stream while the screen is off
 
-    // ── other apps' recordings ───────────────────────────────────────────────
-    // Zynkbot must never take the microphone away from an app the user is talking to
-    // (OnePlus 2026-09-04 14:13: the Claude app's voice mode started, its start tone
-    // fired the wake word, and our session grabbed the mic). Android reports every
-    // active recording; while any that isn't our own loop is active, detection is
-    // paused and every re-arm is refused, and it resumes when that recording ends.
+    /** The current state, for the page and for callers deciding whether to use the service's stream. */
+    fun state(): MicState.State = mic.state
+    val isOn: Boolean get() = mic.state != MicState.State.OFF
+
+    // Other apps' recordings. Zynkbot must never take the microphone away from an app
+    // the user is talking to (OnePlus 2026-09-04 14:13: the Claude app's voice mode
+    // started, its start tone fired the wake word, and our session grabbed the mic).
+    // Android reports every active recording; any that is not our one stream pauses
+    // us, and we resume when it ends. Our own dictation runs on the same stream, so
+    // it never looks foreign here (it used to, which routed every hand-off of our own
+    // through this watch).
     private var recordingCallback: AudioManager.AudioRecordingCallback? = null
-    @Volatile private var pausedForOtherRecording = false
-    // A screen-off turn is in progress: from the start of its dictation until the reply
-    // has been spoken or the turn abandoned. NativeVoiceAnswerer.speaking only goes true
-    // once answer() starts, ~100 ms after Vosk's recording ends; the recording watch
-    // re-armed the detector in that gap, so it was live while the phone spoke the
-    // reply and fired on it (Pixel, 2026-09-12 16:41).
-    @Volatile private var answering = false
-    @Volatile private var loopSessionId = -1
 
     // The last ~3 s of microphone audio and the model's score per chunk, so each firing
     // can be saved, listened to, and replayed offline against the exact same numbers.
@@ -259,13 +486,13 @@ class WakeWordService : Service() {
         val pm = getSystemService(PowerManager::class.java)
         audioWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "zynkbot:audio_loop")
         audioWakeLock?.acquire()
-        Log.i(TAG, "Audio loop CPU wake lock acquired")
+        WakeLog.i(TAG, "Audio loop CPU wake lock acquired")
     }
 
     private fun releaseAudioWakeLock() {
         try { if (audioWakeLock?.isHeld == true) audioWakeLock?.release() } catch (_: Exception) {}
         audioWakeLock = null
-        Log.i(TAG, "Audio loop CPU wake lock released")
+        WakeLog.i(TAG, "Audio loop CPU wake lock released")
     }
 
     inner class LocalBinder : android.os.Binder() {
@@ -277,6 +504,7 @@ class WakeWordService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        WakeLog.init(this)   // wake lines to files/zynkbot/logs/wake.log as well as logcat (2026-10-24)
         createNotificationChannel()
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -284,6 +512,8 @@ class WakeWordService : Service() {
         }
         registerReceiver(screenReceiver, filter)
         registerRecordingWatch()
+        registerPlaybackWatch()
+        watchdogHandler.postDelayed(watchdog, WATCHDOG_MS)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -320,45 +550,10 @@ class WakeWordService : Service() {
                 // IllegalStateException, not a SecurityException — on Android 12+
                 // when the app is in the background. The sync service crashed the
                 // app on exactly that one (2026-09-14); catch everything here.
-                Log.w(TAG, "Cannot start as a foreground service now: ${e.javaClass.simpleName}: ${e.message}")
+                WakeLog.w(TAG, "Cannot start as a foreground service now: ${e.javaClass.simpleName}: ${e.message}")
                 stopSelf()
                 return START_NOT_STICKY
             }
-        }
-
-        // Hard gate: never (re)start the microphone listener while the native voice is
-        // speaking a reply — the detector hears the speaker, fires, and records the reply
-        // as a new question. The web side's timers can't see native speech, so this is
-        // enforced here, at the one entry point every start goes through. The re-arm
-        // happens from NativeVoiceAnswerer when the speech ends.
-        if (NativeVoiceAnswerer.speaking || answering || ZynkAssistantService.sessionActive || pausedForOtherRecording) {
-            val why = when {
-                NativeVoiceAnswerer.speaking -> "native speech"
-                answering -> "a screen-off turn"
-                ZynkAssistantService.sessionActive -> "an assistant session"
-                else -> "another app's recording"
-            }
-            Log.i(TAG, "Start requested during $why — deferred")
-            lastModelDir = modelDir
-            return START_STICKY
-        }
-
-        // Stop existing audio loop and wait for it to exit before starting a new one.
-        // ONNX Runtime sessions are not safe for concurrent inference — if the old thread
-        // is still mid-inference when the new one starts, both corrupt each other's results.
-        if (running || audioThread?.isAlive == true) {
-            Log.i(TAG, "Restarting audio loop (threshold=${threshold})")
-            running = false
-            audioThread?.interrupt()
-            audioThread?.join(500) // wait for the read loop to exit (one cycle is ~80ms)
-            audioThread = null
-            // Keep the loaded ONNX sessions. Reloading all three models on every
-            // restart was the main source of wake-word churn and raced with the
-            // screen-off Vosk mic handoff (intermittent empty transcripts). The old
-            // audio thread has now exited (join above), so no inference is in flight
-            // and the resident sessions are safe to reuse on the new thread.
-            melBuffer.clear()
-            embBuffer.clear()
         }
 
         // Pre-load Vosk model in background so it's ready for screen-off dictation.
@@ -368,16 +563,18 @@ class WakeWordService : Service() {
                 if (voskDir.exists()) {
                     try {
                         sharedVoskModel = org.vosk.Model(voskDir.absolutePath)
-                        Log.i(TAG, "Vosk model pre-loaded for screen-off dictation")
+                        WakeLog.i(TAG, "Vosk model pre-loaded for screen-off dictation")
                     } catch (e: Exception) {
-                        Log.w(TAG, "Vosk pre-load failed: ${e.message}")
+                        WakeLog.w(TAG, "Vosk pre-load failed: ${e.message}")
                     }
                 }
             }.start()
         }
 
+        // The page sends several starts per toggle (its effects, plus one on every lock
+        // and unlock). The state machine takes the first and ignores the rest.
         lastModelDir = modelDir
-        Thread { loadAndStart(modelDir) }.start()
+        events.execute { apply(MicState.Event.PageOn) }
         return START_STICKY
     }
 
@@ -385,81 +582,198 @@ class WakeWordService : Service() {
         isForegrounded = false
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         unregisterRecordingWatch()
+        unregisterPlaybackWatch()
+        watchdogHandler.removeCallbacks(watchdog)
+        // Synchronously: the process may be going away with us.
+        apply(MicState.Event.PageOff)
+        releaseWakeLock()
         releaseAudioWakeLock()
-        stop()
         NativeVoiceAnswerer.shutdown()
+        events.shutdown()
         instance = null
         super.onDestroy()
     }
 
-    private fun loadAndStart(modelDir: String) {
-        try {
-            if (melSession == null || embSession == null || kwsSession == null || modelDir != loadedModelDir) {
-                // (Re)load only when the models aren't already resident, or the
-                // directory changed. The common restart path skips this entirely.
-                melSession?.close(); embSession?.close(); kwsSession?.close()
-                ortEnv = OrtEnvironment.getEnvironment()
-                val env = ortEnv!!
-                val dir = File(modelDir)
-                melSession = env.createSession(File(dir, "melspectrogram.onnx").absolutePath)
-                embSession = env.createSession(File(dir, "embedding_model.onnx").absolutePath)
-                kwsSession = env.createSession(File(dir, "hey_zynk.onnx").absolutePath)
-                loadedModelDir = modelDir
-                Log.i(TAG, "ONNX models loaded. mel inputs: ${melSession!!.inputNames}, emb inputs: ${embSession!!.inputNames}, kws inputs: ${kwsSession!!.inputNames}")
-            } else {
-                Log.i(TAG, "Reusing already-loaded ONNX models")
-            }
+    // ── the single entry point ────────────────────────────────────────────────
 
-            startAudioLoop()
+    /** Apply one event and carry out what the state machine says. True if it was
+     *  accepted. Synchronized: actions never interleave. May block up to 500 ms while
+     *  closing the stream; never call it with a lock the audio thread may need. */
+    @Synchronized
+    private fun apply(event: MicState.Event): Boolean {
+        val actions = mic.on(event) ?: return false
+        onStateChanged?.let { cb -> try { cb(mic.state.name.lowercase()) } catch (_: Exception) {} }
+        when (event) {
+            is MicState.Event.Wake, is MicState.Event.TurnBegun, is MicState.Event.DictationEnded -> turnStartedAt = System.currentTimeMillis()
+            is MicState.Event.ForeignStarted -> pausedAt = System.currentTimeMillis()
+            else -> {}
+        }
+        for (a in actions) when (a) {
+            MicState.Action.LOAD_MODELS -> {
+                val gen = synchronized(modelLock) { ++loadGeneration }
+                val dir = lastModelDir ?: continue
+                Thread { loadModels(dir, gen) }.start()
+            }
+            MicState.Action.UNLOAD_MODELS -> unloadModels()
+            MicState.Action.OPEN_STREAM -> openStream()
+            MicState.Action.CLOSE_STREAM -> stream.close()
+            MicState.Action.SINK_DETECTOR -> { resetDetector(); stream.sink = detectorSink }
+            MicState.Action.SINK_DICTATION -> stream.sink = dictation
+            MicState.Action.SINK_NONE -> stream.sink = null
+            MicState.Action.ABORT_DICTATION -> { val d = dictation; dictation = null; d?.cancel() }
+        }
+        return true
+    }
+
+    private fun openStream() {
+        stream.onLost = { why ->
+            WakeLog.e(TAG, "Microphone stream lost: $why")
+            events.execute { apply(MicState.Event.StreamLost) }
+        }
+        if (!stream.open()) {
+            WakeLog.e(TAG, "Microphone could not be opened — the watchdog retries in a minute")
+            return
+        }
+        val pm = getSystemService(PowerManager::class.java)
+        if (!pm.isInteractive) acquireAudioWakeLock()
+    }
+
+    /** Asked for from the state machine's thread; carried out by the audio thread at
+     *  its next chunk. Until 2026-10-22 the buffers were cleared here directly while
+     *  processChunk could be mid-way through them on the audio thread; the speech gate's
+     *  carry buffer then overran, the error handler switched the gate off for the rest
+     *  of the run, and the detector was back on the -46 dBFS gate (three times on
+     *  10-20, twenty minutes on 10-21). */
+    @Volatile private var detectorResetPending = false
+    private fun resetDetector() { detectorResetPending = true }
+    private fun applyDetectorReset() {
+        melBuffer.clear(); embBuffer.clear()
+        consecutiveHighScores = 0
+        cooldownRemaining = COOLDOWN_CHUNKS   // don't re-trigger on the tail of a reply
+        resetVad()
+    }
+
+    // ── public API: the ways into a turn ──────────────────────────────────────
+
+    /**
+     * Feed the microphone to [d] until it finishes. [ownsTurn]: the caller runs a
+     * whole turn (chime, answer, speech) and calls [endTurn] when it is over; false
+     * (the app's mic button): the listener comes back by itself when the dictation
+     * ends. False if the service is off or paused in a way that refuses it — the
+     * caller then opens its own stream (see ZynkAssistantSession, VoskBridge).
+     */
+    fun dictate(d: Dictation, ownsTurn: Boolean): Boolean {
+        synchronized(this) {
+            dictation?.cancel()
+            dictation = d
+            val sinceChime = System.currentTimeMillis() - chimeEndedAt
+            if (sinceChime < CHIME_SETTLE_MS) d.skipSamples = (CHIME_SETTLE_MS - sinceChime) * MicStream.SAMPLE_RATE / 1000
+            d.onDone = {
+                // On the finishing thread, before the listener hears the result, so the
+                // owner's endTurn() finds the state it expects.
+                if (dictation === d) { dictation = null; apply(MicState.Event.DictationEnded) }
+            }
+            if (!apply(MicState.Event.DictationStarted(ownsTurn))) { dictation = null; d.onDone = null; return false }
+            return true
+        }
+    }
+
+    /** A turn that starts without a dictation (a spoken confirmation, a reply to a
+     *  page question). True if this call opened it; the caller then calls [endTurn]. */
+    fun beginTurn(): Boolean = apply(MicState.Event.TurnBegun)
+
+    /** off / loading / listening / dictating / turn / paused, for the Voice page's status line. */
+    fun stateName(): String = mic.state.name.lowercase()
+
+    /** The turn is over: back to listening (or paused, if another app records). */
+    fun endTurn() { apply(MicState.Event.TurnEnded) }
+
+    // ── models ────────────────────────────────────────────────────────────────
+
+    private fun loadModels(modelDir: String, generation: Int) {
+        try {
+            // Sessions are built into locals first and installed under the lock at the
+            // end, so a page-off that arrives meanwhile cannot pull them out from under
+            // this thread (KI-097).
+            val env = OrtEnvironment.getEnvironment()
+            val dir = File(modelDir)
+            // One worker thread, no spin-waiting. With the defaults ONNX Runtime opened a
+            // pool the size of the phone and its workers busy-waited between runs: three
+            // threads at a third of a core each with the phone idle, 18.5 h of CPU in
+            // 11.5 h on battery on the Pixel 10 Pro XL (2026-10-26). The models are
+            // small enough that one thread runs them in time.
+            fun opts() = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(1)
+                setInterOpNumThreads(1)
+                addConfigEntry("session.intra_op.allow_spinning", "0")
+                addConfigEntry("session.inter_op.allow_spinning", "0")
+            }
+            val mel = env.createSession(File(dir, "melspectrogram.onnx").absolutePath, opts())
+            val emb = env.createSession(File(dir, "embedding_model.onnx").absolutePath, opts())
+            val kws = env.createSession(File(dir, "hey_zynk.onnx").absolutePath, opts())
+            var vad: OrtSession? = null
+            val vadFile = File(dir, "silero_vad.onnx")
+            if (vadFile.isFile) {
+                try {
+                    val v = env.createSession(vadFile.absolutePath, opts())
+                    vad = v
+                    WakeLog.i(TAG, "Speech gate loaded (Silero VAD, inputs ${v.inputNames})")
+                } catch (e: Exception) { WakeLog.w(TAG, "Speech gate unavailable, running without it: ${e.message}") }
+            } else WakeLog.w(TAG, "Speech gate unavailable: silero_vad.onnx not in $modelDir")
+            val installed = synchronized(modelLock) {
+                if (generation != loadGeneration) false else {
+                    ortEnv = env
+                    melSession = mel; embSession = emb; kwsSession = kws; vadSession = vad
+                    loadedModelDir = modelDir
+                    true
+                }
+            }
+            if (!installed) {
+                mel.close(); emb.close(); kws.close(); vad?.close()
+                WakeLog.i(TAG, "Model load abandoned: the service was stopped while the models were loading")
+                return
+            }
+            WakeLog.i(TAG, "ONNX models loaded. mel inputs: ${mel.inputNames}, emb inputs: ${emb.inputNames}, kws inputs: ${kws.inputNames}")
+            events.execute { apply(MicState.Event.ModelsLoaded) }
+            trainVerifierInBackground()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load ONNX models: ${e.message}")
+            WakeLog.e(TAG, "Failed to load ONNX models: ${e.javaClass.simpleName}: ${e.message}")
+            events.execute { apply(MicState.Event.ModelsFailed) }
             stopSelf()
         }
     }
 
-    private fun startAudioLoop() {
-        val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val bufSize = maxOf(minBuf, CHUNK_SAMPLES * 2 * 8)
-
-        val audioRecord = try {
-            AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize)
-        } catch (e: Exception) {
-            Log.e(TAG, "AudioRecord init failed: ${e.message}")
-            stopSelf()
-            return
+    private fun unloadModels() {
+        synchronized(modelLock) {
+            loadGeneration++   // any load still in flight will see this and discard its result
+            melSession?.close(); melSession = null
+            embSession?.close(); embSession = null
+            kwsSession?.close(); kwsSession = null
+            vadSession?.close(); vadSession = null
+            ortEnv = null   // OrtEnvironment.getEnvironment() is a process-wide singleton; not closed here
+            loadedModelDir = null
         }
+        melBuffer.clear()
+        embBuffer.clear()
+        consecutiveHighScores = 0
+    }
 
-        if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord not initialized")
-            audioRecord.release()
-            stopSelf()
-            return
-        }
-
-        running = true
-        audioReleased = false
-        val chunk = ShortArray(CHUNK_SAMPLES)
-        audioRecord.startRecording()
-        loopSessionId = audioRecord.audioSessionId
-        Log.i(TAG, "Wake word audio capture started")
-
-        audioThread = Thread {
-            while (running) {
-                val read = audioRecord.read(chunk, 0, CHUNK_SAMPLES)
-                if (read == CHUNK_SAMPLES) {
-                    processChunk(chunk)
+    /** Siri-style ongoing learning: retrain the personal verifier from the labelled
+     *  clips when enough new ones have arrived (WakeVerifierTrainer decides), then
+     *  pick the new profile up. Runs at service start and after every answered turn. */
+    private fun trainVerifierInBackground(delayMs: Long = 0) {
+        Thread {
+            try {
+                if (delayMs > 0) Thread.sleep(delayMs)
+                if (WakeVerifierTrainer.trainIfDue(this, loadedModelDir)) {
+                    verifier = WakeVerifier.load(this)
                 }
-            }
-            audioRecord.stop()
-            audioRecord.release()
-            audioReleased = true
-            loopSessionId = -1
-            Log.i(TAG, "Wake word audio capture stopped")
-        }
-        audioThread!!.start()
+            } catch (e: Exception) { WakeLog.w(TAG, "Verifier training: ${e.message}") }
+        }.start()
     }
 
     private fun processChunk(pcm16: ShortArray) {
+        if (detectorResetPending) { detectorResetPending = false; applyDetectorReset() }
         val env = ortEnv ?: return
         val mel = melSession ?: return
         val emb = embSession ?: return
@@ -476,14 +790,28 @@ class WakeWordService : Service() {
         quietTotal++
         if (chunkLevelDb(pcm16) < COMPUTE_GATE_DB) quietRun++ else quietRun = 0
         if (quietTotal % QUIET_STATS_EVERY_CHUNKS == 0L) {
-            Log.i(TAG, "Quiet-skip: %d of %d chunks skipped in the last ~5 min (%.0f%%)".format(
-                quietSkipped, QUIET_STATS_EVERY_CHUNKS, 100.0 * quietSkipped / QUIET_STATS_EVERY_CHUNKS))
-            quietSkipped = 0
+            WakeLog.i(TAG, "Quiet-skip: %d of %d chunks skipped in the last ~5 min (%.0f%%); no-voice skip: %d".format(
+                quietSkipped, QUIET_STATS_EVERY_CHUNKS, 100.0 * quietSkipped / QUIET_STATS_EVERY_CHUNKS, vadSkipped))
+            quietSkipped = 0; vadSkipped = 0
         }
         if (quietRun > QUIET_SKIP_AFTER) { quietSkipped++; return }
 
         try {
             val audioFloat = FloatArray(CHUNK_SAMPLES) { pcm16[it].toFloat() / 32768f }
+
+            // Speech gate, first stage: sound but no human voice for 2 s (a fan, a hum,
+            // music without singing) — the wake models are not run at all.
+            vadSession?.let { vad ->
+                try { runVad(env, vad, audioFloat); vadFailures = 0 } catch (e: Exception) {
+                    // Recover: start the gate's state over and carry on. Only a gate that
+                    // keeps failing is switched off (it was switched off on the first error
+                    // until 2026-10-22, and then stayed off for the rest of the run).
+                    vadFailures++; resetVad()
+                    if (vadFailures >= VAD_MAX_FAILURES) { WakeLog.w(TAG, "Speech gate failed $vadFailures times in a row, disabling it: ${e.message}"); vadSession = null }
+                    else WakeLog.w(TAG, "Speech gate error ($vadFailures), reset and carrying on: ${e.message}")
+                }
+                if (vadSession != null && vadFramesSinceSpeech > VAD_SKIP_AFTER_FRAMES) { vadSkipped++; return }
+            }
 
             val melOut = runModel(env, mel, audioFloat, longArrayOf(1, CHUNK_SAMPLES.toLong()))
             for (f in 0 until MEL_FRAMES_PER_CHUNK) {
@@ -520,46 +848,101 @@ class WakeWordService : Service() {
             val needScore = if (strict) STRICT_SCORE else threshold
             if (score > needScore) {
                 consecutiveHighScores++
-                Log.d(TAG, "High score: $score (consecutive=$consecutiveHighScores, need=$needHits${if (strict) ", strict" else ""})")
+                WakeLog.d(TAG, "High score: $score (consecutive=$consecutiveHighScores, need=$needHits${if (strict) ", strict" else ""})")
                 if (consecutiveHighScores >= needHits) {
                     val level = recentLevelDb()
-                    if (level < (if (strict) STRICT_GATE_DB else SILENCE_GATE_DB)) {
-                        Log.i(TAG, "Detection ignored: audio too quiet (%.1f dBFS, score=%.3f)".format(level, score))
+                    // The −46 dBFS quiet gate (2026-09-08, against firings on near-silent audio)
+                    // threw away two real wakes at 0.99 on 2026-10-19 (−51.6 and −56.5 dBFS: a
+                    // normal voice from across a quiet room). With the speech gate loaded, "was
+                    // there a voice" is its job, and the level only has to rule out true silence.
+                    val quietGate = if (strict) STRICT_GATE_DB else if (vadSession != null) -65.0 else SILENCE_GATE_DB
+                    if (level < quietGate) {
+                        WakeLog.i(TAG, "Detection ignored: audio too quiet (%.1f dBFS, score=%.3f)".format(level, score))
                         consecutiveHighScores = 0
                         cooldownRemaining = COOLDOWN_CHUNKS / 2
                         embBuffer.clear()
+                        return
+                    }
+                    val pooled = WakeVerifier.pooledFeatures(flatEmb, EMB_WINDOW, EMB_SIZE)
+                    // Playback gate: the phone itself was making sound (a notification tone,
+                    // an app's "boing", a video) in the last second — the model heard the
+                    // speaker. Kept as a labelled false clip for the verifier's training.
+                    // Our own timer ringing is not foreign audio: the whole point is to
+                    // say "Hey Zynk" over it (the echo canceller carries the rest).
+                    if (playbackRecently() && !ZynkTimer.ringing) {
+                        WakeLog.i(TAG, "Detection ignored: this phone was playing audio (score=%.3f)".format(score))
+                        saveTriggerClip(score, pooled, label = false)
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2
+                        embBuffer.clear()
+                        return
+                    }
+                    // Speech gate, second stage: the sound scored like "Hey Zynk" but no frame
+                    // in the last ~2 s had a human voice in it.
+                    val voice = if (vadSession != null) vadRecentMax() else -1f
+                    if (vadSession != null && voice < VAD_SPEECH) {
+                        WakeLog.i(TAG, "Detection ignored: no voice in the last 2 s (vad=%.2f, score=%.3f)".format(voice, score))
+                        saveTriggerClip(score, pooled, label = false)
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2
+                        embBuffer.clear()
+                        return
+                    }
+                    // Voice enrollment: the owner is saying the wake word on purpose. Save it as
+                    // a real clip, chime, and stop there: no turn, and no verifier (there may
+                    // not be one yet). At ENROLL_CLIPS the profile trains.
+                    val enrolling = enrollmentState(this)
+                    if (enrolling == "paused") {
+                        WakeLog.i(TAG, "Detection ignored: voice teaching is paused (score=%.3f)".format(Locale.US, score))
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2
+                        embBuffer.clear()
+                        return
+                    }
+                    if (enrolling == "active") {
+                        val n = clipStats(this).getInt("real") + 1
+                        WakeLog.i(TAG, "Enrollment wake $n of $ENROLL_CLIPS (score=%.3f, level=%.1f dBFS, vad=%.2f)".format(Locale.US, score, level, voice))
+                        saveTriggerClip(score, pooled, label = true)
+                        Thread { playTone(R.raw.wake_chime) }.start()
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2   // ~2 s: the chime and the tail of this one cannot count twice
+                        embBuffer.clear()
+                        if (n >= ENROLL_CLIPS) {
+                            enrollMarker(this).writeText("done\n")
+                            WakeLog.i(TAG, "Enrollment complete: $n clips; training the voice profile")
+                            trainVerifierInBackground(delayMs = 2000)   // the last clip is still being written
+                        }
                         return
                     }
                     val v = verifier ?: WakeVerifier.load(this).also { verifier = it }
                     val vScore = v?.score(flatEmb, EMB_WINDOW, EMB_SIZE) ?: -1f
-                    Log.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS verifier=%.3f%s".format(level, vScore, if (strict) " (strict mode)" else ""))
-                    if (v != null && vScore >= 0f && vScore <= v.threshold && v.enforcesOn(this)) {
-                        Log.i(TAG, "Detection ignored: verifier says not the owner (%.3f <= %.2f)".format(vScore, v.threshold))
-                        saveTriggerClip(score)
+                    val enforcing = v != null && v.enforcesOn(this)
+                    val wouldReject = v != null && vScore >= 0f && vScore <= v.threshold
+                    WakeLog.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS vad=%.2f verifier=%.3f%s%s".format(
+                        level, voice, vScore, if (wouldReject && !enforcing) " (verifier would reject, log-only)" else "", if (strict) " (strict mode)" else ""))
+                    if (wouldReject && enforcing) {
+                        WakeLog.i(TAG, "Detection ignored: verifier says not the owner (%.3f <= %.2f)".format(vScore, v!!.threshold))
+                        saveTriggerClip(score, pooled)
                         consecutiveHighScores = 0
                         cooldownRemaining = COOLDOWN_CHUNKS / 2
                         embBuffer.clear()
                         return
                     }
-                    saveTriggerClip(score)
+                    lastVerifierScore = vScore
+                    saveTriggerClip(score, pooled)
                     consecutiveHighScores = 0
                     cooldownRemaining = COOLDOWN_CHUNKS
                     embBuffer.clear()
 
                     // Every trigger takes the native path, whether or not the app is on
-                    // screen. Until 2026-09-07 a lit screen handed the trigger to the
-                    // WebView's own dictation flow instead, which had none of the
-                    // hands-free safeguards (listening cap, fragment gate, voice
-                    // commands, Stop, tap-Z-to-cancel); a TV test showed the screen
-                    // stays lit far more than assumed, so most real triggers landed
-                    // there. The in-app flow is gone; this is the only route now.
-                    handleScreenOffDetection()
+                    // screen (since 2026-09-07; the in-app flow is gone).
+                    onWake()
                 }
             } else {
                 consecutiveHighScores = 0
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Inference error: ${e.message}")
+            WakeLog.e(TAG, "Inference error: ${e.message}")
         }
     }
 
@@ -578,7 +961,7 @@ class WakeWordService : Service() {
             recordingCallback = cb
             onRecordingsChanged(am.activeRecordingConfigurations)
         } catch (e: Exception) {
-            Log.w(TAG, "Recording watch unavailable: ${e.message}")
+            WakeLog.w(TAG, "Recording watch unavailable: ${e.message}")
         }
     }
 
@@ -588,24 +971,19 @@ class WakeWordService : Service() {
         try { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioRecordingCallback(cb) } catch (_: Exception) {}
     }
 
-    /** Anything recording that isn't our own loop — another app, or our own Vosk
-     *  dictation — pauses detection. When the last such recording ends, detection
-     *  resumes here (the other re-arm paths are refused while paused, so this is the
-     *  one that counts). */
+    /** Anything recording that is not our one stream is another app (or the page's
+     *  own WebView recorder, which is as good as one). The event goes through the
+     *  state machine like every other. */
     private fun onRecordingsChanged(configs: List<AudioRecordingConfiguration>) {
-        val mine = loopSessionId
+        val mine = stream.sessionId
         val others = configs.filter { it.clientAudioSessionId != mine }
-        if (others.isNotEmpty()) {
-            if (!pausedForOtherRecording) {
-                pausedForOtherRecording = true
-                val what = others.joinToString { "src=${it.clientAudioSource}/session=${it.clientAudioSessionId}" }
-                Log.i(TAG, "Another recording is active ($what) — wake word paused")
-                if (running) { running = false; audioThread?.interrupt() }
-            }
-        } else if (pausedForOtherRecording) {
-            pausedForOtherRecording = false
-            Log.i(TAG, "Other recording ended — wake word resuming")
-            Thread { try { resumeMicAfterSession() } catch (e: Exception) { Log.w(TAG, "resume failed: ${e.message}") } }.start()
+        if (others.isNotEmpty() && !mic.foreignActive) {
+            val what = others.joinToString { "src=${it.clientAudioSource}/session=${it.clientAudioSessionId}" }
+            WakeLog.i(TAG, "Another recording is active ($what)")
+            events.execute { apply(MicState.Event.ForeignStarted) }
+        } else if (others.isEmpty() && mic.foreignActive) {
+            WakeLog.i(TAG, "Other recording ended")
+            events.execute { apply(MicState.Event.ForeignEnded) }
         }
     }
 
@@ -616,7 +994,11 @@ class WakeWordService : Service() {
      *  TRIGGER_CLIPS_KEPT kept. Pull with run-as (debug builds) to hear exactly what the
      *  model took for "Hey Zynk"; false triggers become training negatives if the model
      *  is retrained. Called on the audio thread; the file write happens off it. */
-    private fun saveTriggerClip(score: Float) {
+    /** `pooled`: the 192 verifier features at the fire point, saved as <stem>.feat for the
+     *  on-phone trainer. `label`: when the service already knows the outcome (a gate
+     *  rejected it) the label is written here, in the same thread as the clip, so the
+     *  later "how did the turn end" report cannot race it. */
+    private fun saveTriggerClip(score: Float, pooled: FloatArray? = null, label: Boolean? = null) {
         val snapshot = recentChunks.toList()
         val scoreSnap = recentScores.toList()
         if (snapshot.isEmpty()) return
@@ -625,7 +1007,10 @@ class WakeWordService : Service() {
                 val dir = File(filesDir, "zynkbot/wake_triggers").apply { mkdirs() }
                 val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
                 val file = File(dir, "$stamp-${"%.3f".format(Locale.US, score)}.wav")
-                lastClipStem = file.name.removeSuffix(".wav")
+                val stem = file.name.removeSuffix(".wav")
+                if (label == null) lastClipStem = stem   // a gated-out clip is not "the newest turn"
+                if (pooled != null) WakeVerifierTrainer.saveFeatures(this, stem, pooled)
+                if (label != null) File(dir, "$stem.${if (label) "real" else "false"}").writeText(if (label) "real\n" else "false\n")
                 val dataBytes = snapshot.sumOf { it.size } * 2
                 FileOutputStream(file).use { out ->
                     out.write(wavHeader(dataBytes, 16000))
@@ -636,13 +1021,28 @@ class WakeWordService : Service() {
                 // Per-chunk scores next to the clip (one per line, oldest first).
                 File(dir, file.name.removeSuffix(".wav") + ".scores.txt")
                     .writeText(scoreSnap.joinToString("\n") { "%.4f".format(Locale.US, it) })
-                dir.listFiles { f -> f.name.endsWith(".wav") }
-                    ?.sortedByDescending { it.name }
-                    ?.drop(if (verifier?.enforcesOn(this) == true) TRIGGER_CLIPS_KEPT else TRIGGER_CLIPS_KEPT_UNVERIFIED)
-                    ?.forEach { val stem = it.name.removeSuffix(".wav"); it.delete(); for (ext in listOf(".scores.txt", ".real", ".false")) File(dir, stem + ext).delete() }
-                Log.i(TAG, "Trigger clip saved: ${file.name}")
+                // A clip labelled real is training data and is never pruned by age alone —
+                // only the unlabelled/false pool is trimmed to the cap. Before this, heavy
+                // false-trigger churn (background noise, a video playing) could push the
+                // total past the cap and delete an older *real* clip along with it, so the
+                // "Send my wake-word clips" count went backwards even with frequent real use
+                // (Matt, 2026-09-21: 12 real clips over 12 hours' use, dropped to 11).
+                val allWavs = dir.listFiles { f -> f.name.endsWith(".wav") }?.toList() ?: emptyList()
+                val keepCount = if (verifier?.enforcesOn(this) == true) TRIGGER_CLIPS_KEPT else TRIGGER_CLIPS_KEPT_UNVERIFIED
+                val (real, rest) = allWavs.partition { File(dir, it.name.removeSuffix(".wav") + ".real").exists() }
+                rest.sortedByDescending { it.name }
+                    .drop(keepCount)
+                    .forEach {
+                        // The audio and the score trace go; a labelled clip's features and
+                        // label (about 2 KB) stay, so the training set only ever grows and a
+                        // retrain never trades last week's negatives for today's (Matt,
+                        // 2026-10-20). An unlabelled clip is no training material: all of it goes.
+                        val stem = it.name.removeSuffix(".wav"); it.delete(); File(dir, "$stem.scores.txt").delete()
+                        if (!File(dir, "$stem.false").exists()) File(dir, "$stem.feat").delete()
+                    }
+                WakeLog.i(TAG, "Trigger clip saved: ${file.name}")
             } catch (e: Exception) {
-                Log.w(TAG, "Trigger clip not saved: ${e.message}")
+                WakeLog.w(TAG, "Trigger clip not saved: ${e.message}")
             }
         }.start()
     }
@@ -656,58 +1056,32 @@ class WakeWordService : Service() {
         return b.array()
     }
 
-    // ── Screen-off wake word path ────────────────────────────────────────────
+    // ── A wake ────────────────────────────────────────────────────────────────
 
-    // Named for its origin (screen-off was once the only case); it is now the
-    // single handler for every wake-word trigger.
-    private fun handleScreenOffDetection() {
-        Log.i(TAG, "Wake word — handing off to detection wake lock")
+    /** The detector fired (audio thread). The turn runs on its own thread: chime, then
+     *  the assistant session if the system has bound it, else the in-service copy. */
+    private fun onWake() {
+        WakeLog.i(TAG, "Wake word — starting a turn")
+        if (ZynkTimer.ringing) ZynkTimer.stopRinging(this)   // any wake silences a ringing timer
         // Release the indefinite audio-loop wake lock; detection lock covers the next 25s.
         releaseAudioWakeLock()
         val pm = getSystemService(PowerManager::class.java)
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "zynkbot:screen_off_wake")
         wakeLock?.acquire(25_000L)
 
-        // Signal the ONNX audio loop to stop so Vosk can open the mic
-        running = false
-
         Thread {
-            // Wait for AudioRecord to release (set by audio loop thread)
-            var waited = 0
-            while (!audioReleased && waited < 2000) { Thread.sleep(50); waited += 50 }
-
-            // Play chime via MediaPlayer using USAGE_ASSISTANT so it respects
-            // assistant/notification volume rather than media volume.
-            try {
-                val mp = MediaPlayer()
-                mp.setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA) // media volume: the assistant stream has no user-facing slider and sat at 5/15 on the Pixel (2026-09-08)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                resources.openRawResourceFd(R.raw.wake_chime)?.let { afd ->
-                    mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                    afd.close()
-                }
-                mp.prepare()
-                val latch = CountDownLatch(1)
-                mp.setOnCompletionListener { it.release(); latch.countDown() }
-                mp.start()
-                latch.await(2000, TimeUnit.MILLISECONDS)
-            } catch (e: Exception) {
-                Log.w(TAG, "Chime playback failed: ${e.message}")
-            }
+            // Not listening any more by the time this thread runs (paused, turned off): no turn.
+            if (!apply(MicState.Event.Wake)) { releaseWakeLock(); return@Thread }
+            playTone(R.raw.wake_chime)   // the stream stays open; chunks are dropped meanwhile
+            chimeEndedAt = System.currentTimeMillis()
 
             // Preferred path: hand the turn to the assistant session (the OS-blessed
             // route — no Activity, no WebView, no notification). Only possible while
-            // Zynkbot holds the digital-assistant role; otherwise, or if the OS
-            // refuses, keep the older in-service dictation path so nothing regresses.
-            // The session does its own Vosk dictation, so the mic must already be
-            // released here (it is: the audio loop was stopped above).
+            // Zynkbot holds the digital-assistant role and the system has bound the
+            // service; otherwise keep the in-service copy so nothing regresses.
             val assistant = ZynkAssistantService.instance
             if (assistant != null && assistant.triggerSession()) {
-                Log.i(TAG, "Wake word handed off to the assistant session")
+                WakeLog.i(TAG, "Wake word handed off to the assistant session")
                 // The 25s detection lock is too short for dictation + network + TTS.
                 try { wakeLock?.acquire(90_000L) } catch (_: Exception) {}
                 return@Thread
@@ -715,91 +1089,38 @@ class WakeWordService : Service() {
             // Seen on the GrapheneOS Pixel (2026-09-12): the assistant role is held but
             // Settings.Secure.voice_interaction_service was never set, so the system never
             // bound ZynkAssistantService and every trigger landed here without a trace.
-            if (assistant == null) Log.w(TAG, "Assistant service not bound (voice_interaction_service unset?) — using in-service dictation")
-            startKotlinVoskDictation()
+            if (assistant == null) WakeLog.w(TAG, "Assistant service not bound (voice_interaction_service unset?) — using in-service dictation")
+            startInServiceDictation()
         }.start()
     }
 
-    private fun startKotlinVoskDictation() {
+    /** The in-service copy of a turn's dictation: Vosk, hands-free timers, then
+     *  [answerNatively]. The assistant session has the better-kept copy (it honours
+     *  the Vosk/Whisper selector); they merge in step 3 of the rebuild. */
+    private fun startInServiceDictation() {
         val model = sharedVoskModel ?: run {
-            Log.w(TAG, "No Vosk model available for screen-off dictation")
+            WakeLog.w(TAG, "No Vosk model available for screen-off dictation")
             releaseWakeLock()
+            endTurn()
             return
         }
-
-        answering = true
-        val accumulated = StringBuilder()
-        val silenceHandler = Handler(Looper.getMainLooper())
-        var speechService: org.vosk.android.SpeechService? = null
-        // Two separate timers. The silence timer restarts on every partial transcript;
-        // the cap does not — continuous speech (a TV) used to keep dictation open until
-        // the programme paused, because one removeCallbacksAndMessages(null) cancelled
-        // both (40 s recording, 2026-09-04).
-        val silenceStop = Runnable { speechService?.stop() }
-        val hardStop = Runnable { Log.i(TAG, "Screen-off dictation reached the listening cap"); speechService?.stop() }
-
-        val listener = object : org.vosk.android.RecognitionListener {
-            override fun onPartialResult(h: String?) {
-                val partial = try { org.json.JSONObject(h ?: "").optString("partial", "") } catch (_: Exception) { "" }
-                if (partial.isNotBlank()) {
-                    silenceHandler.removeCallbacks(silenceStop)
-                    silenceHandler.postDelayed(silenceStop, 1500)   // 1.5 s silence after last speech
+        val d = Dictation(Dictation.Engine.VOSK, model, null, timers = true, listener = object : Dictation.Listener {
+            override fun onFinal(text: String?) {
+                if (text == null) {
+                    WakeLog.w(TAG, "Screen-off dictation cancelled or failed")
+                    releaseWakeLock()
+                    endTurn()
+                    return
                 }
+                WakeLog.i(TAG, "Screen-off transcript: \"$text\"")
+                Thread { answerNatively(text) }.start()
             }
-            override fun onResult(h: String?) {
-                val t = try { org.json.JSONObject(h ?: "").optString("text", "").trim() } catch (_: Exception) { "" }
-                if (t.isNotBlank()) synchronized(accumulated) {
-                    if (accumulated.isNotEmpty()) accumulated.append(" ")
-                    accumulated.append(t)
-                }
-            }
-            override fun onFinalResult(h: String?) {
-                val last = try { org.json.JSONObject(h ?: "").optString("text", "").trim() } catch (_: Exception) { "" }
-                val transcript = synchronized(accumulated) {
-                    buildString {
-                        append(accumulated)
-                        if (accumulated.isNotEmpty() && last.isNotBlank()) append(" ")
-                        append(last)
-                    }.trim().also { accumulated.clear() }
-                }
-                silenceHandler.removeCallbacksAndMessages(null)
-                speechService = null
-                Log.i(TAG, "Screen-off transcript: \"$transcript\"")
-                answerNatively(transcript)
-            }
-            override fun onError(e: Exception?) {
-                Log.e(TAG, "Screen-off Vosk error: ${e?.message}")
-                silenceHandler.removeCallbacksAndMessages(null)
-                releaseWakeLock()
-                endTurn(resume = true)
-            }
-            override fun onTimeout() {
-                Log.w(TAG, "Screen-off Vosk timeout — no speech detected")
-                releaseWakeLock()
-                endTurn(resume = true)
-            }
+        })
+        if (!dictate(d, ownsTurn = true)) {
+            WakeLog.w(TAG, "Dictation refused in state ${mic.state}")
+            releaseWakeLock()
+            endTurn()
         }
-
-        Handler(Looper.getMainLooper()).post {
-            try {
-                val rec = org.vosk.Recognizer(model, 16000.0f)
-                speechService = org.vosk.android.SpeechService(rec, 16000.0f)
-                speechService!!.startListening(listener)
-                Log.i(TAG, "Screen-off Vosk dictation started")
-                silenceHandler.postDelayed(hardStop, MAX_LISTEN_MS)
-            } catch (e: Exception) {
-                Log.e(TAG, "Screen-off Vosk start failed: ${e.message}")
-                releaseWakeLock()
-                endTurn(resume = true)
-            }
-        }
-    }
-
-    /** The screen-off turn is over. Resume passive listening unless the transcript was
-     *  handed to the app, whose JS re-arms the detector itself once the reply is done. */
-    private fun endTurn(resume: Boolean) {
-        answering = false
-        if (resume) resumeMicAfterSession()
     }
 
     // Answer a screen-off transcript entirely natively: no Activity, no WebView,
@@ -809,18 +1130,20 @@ class WakeWordService : Service() {
     // Shared with ZynkAssistantSession — see NativeVoiceAnswerer.
     private fun answerNatively(transcript: String) {
         if (transcript.isBlank()) {
-            Log.i(TAG, "Empty transcript — not waking screen")
+            WakeLog.i(TAG, "Empty transcript — not waking screen")
+            noteOutcome(false)   // a wake that led to nothing: a false clip for the trainer (the session path already did this)
             releaseWakeLock()
-            endTurn(resume = true)
+            endTurn()
             return
         }
         // Local sanity gate, free: one word is noise, sixty is a TV programme.
         val words = transcript.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
         if (words.size < 2 || words.size > MAX_QUERY_WORDS) {
-            Log.i(TAG, "Transcript rejected (${words.size} words) — not a question")
+            WakeLog.i(TAG, "Transcript rejected (${words.size} words) — not a question")
+            noteOutcome(false)
             releaseWakeLock()
-            if (MainActivity.fruitlessTone(this)) playClosingTone()
-            endTurn(resume = true)
+            if (MainActivity.fruitlessTone(this)) playTone(R.raw.wake_chime_close)
+            endTurn()
             return
         }
         // "Sent" tone before anything slow, as ZynkAssistantSession does: until
@@ -828,70 +1151,68 @@ class WakeWordService : Service() {
         // through the whole round trip in silence and then heard "sent" at the end.
         VoiceCommands.parse(transcript)?.let { cmd ->
             Thread {
-                playClosingTone()
+                playTone(R.raw.wake_chime_close)
                 val ok = VoiceCommands.execute(this, cmd)
-                Log.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
-                NativeVoiceAnswerer.say(this, if (ok) VoiceCommands.confirmation(cmd) else VoiceCommands.FAILED_LINE)
+                WakeLog.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
+                NativeVoiceAnswerer.say(this, if (ok) VoiceCommands.confirmation(this, cmd) else VoiceCommands.FAILED_LINE)
                 releaseWakeLock()
-                endTurn(resume = true)
+                endTurn()
             }.start()
             return
         }
-        Log.i(TAG, "Answering natively: \"$transcript\"")
+        WakeLog.i(TAG, "Answering natively: \"$transcript\"")
 
         // The 25s detection wake lock (acquired for chime+dictation) is too short
         // for a network round trip plus speech; extend it for this attempt.
         try { wakeLock?.acquire(90_000L) } catch (_: Exception) {}
 
         Thread {
-            playClosingTone()
-            val spoke = NativeVoiceAnswerer.answer(this, transcript)
+            playTone(R.raw.wake_chime_close)
+            val spoke = NativeVoiceAnswerer.answer(this, transcript)   // labels the clip itself
             if (spoke) {
-                labelLastClip(true)
                 releaseWakeLock()
-                endTurn(resume = true)
+                endTurn()
             } else {
                 deliverTranscriptToApp(transcript)
-                // Same as before this flag existed: the recording watch used to re-arm
-                // here, and on GrapheneOS the app only opens when the notification is
-                // tapped, so waiting for its JS would leave the wake word off.
-                endTurn(resume = true)
+                // On GrapheneOS the app only opens when the notification is tapped, so
+                // waiting for its JS would leave the wake word off: the turn ends here.
+                endTurn()
             }
         }.start()
     }
 
-    private fun playClosingTone() {
-        Thread {
-            try {
-                val mp = MediaPlayer()
-                mp.setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA) // media volume: the assistant stream has no user-facing slider and sat at 5/15 on the Pixel (2026-09-08)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                resources.openRawResourceFd(R.raw.wake_chime_close)?.let { afd ->
-                    mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                    afd.close()
-                }
-                mp.prepare()
-                val latch = CountDownLatch(1)
-                mp.setOnCompletionListener { it.release(); latch.countDown() }
-                mp.start()
-                latch.await(2000, TimeUnit.MILLISECONDS)
-            } catch (e: Exception) {
-                Log.w(TAG, "Closing tone failed: ${e.message}")
+    /** Play one bundled sound and wait for it (≤ 2 s). Media volume: the assistant
+     *  stream has no user-facing slider and sat at 5/15 on the Pixel (2026-09-08). */
+    private fun playTone(resId: Int) {
+        try {
+            val mp = MediaPlayer()
+            mp.setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            resources.openRawResourceFd(resId)?.let { afd ->
+                mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                afd.close()
             }
-        }.start()
+            mp.prepare()
+            val latch = CountDownLatch(1)
+            mp.setOnCompletionListener { it.release(); latch.countDown() }
+            mp.start()
+            latch.await(2000, TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {
+            WakeLog.w(TAG, "Tone failed: ${e.message}")
+        }
     }
 
     private fun deliverTranscriptToApp(transcript: String) {
         if (transcript.isBlank()) {
-            Log.i(TAG, "Empty transcript — not waking screen")
+            WakeLog.i(TAG, "Empty transcript — not waking screen")
             releaseWakeLock()
             return
         }
-        Log.i(TAG, "Delivering transcript to app: \"$transcript\"")
+        WakeLog.i(TAG, "Delivering transcript to app: \"$transcript\"")
 
         val activityIntent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
@@ -908,9 +1229,9 @@ class WakeWordService : Service() {
         if (screenOn && !isGrapheneOS()) {
             try {
                 startActivity(activityIntent)
-                Log.i(TAG, "Direct startActivity succeeded")
+                WakeLog.i(TAG, "Direct startActivity succeeded")
             } catch (e: Exception) {
-                Log.w(TAG, "Direct startActivity failed: ${e.message}")
+                WakeLog.w(TAG, "Direct startActivity failed: ${e.message}")
             }
         }
 
@@ -941,70 +1262,8 @@ class WakeWordService : Service() {
 
         releaseWakeLock()
 
-        // Play closing tone (faster/higher pitch = "done") to signal end of listening window.
-        // We do NOT restart the ONNX loop here. The JS side (TTS-aware useEffect +
-        // visibilitychange) restarts it correctly after TTS finishes. Restarting from
-        // Kotlin races with WakeWordBridge.stop()/start() calls and causes the loop to
-        // fire __wakeWordDetected during AI generation before JS can guard it.
-        Thread {
-            try {
-                val mp = MediaPlayer()
-                mp.setAudioAttributes(
-                    android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA) // media volume: the assistant stream has no user-facing slider and sat at 5/15 on the Pixel (2026-09-08)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build()
-                )
-                resources.openRawResourceFd(R.raw.wake_chime_close)?.let { afd ->
-                    mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                    afd.close()
-                }
-                mp.prepare()
-                val latch = CountDownLatch(1)
-                mp.setOnCompletionListener { it.release(); latch.countDown() }
-                mp.start()
-                latch.await(2000, TimeUnit.MILLISECONDS)
-            } catch (e: Exception) {
-                Log.w(TAG, "Closing tone failed: ${e.message}")
-            }
-        }.start()
-    }
-
-    // ── Microphone hand-off for ZynkAssistantSession ─────────────────────────
-
-    /**
-     * Stop the ONNX audio loop and wait until its AudioRecord is released, so the
-     * assistant session can open the mic for Vosk. Blocking (≤ [timeoutMs]); call
-     * from a background thread. Returns true if the mic is known to be free. The
-     * ONNX sessions stay loaded — this is a pause, not stop(). Mirrors what the
-     * wake-word path already does in handleScreenOffDetection(); the gesture path
-     * skipped it and a second reader on the busy mic wedged the session.
-     */
-    fun releaseMicForSession(timeoutMs: Long = 2000): Boolean {
-        if (!running && audioThread?.isAlive != true) return true
-        Log.i(TAG, "Releasing mic for the assistant session")
-        running = false
-        audioThread?.interrupt()
-        var waited = 0L
-        while (!audioReleased && waited < timeoutMs) { Thread.sleep(50); waited += 50 }
-        return audioReleased
-    }
-
-    /** Re-arm passive wake-word listening after the session hides, without going
-     *  through the WebView (the JS re-arm only runs when the app resumes). No-op if
-     *  the models aren't loaded or the loop is already running. */
-    fun resumeMicAfterSession() {
-        if (running || audioThread?.isAlive == true) return
-        if (kwsSession == null || melSession == null || embSession == null) return
-        if (NativeVoiceAnswerer.speaking) return   // NativeVoiceAnswerer re-arms when speech ends
-        if (answering) return                       // endTurn() re-arms when the screen-off turn is over
-        if (pausedForOtherRecording) return         // the recording watch re-arms when it ends
-        if (ZynkAssistantService.sessionActive) return  // the session re-arms on hide
-        Log.i(TAG, "Re-arming wake word after the assistant session")
-        melBuffer.clear(); embBuffer.clear()
-        consecutiveHighScores = 0
-        cooldownRemaining = COOLDOWN_CHUNKS   // don't re-trigger on the tail of the reply
-        startAudioLoop()
+        // Closing tone (faster/higher pitch = "done"): the listening window is over.
+        Thread { playTone(R.raw.wake_chime_close) }.start()
     }
 
     private fun releaseWakeLock() {
@@ -1028,23 +1287,6 @@ class WakeWordService : Service() {
         return out
     }
 
-    fun stop() {
-        running = false
-        consecutiveHighScores = 0
-        audioThread?.interrupt()
-        audioThread?.join(300)
-        audioThread = null
-        melSession?.close(); melSession = null
-        embSession?.close(); embSession = null
-        kwsSession?.close(); kwsSession = null
-        ortEnv?.close(); ortEnv = null
-        loadedModelDir = null   // full stop tears the models down; next start reloads
-        melBuffer.clear()
-        embBuffer.clear()
-        releaseWakeLock()
-        releaseAudioWakeLock()
-    }
-
     // GrapheneOS blocks background activity launches (startActivity from a foreground
     // service) even when SYSTEM_ALERT_WINDOW is granted. Detect it via a system property
     // it exposes; fall back to checking Build.DISPLAY if reflection fails.
@@ -1065,7 +1307,7 @@ class WakeWordService : Service() {
                 description = "Listens for the wake word in the background"
                 setShowBadge(false)
             })
-            // HIGH importance required for full-screen-intent to fire on the lock screen
+            // HIGH importance: the transcript notification should be seen at once
             nm.createNotificationChannel(NotificationChannel(
                 TRANSCRIPT_CHANNEL_ID, "Wake Word Response", NotificationManager.IMPORTANCE_HIGH
             ).apply {

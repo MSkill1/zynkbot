@@ -411,6 +411,34 @@ impl NLPEnhancer {
         }
     }
 
+    /// A tagged word piece followed by untagged pieces came out as a fragment: for a
+    /// lowercase "vermont" BERT tagged "ve" as a place and "##rmont" as nothing, and
+    /// untagged pieces never reach the merge, so the entity was "ve" (2026-09-20).
+    /// Extend each entity to the end of the word it starts in and take the word from
+    /// the text. `start`/`end` are byte offsets into `text` from the tokenizer.
+    fn extend_to_word_end(text: &str, mut entities: Vec<Entity>) -> Vec<Entity> {
+        for e in entities.iter_mut() {
+            if e.start >= e.end || e.end > text.len()
+                || !text.is_char_boundary(e.start) || !text.is_char_boundary(e.end) {
+                continue;
+            }
+            // Only when the offsets really point at this word.
+            if !text[e.start..e.end].eq_ignore_ascii_case(&e.word) {
+                continue;
+            }
+            let mut end = e.end;
+            while let Some(c) = text[end..].chars().next() {
+                if c.is_alphanumeric() { end += c.len_utf8(); } else { break; }
+            }
+            if end > e.end {
+                e.word = text[e.start..end].to_string();
+                e.end = end;
+                e.offset.end = end as u32;
+            }
+        }
+        entities
+    }
+
     /// Merge BERT wordpiece tokens into complete words
     /// Example: ["o", "##ly", "##mp", "##ia"] → ["olympia"]
     /// BERT tokenizer splits words into subword units with ## prefix for continuations
@@ -430,6 +458,20 @@ impl NLPEnhancer {
 
         for entity in entities {
             if entity.word.starts_with("##") {
+                // A continuation that does not touch the word before it belongs to a root
+                // the loop skipped (too short or too unsure): "Homestead Idea" came out as
+                // "homesteaddea" when "i" was dropped and "##dea" joined "homestead"
+                // (2026-10-26). The orphan is a fragment; the word before it stands.
+                if !current_word.is_empty() && entity.start != current_end {
+                    if !current_is_fragment {
+                        merged.push(Entity {
+                            word: current_word.clone(), label: current_label.clone(), score: current_score,
+                            start: current_start, end: current_end,
+                            offset: Offset { begin: current_start as u32, end: current_end as u32 },
+                        });
+                    }
+                    current_word.clear();
+                }
                 if current_word.is_empty() {
                     // Group starts with a continuation — root was O-labeled, this is a fragment.
                     // Mark it so we discard it when the group ends.
@@ -531,7 +573,7 @@ impl NLPEnhancer {
         let fallback_entities = self.extract_entities_fallback(&normalized_content);
 
         // Step 3: Merge BERT wordpiece tokens (e.g., "o", "##ly", "##mp", "##ia" → "olympia")
-        let merged_bert_entities = Self::merge_wordpiece_tokens(bert_entities);
+        let merged_bert_entities = Self::extend_to_word_end(&normalized_content, Self::merge_wordpiece_tokens(bert_entities));
 
         // Step 4: Merge results, removing duplicates
         all_entities.extend(merged_bert_entities);
@@ -548,8 +590,40 @@ impl NLPEnhancer {
             }
         }
 
+        let all_entities = Self::clean_entities(all_entities);
         println!("[NER] 🎯 TOTAL: {} unique entities (BERT + Fallback)", all_entities.len());
         all_entities
+    }
+
+    /// Words that are never a name on their own and never start or end one: the fact
+    /// prefix "User", and the function words the capitalised-run fallback picks up at a
+    /// sentence start ("Is Primal Kitchen the mayo" gave "is primal kitchen", and "of"
+    /// stood alone from "Clash of Clans", 2026-10-26).
+    const NOT_A_NAME: &'static [&'static str] = &[
+        "user", "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "by", "for", "with", "from",
+        "is", "are", "was", "were", "be", "do", "does", "did", "can", "could", "would", "should", "will",
+        "my", "your", "his", "her", "their", "our", "its", "this", "that", "these", "those", "it", "i", "we", "you", "they",
+        "what", "which", "who", "when", "where", "how", "why", "not", "no", "yes", "so", "but", "if", "as",
+    ];
+
+    /// Trim function words off both ends of every entity, drop what is left empty or
+    /// is a function word itself, and drop repeats.
+    pub(crate) fn clean_entities(entities: Vec<Entity>) -> Vec<Entity> {
+        let mut out: Vec<Entity> = Vec::new();
+        for mut e in entities {
+            let words: Vec<&str> = e.word.split_whitespace().collect();
+            let mut lo = 0;
+            let mut hi = words.len();
+            while lo < hi && Self::NOT_A_NAME.contains(&words[lo].to_lowercase().as_str()) { lo += 1; }
+            while hi > lo && Self::NOT_A_NAME.contains(&words[hi - 1].to_lowercase().as_str()) { hi -= 1; }
+            if lo >= hi { continue; }
+            let cleaned = words[lo..hi].join(" ");
+            if cleaned.chars().filter(|c| c.is_alphanumeric()).count() < 2 { continue; }
+            if out.iter().any(|o| o.word.eq_ignore_ascii_case(&cleaned)) { continue; }
+            e.word = cleaned;
+            out.push(e);
+        }
+        out
     }
 
     /// Batch entity extraction using HYBRID approach (BERT + Rule-Based)
@@ -605,9 +679,10 @@ impl NLPEnhancer {
         let combined_results: Vec<Vec<Entity>> = bert_results
             .into_iter()
             .zip(fallback_results)
-            .map(|(bert_entities, fallback_entities)| {
+            .zip(contents.iter())
+            .map(|((bert_entities, fallback_entities), text)| {
                 // Merge BERT wordpiece tokens first
-                let merged_bert = Self::merge_wordpiece_tokens(bert_entities);
+                let merged_bert = Self::extend_to_word_end(text, Self::merge_wordpiece_tokens(bert_entities));
                 let mut all_entities = merged_bert;
 
                 // Add fallback entities that aren't duplicates
@@ -621,7 +696,7 @@ impl NLPEnhancer {
                     }
                 }
 
-                all_entities
+                Self::clean_entities(all_entities)
             })
             .collect();
 
@@ -993,6 +1068,25 @@ impl Default for NLPEnhancer {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn extend_to_word_end_completes_a_fragment() {
+        // "vermont" tokenised as "ve" + "##rmont"; only "ve" was tagged.
+        let text = "what can you tell me about vermont from the knowledge base";
+        let start = text.find("vermont").unwrap();
+        let e = Entity { word: "ve".into(), score: 0.9, label: "LOC".into(), start, end: start + 2,
+            offset: Offset { begin: start as u32, end: (start + 2) as u32 } };
+        let out = NLPEnhancer::extend_to_word_end(text, vec![e]);
+        assert_eq!(out[0].word, "vermont");
+        assert_eq!(out[0].end, start + 7);
+        // A whole word is left alone; a stale offset is left alone.
+        let whole = Entity { word: "vermont".into(), score: 0.9, label: "LOC".into(), start, end: start + 7,
+            offset: Offset { begin: start as u32, end: (start + 7) as u32 } };
+        assert_eq!(NLPEnhancer::extend_to_word_end(text, vec![whole])[0].word, "vermont");
+        let stale = Entity { word: "ve".into(), score: 0.9, label: "LOC".into(), start: 0, end: 2,
+            offset: Offset { begin: 0, end: 2 } };
+        assert_eq!(NLPEnhancer::extend_to_word_end(text, vec![stale])[0].word, "ve");
+    }
     use super::*;
 
     #[test]
@@ -1122,5 +1216,33 @@ mod tests {
                 println!("[DIAG]   {:15} -> {:8} ({:.3}){}", token, label, score, non_o_str);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod entity_noise_tests {
+    use super::*;
+
+    fn ent(word: &str, start: usize, end: usize) -> Entity {
+        Entity { word: word.to_string(), label: "ORG".to_string(), score: 0.9, start, end, offset: Offset { begin: start as u32, end: end as u32 } }
+    }
+
+    #[test]
+    fn an_orphaned_continuation_does_not_glue_onto_the_word_before_it() {
+        // "Homestead Idea": "homestead" (0..9), then "i" skipped, then "##dea" (11..14).
+        let merged = NLPEnhancer::merge_wordpiece_tokens(vec![ent("homestead", 0, 9), ent("##dea", 11, 14)]);
+        assert_eq!(merged.iter().map(|e| e.word.as_str()).collect::<Vec<_>>(), vec!["homestead"]);
+        // A real continuation still joins: "o" (0..1) "##ly" (1..3) "##mp" (3..5) "##ia" (5..7).
+        let merged = NLPEnhancer::merge_wordpiece_tokens(vec![ent("o", 0, 1), ent("##ly", 1, 3), ent("##mp", 3, 5), ent("##ia", 5, 7)]);
+        assert_eq!(merged.iter().map(|e| e.word.as_str()).collect::<Vec<_>>(), vec!["olympia"]);
+    }
+
+    #[test]
+    fn function_words_and_the_fact_prefix_are_not_names() {
+        let cleaned = NLPEnhancer::clean_entities(vec![
+            ent("User", 0, 4), ent("of", 5, 7), ent("is primal kitchen", 8, 25), ent("Clash of Clans", 26, 40),
+            ent("the Homestead Idea", 41, 59), ent("Primal Kitchen", 60, 74), ent("Verizon", 75, 82),
+        ]);
+        assert_eq!(cleaned.iter().map(|e| e.word.as_str()).collect::<Vec<_>>(), vec!["primal kitchen", "Clash of Clans", "Homestead Idea", "Verizon"]);
     }
 }

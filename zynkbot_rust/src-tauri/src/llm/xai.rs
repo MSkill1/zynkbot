@@ -137,3 +137,46 @@ mod tests {
         assert!(json.contains("grok-3"));
     }
 }
+
+// ============================================================================
+// THE WEB THROUGH xAI'S OWN SEARCH TOOL (2026-10-27)
+// ============================================================================
+
+const XAI_RESPONSES_URL: &str = "https://api.x.ai/v1/responses";
+
+/// One Responses API request with xAI's `web_search` tool: Grok's answer with the pages
+/// it cited. The answer carries inline "[[1]](url)" links; the annotation titles are the
+/// citation numbers, so the page's host stands in as the title.
+pub async fn search_and_answer(api_key: &str, model: &str, query: &str, on_token: super::OnToken<'_>) -> Result<super::WebAnswer, super::LLMError> {
+    let body = serde_json::json!({
+        "model": model,
+        "tools": [{"type": "web_search"}],
+        "stream": true,
+        "input": [{"role": "user", "content": format!("Search the web for: {}\n\nAnswer directly and concisely from what you find. Do not narrate the searching or describe your process.", query)}],
+    });
+    println!("[Rust xAI] Web search through Grok ({}): {}", model, query);
+    let mut answer = super::openai::stream_responses(XAI_RESPONSES_URL, api_key, &body, on_token).await?;
+    for s in &mut answer.sources {
+        if s.title.trim().is_empty() || s.title.trim().chars().all(|c| c.is_ascii_digit()) {
+            s.title = host_of(&s.url);
+        }
+    }
+    Ok(answer)
+}
+
+/// "https://www.hfcuvt.com/business/x.html" -> "hfcuvt.com"
+pub fn host_of(url: &str) -> String {
+    let rest = url.split("://").nth(1).unwrap_or(url);
+    let host = rest.split('/').next().unwrap_or(rest);
+    host.trim_start_matches("www.").to_string()
+}
+
+#[cfg(test)]
+mod web_answer_tests {
+    #[test]
+    fn hosts_stand_in_for_numbered_titles() {
+        assert_eq!(super::host_of("https://www.hfcuvt.com/business/x.html"), "hfcuvt.com");
+        assert_eq!(super::host_of("http://x.ai/company"), "x.ai");
+        assert_eq!(super::host_of("nonsense"), "nonsense");
+    }
+}

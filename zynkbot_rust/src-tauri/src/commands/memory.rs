@@ -23,7 +23,7 @@ pub async fn list_memories(
             is_syncable, is_shareable,
             event_type, event_date,
             link_count, is_ephemeral, expires_at,
-            entities_detected, original_text, tags,
+            entities_detected, original_text, tags, temporal_status,
             NULL as similarity
         FROM memories
         WHERE TRUE
@@ -112,7 +112,8 @@ pub async fn update_memory(
 
     let embedding_vec = if let Some(ref new_content) = content {
         println!("[Rust] Content updated, regenerating embedding...");
-        let content_clone = new_content.clone();
+        let existing_title: Option<String> = sqlx::query_scalar("SELECT title FROM memories WHERE id = ?").bind(memory_id).fetch_optional(&pool).await.ok().flatten();
+        let content_clone = crate::memory::embedding_text(title.as_deref().or(existing_title.as_deref()), new_content);
         let embedding = tokio::task::spawn_blocking(move || {
             crate::llm::local_embeddings::generate_local_embedding(&content_clone)
         })
@@ -169,21 +170,133 @@ pub async fn update_memory(
         Ok(r) => {
             let updated = r.rows_affected() > 0;
             println!("[Rust] Updated {} row(s)", r.rows_affected());
-            if updated {
-                let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
-                if let Some(service) = zynksync_service.as_ref() {
-                    if service.is_auto_sync_enabled().await {
-                        match service.propagate_memory_update(memory_id, title, content, namespace).await {
-                            Ok(count) => println!("[Rust] ✓ Memory update synced to {} device(s)", count),
-                            Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to sync memory update: {}", e),
-                        }
-                    }
-                }
-            }
+            // The edit reaches the other devices through the outbox (the UPDATE above
+            // queued it); no push here since step 5 of the sync rebuild.
+            let _ = (updated, &title, &content, &namespace);
             Ok(updated)
         }
         Err(e) => Err(format!("Failed to update memory: {}", e)),
     }
+}
+
+/// Answer a card about two memories that are both already stored (the on-device model's
+/// store-first card, 2026-10-23). Decisions: keep_new (the old one becomes history, linked
+/// "updates"), keep_old (the new one is deleted), not_a_contradiction (no link between
+/// them), keep_both (the link stays "contradicts"), keep_both_related (the link becomes
+/// "related"; the "Is this an update?" card's keep-both), both_with_explanation (the
+/// explanation is stored and linked "resolves" to both).
+#[tauri::command]
+pub async fn resolve_stored_conflict(
+    new_memory_id: i32,
+    old_memory_id: i32,
+    decision: String,
+    explanation: Option<String>,
+    user_id: String,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url)
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let unlink = |pool: sqlx::SqlitePool| async move {
+        sqlx::query("DELETE FROM memory_links WHERE (source_memory_id = ? AND target_memory_id = ?) OR (source_memory_id = ? AND target_memory_id = ?)")
+            .bind(new_memory_id).bind(old_memory_id).bind(old_memory_id).bind(new_memory_id)
+            .execute(&pool).await.map(|_| ()).map_err(|e| format!("Failed to remove the link: {}", e))
+    };
+    println!("[Rust] Stored-pair resolution: {} (new #{}, old #{})", decision, new_memory_id, old_memory_id);
+    match decision.as_str() {
+        "keep_new" => {
+            unlink(pool.clone()).await?;
+            memory::set_temporal_status(&pool, old_memory_id, Some("superseded"))
+                .await.map_err(|e| format!("Failed to mark the old memory as replaced: {}", e))?;
+            let _ = memory::create_memory_link(&pool, new_memory_id, old_memory_id, "updates", 0.95,
+                Some("The user chose the new memory on the card"), "user").await;
+            Ok(serde_json::json!({ "success": true, "action": "kept_new" }))
+        }
+        "keep_old" => {
+            unlink(pool.clone()).await?;
+            delete_memory(new_memory_id).await?;
+            Ok(serde_json::json!({ "success": true, "action": "kept_old" }))
+        }
+        "not_a_contradiction" => {
+            unlink(pool.clone()).await?;
+            Ok(serde_json::json!({ "success": true, "action": "not_a_contradiction" }))
+        }
+        "keep_both" => Ok(serde_json::json!({ "success": true, "action": "kept_both" })),
+        "keep_both_related" => {
+            sqlx::query("UPDATE memory_links SET relation_type = 'related' WHERE (source_memory_id = ? AND target_memory_id = ?) OR (source_memory_id = ? AND target_memory_id = ?)")
+                .bind(new_memory_id).bind(old_memory_id).bind(old_memory_id).bind(new_memory_id)
+                .execute(&pool).await.map_err(|e| format!("Failed to relabel the link: {}", e))?;
+            Ok(serde_json::json!({ "success": true, "action": "kept_both_related" }))
+        }
+        "both_with_explanation" => {
+            let expl = explanation.unwrap_or_default();
+            if expl.trim().is_empty() {
+                return Ok(serde_json::json!({ "success": true, "action": "kept_both" }));
+            }
+            let expl_clone = expl.clone();
+            let expl_embedding = tokio::task::spawn_blocking(move || {
+                crate::llm::local_embeddings::generate_local_embedding(&expl_clone)
+            }).await
+            .map_err(|e| format!("Failed to generate embedding: {}", e))?
+            .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+            let explanation_id = memory::insert_memory(
+                &pool,
+                Some("Resolution of contradictory memories"),
+                &expl,
+                Some("user_explanation"),
+                Some(&session_id),
+                Some(expl_embedding),
+                None, None,
+                Some(&user_id),
+                "personal",
+                true, false,
+                None, None, None,
+                Some(&expl),
+            ).await.map_err(|e| format!("Failed to store the explanation: {}", e))?;
+            let _ = memory::create_memory_link(&pool, explanation_id, new_memory_id, "resolves", 0.95, Some("Resolves contradiction"), "user").await;
+            let _ = memory::create_memory_link(&pool, explanation_id, old_memory_id, "resolves", 0.95, Some("Resolves contradiction"), "user").await;
+            Ok(serde_json::json!({ "success": true, "action": "both_with_explanation", "explanation_id": explanation_id }))
+        }
+        other => Err(format!("Unknown decision: {}", other)),
+    }
+}
+
+/// Make a replaced memory current again (Memory Manager "Undo replacement", 2026-10-23).
+/// Clears temporal_status and removes the "updates" link(s) that pointed at it, so both
+/// memories stand as current; the user can still delete either one.
+#[tauri::command]
+pub async fn restore_memory(memory_id: i32) -> Result<bool, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url)
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    memory::set_temporal_status(&pool, memory_id, None)
+        .await
+        .map_err(|e| format!("Failed to restore memory: {}", e))?;
+    sqlx::query("DELETE FROM memory_links WHERE relation_type = 'updates' AND target_memory_id = ?")
+        .bind(memory_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to remove the replacing link: {}", e))?;
+    println!("[Rust] restore_memory: memory #{} is current again", memory_id);
+    Ok(true)
+}
+
+/// A passing fact the user wants kept: clears its expiry so it stays in recall, and
+/// bumps updated_at so the change syncs (2026-10-26).
+#[tauri::command]
+pub async fn keep_memory(memory_id: i32) -> Result<bool, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url())
+        .await
+        .map_err(|e| format!("Failed to connect to database: {}", e))?;
+    sqlx::query("UPDATE memories SET is_ephemeral = 0, expires_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(memory_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to keep memory: {}", e))?;
+    println!("[Rust] keep_memory: memory #{} no longer expires", memory_id);
+    Ok(true)
 }
 
 /// Delete a memory and propagate deletion to synced devices
@@ -243,15 +356,9 @@ pub async fn delete_memory(memory_id: i32) -> Result<bool, String> {
             if let Some(service) = zynksync_service.as_ref() {
                 // Always record tombstone so future syncs can't resurrect this memory,
                 // regardless of whether auto-sync is currently enabled.
+                // The deletion itself reaches the other devices through the outbox; the
+                // local tombstone is what stops a stale copy coming back here.
                 let _ = service.record_tombstones(&[hash.clone()]).await;
-                if service.is_auto_sync_enabled().await {
-                    match service.propagate_deletion_by_hash(hash).await {
-                        Ok(count) => println!("[Rust] ✓ Deletion synced to {} device(s)", count),
-                        Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to sync deletion: {}", e),
-                    }
-                } else {
-                    println!("[Rust] Auto-sync disabled - tombstone recorded, deletion not propagated");
-                }
             } else {
                 println!("[Rust] ⚠ ZynkSync not running - deletion not propagated to other devices");
             }
@@ -591,6 +698,56 @@ pub async fn get_namespaces(user_id: Option<String>) -> Result<serde_json::Value
 }
 
 /// Update an existing memory link
+/// Change the message a memory came from ("What I said"). Every fact that came from the
+/// same message shares that text and is grouped by it in the Memory Manager, so the new
+/// wording is written to all of them (2026-10-26). Returns how many rows changed.
+#[tauri::command]
+pub async fn update_memory_original_text(memory_id: i32, original_text: String) -> Result<i64, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let row: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
+        "SELECT user_id, original_text, namespace FROM memories WHERE id = ?")
+        .bind(memory_id).fetch_optional(&pool).await.map_err(|e| format!("Failed to read memory: {}", e))?;
+    let Some((user_id, old_text, namespace)) = row else { pool.close().await; return Err("Memory not found".into()); };
+    if namespace == "_zynkbot" { pool.close().await; return Err("Cannot edit system memories.".into()); }
+    let new_text = original_text.trim().to_string();
+    let stored: Option<String> = if new_text.is_empty() { None } else { Some(new_text) };
+    let result = match (&user_id, old_text.as_deref().map(str::trim).filter(|t| !t.is_empty())) {
+        (Some(uid), Some(old)) => sqlx::query(
+            "UPDATE memories SET original_text = ?, updated_at = datetime('now') WHERE (id = ? OR (user_id = ? AND trim(original_text) = ?)) AND namespace != '_zynkbot'")
+            .bind(&stored).bind(memory_id).bind(uid).bind(old).execute(&pool).await,
+        _ => sqlx::query("UPDATE memories SET original_text = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(&stored).bind(memory_id).execute(&pool).await,
+    }.map_err(|e| format!("Failed to update: {}", e))?;
+    pool.close().await;
+    println!("[Rust] update_memory_original_text: {} memories changed", result.rows_affected());
+    Ok(result.rows_affected() as i64)
+}
+
+/// Cards raised and not yet answered, oldest first, each as the event payload plus card_id.
+#[tauri::command]
+pub async fn list_pending_memory_cards(user_id: String) -> Result<Vec<serde_json::Value>, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, payload_json FROM memory_cards WHERE user_id = ? AND answered_at IS NULL ORDER BY id LIMIT 20")
+        .bind(&user_id).fetch_all(&pool).await.map_err(|e| format!("Failed to read cards: {}", e))?;
+    pool.close().await;
+    Ok(rows.into_iter().filter_map(|(id, json)| {
+        let mut v: serde_json::Value = serde_json::from_str(&json).ok()?;
+        v["card_id"] = serde_json::json!(id);
+        Some(v)
+    }).collect())
+}
+
+/// The user answered (or deliberately dismissed) a card.
+#[tauri::command]
+pub async fn answer_memory_card(card_id: i64, decision: String) -> Result<bool, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e| format!("Failed to connect to database: {}", e))?;
+    let r = sqlx::query("UPDATE memory_cards SET answered_at = datetime('now'), decision = ? WHERE id = ? AND answered_at IS NULL")
+        .bind(&decision).bind(card_id).execute(&pool).await.map_err(|e| format!("Failed to update card: {}", e))?;
+    pool.close().await;
+    Ok(r.rows_affected() > 0)
+}
+
 #[tauri::command]
 pub async fn update_memory_link(
     link_id: i32,
@@ -644,7 +801,7 @@ pub async fn get_full_memory_graph(
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
 
     let mut sql = String::from(
-        "SELECT id, title, content, namespace FROM memories WHERE TRUE"
+        "SELECT id, title, content, namespace, original_text, created_at, temporal_status FROM memories WHERE TRUE"
     );
     if user_id.is_some() { sql.push_str(" AND user_id = ?"); }
     if namespace.is_some() { sql.push_str(" AND namespace = ?"); }
@@ -655,6 +812,11 @@ pub async fn get_full_memory_graph(
         title: Option<String>,
         content: String,
         namespace: String,
+        /// The message the fact came from; facts from one message share it and the graph
+        /// draws them as one cluster (2026-10-26).
+        original_text: Option<String>,
+        created_at: String,
+        temporal_status: Option<String>,
     }
 
     let mut query = sqlx::query_as::<_, MemoryNode>(&sql);
@@ -698,7 +860,10 @@ pub async fn get_full_memory_graph(
             "id": m.id,
             "title": m.title,
             "content": m.content,
-            "namespace": m.namespace
+            "namespace": m.namespace,
+            "original_text": m.original_text,
+            "created_at": m.created_at,
+            "temporal_status": m.temporal_status
         }))
         .collect();
 
@@ -926,10 +1091,8 @@ pub async fn resolve_conflict(
                         g.as_ref().cloned()
                     };
                     if let Some(service) = service {
-                        match service.propagate_deletion_by_hash(content_hash).await {
-                            Ok(count) => println!("[Rust] ✅ Deletion propagated to {} peer(s)", count),
-                            Err(e) => eprintln!("[Rust] ⚠️ Failed to propagate deletion: {}", e),
-                        }
+                        // Peers learn of it from the outbox; the tombstone stays local.
+                        let _ = service.record_tombstones(&[content_hash]).await;
                     }
                 }
             }
@@ -1073,44 +1236,26 @@ pub async fn resolve_memory_conflict_v2(
         }
 
         "keep_new" => {
-            println!("[Rust] Resolution: Keep NEW memory, delete OLD #{}", conflicting_memory_id);
-
-            // Compute hash before deleting so we can propagate to sync peers
-            let content_hash: Option<String> = sqlx::query_scalar::<_, String>(
-                "SELECT content FROM memories WHERE id = ?"
-            )
-            .bind(conflicting_memory_id)
-            .fetch_optional(&pool)
-            .await
-            .ok()
-            .flatten()
-            .map(|content| {
-                use sha2::{Digest, Sha256};
-                format!("{:x}", Sha256::digest(content.as_bytes()))
-            });
-
-            sqlx::query("DELETE FROM memories WHERE id = ?")
-                .bind(conflicting_memory_id)
-                .execute(&pool)
-                .await
-                .map_err(|e| format!("Failed to delete old memory: {}", e))?;
-
-            println!("[Rust] ✅ Deleted old memory #{}", conflicting_memory_id);
-
-            // Propagate deletion to sync peers so they don't restore the old memory
-            if let Some(hash) = content_hash {
-                let zynksync_service = crate::ZYNKSYNC_SERVICE.lock().await;
-                if let Some(service) = zynksync_service.as_ref() {
-                    if service.is_auto_sync_enabled().await {
-                        match service.propagate_deletion_by_hash(hash).await {
-                            Ok(count) => println!("[Rust] ✓ Deletion propagated to {} device(s)", count),
-                            Err(e) => eprintln!("[Rust] ⚠ Warning: Failed to propagate deletion: {}", e),
-                        }
-                    }
-                }
-            }
+            // Since 2026-10-23 "keep new" is an update, not a deletion: the old memory is
+            // marked replaced and kept as history (out of recall, "REPLACED" in Memory
+            // Manager, "Undo replacement" to undo), linked from the new one with
+            // "updates". Only the user deletes memories, and only in Memory Manager.
+            println!("[Rust] Resolution: Keep NEW memory, OLD #{} becomes history", conflicting_memory_id);
 
             let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
+
+            memory::set_temporal_status(&pool, conflicting_memory_id, Some("superseded"))
+                .await
+                .map_err(|e| format!("Failed to mark the old memory as replaced: {}", e))?;
+            let _ = memory::create_memory_link(
+                &pool,
+                new_memory_id,
+                conflicting_memory_id,
+                "updates",
+                0.95,
+                Some("The user chose the new memory on the conflict card"),
+                "user",
+            ).await;
 
             for rel in relationships.iter().filter(|r| r.memory_id != conflicting_memory_id && r.relationship_type != "none") {
                 let _ = memory::create_memory_link(
@@ -1130,7 +1275,7 @@ pub async fn resolve_memory_conflict_v2(
                 "success": true,
                 "action": "kept_new",
                 "new_memory_id": new_memory_id,
-                "message": "Old memory deleted, new memory stored"
+                "message": "New memory stored; the old one is kept as history"
             }))
         }
 
@@ -1162,7 +1307,14 @@ pub async fn resolve_memory_conflict_v2(
         }
 
         "keep_both" => {
-            println!("[Rust] Resolution: Accept contradiction — keeping both memories");
+            // When the card was the "Is this an update?" form (the local model's "updates"
+            // turned into a question, reason "Possibly an update…"), "keep both" means the
+            // two are about the same thing and both stand: a "related" link, not a
+            // contradiction (2026-10-23).
+            let was_update_question = relationships.iter()
+                .any(|r| r.memory_id == conflicting_memory_id && r.reason.starts_with("Possibly an update"));
+            let link_type = if was_update_question { "related" } else { "contradicts" };
+            println!("[Rust] Resolution: keep both memories, linked as {}", link_type);
 
             let new_memory_id = crate::store_pending_memory(&pool, &pending, &user_id, &session_id).await?;
 
@@ -1170,14 +1322,14 @@ pub async fn resolve_memory_conflict_v2(
                 &pool,
                 new_memory_id,
                 conflicting_memory_id,
-                "contradicts",
+                link_type,
                 0.95,
                 Some("user_acknowledged"),
                 "user",
             ).await
-            .map_err(|e| format!("Failed to create contradiction link: {}", e))?;
+            .map_err(|e| format!("Failed to create {} link: {}", link_type, e))?;
 
-            println!("[Rust] ✅ Created contradicts relationship: {} <-> {}", new_memory_id, conflicting_memory_id);
+            println!("[Rust] ✅ Created {} relationship: {} <-> {}", link_type, new_memory_id, conflicting_memory_id);
 
             for rel in relationships.iter().filter(|r| r.relationship_type != "contradicts" && r.relationship_type != "none") {
                 let _ = memory::create_memory_link(
@@ -1299,4 +1451,56 @@ pub async fn resolve_memory_conflict_v2(
 
         _ => Err(format!("Invalid decision: '{}'. Must be one of: keep_old, keep_new, not_a_contradiction, keep_both, both_with_explanation", decision))
     }
+}
+
+/// Where a memory came from: the conversation it was made in and, when it can be
+/// found, the user message that produced it (Matt, 2026-10-16: "I was looking at a
+/// memory and could not remember what the response was").
+#[derive(serde::Serialize)]
+pub struct MemorySource {
+    pub session_id: Option<String>,
+    pub session_exists: bool,
+    pub session_title: Option<String>,
+    pub message_id: Option<i64>,
+}
+
+#[tauri::command]
+pub async fn find_memory_source(memory_id: i32) -> Result<MemorySource, String> {
+    let db_url = crate::db::get_db_url();
+    let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e| e.to_string())?;
+    let row: Option<(Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT session_id, CAST(created_at AS TEXT), original_text FROM memories WHERE id = ?")
+        .bind(memory_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    let Some((session_id, created_at, original_text)) = row else { return Err("Memory not found".into()); };
+    let Some(session_id) = session_id.filter(|s| !s.is_empty()) else {
+        return Ok(MemorySource { session_id: None, session_exists: false, session_title: None, message_id: None });
+    };
+    let title: Option<(Option<String>,)> = sqlx::query_as("SELECT title FROM conversation_sessions WHERE session_id = ?")
+        .bind(&session_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    let Some((session_title,)) = title else {
+        return Ok(MemorySource { session_id: Some(session_id), session_exists: false, session_title: None, message_id: None });
+    };
+    // The message that produced the memory: the user's words it was extracted from
+    // when they were kept verbatim; otherwise the last user message before the memory
+    // was written (extraction runs after the reply, so that is the exchange); otherwise
+    // the start of the thread.
+    let mut message_id: Option<i64> = None;
+    if let Some(text) = original_text.as_deref().filter(|t| !t.trim().is_empty()) {
+        message_id = sqlx::query_scalar(
+            "SELECT id FROM conversation_messages WHERE session_id = ? AND role = 'user' AND content = ? ORDER BY created_at LIMIT 1")
+            .bind(&session_id).bind(text).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    }
+    if message_id.is_none() {
+        message_id = sqlx::query_scalar(
+            "SELECT id FROM conversation_messages WHERE session_id = ? AND role = 'user'
+               AND julianday(created_at) <= julianday(?) + 5.0 / 86400.0
+             ORDER BY created_at DESC LIMIT 1")
+            .bind(&session_id).bind(&created_at).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    }
+    if message_id.is_none() {
+        message_id = sqlx::query_scalar(
+            "SELECT id FROM conversation_messages WHERE session_id = ? ORDER BY created_at LIMIT 1")
+            .bind(&session_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
+    }
+    Ok(MemorySource { session_id: Some(session_id), session_exists: true, session_title, message_id })
 }

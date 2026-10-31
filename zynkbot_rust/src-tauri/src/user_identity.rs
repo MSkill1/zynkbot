@@ -275,7 +275,12 @@ pub fn set_current_session_id(session_id: &str) -> Result<(), String> {
 /// Persist a user-chosen device name and push it to the running sync service (if any)
 /// so already-open connections use it immediately, with no restart.
 pub fn set_device_name(name: &str) -> Result<(), String> {
-    IDENTITY_MANAGER.set_device_name(name)
+    IDENTITY_MANAGER.set_device_name(name)?;
+    // The running sync service owns a copy of the identity; keep it current.
+    if let Ok(guard) = crate::ZYNKSYNC_SERVICE.try_lock() {
+        if let Some(svc) = guard.as_ref() { svc.set_device_name(&get_device_name()); }
+    }
+    Ok(())
 }
 
 /// Falls back to "Android-XXXX" when hostname::get() returns "localhost" (always the case on Android).

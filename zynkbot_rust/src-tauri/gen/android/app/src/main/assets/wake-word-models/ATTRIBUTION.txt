@@ -25,3 +25,20 @@ They were previously fetched at runtime from a GitHub release, which meant wake
 word could not be enabled without network access and tied the app to a release
 that could never be deleted. Bundling them costs ~3 MB in the APK and makes wake
 word work offline on first launch.
+
+silero_vad.onnx
+---------------
+Source:  Silero VAD v5 — https://github.com/snakers4/silero-vad
+License: MIT License, Copyright (c) 2020-present Silero Team
+         https://github.com/snakers4/silero-vad/blob/master/LICENSE
+A pre-trained speech-or-not detector (16 kHz, 32 ms frames). Added 2026-10-19
+as a gate in front of the wake-word classifier: a detection with no human voice
+in the previous two seconds is ignored. Redistributed unmodified.
+
+generic_negatives.json
+----------------------
+Source:  Zynkbot — 110 false-trigger clips (noise, television, electronic sounds)
+         collected on the developer's phones 2026-09-04..09-22, reduced to the
+         192 pooled embedding numbers per clip. No audio, no personal voice.
+Used by WakeVerifierTrainer as the shipped negative set for the on-phone verifier.
+License: same terms as Zynkbot itself (see LICENSE in the repository root)

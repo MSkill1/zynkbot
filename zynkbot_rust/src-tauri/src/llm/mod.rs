@@ -4,70 +4,13 @@
 pub mod anthropic;
 pub mod openai;
 pub mod xai;  // xAI (Grok) API - OpenAI-compatible
+pub mod mistral;  // Mistral: its own web search through the Conversations API (2026-10-27)
 pub mod local_embeddings;
 
-#[cfg(not(target_os = "android"))]
+// On-device GGUF inference on every platform, Android included (2026-10-22, branch
+// local-model). The Android stub that returned "Local models not supported on Android"
+// from every call lived here from 2026-09 until then.
 pub mod local_models;
-
-// Android stub: local GGUF LLM inference is Phase 2. Avoids scattering #[cfg]
-// throughout chat.rs and lib.rs while keeping the type system consistent.
-#[cfg(target_os = "android")]
-pub mod local_models {
-    use super::{LLMError, LLMResponse, Message};
-
-    pub struct LocalModelSession;
-
-    // `load` mirrors the desktop API; on Android nothing calls it because on-device
-    // GGUF inference is compiled out, so silence the dead-code warning rather than
-    // let every phone build print it.
-    #[allow(dead_code)]
-    impl LocalModelSession {
-        pub fn load(_path: &str) -> Result<Self, LLMError> {
-            Err(LLMError::APIError("Local models not supported on Android".to_string()))
-        }
-        pub fn generate(
-            &self,
-            _messages: Vec<Message>,
-            _max_tokens: Option<u32>,
-            _temperature: Option<f32>,
-            _json_schema: Option<&str>,
-        ) -> Result<LLMResponse, LLMError> {
-            Err(LLMError::APIError("Local models not supported on Android".to_string()))
-        }
-    }
-
-    /// Mirrors the desktop signature so call sites in chat.rs and lib.rs compile
-    /// unchanged. Added because main introduced this function and its callers
-    /// without a matching Android stub, which broke the Android build — main is
-    /// not built for Android, so nothing caught it there.
-    pub fn with_cached_session<F, R>(_model_path: &str, _f: F) -> Result<R, LLMError>
-    where
-        F: FnOnce(&LocalModelSession) -> Result<R, LLMError>,
-    {
-        Err(LLMError::APIError("Local models not supported on Android".to_string()))
-    }
-
-    pub fn resolve_default_model_path() -> Result<String, LLMError> {
-        Err(LLMError::APIError("Local models not supported on Android".to_string()))
-    }
-
-    pub fn generate_with_local_model(
-        _model_path: &str,
-        _messages: Vec<Message>,
-        _max_tokens: Option<u32>,
-        _temperature: Option<f32>,
-    ) -> Result<LLMResponse, LLMError> {
-        Err(LLMError::APIError("Local models not supported on Android".to_string()))
-    }
-
-    pub fn generate_with_local_model_constrained(
-        _model_path: &str,
-        _messages: Vec<Message>,
-        _json_schema: &str,
-    ) -> Result<LLMResponse, LLMError> {
-        Err(LLMError::APIError("Local models not supported on Android".to_string()))
-    }
-}
 
 // pub mod whisper;    // TEMPORARILY DISABLED: Conflicts with llama-cpp-2 (GGML symbols)
 
@@ -126,3 +69,47 @@ impl std::fmt::Display for LLMError {
 }
 
 impl std::error::Error for LLMError {}
+
+/// A page a provider's own web search drew on (2026-10-27).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct WebSource {
+    pub title: String,
+    pub url: String,
+    pub snippet: String,
+}
+
+/// What a provider's own web search tool returned: the model's answer and its sources.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WebAnswer {
+    pub answer: String,
+    pub sources: Vec<WebSource>,
+}
+
+/// Where a provider's web answer is sent word by word while it is written (2026-10-28).
+pub type OnToken<'a> = &'a (dyn Fn(&str) + Send + Sync);
+
+/// Reads a server-sent-events response and hands every `data:` line that holds JSON to
+/// `on_event`, as it arrives. The three web search endpoints stream the same way.
+pub async fn read_sse(
+    response: reqwest::Response,
+    mut on_event: impl FnMut(&serde_json::Value) -> Result<(), LLMError>,
+) -> Result<(), LLMError> {
+    use futures::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| LLMError::RequestFailed(e.to_string()))?;
+        buf.extend_from_slice(&chunk);
+        while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line);
+            let Some(data) = line.trim().strip_prefix("data:") else { continue };
+            let data = data.trim();
+            if data.is_empty() || data == "[DONE]" { continue; }
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                on_event(&v)?;
+            }
+        }
+    }
+    Ok(())
+}

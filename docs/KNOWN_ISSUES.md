@@ -6,7 +6,15 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ## Memory Pipeline
 
-### KI-012 — Original text not preserved when memory is stored via contradiction resolution
+### KI-102 — A repeated passing fact is dropped as a duplicate
+**Status:** Open (noted 2026-10-29, not scheduled)  
+**Affected:** All users — passing facts (parking level, an errand, this week's trip)  
+**Description:** A passing fact stays in the database until its expiry date, about two weeks. If the user says the same thing again inside that window ("I parked on level three at the mall" on the 26th and again on the 29th), the duplicate check matches the stored memory at 100% and stores nothing, so the newer date is not recorded and the expiry is not moved. The conversation reply is unaffected.  
+**Impact:** Low — the fact is still known; only its date is stale. Matt's call: note it, do not fix it now.
+
+---
+
+### KI-012 — Original text not preserved when memory is stored via contradiction resolution (fixed)
 **Status:** Fixed in this release  
 **Affected:** All users — any memory stored after resolving a contradiction modal  
 **Description:** The `original_text` field (the verbatim user input) is correctly stored for memories created through the normal path. However, when a contradiction is detected and the user resolves it via the modal, the memory was stored through `store_pending_memory`, which passed `pending.content` (the LLM-extracted fact) as `original_text` instead of the raw user message. Both the Content and Original fields in Memory Manager showed the same extracted text. Fixed by adding `original_text` to `PendingMemory` and threading `bg_message` through the contradiction event payload.  
@@ -14,7 +22,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-013 — Original text not preserved when memory arrives via ZynkSync
+### KI-013 — Original text not preserved when memory arrives via ZynkSync (fixed)
 **Status:** Fixed in this release  
 **Affected:** All users — any memory received from a paired device via ZynkSync  
 **Description:** The `original_text` field (the verbatim user input) was not included in the ZynkSync payload. Memories created on one device and synced to another had no `original_text` on the receiving device. Fixed by adding `original_text` to the `SyncMemory` struct, all memory SELECT queries, and the receive INSERT/UPDATE paths in `zynksync.rs`.  
@@ -25,8 +33,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ### KI-001 — Double memory on contradiction resolution (edge case)
 **Status:** Partially fixed  
 **Affected:** All local models  
-**Description:** Memory is only stored after the user resolves the contradiction modal — never before. However, in rare cases the background duplicate check may still produce a second copy if the embedding distance between the raw user message and the MEMORY_EXTRACT fact falls between the 0.65 and 0.93 similarity thresholds, causing both to pass the near-duplicate filter.  
-**Workaround:** If you see duplicate memories after a contradiction resolution, delete the lower-numbered one — the MEMORY_EXTRACT version is the cleaner fact.  
+**Description:** Memory is only stored after the user resolves the contradiction modal — never before (cloud models; a local model stores first and asks after, since 2026-10-23). The original form of this issue, a second copy made from the raw user message beside the extracted fact, cannot happen since 2026-10-24: the raw message is no longer stored as a memory at all, only the facts call 2 lists.  
+**Workaround:** If you see duplicate memories after a contradiction resolution, delete the lower-numbered one.  
 **Fix target:** Improve near-duplicate search to prefer most-recently-inserted match.
 
 ### KI-002 — Contradiction false positive: intention vs. current state
@@ -34,7 +42,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 **Description:** Statements expressing a future intention ("I'm thinking about leaving my job") may occasionally be flagged as contradicting a stored current state ("I work at X"). The classifier prompt includes an example to discourage this, but LLM classification is not deterministic.  
 **Workaround:** Select "Not a contradiction" in the modal. No data is lost.
 
-### KI-003 — System memories appearing in user hybrid search
+### KI-003 — System memories appearing in user hybrid search (fixed)
 **Status:** Fixed in this release  
 **Description:** System memories (user_id = 'system', IDs 1–12) were appearing in user hybrid search results — for example, "Model Support" appeared at ~50% similarity for queries containing common nouns. Fixed by scoping `hybrid_search`, `list_memories`, and the Memory Manager query to exclude `user_id = 'system'` entries.  
 **Impact:** None — resolved.
@@ -72,6 +80,17 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ## Local Models
+
+### KI-098 — The desktop build with `--features cuda` no longer links after the engine upgrade (open)
+**Status:** Open, found 2026-10-23 starting the desktop dev app on `memory-types` (same engine as `local-model`). The app runs without the feature; desktop local models then use the CPU.
+**Description:** Since llama-cpp-2 moved to 0.1.160 (for the Android build of the engine, `local-model` 2026-10-21), the CUDA objects it compiles (`mmq-instance-*.cu.o`) are built without position-independent code, and rust-lld refuses them: `relocation R_X86_64_PC32 cannot be used against symbol 'stderr'; recompile with -fPIC`. The desktop had not been rebuilt with the feature since the upgrade; the Oct 17 build still ran.
+**Fix:** The flag above. The C++ side of the engine already builds position-independent; only the CUDA kernels (`.cu` files) did not, and the toolkit reads `CUDAFLAGS` from the environment at configure time.
+
+### KI-083 — Windows: the settings file was ignored at startup once a local model was selected (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06 (`env_file.rs`). Values that need it are written in quotes, and the file is read line by line so one unreadable line no longer discards the rest. The startup log says how many settings loaded and names any line it could not read.
+**Affected:** Windows builds up to `649f597`. Linux and Android were never hit: their model paths contain no backslashes.
+**Description:** Choosing a local model stores its path as `ZYNK_MODEL_BACKEND=C:\Users\...\model.gguf`, the first line of `.env`. The `dotenv` crate reads a backslash as an escape, fails on `\U`, and stops at the first bad line, so every API key below it was never loaded into the process. The model menu showed only the local model, Settings → API Keys still showed the keys as set (it reads the file), and a key that arrived from another device worked until the next restart because it is also applied to the running process directly. Found 2026-10-06 on the laptop during the sync test pass, after the keys had demonstrably synced.
+**Workaround on an old build:** quote the path in `%LOCALAPPDATA%\zynkbot\.env` with single quotes and restart the app.
 
 ### KI-007 — Uncensored and fine-tuned models may produce lower-quality memory extraction
 **Status:** Open / by design  
@@ -129,8 +148,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-050 — Reinstalling the app on a phone leaves a stale second device in every peer's ZynkSync list
-**Status:** Open — post-beta. Cause known; fix deferred because it touches the pairing path. Workaround is a delete.
+### KI-050 — Reinstalling the app on a phone leaves a stale second device in every peer's ZynkSync list (by design since 2026-10-07)
+**Status:** By design (Matt, 2026-10-07): a reinstalled phone is a new device; it pairs with a code, receives everything in its first contact, and the old entry is removed by hand with the Remove button (I36 in the sync protocol). The identity-restore path built on 2026-10-02 was withdrawn (KI-092). Messages are addressed by device identity, so the stale entry can do no harm while it waits to be removed. Earlier status follows for the record.
 **Affected:** Any device that is reinstalled (or has its app data wiped, including a release build installed over a debug build) and then pairs again. Seen 2026-09-12: the OnePlus paired as `12R` before the reinstall and as `Oneplus-453A` after, from the same address; the desktop, the Pixel and the Windows install each kept both entries until the old one was deleted by hand.
 **Description:** A device's identity is a UUID written to a file in the app's private data (`user_identity.rs`, `get_or_create_device_id`). Uninstalling removes the file; the next launch mints a new UUID and, on Android, a new default name from its last four characters. `zynk_devices` is keyed on `device_id` (UNIQUE), and the pairing handler upserts `ON CONFLICT (device_id)`, so a new id is a new row; nothing compares the incoming `device_ip` against existing rows. The old row stays "paired", its cert stays pinned, and every peer keeps trying to sync with it.
 **Workaround:** delete the old entry in ZynkSync (it is expelled from all peers); re-pair if needed.
@@ -146,8 +165,31 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-066 — About me timeline shows a date in the future for a memory that has none (open)
-**Status:** Open — reported by tester Mike 2026-09-15 ("December 2026" on a memory from 9/5/26 with nothing in the text to explain it).  
+### KI-069 — The wake word fires in bursts on some ambient sound, not the owner's voice (open)
+**Status:** Open, found 2026-09-21 on the Pixel: 45 wake detections in a 96-minute stretch, in bursts of several 20–60 s apart (one burst: six in under four minutes), each at a real but sometimes quiet level (-21 to -46 dBFS) and a low match to the owner's trained verifier (mostly under 0.10). Not the owner's voice; likely a recurring ambient sound (fan, appliance, something electronic) whose source is unidentified.
+**Status, 0.9.6-beta5 (2026-10-27):** still open, but four gates now sit in front of every detection, each confirmed in `WakeWordService.kt` and `MicStream.kt`, in this order: (1) quiet gate: while the speech gate is loaded, a detection only has to be above -65 dBFS, since the old -46 dBFS rule threw away two real wakes at 0.99 on 2026-10-19; without the speech gate the -46 rule still applies; (2) playback gate: a detection while the phone itself is playing audio, or in the second after (`PLAYBACK_TAIL_MS`), is ignored and saved as a false clip, except while Zynkbot's own timer is ringing; (3) speech gate: Silero VAD runs on every chunk, a detection with no frame at or above 0.5 speech probability in the last ~2 s is ignored and saved as a false clip, and with no voice for 2 s the wake-word models are not run at all; (4) an echo canceller is requested on the microphone stream (`AcousticEchoCanceler` in `MicStream.kt`) and the log says whether the phone enabled it. After the gates comes the personal verifier (KI-063). The strict-mode code is still in the file, switched off. The changelog does not claim the bursts of 2026-09-21 are gone, so this entry stays open; fix candidate (1) below is not implemented.
+**Affected:** Any phone with the wake word on; worse since strict mode was removed 2026-09-20 (KI unfiled at the time — see the strict-mode change in the changelog). Strict mode's ten-minute lockout after three misses likely masked bursts like this before; removing it made them fully audible. The log does not reach back far enough to confirm this burst pattern predates strict mode's removal, only that its rate did not increase across today's builds specifically.
+**Ruled out as a fix:** any cooldown or backoff after a miss, including a plain time-based one that doesn't touch confidence. Matt, 2026-09-21: a real first attempt fails to wake the phone roughly a quarter of the time, so any lockout after a miss would block a genuine retry the same way strict mode's confidence bar did, just through a different mechanism.
+**Fix candidates, not started:** (1) an ambient-noise-adaptive threshold — raise the bar only while the recent noise floor is elevated, relax it when the room is quiet, rather than a fixed lockout regardless of the current moment (Matt's idea, 2026-09-21); (2) the verifier-gated response plan already on the roadmap (answer only when the trained verifier matches, whatever triggered the wake) — a different mechanism, addresses this as a side effect once it exists. Both are after-beta3, alongside the verifier retraining work.
+
+### KI-068 — Desktop conversation history never reaches the phones: push rejected as too large (fixed)
+**Status:** Fixed on `v1` (2026-09-19): the marker is persisted per peer (`zynk_conversation_push_state`), advanced only after the peer accepts a push, and a push carries at most 300 messages; the receiving cap is raised to 32 MB in rebuilt peers. Harness tests b08c (marker survives a restart) and b08d (a backlog arrives over cycles, nothing duplicated). Found 2026-09-19 on e1273a1. Desktop log: `Conversation sync failed (non-fatal): Conversation push rejected by peer: 413 Payload Too Large`, once per phone.  
+**Affected:** Any device with a large conversation history syncing to a peer.  
+**Description:** The "what changed since the last push" marker for conversations is kept in memory only, so the first sync after the app starts has no marker and sends everything (up to 500 sessions and 5,000 messages) in one request. The receiving side caps a request at 2 MB (the web server default); the desktop's 1,886 messages exceed it. The memory sync in the same cycle succeeds and advances the marker, so the next cycle is incremental again and the backlog is silently never sent.  
+**Fix:** persist the marker per peer and advance it only after a successful push; a first-ever backlog goes over a few cycles.
+
+---
+
+### KI-067 — A file downloaded into ZynkbotShare does not appear in the phone's Files app (fixed)
+**Status:** Fixed on `v1` (2026-09-19), verified on the Pixel 2026-09-20: downloads land in the Zynkbot storage location, which the Files app lists directly from the app (see KI-015), so the media index is no longer involved. An earlier same-day fix asked Android to index the file.  
+**Affected:** Android.  
+**Description:** Downloads are written to a `.part` file and renamed. Android's media index, which the Files and Gallery apps list from, failed to record the rename (`MediaProvider: Database update failed while renaming …jpg.part`), so the file was on disk but not shown anywhere but Zynkbot's own share list.  
+**Fix:** `AndroidPaths.scanFile(path)` bridge calling `MediaScannerConnection.scanFile`, called from the download path and from the Add-file copy.
+
+---
+
+### KI-066 — About me timeline shows a date in the future for a memory that has none (fixed)
+**Status:** Fixed on `v1` (2026-09-18): an event date after the day the memory was said is dropped; About me states how many memories have no date.  
 **Affected:** All platforms; any memory whose date the model inferred wrongly.  
 **Description:** `memory_extras::validate_event_date` accepts any date up to two years after the day the memory was said, so a hallucinated or mis-inferred future date passes and the timeline sorts it to the top. The prompt asks for "the date the thing HAPPENED".  
 **Fix:** bound the date to the day after it was said (plans stay undated for now); one line plus a test. Also make About me state how many memories have no date, so a short timeline is not read as missing memories.
@@ -170,40 +212,45 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-063 — Personal wake-word verifier enforcement suspended: it rejected most of its owner's real triggers and is not a voice lock (open)
-**Status:** Open — enforcement off since 6d7fc85 (`owners` emptied); replaced by on-device training on the roadmap.  
+### KI-063 — Personal wake-word verifier enforcement suspended: it rejected most of its owner's real triggers and is not a voice lock (fixed in 0.9.6-beta4, 2026-10-17)
+**Status:** Fixed in 0.9.6-beta4 (2026-10-17): enforcement is decided by the profile itself. A profile lists the user ids it enforces for (`owners`; `*` means whoever owns the phone). `WakeVerifier.enforcesOn()` compares that list with the phone's `.zynk_user_id`; a wake the verifier scores below its threshold is dropped only when the list matches, otherwise it is logged as "verifier would reject, log-only" and goes through (`WakeWordService.kt`). A profile the phone trains from its own clips gets the owner id written in when, on clips it did not train on, it keeps at least 90% of the owner's wakes and stops at least 90% of the negatives (`WakeVerifierTrainer`, `AUTO_ENFORCE_KEEP` / `AUTO_ENFORCE_STOP`), or when the profile it replaces already enforced here; a retrain never switches enforcement off. Below that bar the `owners` list is empty and the profile only logs. The profile built into the APK (`assets/wake-word-models/hey_zynk_verifier.json`) is in the v3 format and lists one owner id again, so the emptied list from 6d7fc85 is gone. Was: open, enforcement off since 6d7fc85 (`owners` emptied).  
 **Affected:** The developer's phones only (it never enforced for testers).  
 **Description:** In use the v2 verifier accepted 4 of 17 real "Hey Zynk"s (scores mostly ≤ 0.02, a few 0.84–0.98, nothing between). Offline analysis on 2026-09-15 found the cause: 1,536 of its 1,728 inputs are the 16 embeddings in time order, so it learned *where in the window* the phrase sat in the 33 training clips; shifting the window by one 80 ms frame lost 3 of 33 clips, three frames lost 23. With a second tester's clips it also accepted 7 of his 31 triggers, so it separated "someone said Hey Zynk" from noise, not one voice from another.  
 **Fix:** the shift-invariant mean/max form (192 numbers) keeps the accuracy without the collapse and is what the phone now scores (v3 format, `v1` 14a29d9); the profile is trained on the phone from its own clips (roadmap). Present it as a TV/other-people filter, not security: about 6% of another voice gets through.
 
 ---
 
-### KI-062 — Hands-free web search never runs when "auto-execute in voice sessions" is off (open)
-**Status:** Open — GitHub #26 (2026-09-15), five reports attached.  
+### KI-062 — Hands-free web search never runs when "auto-execute in voice sessions" is off (fixed)
+**Status:** Fixed on `v1` (2026-09-17): the setting is mirrored to the Rust core (`voice_prefs.json`) and the hands-free path runs the search and answers from it. With the setting off it still asks, by design.  
 **Affected:** Android hands-free path.  
 **Description:** With auto-execute disabled the model answers "let me look that up for you" (it emitted `WEB_SEARCH_NEEDED`), but in the voice path there is no button to confirm, so the search is flagged and never run; asking again gets "not yet — I flagged it".  
 **Fix:** in hands-free turns either run the search when the setting allows it, or have the reply say plainly that searches are off in voice mode; never promise one.
 
 ---
 
-### KI-061 — A timer set hands-free while the phone is asleep is confirmed but never fires (open)
-**Status:** Open — GitHub #29 (2026-09-17) with three problem reports; app open and awake works, screen-off does not.  
+### KI-088 — "Set a timer for two and a half minutes" set no timer; the model said it had (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-07 in both parsers (`useVoiceSession.js` and `VoiceCommands.kt`): spoken fractions and articles are normalised before the timer patterns run — "two and a half minutes" → 2.5, "a minute and a half" → 1.5, "half an hour" → 0.5 hour, "a minute" → 1 minute, "and a quarter" → .25. Jest covers the phrases.
+**Affected:** Every build before this one, typed and spoken, Android and desktop.
+**Description:** The number words were converted ("two" → 2) but "2 and a half minutes" matched no timer pattern, so the request went to the model as ordinary chat. The model replied as if it had set the timer, and the memory extractor then stored "Timer set for two and a half minutes" as a memory. Found by Matt on the Pixel during the sync pass (he was timing test G25). The stored "timer" memories are noise and should be cleaned up in the memory relationship audit.
+
+### KI-061 — A timer set hands-free while the phone is asleep is confirmed but never fires (fixed 2026-10-25, branch `timer`)
+**Status:** Fixed by Zynkbot's own timer (`ZynkTimer`): the deadline is an exact alarm of our own, not a clock-app intent, so it rings with the phone asleep and the app closed. GitHub #29 (2026-09-17) had three problem reports; app open and awake worked, screen-off did not. Needs the "Alarms & reminders" permission, offered on the Voice page; without it the old clock-app path is used. Verified on the Pixel 10 Pro XL 2026-10-25 (screen off, 1-minute timer rang and spoke).  
 **Affected:** Android hands-free path with the screen off (assistant session over the keyguard).  
 **Description:** "Set a timer for 60 seconds" is parsed natively and confirmed aloud ("timer set for 1 minute"), but no timer appears or rings. Hypothesis to confirm from the attached reports: the `AlarmClock.ACTION_SET_TIMER` intent is fired from the session with the phone locked, and the clock app either refuses the start from the background or shows its own UI over the keyguard where nothing completes; the confirmation is spoken before the result is known.  
 **Fix:** read the reports; confirm the start result before speaking; if the clock app cannot take the intent from the keyguard, keep the timer in the app (foreground service with its own alarm) and say so.
 
 ---
 
-### KI-060 — An edited memory reverts after sync: the old version returns beside the new one (open)
-**Status:** Open — GitHub #28 (2026-09-16); GitHub #13 (2026-08-27) showed the same on an edit that reached Linux but not Android.  
+### KI-060 — An edited memory reverts after sync: the old version returns beside the new one (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b05): an edit keeps its `sync_id`, so the peer updates its copy. Was: open — GitHub #28 (2026-09-16); GitHub #13 (2026-08-27) showed the same on an edit that reached Linux but not Android.  
 **Affected:** Any two devices syncing memories.  
 **Description:** After editing a memory in the Memory Manager the edit is saved, and later the pre-edit version reappears so both are listed; the user has to delete the old one. Most likely a peer that still holds the old row pushes it back on its next sync, and the receive path does not compare `updated_at` (or the content hash changed, so the old row looks like a new memory).  
 **Fix:** part of the ZynkSync rebuild (KI-028): last-writer-wins on `updated_at`, and an edit carries the old hash as a tombstone.
 
 ---
 
-### KI-059 — "Remembered on request" filter in the Memory Manager never shows anything (open)
-**Status:** Open — reported by tester Mike 2026-09-15; cause confirmed in code 2026-09-16.  
+### KI-059 — "Remembered on request" filter in the Memory Manager never shows anything (fixed)
+**Status:** Fixed on `v1` (2026-09-18): the Memory Manager window now asks for the requested ids and tags the list, as the sidebar did.  
 **Affected:** All platforms since the filter shipped (0.9.6-beta1, 736ef02).  
 **Description:** The sidebar list (`MemoryManager.jsx`) asks the backend which memories carry the "requested" mark and tags them; the full Memory Manager window (`MemoryManagerModal.jsx`), where the checkbox filter lives, fetches its own list and never asks, so `mem.requested` is always missing and the filter matches nothing. About me shows the same memories because it queries the mark directly.  
 **Fix:** call `list_requested_memory_ids` in the modal's fetch and map the flag, as the sidebar does; three lines plus a test.
@@ -219,7 +266,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 ---
 
 ### KI-057 — A false wake-word trigger produced a memory: Whisper hallucinated "Aum. Namaste. Thank you." from fan noise, the model answered it, and the extractor stored "gratitude greeting" (open)
-**Status:** Open, seen 2026-09-13 14:15 on the Pixel (Whisper engine, air conditioner running, verifier log-only). Not a sync bug; the junk memory then synced correctly to all four devices.
+**Status:** Open, seen 2026-09-13 14:15 on the Pixel (Whisper engine, air conditioner running, verifier log-only). Not a sync bug; the junk memory then synced correctly to all four devices. **2026-10-25:** the extraction side is narrower since the pipeline rewrite: "greetings and thanks are not facts" is in call 2's rules, a fact under three words is dropped, and the raw transcript is never stored as a memory (until 2026-10-24 a cloud reply with no fact line stored the user's message verbatim, which is how most hands-free junk, television lines included, reached the Memory Manager; those rows were deleted from the developer's own database on 2026-10-24). The wake-side causes (false trigger, Whisper on a hum, verifier log-only) are unchanged. Hands-free memories are still stored and still marked `hands_free` so they can be reviewed as a group; Matt's decision 2026-10-24: hands-free turns are not to be blocked from memory.
 **Affected:** Hands-free turns on the OpenAI Whisper engine in steady noise (Vosk produces no words from a hum, so it does not do this); any small model that extracts eagerly.
 **Description:** Three things lined up: the wake word fired on the air conditioner; Whisper turned the hum into words (KI-029); the turn was answered and the extractor decided the "greeting" was a personal fact. Strict mode only began after the third misfire, a minute later. Related: the same session produced a second "favourite pie is cherry" memory (id 2, namespace personal, 14:12) from a turn that merely *mentioned* the earlier one (id 1, kitchen, 13:58) — the write-time consolidation item on the roadmap, not a sync fault.
 **Fix candidates:** skip memory extraction for a hands-free turn whose transcript came from Whisper with no speech-energy evidence (the endpointer knows whether speech ever crossed the onset); treat a transcript of ≤3 words as not extractable; and the roadmap's write-time consolidation for the near-duplicate.
@@ -234,8 +281,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-055 — A device that pairs after the keys were saved never receives them (open; workaround: Push to all devices)
-**Status:** Open, found on the four-device first-time-user run 2026-09-13. Not a beta blocker; the button works.
+### KI-055 — A device that pairs after the keys were saved never receives them (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-01 (`d789eec`, b02): keys are queue rows; a device gets them all on first contact; the newest value per key wins. Was: open, found on the four-device first-time-user run 2026-09-13. Not a beta blocker; the button works.
 **Affected:** Every new device in the natural order: keys entered on the desktop first, phone paired afterwards.
 **Description:** Keys leave a device in exactly two cases — `set_api_key` pushes the one key just saved to the peers that exist at that moment, and the "Push to all devices" button pushes everything. Pairing itself pushes nothing in either direction. On 2026-09-13 the desktop had its Anthropic key saved at about 13:45; both phones paired at 13:49 and 13:50 and showed no keys; the OnePlus log has no "Received API key push" after pairing. Matt pushed by hand.
 **Fix candidates:** after `handle_verify_pairing` accepts a client, the host pushes its allow-listed keys to that one device (the push code exists; it needs a single-peer variant); or the client asks for them once after adopting the host's identity. First-run guides should say "pair, then keys arrive" — today they arrive only if entered later or pushed by hand.
@@ -251,8 +298,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-053 — Deleting a stale device entry disconnected the live phone at the same address (fixed on `voice`, 2026-09-13; not yet in any installed build)
-**Status:** Fixed in `expel_device` / `handle_notify_unsynced`; the desktop `.deb` and the APKs installed on 2026-09-13 still carry the bug.
+### KI-053 — Deleting a stale device entry disconnected the live phone at the same address (fixed on `voice`, 2026-09-13; shipped in 0.9.6-beta1; widened to every sync message in 0.9.6-beta4, 2026-10-17)
+**Status:** Fixed in `expel_device` / `handle_notify_unsynced` (2026-09-13), shipped in 0.9.6-beta1 (2026-09-13; changelog: "removal notices name their target and are ignored by anyone else"). Since `266f871` (2026-10-01, b21) every outbox message also names its target device id (the `x-target-device-id` header, `sync_outbox.rs`) and any other device refuses it with 421 (harness test 21), closing the class; shipped in 0.9.6-beta4 (2026-10-17).
 **Affected:** Any mesh with a ghost entry (KI-050) — i.e. any phone that has been reinstalled — when someone deletes the ghost from another device.
 **Description:** Expelling a device sends every other peer a cascade ("remove X") and, best-effort, tells the expelled device itself "I have unsynced from you" so its screen clears. That last notice is addressed by IP only. The ghost "Oneplus-453A" (yesterday's identity) had the same address as the live OnePlus, so the live phone received "the desktop unsynced from you", removed the desktop from its peer list and cleared its tombstones ("No peers remain"). The desktop still listed the phone, so from the desktop it merely looked as if the phone had gone quiet. Seen 2026-09-13 09:28:55.
 **Fix:** the notice carries the intended `target_device_id`; a receiver whose own id differs ignores it (logged as "Ignoring removal notice addressed to …"). Recovery on affected builds: re-pair the live phone (code generated on the desktop, entered on the phone).
@@ -267,22 +314,22 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-009 — Unsyncing a device also removes the ZynkLink pairing
+### KI-009 — Unsyncing a device also removes the ZynkLink pairing (fixed)
 **Status:** Fixed in this release  
 **Affected:** Users who have both ZynkSync and ZynkLink active between the same two devices  
 **Description:** ZynkSync and ZynkLink now maintain independent trust relationships via the `sync_paired` column. Unsyncing only clears the ZynkSync pairing; the ZynkLink pairing remains active. Unlinking only clears the ZynkLink pairing; the ZynkSync pairing remains active. Each can be revoked independently without affecting the other.
 
 ---
 
-### KI-010 — ZynkLink pairing appeared in the ZynkSync device list
+### KI-010 — ZynkLink pairing appeared in the ZynkSync device list (fixed)
 **Status:** Fixed in this release  
 **Affected:** Users who established a ZynkLink pairing without a ZynkSync pairing  
 **Description:** Establishing a ZynkLink pairing would register the remote device in `zynk_devices` with `is_paired = 1`, causing it to appear in the ZynkSync panel as a paired sync device even though no sync pairing had been established. The `sync_paired` column now tracks sync pairings separately — ZynkLink-only devices no longer appear in the ZynkSync panel.
 
 ---
 
-### KI-011 — Pre-existing memories are orphaned after first sync
-**Status:** Open  
+### KI-011 — Pre-existing memories are orphaned after first sync (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-01 (`7f8693f`, b07): on pairing, the joining device's rows move under the shared user id and are queued for the peers.
 **Affected:** Users who have existing memories on a device before performing their first ZynkSync with a new partner device  
 **Description:** When two devices sync for the first time, memories that already existed on the receiving device before the sync are not automatically merged or associated with the synced identity. They remain as orphaned records in the local database — accessible locally but not part of the synced memory set. New memories created after the first sync are handled correctly.  
 **Workaround:** No workaround currently. Orphaned memories remain visible and usable in local conversation but will not propagate to other devices.  
@@ -290,8 +337,8 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ---
 
-### KI-028 — Conversation history sync duplicates messages and silently skips some threads
-**Status:** Open — deferred to the ZynkSync refactor; not a beta blocker (testers should treat all sync behaviour as untested until the refactor lands)
+### KI-028 — Conversation history sync duplicates messages and silently skips some threads (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b08b, b09): rows are named by `sync_id`, so same-second messages are two rows and a deleted thread is deleted everywhere. Was: deferred to the ZynkSync refactor; not a beta blocker (testers should treat all sync behaviour as untested until the refactor lands)
 **Affected:** Any two devices syncing conversation history over ZynkSync (observed OnePlus 12R ↔ Pixel 10 Pro XL, 2026-09-07). Covers GitHub #4 (duplicate and stale history entries) and #12 (clearing history or memories does not propagate).
 **Description:** Three separate defects in `zynksync.rs` combine to corrupt synced history:
 1. *Skipped threads.* `get_modified_conversations` sends only sessions whose `last_active` is later than the last sync time, comparing the values as text. Rows written through the voice path used SQLite's `datetime('now')` format (`2026-09-04 17:51:12`) while the cursor is RFC 3339 (`2026-09-04T…`); a space sorts before `T`, so those rows always looked older than the cursor and were never sent. 40 of 156 sessions on the OnePlus never reached the Pixel. Build29 (migration 0010) normalises every stored timestamp, but the cursor has already passed those rows, so they still will not sync on their own.
@@ -303,8 +350,28 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-101 — After an app update, "Hey Zynk" does not answer until the app is opened, and the Z does not return until the assistant is re-selected or the phone rebooted (open; listener part fixed 2026-10-28)
+**Status:** Listener restart fixed on `local-model` 2026-10-28 (`PackageReplacedReceiver.kt`). The Z part is a system behaviour the app cannot force; the app now says so once after an update, with a tap that opens the assistant setting.  
+**Affected:** Android, every build so far. Seen on the Pixel (GrapheneOS) after the 2026-10-28 install over a running app.  
+**Description:** Installing a new build kills the running app. Two things do not come back on their own: (1) the Hey Zynk listener, a foreground service, stays stopped until the app is opened, so the wake word is heard by nothing — Matt said it six times to a silent phone; (2) the system does not re-bind Zynkbot's assistant service to the updated package even though Zynkbot still holds the assistant role and the `voice_interaction_service` setting still names it, so a wake is answered by the in-service path with no Z on screen (the log line is "Assistant service not bound … using in-service dictation"). Re-setting the setting (`adb shell settings put secure voice_interaction_service ai.containai.zynkbot/.ZynkAssistantService`), re-selecting Zynkbot under Default assistant, or a reboot makes the system bind it again.  
+**Fix / workaround:** A receiver for the "my package was replaced" broadcast restarts the listener after every update. For the Z: after an update, if the Z does not appear, choose Zynkbot again under Settings → Apps → Default apps → Digital assistant, or reboot. Testers get this line in the release notes.
+
+### KI-100 — The settings file could be cut to one line when the app was killed while saving (fixed 2026-10-28)
+**Status:** Fixed on `local-model` 2026-10-28 (`env_file.rs`, `sync_outbox.rs`).  
+**Affected:** Every platform up to beta 5. Seen on the desktop dev app: `~/.local/share/zynkbot/.env` went from 14 settings to the single line `ZYNK_MODEL_BACKEND=…` during a restart, and the app came back with no API keys.  
+**Description:** Every write to `.env` (saving a key, choosing a model, a key arriving by sync) read the file, changed one line and wrote the whole file back in place. Two faults: a read that failed for any reason counted as an empty file, so the rewrite kept only the one line being saved; and the write truncated the file before filling it, so a kill at that instant (Android does this to background apps as a matter of course) left it empty or short. Either way the next write produced a one-line file and every key was gone from disk.  
+**Fix:** The file is written to a temp file and renamed over the old one, the previous content is kept as `.env.bak`, a failed read is an error and never an empty file, and a rewrite that would shrink the file is refused. On top of that, at the start of every sync round the app puts back any key that its own `sync_secrets` table holds and the environment lacks, so a device that lost its file recovers on its own; that is how the desktop got its keys back.
+
+### KI-099 — Facts from a message were lost when the next questions came quickly (fixed 2026-10-24)
+**Status:** Fixed on `memory-types` by the memory job queue (`memory_jobs.rs`, migration 0023).  
+**Affected:** Any backend; worst on a phone, where a message's background work takes minutes.  
+**Description:** The background memory work ran as a spawned task per message that stepped aside for the user's next message and gave up after three interruptions. Four quick questions in a row lost the first one's facts outright (the dentist appointment, Pixel, 2026-10-24).  
+**Fix:** each message becomes a row in `memory_jobs`; one worker runs the rows in order when the model is idle; an interruption leaves the row pending; a real failure retries up to four times; rows survive an app restart.
+
+---
+
 ### KI-016 — Memory extraction produces "kitchen sink" summaries
-**Status:** Open  
+**Status:** Addressed by the 2026-10-24 pipeline rewrite (branch `memory-types`), to be confirmed in use. Call 2 (`memory_prompts.rs`) lists up to three facts per message, one sentence each, "only what the message states, nothing guessed"; the last exchange is given to it only to resolve pronouns; a fact that shares no content word with the message is dropped. The compound one-line-per-message memory this entry describes is no longer produced.  
 **Affected:** Memory quality overall  
 **Description:** When the user says something focused and short (e.g., "I am using a VPN but I want to use a VPN with X, I don't trust it"), the extraction LLM sometimes pulls in unrelated context from earlier in the conversation and produces a single memory containing many unrelated facts (dictation habits, gaming usernames, device names, and the actual new fact all in one memory). This dilutes the memory's embedding across topics, weakens semantic search accuracy, and — as a downstream effect — prevents the relationship-detection pipeline from finding thematic links because low similarity scores filter the memory out of candidate pairs before the LLM classifier ever sees them.  
 **Example:** Memory 346 (mentions dictation, iPhone 13, OnePlus 12R, Clash of Clans, VPN) had cosine similarity 0.22 with memory 347 (focused on ProtonVPN configuration) — well below the candidate-pair threshold. The two obviously belong linked but never got classified.  
@@ -313,25 +380,72 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ---
 
 ### KI-017 — Memory extraction duplicates already-stored facts
-**Status:** Open  
+**Status:** Partly addressed by the 2026-10-24 pipeline rewrite. Within one message, a restatement of a fact already taken (`restates`, four fifths of its content words) and a near-duplicate by embedding (cosine ≥ 0.86) are dropped before storage. Across messages the storage path's duplicate check (>93% cosine or >98% hybrid) is unchanged, so a re-stated old fact in a new message can still be stored as a second memory; the conflict and `updates` links are the tools for that case.  
 **Affected:** Memory quality; contributes to KI-016  
 **Description:** The extraction step includes previously stored facts in the output of a new memory rather than treating them as already-known context. Example: memory 346's nearest neighbor is memory 341 at cosine similarity 0.81 — because 346 re-states most of 341 (dictation, iPhone 13, Clash of Clans) alongside the new VPN fact. Near-duplicate memories inflate the DB, weaken retrieval precision, and cause link-detection to waste time on redundant candidates.  
 **Fix target:** Extraction prompt should treat retrieved memories as "already known, do not restate — only capture what's new in this turn."
 
 ---
 
-### KI-015 — Android scoped storage blocks scan of files created by other apps
-**Status:** Resolved on `voice` (build34, 2026-09-07) by design change  
+### KI-015 — Android scoped storage blocks scan of files created by other apps (fixed)
+**Status:** Fixed on `v1` (2026-09-19), verified on the Pixel and the OnePlus 2026-09-20: the share folder is Zynkbot's own storage location, published to the Files app and every app's Share menu (`ZynkShareProvider`, `ShareReceiverActivity`); every file that enters is written by Zynkbot, so nothing is invisible. Tested: Share to Zynkbot from the Files app (8 files, sizes intact), listing from the linked phone, → KB with a working query, Save… landing in the folder, a 17 MB PDF each way. The picker-only design below is what shipped before.  
 **Affected:** Android 11+ devices using ZynkLink file sharing or the Knowledge Base  
 **Description:** Files placed into `Downloads/ZynkbotShare/` by apps other than Zynkbot are invisible to Zynkbot's directory scan under scoped storage. Until 2026-09-07 the app declared and requested `MANAGE_EXTERNAL_STORAGE` ("All files access") to see them; Google Play only grants that permission to file managers and similar, so it was removed.  
 **Resolution:** files enter ZynkbotShare through the in-app **Add file** picker (`AndroidPaths.pickFile`, which copies the file into the folder) and the Knowledge Base through **Add files** in the KB Manager (`AndroidPaths.copyToKnowledgeBase`, which copies into the app-private KB folder). Files dropped into the folder by other apps remain invisible; that is now expected behaviour and is documented in INSTALLATION_TROUBLESHOOTING.md.  
-**Impact:** none for users who add files from inside the app.
+**Impact:** none for users who add files from inside the app.  
+**Note (2026-09-19, e1273a1):** confirmed again on the OnePlus: 19 files in the folder, 1 visible (the one added with ➕ Add file); the other 18 were moved in with the My Files app. The scan now logs the skipped names, and the Link panel says only ➕-added files show. The full fix (folder access through the system picker, SAF) stays on the roadmap.
+
+---
+
+### KI-070 — A file in a subfolder of a Windows share was listed as one oddly named file (fixed)
+**Status:** Fixed on `v1` (2026-09-22), shipped in 0.9.6-beta3. Verified between the Windows laptop and the Linux desktop.
+**Affected:** Anyone sharing from Windows to a Linux or Android device over ZynkLink.
+**Description:** The share manifest stored each file's path using the host's own separator, so a Windows host recorded `sub\file.txt`. Linux and Android treat a backslash as an ordinary filename character, so the peer showed one file with a strange name instead of a folder containing a file. One of six files in the laptop's manifest was affected.
+**Fix:** `portable_relative_path()` in `zynklink.rs` joins the path's components with `/` rather than replacing separators, so a backslash that is genuinely part of a Linux filename survives. Four unit tests cover it, two of them platform-gated.
+
+---
+
+### KI-071 — The ZynkLink Refresh button's status appeared far from the button and vanished (fixed)
+**Status:** Fixed on `v1` (2026-09-22), shipped in 0.9.6-beta3.
+**Affected:** Every platform with the ZynkLink panel.
+**Description:** Pressing Refresh wrote "Refreshing…" and then "✓ Refreshed" to a message area at the bottom of the panel, which cleared after two seconds. Users pressing the button at the top of the panel did not see it.
+**Fix:** the button shows its own state and returns to "Refresh" after two seconds.
+
+---
+
+### KI-072 — Another device saw a stale file list until the sharing computer opened its own ZynkLink menu (fixed)
+**Status:** Fixed on `v1` (2026-09-22), shipped in 0.9.6-beta3. Verified by a tester moving a file into the laptop's share and seeing it on the desktop after a Refresh.
+**Affected:** Anyone adding files to a shared folder outside the app.
+**Description:** The file list served to a peer came from the stored manifest, which was only rebuilt when the sharing device opened its own ZynkLink panel, pressed Rescan, added a share, or received a download. Files moved into the folder by the Files app or Explorer stayed invisible to every other device through any number of Refreshes.
+**Fix:** `handle_zynklink_files` rescans the share before answering, throttled to once per five seconds per share so that several devices opening "Shared With Me" at once do not each trigger a directory walk.
+
+---
+
+### KI-074 — A stale device entry at a device's own address makes it pair with itself
+**Status:** Mitigated 2026-10-01 (`266f871`): a message addressed to another device id is refused, so a self-row can no longer receive anything. The row itself is still purged at startup (`purge_self_referential_devices`). Was: part of the ZynkSync refactor, not separate work: the introduction path is being rewritten there. Recorded so it is not rediscovered. Workaround: delete the stale entry.
+**Affected:** Any device re-paired after a wipe or reinstall while other devices still list its old identity.
+**Description:** A reinstall mints a new device id (KI-050), so peers keep an entry for the old one at the same address. Mesh introduction then tells every known peer about the newcomer, skipping the newcomer by id; the stale entry has a different id, so the introduction is sent to the newcomer's own address. The receiving handler checks that the introducer is trusted and that the device is not already paired, but never that the introduced device is itself, so it adds itself as a peer. Writing a sync timestamp for that pair then fails the `zynk_device_pairings_order` check constraint (the two ids in a pair must differ), once per sync cycle. Seen on a Pixel 2026-09-22, logging the failure every minute.
+**Impact:** Wasted sync cycles and a recurring error in the log. Nothing is lost or duplicated; the pairing row is never written.
+
+---
+
+### KI-075 — A freshly installed desktop does not receive the other devices by introduction (fixed in 0.9.6-beta4, 2026-10-17)
+**Status:** Fixed in 0.9.6-beta4 (2026-10-17; code on `sync-rebuild` 2026-10-15): the host now tells its existing peers about a joining device *before* it answers the joiner (the joiner's own introduction used to race that notice and lose: 401 from the OnePlus, laptop invisible to it until restarted); the joiner lists every introduced peer at once and retries a refused introduction twice (harness b32; the pairing-verify handler in `zynksync.rs`). Remaining limit, outside the fix: each notice to a peer has a 3 s timeout and the host does not retry one that fails (logged "offline during introduction"), so a peer that is asleep through all of that still learns of the new device only on its next contact or after a restart (`load_devices`). Workaround for that case: restart the app, or pair the two directly.
+**Affected:** A device reinstalled or set up fresh while its peers still hold its old identity.
+**Description:** Observed 2026-09-22 after installing the beta3 binaries on a fresh Linux desktop and pairing from the Pixel. The desktop did not learn about the other devices through mesh introduction and had to be paired to each by hand. Same underlying cause as KI-074: introductions are addressed against a peer list that still holds the old identity, so they reach the wrong entry. Seen again 2026-10-06 the other way round: the laptop was asleep when the wiped OnePlus was introduced on 10-02 and never learned its new identity; the two could not sync until the laptop was removed and re-paired (I33/I34). A retry of missed introductions is designed (host re-sends on its next successful contact) and on hold until after the manual pass.
 
 ---
 
 ## Debug Logging
 
-### KI-006 — Verbose debug output in development builds
+### KI-082 — Nothing was logged to disk; a failure left no trace once the report buffer cycled (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06. Every line the app prints is also appended to `<app data dir>/logs/zynkbot.log` on every platform, rotating at 5 MB with three generations kept (`zynkbot.log`, `.1`, `.2`). The app names the file at startup (`[Log] On-disk log: …`) and every problem report names it too.
+**Where the file is:** Linux `~/.local/share/zynkbot/logs/zynkbot.log`; Windows `%LOCALAPPDATA%\zynkbot\logs\zynkbot.log`; Android `/data/data/ai.containai.zynkbot/files/zynkbot/logs/zynkbot.log` (readable with `run-as` on a debug build; on a release build only "Report a problem" reaches it).
+**Affected:** Every build up to `fb3fc15`, all platforms.
+**Description:** On 2026-10-05 a `Remember:` typed on the Windows laptop with the local model stored nothing and left no extraction status. By the time anyone looked, the only record, the 800-line in-memory buffer behind "Report a problem" (`app_log.rs`), had been cycled through by sync messages, and the `Zynkbot.log` under `%LOCALAPPDATA%\ai.containai.zynkbot\logs` had been empty since 2026-09-22: that file belongs to `tauri-plugin-log`, which is only enabled in debug builds and only receives `log::` records, which the app never emits (everything is `println!`). The failure could not be investigated and did not reproduce.
+**Privacy:** the file holds the same lines the terminal or logcat would, which includes what the user typed. Redaction and the user-text scrub apply to reports, which leave the device; the file does not leave it. Elder Mode's redaction work (roadmap) should decide whether the on-disk log needs the same scrub.
+
+### KI-006 — Verbose debug output in development builds (fixed)
 **Status:** Fixed  
 **Description:** Several `println!` statements in `lib.rs` and `zynksync.rs` dumped full LLM responses and raw HTTP payloads to the terminal. Gated behind `#[cfg(debug_assertions)]` — silent in release builds, visible in `cargo tauri dev`.
 
@@ -357,6 +471,105 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ---
 
+### KI-077 — Back closed the app and silently killed the sync server (fixed)
+**Status:** Fixed 2026-10-01 on `sync-rebuild` (`1401895`); verified on the OnePlus.
+**Affected:** Both phones, every build before the fix.
+**Description:** Zynkbot is one screen, so Back meant "close". Android finished the activity and Tauri's Android runtime then exited the whole process: the ZynkSync server, the auto-sync loop and the hands-free service's Rust side went with it. Android restarted only the Kotlin foreground service, in a process that never starts the server, so the phone neither served nor synced until the app was opened again. Found on the first outbox device pass, when a phone that had just been dismissed with Back dropped out of sync for twenty minutes.
+**Fix:** `MainActivity.onBackPressed` sends the app to the background (`moveTaskToBack`), as Home does; the service and server keep running.
+
+---
+
+### KI-078 — ONNX Runtime aborts while the app exits
+**Status:** Open — cosmetic since KI-077, but it is the "Zynkbot stopped" dialog a tester sees after closing the app.
+**Affected:** Android, when the process actually exits (swipe away from Recents, force stop, the pre-KI-077 Back).
+**Description:** On exit, C runtime teardown runs `libonnxruntime.so`'s destructors, one of which locks a mutex it has already destroyed; bionic aborts the process (`FORTIFY: pthread_mutex_lock called on a destroyed mutex`). Tombstone from the OnePlus, 2026-10-01: `exit` → `__cxa_finalize` → `libonnxruntime.so` → `abort`. The data is already saved by then; the only effect is the crash dialog and a crash entry.
+**Fix:** release the ONNX sessions (wake-word model, verifier) before the runtime exits, or stop the process with `_exit` once the app's own shutdown is done so no destructors run. Not part of the sync rebuild.
+
+---
+
+### KI-079 — A photo or screenshot cannot be sent on its own
+**Status:** Open (Matt, 2026-10-01).
+**Affected:** Both phones, desktop too.
+**Description:** Attaching a picture does not enable Send; some text has to be typed first. Asked for a screenshot, the user has to type "here it is" to send it.
+**Fix:** enable Send when there is an attachment and no text; send the attachment with an empty message.
+
+---
+
+### KI-080 — Every start of the sync service added another sync loop (fixed)
+**Status:** Fixed 2026-10-02 (`509f815`).
+**Affected:** Every device, every build before the fix.
+**Description:** `start_auto_sync` was called at startup, from the Sync panel's "Sync now", and when a peer sent a resume notice; each call spawned a new 60-second loop and none ended. On 2026-10-02 the desktop was running seven loops and the Pixel about fifteen — fifteen full sync cycles a minute, each one building a 300-row slice for the closed laptop and failing to connect. Found while looking at the Pixel's battery (Zynkbot: 27 mAh since the last charge, so not the cause of the charging problem, but wasted CPU all the same).
+**Fix:** one loop per service, guarded by a flag; a slow cycle no longer bursts catch-up ticks; a peer that refused a connection in the last two minutes and sends no heartbeat is skipped.
+
+---
+
+### KI-085 — A thread deleted on one device came back if another device still had it open (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06 (migration 0019, b26). Threads now have tombstones like memories: the local delete and an incoming delete both record the thread in `deleted_sessions`; an incoming thread or message for a tombstoned thread is ignored; saving a reply into one is refused. The screen is told which threads a sync deleted (`zynksync-threads-changed`): an open thread closes with the notice "This conversation was deleted on another device, so it was closed here", and the History list refreshes by itself.
+**Affected:** Every build up to `1ea4453`.
+**Description:** Raised by Matt during test D13: a thread deleted on the Pixel while open on the laptop. The deletion did reach the laptop's database, but the screen was never told, and saving the next reply recreated the thread row (the exchange logger creates the thread if it is missing), which synced back out with only the new messages on every device.
+
+### KI-086 — History: tapping the rename pencil a second time restarted the edit instead of saving (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06. While a title is being edited, the pencil saves (its hint reads "Save name"); Enter still saves and Escape cancels.
+**Description:** On a phone, tapping the pencil again blurred the text box (which saved) and then reopened the edit with the stale old title, so the name looked like it had reverted until a third tap and Enter. Reported by Matt on the OnePlus during test D14.
+
+### KI-084 — Rows written during a first-contact full send could be skipped for good (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-06 (b25). The full send now remembers where the queue stood when it began and sets the peer's cursor there, so the queue carries everything written during the send.
+**Affected:** Builds `509f815` through `16e16b9`, any device pair during their first contact (or a peer so far behind that it gets the live tables), which on real data takes many minutes.
+**Description:** A first contact sends the live tables in 300-row slices, one per cycle, walking sessions, memories, messages and links in turn. A row written while the send is running lands behind the offset if its section has already been passed, so the slices never reach it; and the cursor set at the end pointed to the queue's end *at that moment*, so the queue path skipped its row too. Found in test D11 on 2026-10-06: two messages written on the laptop at 14:26, during a 26-minute first contact with the OnePlus, were missing on the OnePlus while the six written after the send had arrived.
+**Fix:** `FULL_SEND_OFFSET` keeps `(offset, through)`; `through` is taken at the first slice and reused for the cursor. Harness b25 writes a thread between the first and second slice and checks it arrives; it fails on the previous code.
+
+### KI-087 — OnePlus (ColorOS): the app is frozen or killed a few hours after leaving the screen, and sync stops (mitigated)
+**Status:** Mitigated on `sync-rebuild` 2026-10-07: from its second start the app asks once for the battery-optimisation exemption (the system "let app always run in background" dialog). Fallback if testers still see it: a foreground service for sync.
+**Affected:** Android, worst on OnePlus/ColorOS; the Pixel showed the same whenever its screen was off for long.
+**Description:** 2026-10-07: the OnePlus app logged nothing from 07:55 to 10:21 UTC, its sync port was closed and neither the desktop nor the laptop could reach it, although the phone itself was awake. Bringing Zynkbot to the front started the app afresh (`[Startup]` lines), so the OS had killed it. Nothing is lost — the queue delivers everything when the app returns — but a phone that is "on" is not necessarily syncing. The test protocol says to open Zynkbot on the OnePlus before a test where it should receive.
+
+### KI-089 — A device whose address keeps changing received nothing for hours, although it called in every minute (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-07 (b28): any verified request from a peer clears our "silent peer" mark for it, so the pull it is making is served (and its address is corrected from the same request, as before).
+**Affected:** Every build from `509f815` to `119a0ca`; any device whose address changes often. The Pixel on GrapheneOS changed address seven times in two days, on nearly every Wi-Fi reconnect.
+**Description:** After a connection to a peer fails, the sender skips that peer for two minutes unless a heartbeat arrives (the closed-laptop fix, 2026-10-02), and every further failure re-stamps the two minutes. When the Pixel moved, our pushes to its old address failed every cycle, so the mark never expired; and the same skip applied inside the pull the Pixel itself was making, so the pull returned nothing. The Pixel's requests still reached us (its last-seen time stayed fresh), which hid the fault. Found in test G27: a memory made on the OnePlus at 16:45 UTC never reached the Pixel, whose pull cursors on the OnePlus and the desktop had not moved since 16:19 and 15:21.
+**Design note:** a pull is still served by pushing back to the caller's recorded address. Returning the batch in the pull response itself would make a device that can call out but cannot be called (changing address, firewall, hotspot) a full participant; proposed to Matt 2026-10-07.
+
+### KI-090 — A dictated comma after "remember" hid the Remember command (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-07 with a unit test: "remember, colon …" and "remember. colon …" are the command.
+**Description:** The spoken form required whitespace right after "remember". Dictation often writes "remember, colon the ferry runs hourly in summer", which therefore went to the model as chat; the extractor stored its paraphrase ("User noted that the ferry runs hourly in summer") instead of the words said. Found by Matt during the sync pass, comparing memories made by voice with ones typed.
+
+### KI-094 — Memories deleted after a cloud backup came back from a restore and spread to every device (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-14 (migration 0020; harness b29–b31; restore unit test). Found by Matt in test J39 of the sync pass, 2026-10-08: the laptop's restore revived "favourite colour is orange" and "elite Clash of Clans player", both deleted days before, and they synced to the desktop and both phones.
+**Description:** Three holes. (1) The restore only skipped memories whose text was already present and then *cleared* the local tombstones of what it restored, so a deletion made after the backup was undone. (2) A deletion travelled by the row's `sync_id` only; copies that predate migration 0013 were named independently on each device, so the desktop's delete missed the OnePlus's copy of the same text, and the backup taken from the OnePlus still held it. (3) A device joining by first contact received live rows only, never the deletions, so a re-paired laptop with 121 tombstones to the desktop's 131 had nothing to refuse the revived rows with.
+**Fix:** Deletions win (Matt, 2026-10-14, reversing the 10-08 call): a restore brings back the backup minus anything deleted since it was taken, says how many stayed deleted, and gives restored rows the backup's time rather than now, so a peer's later deletion outranks them. A deletion carries sha256(content) and the moment it happened, and the receiver removes any copy of that text not changed after that moment, whatever it is named. The deletions a device already holds are queued once more by hash (0020), and on its first start after the change a device forgets how far it has heard from each peer so every peer starts it over and its stray copies are swept with the new code in place (0021; the desktop's re-send reached the laptop and the Pixel while they still ran the old build). When two devices know a deletion at different times the earlier one is kept, because old builds stamped a received deletion with the moment it was applied. A first contact sends the deletions with its first slice. A memory made again after its deletion, with the same text, is a new memory and does restore. Undo-delete and choosing among several backups are roadmap items.
+
+---
+
+### KI-097 — Turning Hey Zynk off and on while its models were loading killed the listener (fixed)
+**Status:** Fixed on `beta5` 2026-10-20. Found in the Pixel's log on the first beta5 build: Matt flipped the toggle off and on, the log showed "Speech gate loaded" and then "Failed to load ONNX models: null", and the service quit.
+**Description:** `loadAndStart()` built the ONNX sessions on its own thread and wrote them straight into the service's fields. `stop()` (the toggle going off, or a restart superseding this one) closed and nulled those same fields. When the stop landed while the loader was still working, the loader's next use of a field it had just set threw a NullPointerException (the "null" message), the catch block called `stopSelf()`, and nothing listened. The new speech-gate load lengthened the window, which is why beta5 showed it on the first try; the race existed before.
+**Fix:** The sessions are built into locals and installed under a lock at the end, and `stop()` bumps a generation counter under the same lock. A load that finishes after a stop sees the counter change, closes what it loaded, logs "Model load abandoned", and goes quietly; the next start loads again. The ONNX environment is no longer closed on stop (it is a process-wide singleton the verifier trainer also uses). The failure log now names the exception class.
+**Second round (same day, build 23c0737):** the first fix opened a sibling hole. The page sends three start requests within a second of the toggle going on, so two loader threads ran at once; the second finished after the first had installed its sessions and the audio loop was using them, and replaced them, closing the first set under the loop. GrapheneOS's hardened allocator caught the native write-after-free at 12:21:33 and killed the process. Fixed: a load that finds the same models already installed discards its own. Two more findings from the same log: a `stop()` during a pause for another recording left the models unloaded, and the later resume returned silently at its "no models" check, so the listener stayed off until the toggle was flipped (now the resume reloads them); and a screen-off dictation that closed after the 6 s no-speech rule now logs how many Vosk callbacks arrived, with and without text, because at 12:22:25 a spoken alarm request came back as an empty transcript and the log could not say whether any audio reached the recogniser.
+### KI-096 — The wake-word listener died after a false wake and nothing restarted it (fixed)
+**Status:** Fixed on `beta5` 2026-10-19. Found in the Pixel's log while Matt reported "Hey Zynk" not working at all, screen on or off, with the TV on.
+**Description:** 12:48:52 the TV fired the detector (score 0.87); 30 s of TV dialogue came back and was correctly rejected (89 words). At 12:49:23 two code paths re-armed the listener in the same instant — the recording watch ("other recording ended") and the end of the turn — and both passed the "is it running?" check before either had started, so two microphone streams opened. The recording watch then saw the second stream's session id as *another app's recording*, paused detection (stopping both streams), and when they ended the resume call found the other thread still alive and quietly did nothing. The log ends with "Wake word audio capture stopped"; the phone confirmed the microphone released. Every TV false wake had a chance of doing this, so with a TV on the listener was dead within minutes.
+**Fix:** `resumeMicAfterSession()` and `startAudioLoop()` are `@Synchronized` and the loop refuses to start twice; the loop's session id is recorded before recording starts so the watch can never mistake it for foreign; and a once-a-minute watchdog restarts a listener that is off with no reason (or lifts a pause for a recording that no longer exists). Same commit, same log: a wake followed by silence now closes after 6 s instead of the 30 s cap (every TV false wake had cost 30 s of deafness), a detection while the phone itself plays audio (or in the second after) is ignored, a detection with no human voice in the previous 2 s (Silero VAD) is ignored, the −46 dBFS "too quiet" gate relaxes to −65 dBFS while the speech gate is loaded (it had rejected two real wakes at 0.99 from across a quiet room, 13:01 and 13:03 the same day), and the personal verifier is trained on the phone from the labelled clips (log-only; `WakeVerifierTrainer.kt`).
+### KI-095 — A device that left sync and re-joined after the queue was pruned got no catch-up (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-16 (harness b33). Found reading the desktop's database after the laptop's 10-16 re-join: its outbox position marker still sat at 0 from 2026-10-15.
+**Description:** Removing a device left its `sync_outbox_cursor` and `sync_inbox_cursor` rows in place. On re-join with the queue already pruned to empty, the sender saw neither a first contact (a row existed) nor a peer behind the queue (no rows to be behind), so it sent nothing; anything written while the device was out would never reach it. No loss on the devices this time (all three readable databases match).
+**Fix:** Removing a device (locally, or on its notice) deletes both marker rows and any half-done full send to it, so the next contact is a first contact both ways.
+### KI-093 — "Set timer for fifteen minutes" heard as "set time or fifteen minutes" set no timer (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-14 in both parsers (`useVoiceSession.js` and `VoiceCommands.kt`): one misheard word ("or", "of", "four", "fer") may sit between "timer" and the number. Jest covers the phrases and two ordinary sentences that must stay chat.
+**Description:** Vosk dropped the "r" and split "for" into "or"; the parser already forgave the missing "r" but not the stray word, so the request went to the model as chat. The model answered, truthfully, that it cannot start a timer. Found by Matt on the Pixel 2026-10-12 after several repeats; the earlier attempts never reached the app at all (wake word or the strict-mode gate — not diagnosable afterwards, the release build's log is out of reach).
+
+---
+### KI-092 — A fresh install cannot restore its identity until the cloud credentials are typed in again (decided: pair instead)
+**Status:** Decided 2026-10-07 (Matt): a fresh install, whether a reinstall or a new phone, follows the one flow — pair it with a code. First contact brings every memory, thread, link and key (the cloud credentials included) in under a minute, so the cloud restore is not needed when a peer exists. The old entry stays in the lists until removed by hand; messages are addressed by identity, so it can do no harm. The identity restore built in step 4 of the outbox rebuild ("Which device is this?") was removed from the Restore flow the same day: Restore now means one thing, restore memories from the most recent cloud backup, and on a device without the cloud details it says so plainly instead of failing silently. The backend commands behind it (`backup_restore_options`, `restore_device_identity`, `list_restorable_devices`), the identity bundle upload, the certificate-save helper and harness test b11 were removed the same day; Known Issue KI-050's identity-in-backup design is withdrawn with them.
+**Description:** Found in J37. Backups go to the user's own Cloudflare R2 bucket; the four R2 settings were wiped with the app, so on a fresh install Restore had no bucket to look in, the device picker never appeared, and nothing happened (no error on screen or in the log — the silent failure is worth a message of its own). The passphrase was accepted because it only derives the key.
+
+### KI-081 — Clock skew between devices can decide which key value wins (fixed)
+**Status:** Fixed on `sync-rebuild` 2026-10-03 (migration 0018, b23): every key carries a revision that goes up by one on each local change, starting above the highest this device has seen, so a later save outranks what it followed whatever the clocks say; time and then the value break ties between changes made apart.
+**Affected:** Any two devices whose clocks differ by more than the gap between two saves of the same key.
+**Description:** Keys travel with the time the device saved or first saw them, and the newest wins (step 3 of the outbox rebuild). On 2026-10-01 the phones' clocks ran about a minute ahead of the desktop's, so a value the phones recorded *after* starting up was treated as newer than the desktop's identical one. With identical values nothing changed; with different values the phone's would have won even if the desktop's was saved later by the wall clock.
+**Fix:** compare with a tolerance and prefer the local value inside it, or carry a per-key counter beside the time. Decide after the manual pass; see protocol check 46.
+
+---
+
 ## Desktop UI
 
 ### KI-041 — Two close buttons on desktop modals, one of them closing the sidebar underneath (fixed)
@@ -368,7 +581,7 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Installation
 
-### KI-022 — Linux install fails to build: ALSA development headers not installed
+### KI-022 — Linux install fails to build: ALSA development headers not installed (fixed)
 **Status:** Fixed (installer)
 **Affected:** Every fresh Linux install (all distributions) from the point desktop Vosk dictation landed
 **Description:** `install.sh` never installed ALSA development headers. `cpal` (`Cargo.toml:120`, used for desktop Vosk dictation) depends on `alsa` -> `alsa-sys`, whose build script resolves the `alsa` pkg-config package. Without `libasound2-dev` present, `cargo build` fails during the dependency build and the install aborts.
@@ -380,6 +593,22 @@ Deletions are not propagated at all (no tombstones), which is #12.
 ---
 
 ## Voice & Dictation
+
+### KI-103 — The owner-voice check lets some television voices through; an answered TV question is saved into the open thread and counted as a real "Hey Zynk"
+**Status:** Open; the training side fixed 2026-10-31 (an answered turn is a training positive only when the owner check scored at least 0.80; clock commands count at any score; the rest are left out of training). The owner check itself still passes some TV voices.  
+**Affected:** Phones with Hey Zynk on in a room with a television or radio  
+**Description:** In 95 minutes with the TV on, the wake-word model fired 26 times. The owner-voice check stopped 20 and passed 6 (scores 0.56–0.90 against the 0.50 line). Each pass opened a session and sent the next sentence of the broadcast to the model with the hands-free instruction. Two broadcast fragments were correctly answered with NO_QUERY, but a bare "How are you?" (23:44, user asleep) and "Are you deaf?" (07:32) were answered aloud and written into the user's current thread as ordinary turns. Because an answered turn is labelled a real wake for the on-device profile trainer (WakeVerifierTrainer.kt), those two TV voices also became positive training examples.  
+**Impact:** Medium — wrong answers spoken into an empty room, a cloud call per pass, lines in the wrong thread, and a profile that slowly learns the TV. Raising the 0.50 line blocks the owner at a distance (September measurements); the fix is in the verifier and the labelling rule, not the threshold.
+
+---
+
+### KI-104 — A hands-free line arrived on other devices marked as typed (fixed 2026-10-31)
+**Status:** Fixed on `local-model`  
+**Affected:** Every synced thread with wake-word turns  
+**Description:** The synced message row did not carry `input_mode`, so a line saved as `hands_free` on the phone was inserted as `typed` on every other device. Fixed by sending the column; a peer on an older build leaves the receiver's value alone.  
+**Impact:** Low — the thread read the same; only the label was wrong, which matters for anything that treats wake-word turns differently.
+
+---
 
 ### KI-019 — No offline dictation on Windows; Vosk is compiled out rather than unavailable (fixed)
 **Status:** Fixed on `voice`; verified on Windows 2026-09-11 — the four gates below are widened, `build.rs` emits the Windows link-search, MSVC accepted the MinGW import library (the predicted CRT mismatch surfaces only as `LNK4098`, a warning), the NSIS bundle carries the four DLLs and the Vosk model next to `app.exe`, and Vosk and Whisper dictation were both confirmed at runtime. The offline-first guarantee now holds on Windows. KI-020 remains.  
@@ -421,7 +650,7 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 ---
 
-### KI-023 — Wake-word command is captured but not dispatched until the app is foregrounded
+### KI-023 — Wake-word command is captured but not dispatched until the app is foregrounded (fixed)
 **Status:** Fixed on `voice` (build19–29) — hands-free turns are answered natively by `ZynkAssistantSession` / `NativeVoiceAnswerer` and joined to the current thread; the app no longer needs to be foregrounded
 **Affected:** Android, "Hey Zynk" while the app is backgrounded (observed on Pixel 10 Pro XL, 2026-09-01)
 **Description:** Saying "Hey Zynk" while the app is not in the foreground works up to a point — the wake word triggers, dictation runs, and the spoken text is captured correctly. But the message is never sent and no answer is produced. Opening the app causes the queued message to send immediately and Zynkbot to respond, which shows the transcript survived and only the dispatch was deferred.
@@ -431,12 +660,20 @@ The `build.rs` comment records the motive: *"gate all Vosk linker flags to Linux
 
 ---
 
-### KI-024 — Wake word from the Android home screen only shows a popup of the transcript, nothing is sent
+### KI-024 — Wake word from the Android home screen only shows a popup of the transcript, nothing is sent (fixed)
 **Status:** Fixed on `voice` — same fix as KI-023, verified on the OnePlus 12R home screen
 **Affected:** Android, wake word triggered from the launcher/home screen (observed on OnePlus 12R, 2026-09-01)
 **Description:** Triggering "Hey Zynk" from the home screen produces a popup containing the dictated text and nothing further. No message is sent, and no response is generated or spoken.
 **Relationship to KI-023:** Both are failures of the same step — a captured transcript that never reaches the send path. Filed separately because the observable behaviour differs (silent queue versus a visible popup that leads nowhere), and it is not yet confirmed they share one cause. Fixing KI-023 should be verified against this case explicitly rather than assumed to cover it.
 **Fix target:** Determine whether the popup is the full-screen-intent notification path or a separate toast, then route it into the same dispatch fix as KI-023.
+
+---
+
+### KI-076 — A wake clip can carry both a `.real` and a `.false` label (fixed in 0.9.6-beta5, 2026-10-27)
+**Status:** Fixed in 0.9.6-beta5 (2026-10-27). `labelLastClip()` deletes the opposite label before writing one, so the last report wins (`WakeWordService.kt`). The label is also decided in one place now: a spoken answer (`NativeVoiceAnswerer`, only after the speaker actually spoke) or an executed clock command (`ZynkAssistantSession`) is real; a "not a request" verdict and every other outcome is false. Clips labelled before 2026-10-20 cannot be sorted afterwards, so the first training run of this build deletes every clip, the on-phone profile and its state file, once, and writes the marker file `wake-word-models/labels_v2` so it never runs again (`WakeVerifierTrainer.resetMislabelledSetOnce`); collection starts over. Was: open, blocking retraining of the personal wake-word verifier.
+**Affected:** Every phone collecting wake-word clips. 27 of the 87 clips in the 2026-09-22 set carried both labels; 14 were cleanly real and 6 had no label at all.
+**Description:** `WakeWordService.labelLastClip()` writes `<stem>.real` or `<stem>.false` next to the clip but never removes the opposite file. A single trigger can report its outcome more than once as it moves through the session (`ZynkAssistantSession` reports a fruitless outcome, then an answer arrives and `markAnswered()` reports a useful one), so both files end up present and the clip is ambiguous to the trainer.
+**Fix:** delete the opposite label when writing one, so the last outcome wins. Two lines. Then decide what to do with the existing ambiguous clips: discard them, or take the later file's timestamp as the answer.
 
 ---
 
@@ -527,8 +764,8 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-025 — LLM responses are not streamed; nothing appears until the full response arrives
-**Status:** Open — Tier 1 v1.0 item
+### KI-025 — LLM responses are not streamed; nothing appears until the full response arrives (fixed)
+**Status:** Fixed. Streaming has been in place since the pure-Rust backend landed: the backend emits a `stream-token` event per token (`response_sink.rs`) and the chat listens for it (`App.jsx`). Confirmed end to end in a tester's problem report 2026-09-22, where an OpenAI reply streamed on a Pixel 7a. This entry was simply never updated when the work shipped; the text below describes the old behaviour.
 **Affected:** All platforms, all backends
 **Description:** Asking for a long answer produces no visible output until the entire response has been generated. The response should begin rendering as soon as the first tokens are available.
 **Fix target:** Use `stream: true` for API backends (Claude, OpenAI, Grok) and llama.cpp's streaming generation callback for local and Ollama backends. This is a transport and rendering change only — it does not touch the memory graph, contradiction detection, or wake-word logic.
@@ -536,7 +773,7 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-026 — No way to stop speech or output once it starts; Clear should become Stop
+### KI-026 — No way to stop speech or output once it starts; Clear should become Stop (fixed)
 **Status:** Fixed on `voice` (build21) — Stop halts native speech, OpenAI TTS and text output; tapping the Z overlay cancels a hands-free turn
 **Affected:** All platforms; most acute on Android with TTS enabled
 **Description:** Once Zynkbot begins speaking a response there is no control to stop it. The existing TTS-stop work is not reachable from the UI in normal use.
@@ -545,7 +782,7 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-027 — Hands-free "set a timer" is confirmed aloud but no timer is set
+### KI-027 — Hands-free "set a timer" is confirmed aloud but no timer is set (fixed)
 **Status:** Fixed on `voice` (build26) — `VoiceCommands.kt` parses timer/alarm/stopwatch before the model and fires the `AlarmClock` intent; confirmation is spoken only after the clock app accepted it
 **Affected:** Android, hands-free ("Hey Zynk") path only
 **Description:** Asked hands-free to set a timer, Zynkbot replies with a spoken confirmation including the correct end time, but no timer exists and nothing happens when the time arrives. The in-app dictation path recognises timer, alarm and stopwatch requests (`parseVoiceCommand` in `useVoiceSession.js`) and hands them to the clock app through `VoiceCommandBridge`; the hands-free path (`ZynkAssistantSession` / `WakeWordService` → `NativeVoiceAnswerer`) sends the transcript straight to the language model, which has no clock and invents the confirmation.
@@ -562,8 +799,8 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-### KI-030 — Sync and cloud backup do not carry the new memory fields
-**Status:** Open — after the beta, with the sync refactor  
+### KI-030 — Sync and cloud backup do not carry the new memory fields (sync fixed) (fixed)
+**Status:** Sync fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b12): the sender reads every column at send time, so tags, provenance and new columns travel. The cloud backup still carries its own field list.
 **Affected:** Multi-device users; anyone restoring a backup  
 **Description:** Migration 0011 added `tags`, `sentiment`, `event_date` use, and the `memory_entities` table. ZynkSync's memory payload and the R2 backup export were written before them and do not include tags or entities, so a memory arriving on a second device or restored from backup loses them.  
 **Fix target:** extend `SyncMemory` and the backup export/import to carry the new columns and the entities rows; part of the outbox refactor.
@@ -590,6 +827,14 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 **Status:** Fixed on `memory` (2026-09-09)  
 **Description:** The Memory Manager's list query did not include the new `tags` column, so the tag filter fell back to a text search and matched nothing. The query now returns tags.
 
+### KI-073 — A phone whose API key was typed in by hand failed every typed message (fixed)
+**Status:** Fixed on `v1` (2026-09-22), shipped in the republished 0.9.6-beta3. Reproduced on a wiped OnePlus with a hand-typed OpenAI key and verified from the log (`Backend: local` → `Falling back to: openai` → streamed reply).
+**Affected:** Any phone set up on its own, with a cloud API key entered by hand and no paired device. Found by a tester on a Pixel 7a.
+**Description:** A fresh install starts with `local` as the model choice and the page persisted it before any key existed. On a phone there are no local models, so every typed message failed with "API error: Local models not supported on Android", while "Hey Zynk" answered normally because the hands-free path already falls back to a provider that has a key. The model picker showed the OpenAI entry, which made the stored value invisible to the user. Devices in testing never hit it because a key *pushed* from a paired device triggers a model-list refresh that replaces the placeholder; a key typed by hand does not.
+**Fix:** two parts. In `commands/chat.rs`, a local backend that cannot load is treated like a provider with no key, and `get_best_available_backend()` now falls through to any API provider with a key (custom endpoint, then a downloaded model, then Anthropic, OpenAI, xAI, Mistral) instead of returning nothing. In `App.jsx`, Android no longer persists the `local` placeholder. The Rust half is the important one: it does not depend on what the page has stored.
+
+---
+
 ### KI-034 — The GitHub Actions Android release job has never worked (fixed)
 
 **Status:** Fixed 2026-09-09 — workflow rewritten (the Android job runs `tauri android build`, both desktop jobs get the Vosk library, Windows ships NSIS only, and the workflow can be run by hand without a tag); manual run 34419918942 on `voice` was green on all three jobs  
@@ -599,4 +844,4 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 
 ---
 
-*Last updated: 2026-09-09*
+*Last updated: 2026-09-28*

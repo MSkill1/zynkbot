@@ -6,7 +6,7 @@
 
 Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same Rust backend — memory system, ML inference, and encrypted device sync — runs on Android and desktop. It connects to Claude, GPT, Grok, or Mistral through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required — for typical conversational use, expect an estimated $5–15/month in API costs, versus $20/month per provider for subscription apps ([cost breakdown](API_COSTS.md)). Local GGUF models are supported for fully offline, zero-cost use on desktop. Android uses cloud API models or Ollama proxied from a paired desktop over your home network.
 
-**Current Status**: [![GitHub Release](https://img.shields.io/github/v/release/MSkill1/zynkbot?label=latest)](https://github.com/MSkill1/zynkbot/releases/latest) [![Beta](https://img.shields.io/badge/main%20branch-v0.9.5--beta1-orange)](https://github.com/MSkill1/zynkbot/releases) — desktop (Windows, Linux) + Android beta. The `main` branch tracks the current beta; stable releases are tagged. iOS planned.
+**Current Status**: [![GitHub Release](https://img.shields.io/github/v/release/MSkill1/zynkbot?label=latest)](https://github.com/MSkill1/zynkbot/releases/latest) [![Beta](https://img.shields.io/badge/main%20branch-v0.9.6--beta5-orange)](https://github.com/MSkill1/zynkbot/releases) — desktop (Windows, Linux) + Android beta. The `main` branch tracks the current beta; stable releases are tagged. iOS planned.
 
 <img src="assets/main.png" alt="Zynkbot main interface" width="800">
 
@@ -20,7 +20,7 @@ The memory system is the core. Every conversation is processed into structured m
 
 The kitchen is the plainest example of what that memory is for. Tell Zynkbot what you cooked and how it went, in whatever words you like. Ask it later what to make, and it remembers what you liked, what you refused, and how you are trying to eat. If you fall off a diet, tell it to forget those weeks and start again, because the memory is yours to edit. This is becoming the free Kitchen kit: a packaged, opt-in use of the memory system, in development for v1.0. Kits will run on your device, stay off unless you turn them on, and can be deleted as a group.
 
-Zynkbot also runs a networking layer entirely on your local network. ZynkSync keeps your memory database consistent across your own devices. ZynkLink enables direct file transfers between paired users. ZChat provides device-to-device messaging with no cloud relay. Download a colleague's project directly into your knowledge base and Zynkbot is instantly familiar with it — without any of it touching a third-party server.
+Zynkbot also runs a networking layer entirely on your local network. ZynkSync keeps your memories, conversation history and settings the same on every device you own — changes queue on the device that made them and reach the others when they're on, so a phone that was off all day catches up when it's back, and a reinstalled phone can become itself again from its backup. ZynkLink enables direct file transfers between paired users. ZChat provides device-to-device messaging with no cloud relay. Download a colleague's project directly into your knowledge base and Zynkbot is instantly familiar with it — without any of it touching a third-party server.
 
 And because the entire stack is offline-first — no cloud dependency, no subscription, no internet required — the same infrastructure that protects one person's memory also works where connectivity can't be assumed: field work, disaster response, resource-limited regions. A snap-in architecture customizes the platform for specific domains — healthcare, legal, research, enterprise — on the same local-first foundation. **[→ Digital resilience documentation](docs/DIGITAL_RESILIENCE.md)**
 
@@ -60,7 +60,7 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 - **Cross-Device Sync** - ZynkSync syncs memories across your own devices
 - **File Sharing** - ZynkLink transfers files directly between paired Zynkbot users
 - **ZChat** - Direct device-to-device messaging without cloud relay
-- **Web Search** - On-demand live web search integrated into conversation when current information is needed
+- **Web Search** - On-demand live web search when current information is needed: through your cloud model's own search tool, or Brave, a SearXNG server or DuckDuckGo for local models
 - **Knowledge Base** - RAG with semantic search over your uploaded documents
 - **No Login Required** - Once installed, just open it. No accounts, no verification codes emailed to you, no password resets
 - **Conversation History** - Persistent log of all conversations; browse by date, full-text search, resume past sessions
@@ -82,7 +82,7 @@ Development testing validates that features work under controlled conditions. It
 - Does the memory system store things it shouldn't? Miss things it should catch?
 - Does contradiction detection fire when it should — and stay quiet when it shouldn't?
 - Does the hybrid memory search surface the right memories for your queries?
-- Do ZynkSync and ZynkLink work reliably across your devices and network setup?
+- Does ZynkLink work across your devices and network setup?
 
 v1.0 and mobile development depend on what we learn in this phase. If you have a GitHub account, [open an issue](https://github.com/MSkill1/zynkbot/issues). If you'd prefer to contact the project directly, feedback is always welcome at matt@containai.ai.
 
@@ -104,7 +104,7 @@ Pre-built binaries are available for Android, Linux, and Windows — no compilat
 
 **Android:** Download the APK and tap to install. Android will prompt you to allow installation from unknown sources — this is a one-time prompt per device.
 
-Once Zynkbot is on both your phone and desktop, open Settings → ZynkSync on each device and pair them. After that, your memory stays in sync automatically whenever both devices are on the same network.
+Once Zynkbot is on both your phone and desktop, open System Controls → ZynkSync on each device and pair them. The new device has everything within a minute; after that, a change on any device reaches the others within seconds whenever they're on the same network, and waits for any that aren't.
 
 > ⚠️ **Local models are CPU-only in pre-built desktop binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected. Android uses API models only in Phase 1.
 
@@ -154,7 +154,7 @@ zynkbot/
 │   │   │   ├── db.rs                    # Database connection helpers
 │   │   │   ├── user_identity.rs         # User & device identity (required for ZynkSync/ZynkLink)
 │   │   │   ├── nlp_enhancer.rs          # NLP utilities
-│   │   │   ├── llm_fact_extractor.rs    # Fact extraction helpers
+│   │   │   ├── llm_fact_extractor.rs    # Older fact extractor, unused since 2026-10-24 (memory_prompts.rs replaced it)
 │   │   │   ├── question_extractor.rs    # Question detection
 │   │   │   ├── sync_codes.rs            # ZynkSync pairing codes
 │   │   │   ├── zchat.rs                 # Device-to-device messaging
@@ -171,7 +171,7 @@ zynkbot/
 │   │   └── models/                      # ML model weights
 │   │       ├── system/                  # Auto-downloaded: embeddings, NER, safety
 │   │       └── user/                    # Optional local LLMs (.gguf files)
-│   └── system_docs/_system/             # Built-in Zynkbot documentation (auto-indexed at startup)
+│   └── (built-in user guides are compiled into the app from docs/ and indexed under knowledge_base/_system at startup)
 ├── docs/
 │   ├── FEATURES.md
 │   ├── ROADMAP.md
@@ -301,13 +301,13 @@ As of two years ago, I had no experience with Rust and only an interest. When it
 
 A **containment mode** is a global safety setting that applies to everything Zynkbot processes — every message in, every response out. Think of it as the safety layer that wraps your entire session. Unlike snap-ins (which are industry-specific behavior customizations), a containment mode is a filter on the AI itself: it determines what kinds of content are allowed through, blocked, or flagged.
 
-Every installation runs in exactly one containment mode at a time. The default is **Guardian**, which blocks severe harm categories without being overly restrictive for everyday use. Developers can implement new modes for specialized deployment scenarios.
+Every installation runs in exactly one containment mode at a time. The default is **Sovereign**, which warns about dangerous content but does not block it. **Guardian** blocks severe harm categories without being overly restrictive for everyday use. Developers can implement new modes for specialized deployment scenarios.
 
 | Mode          | Safety Level          | Use Case                          |
 | ------------- | --------------------- | --------------------------------- |
-| **Guardian**  | Moderate (default)    | General use, blocks severe harm   |
+| **Guardian**  | Moderate              | General use, blocks severe harm   |
 | **Child**     | Strict                | For minors, aggressive filtering  |
-| **Sovereign** | Warnings only         | Warns but doesn't block           |
+| **Sovereign** | Warnings only (default) | Warns but doesn't block         |
 | **Witness**   | No filtering          | Full freedom, no restrictions     |
 | **HIPAA**     | Healthcare-oriented   | PHI detection, no memory storage  |
 
@@ -323,7 +323,7 @@ Every installation runs in exactly one containment mode at a time. The default i
 
 ## Networking Features
 
-**ZynkSync** - Sync memories across YOUR devices (carry conversations across phone/PC/laptop)
+**ZynkSync** - Your memories, conversations and keys, identical on every device you own — including the ones that were switched off
 
 **ZynkLink** - Share files between PAIRED Zynkbots (different users)
 
@@ -340,7 +340,8 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 **Local Models (Privacy-First):**
 
 - Place `.gguf` files in `zynkbot_rust/src-tauri/models/user/`
-- Recommended: Qwen3 8B, DeepSeek R1 Distill Llama 8B, Llama 3.1 8B Lexi Uncensored V2 — optional download included in installation script
+- The Zynkbot model: Qwen3-4B-Instruct-2507, the Q4_0 file from unsloth (`Qwen3-4B-Instruct-2507-Q4_0.gguf`, 2.4 GB). The setup wizard offers to download it at first run. On a phone it is the only model offered
+- Alternatives: Qwen3 8B, DeepSeek R1 Distill Llama 8B, Llama 3.1 8B Lexi Uncensored V2 — optional download included in installation script
 - No API key needed — runs completely offline
 - CPU works; NVIDIA GPU with CUDA gives 10–100x faster responses (automatically configured by the installer if you have the CUDA toolkit — see [GPU Acceleration](#gpu-acceleration) below)
 
@@ -364,7 +365,7 @@ You can connect to any of these cloud providers. Your memory database stays loca
 
 Wondering what API keys actually cost? → [Honest cost estimates](API_COSTS.md)
 
-**Configure:** Settings → API Keys
+**Configure:** System Controls → Current Model (the API keys are entered on that page)
 
 <table>
   <tr>

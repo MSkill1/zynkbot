@@ -39,7 +39,7 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
               <button
                 onClick={() => { onClose(); onOpenAPIKeys(); }}
                 style={{ padding: '8px 18px', background: '#8be9fd', color: '#282a36', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.9rem' }}
-              >🔑 Set Up API Keys</button>
+              >🔑 Set up a model</button>
             )}
             <button
               onClick={() => setShowCostGuide(true)}

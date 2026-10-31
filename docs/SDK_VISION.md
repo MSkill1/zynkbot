@@ -41,7 +41,7 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 
 | Layer | Modules |
 |-------|---------|
-| **Core** | Database, TLS/mTLS, User Identity, Sync Codes |
+| **Core** | Database, TLS/mTLS, Transport, User Identity, Sync Codes |
 | **AI** | LLM Backends, Local Model Inference, Local Embeddings, Memory System, NLP/Entity Extraction, LLM Fact Extractor |
 | **Feature** | Conversation Engine, Conversation History, Containment Layer, Safety Classifier, Knowledge Base/RAG, Web Search, Ensemble Mode, Backup |
 | **Network** | ZynkSync, ZynkLink, ZChat |
@@ -54,6 +54,8 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 **Database** (`db.rs`) — SQLite connection pool with WAL mode, foreign keys, 20-connection limit, platform-aware paths (Android-aware). Foundation everything else depends on.
 
 **TLS/mTLS** (`tls.rs`) — Self-signed cert generation, pinned cert verification, optional client auth. Required by all three network modules.
+
+**Transport** (`transport.rs`, added 2026-09-17) — What the three network modules share and nothing they don't: this device's identity and certificate, the HTTPS server and its TLS accept loop, the pinned mTLS client, the device registry (`zynk_devices`) and presence. ZynkSync, ZynkLink and ZChat are clients of it, each owning only its own tables and routes; a pairing of either kind (the same user's other device, or another user's device) pins a certificate here so every route is verified the same way. Identity and port are values the transport owns — several can coexist in one process, which is how the sync test harness runs two peers. A second carrier (Bluetooth, Wi-Fi Direct) would sit under this module without touching the services.
 
 **User Identity** (`user_identity.rs`) — Persistent user/device ID generation and storage, hostname-based device naming. Required for pairing and sync.
 
@@ -73,7 +75,7 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 
 **NLP / Entity Extraction** (`nlp_enhancer.rs`, `question_extractor.rs`) — BERT NER with rule-based fallback, tag/namespace/event detection, fact extraction from natural language queries (possession, family, events, travel, occupation).
 
-**LLM Fact Extractor** (`llm_fact_extractor.rs`) — LLM-delegated fact extraction from Q&A pairs via Claude/GPT-4o/Grok. Currently experimental; designed as a higher-accuracy alternative to pattern-based extraction.
+**LLM Fact Extractor** (`llm_fact_extractor.rs`) — an older LLM-delegated extractor, unused since 2026-10-24; extraction is `memory_prompts.rs` (call 2 of the memory pipeline) now.
 
 ---
 
@@ -89,7 +91,7 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 
 **Knowledge Base / RAG** (`knowledge_base.rs`, `kb_rag.rs`) — Document indexing with chunking, hybrid semantic + FTS5 retrieval, filename boosting. Supports PDF, text, and code. Embedding generation via local embeddings module.
 
-**Web Search** (`web_search.rs`) — DuckDuckGo Lite wrapper with page content fetching and HTML text extraction. Privacy-respecting: no API key, no tracking.
+**Web Search** (`web_search.rs`) — one call, several engines: a cloud model's own search tool (Anthropic, OpenAI, xAI, Mistral) on the user's key; Brave Search, a SearXNG server or DuckDuckGo Lite for local models, with page content fetching and HTML text extraction.
 
 **Ensemble Mode** (`commands/chat.rs`) — Multi-model parallel query with synthesis coordination. Coordinator model auto-selected by capability tier; results synthesized into a single response.
 
@@ -103,7 +105,7 @@ Zynkbot's 7,000-line monolithic backend was broken into 22 self-contained module
 
 **ZynkLink** (`zynklink.rs`) — P2P file sharing between paired devices over mTLS. Directory sharing with read/write access controls, file listing and content serving.
 
-**ZChat** (`zchat.rs`) — Device-to-device messaging with delivery and read tracking. No cloud storage, no relay server. Works on local network only.
+**ZChat** (`zchat.rs`) — Device-to-device messaging with delivery and read tracking, to any device in the transport's registry: the user's own devices (sync pairing) or another user's (link pairing). No cloud storage, no relay server. Works on local network only.
 
 ---
 

@@ -1,5 +1,7 @@
 use super::{LLMError, LLMResponse, Message, Usage};
 use llama_cpp_2::{
+    context::LlamaContext,
+    token::LlamaToken,
     context::params::LlamaContextParams,
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
@@ -13,8 +15,29 @@ use std::num::NonZeroU32;
 use std::sync::Mutex;
 
 /// Detect model type and build appropriate prompt format
-fn build_prompt_for_model(model_path: &str, messages: &[Message]) -> String {
-    let model_name = model_path.to_lowercase();
+/// `arch` is the file's own `general.architecture` ("qwen3", "llama", "gemma3"…), read from
+/// the loaded model (2026-10-28). The file name decides first, as before; when it names
+/// nothing known, the architecture does. Until then a renamed or fine-tuned Qwen file
+/// (`mem3-Q4_0.gguf`) got the bare generic format, never saw its chat markers, and
+/// rambled to the token limit — 7 s a call instead of 0.4 s.
+fn build_prompt_for_model(model_path: &str, messages: &[Message], arch: Option<&str>) -> String {
+    let file_name = model_path.to_lowercase();
+    let arch = arch.unwrap_or("").to_lowercase();
+    let known = ["qwen", "deepseek", "llama-3", "llama3", "dolphin", "openhermes", "tinyllama", "gemma", "lfm", "granite", "smollm", "mistral", "phi-3", "phi-4", "phi3", "phi4", "phi-2", "phi2"];
+    let model_name = if known.iter().any(|k| file_name.contains(k)) || arch.is_empty() {
+        file_name
+    } else {
+        println!("[Rust Local Models] File name says nothing about the format; going by its architecture: {}", arch);
+        // The architecture names map onto the same patterns the file names use.
+        match arch.as_str() {
+            a if a.starts_with("qwen") => "qwen".to_string(),
+            a if a.starts_with("gemma") => "gemma".to_string(),
+            a if a.starts_with("llama") => "llama-3".to_string(),
+            a if a.starts_with("phi3") => "phi-3".to_string(),
+            a if a.starts_with("granite") || a.starts_with("lfm") || a.starts_with("smollm") => "lfm".to_string(),
+            a => a.to_string(),
+        }
+    };
 
     // Order matters: more specific patterns before generic ones
     let (format_name, prompt) = if model_name.contains("qwen") {
@@ -35,6 +58,11 @@ fn build_prompt_for_model(model_path: &str, messages: &[Message]) -> String {
     } else if model_name.contains("llama-3") || model_name.contains("llama3") {
         ("Llama 3", build_llama3_prompt(messages, false))
     } else if model_name.contains("dolphin") || model_name.contains("openhermes") || model_name.contains("tinyllama") {
+        ("ChatML", build_chatml_prompt(messages, false))
+    } else if model_name.contains("gemma") {
+        ("Gemma", build_gemma_prompt(messages))
+    } else if model_name.contains("lfm") || model_name.contains("granite") || model_name.contains("smollm") {
+        // LFM2, Granite 4 and SmolLM3 all use ChatML markers.
         ("ChatML", build_chatml_prompt(messages, false))
     } else if model_name.contains("mistral") && model_name.contains("instruct") {
         ("Mistral Instruct", build_mistral_instruct_prompt(messages))
@@ -109,6 +137,40 @@ fn build_chatml_prompt(messages: &[Message], no_think: bool) -> String {
 /// `no_think`: inject `<think>\n\n</think>` after the assistant header to short-circuit
 /// DeepSeek R1's chain-of-thought. Without this, the model outputs `</think>` as its
 /// first token (trying to close a think block that was never opened).
+/// Gemma 3 and 4 turn format (2026-10-22). Gemma has no system role: the instructions
+/// go at the top of the first user turn. The engine's conversation prompt arrives as one
+/// user message with "USER'S QUESTION:" marking the question; both halves stay in that
+/// turn. BOS is added by the tokenizer.
+fn build_gemma_prompt(messages: &[Message]) -> String {
+    let mut prompt = String::new();
+    if messages.len() == 1 && messages[0].role == "user" {
+        let content = &messages[0].content;
+        let body = if let Some(q_pos) = content.find("USER'S QUESTION:") {
+            let system_part = content[..q_pos].trim();
+            let after_q = &content[q_pos + "USER'S QUESTION:".len()..];
+            let question = match after_q.find("\n\nYOUR RESPONSE:") { Some(r) => after_q[..r].trim(), None => after_q.trim() };
+            if system_part.is_empty() { question.to_string() } else { format!("{}\n\n{}", system_part, question) }
+        } else { content.trim().to_string() };
+        prompt.push_str(&format!("<start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model\n", body));
+        return prompt;
+    }
+    let mut pending_system = String::new();
+    for msg in messages {
+        match msg.role.as_str() {
+            "system" => pending_system = msg.content.clone(),
+            "user" => {
+                let body = if pending_system.is_empty() { msg.content.clone() } else { format!("{}\n\n{}", pending_system, msg.content) };
+                pending_system.clear();
+                prompt.push_str(&format!("<start_of_turn>user\n{}<end_of_turn>\n", body));
+            }
+            "assistant" => prompt.push_str(&format!("<start_of_turn>model\n{}<end_of_turn>\n", msg.content)),
+            _ => {}
+        }
+    }
+    prompt.push_str("<start_of_turn>model\n");
+    prompt
+}
+
 fn build_llama3_prompt(messages: &[Message], no_think: bool) -> String {
     // BOS token is injected by str_to_token(AddBos::Always) — don't include it here
     let mut prompt = String::new();
@@ -226,8 +288,62 @@ fn build_simple_prompt(messages: &[Message]) -> String {
 }
 
 // llama.cpp backend — initialized once, lives for the process lifetime
+/// Android: load the engine's backend modules by file name. The APK keeps its native
+/// libraries inside base.apk (Android's default since API 23: no copy on disk), so there is
+/// no folder to scan and the engine's own search-by-directory found nothing — the first
+/// loadable-modules build (2026-10-23) registered no backend and every model load failed.
+/// dlopen by bare name goes through the app's library namespace, which does look inside
+/// the APK. build.rs bakes in the names of the modules it packaged (ZB_ANDROID_BACKENDS).
+#[cfg(target_os = "android")]
+fn load_android_backends() {
+    let names: Vec<&str> = option_env!("ZB_ANDROID_BACKENDS")
+        .unwrap_or("")
+        .split(',')
+        .filter(|n| !n.is_empty())
+        .collect();
+    let load = |name: &str| -> bool {
+        let c = std::ffi::CString::new(name).expect("module name without NUL");
+        let reg = unsafe { llama_cpp_sys_2::ggml_backend_load(c.as_ptr()) };
+        println!("[Rust Local Models] engine module {name}: {}", if reg.is_null() { "not loaded" } else { "loaded" });
+        !reg.is_null()
+    };
+    // CPU: the variants form a chain (each adds instructions to the one before), so the most
+    // capable one this chip supports is the first that loads in descending name order; an
+    // unsupported variant reports a score of 0 and the engine does not register it.
+    // Capped at armv8.6: the armv9 variants (SVE2) loaded on the Pixel 10 on 2026-10-24 and
+    // the model then produced an end-of-answer token first, every time, where the same
+    // model file had answered the evening before on the built-in engine. The OnePlus runs
+    // armv8.6 and answers. SVE2 gains nothing measurable on a 4B model; the variants stay
+    // packaged so this can be re-tested by lifting the cap.
+    let mut cpu: Vec<&str> = names.iter().copied().filter(|n| n.starts_with("libggml-cpu")).collect();
+    let before = cpu.len();
+    cpu.retain(|n| !n.contains("armv9"));
+    if cpu.len() < before { println!("[Rust Local Models] {} armv9 CPU module(s) skipped (cap at armv8.6, 2026-10-24)", before - cpu.len()); }
+    cpu.sort_unstable_by(|a, b| b.cmp(a));
+    if !cpu.iter().any(|n| load(n)) {
+        println!("[Rust Local Models] ⚠️ no CPU engine module loaded ({} packaged)", cpu.len());
+    }
+    // What the engine ended up with, e.g. "GPUOpenCL" and "CPU".
+    let devices: Vec<String> = (0..unsafe { llama_cpp_sys_2::ggml_backend_dev_count() })
+        .map(|i| unsafe {
+            let dev = llama_cpp_sys_2::ggml_backend_dev_get(i);
+            std::ffi::CStr::from_ptr(llama_cpp_sys_2::ggml_backend_dev_name(dev)).to_string_lossy().into_owned()
+        })
+        .collect();
+    println!("[Rust Local Models] engine devices: {}", if devices.is_empty() { "none".to_string() } else { devices.join(", ") });
+}
+
 static BACKEND: Lazy<LlamaBackend> = Lazy::new(|| {
+    // Android: load the engine's backend modules before init (2026-10-23). The CPU module
+    // always loads; the OpenCL module loads only where the phone's driver is present and
+    // visible, so the same APK uses the GPU where there is one and the CPU elsewhere.
+    #[cfg(target_os = "android")]
+    load_android_backends();
     let mut backend = LlamaBackend::init().unwrap_or_else(|e| panic!("Failed to initialize llama.cpp backend: {e}"));
+    // Desktop: the engine's own messages are noise. Android: keep them (2026-10-24) — they
+    // are the only place that says how many layers went to the GPU and how much memory
+    // each side took, and the GPU path is still being measured there.
+    #[cfg(not(target_os = "android"))]
     backend.void_logs();
     backend
 });
@@ -307,11 +423,115 @@ pub fn resolve_default_model_path() -> Result<String, LLMError> {
 /// then drop to unload the model from memory. Designed for paired-call use:
 /// load once, run both the main conversation call and Call 2 (relationship
 /// classification), then drop.
+// ── foreground first (2026-10-22) ────────────────────────────────────────────
+// One model, one phone CPU. A user's message must not wait behind the memory
+// pipeline's background calls (on 2026-10-22 a message sat three minutes behind a
+// relationship-classification call). A foreground turn registers itself with a
+// ForegroundGuard before it asks for the model; a background call runs through
+// `in_background`, and `generate` stops between tokens as soon as a foreground turn
+// is waiting. `background_retry` waits for the foreground to finish and runs the
+// call again from the start. Nothing changes for the desktop except that the same
+// rule applies there too.
+
+/// Foreground turns waiting for, or using, the local model.
+pub static FOREGROUND_WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Held by a user turn from before it asks for the model until its reply is done.
+pub struct ForegroundGuard;
+impl ForegroundGuard {
+    pub fn new() -> Self { FOREGROUND_WAITING.fetch_add(1, std::sync::atomic::Ordering::SeqCst); ForegroundGuard }
+}
+impl Drop for ForegroundGuard {
+    fn drop(&mut self) { FOREGROUND_WAITING.fetch_sub(1, std::sync::atomic::Ordering::SeqCst); }
+}
+
+thread_local! { static IN_BACKGROUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+const INTERRUPTED: &str = "interrupted: a user message is waiting for the model";
+
+/// The window's meter while the prompt is read (Matt, 2026-10-24: "can we get a meter of
+/// some kind moving?"). `done` of `total` new tokens; the page shows the bar until the
+/// first streamed token arrives. Foreground calls only; nothing when there is no window.
+fn emit_prompt_progress(done: usize, total: usize) {
+    use tauri::Emitter;
+    if let Ok(guard) = crate::APP_HANDLE.lock() {
+        if let Some(app) = guard.as_ref() {
+            let _ = app.emit("local-prompt-progress", serde_json::json!({ "done": done, "total": total }));
+        }
+    }
+}
+
+/// True when `e` is the interruption `generate` raises for a background call.
+pub fn is_interrupted(e: &LLMError) -> bool {
+    matches!(e, LLMError::RequestFailed(m) if m == INTERRUPTED)
+}
+
+fn foreground_waiting() -> bool { FOREGROUND_WAITING.load(std::sync::atomic::Ordering::SeqCst) > 0 }
+
+/// Run `f` as a background call: it yields to a foreground turn and is retried once
+/// the foreground is done (up to `tries` times, polling every half second while a
+/// turn is in progress). Blocking; call from a blocking thread.
+pub fn background_retry<R>(what: &str, tries: usize, f: impl Fn() -> Result<R, LLMError>) -> Result<R, LLMError> {
+    for attempt in 1..=tries {
+        let mut waited = 0u32;
+        while foreground_waiting() {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            waited += 1;
+            if waited % 120 == 0 { println!("[Rust Local Models] {} still waiting for the foreground ({} s)", what, waited / 2); }
+        }
+        let result = IN_BACKGROUND.with(|b| { b.set(true); let r = f(); b.set(false); r });
+        match result {
+            Err(e) if is_interrupted(&e) && attempt < tries => {
+                println!("[Rust Local Models] {} stepped aside for a user message (attempt {} of {}); will run again after", what, attempt, tries);
+            }
+            other => return other,
+        }
+    }
+    Err(LLMError::RequestFailed(format!("{} gave way to user messages {} times", what, tries)))
+}
+
+/// How many leading tokens of `tokens` the context already holds from `prev`, so they
+/// need not be read again. At least one token is always left to read, because the last
+/// token of the prompt is what produces the logits the first answer token is sampled from.
+pub fn reuse_count(prev: &[LlamaToken], tokens: &[LlamaToken]) -> usize {
+    if tokens.is_empty() { return 0; }
+    let common = prev.iter().zip(tokens.iter()).take_while(|(a, b)| a == b).count();
+    common.min(tokens.len() - 1)
+}
+
+/// Threads for inference. Desktop: every core. Phone: the fast cores only. A phone has
+/// small efficiency cores whose top speed is far below the others', and llama.cpp
+/// waits for the slowest thread at every step, so on a 1+5+2 Pixel 10 Pro XL eight
+/// threads are slower than six. A core counts as fast if its top frequency is at
+/// least three quarters of the fastest core's (2026-10-22).
+fn inference_threads() -> i32 {
+    let all = std::thread::available_parallelism().map(|n| n.get() as i32).unwrap_or(4);
+    if !cfg!(target_os = "android") { return all; }
+    let mut freqs: Vec<u64> = (0..all)
+        .filter_map(|i| std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{}/cpufreq/cpuinfo_max_freq", i)).ok())
+        .filter_map(|s| s.trim().parse::<u64>().ok())
+        .collect();
+    if freqs.len() != all as usize { return all; }
+    freqs.sort_unstable();
+    let top = *freqs.last().unwrap_or(&0);
+    let fast = freqs.iter().filter(|&&f| f * 4 >= top * 3).count() as i32;
+    fast.max(2)
+}
+
+/// The foreground context kept between turns, with the tokens it currently holds.
+struct KvState {
+    ctx: LlamaContext<'static>,
+    tokens: Vec<LlamaToken>,
+}
+
 pub struct LocalModelSession {
-    model: LlamaModel,
+    // Declared before `model` so it is dropped first: the context borrows the model.
+    kv: Mutex<Option<KvState>>,
+    model: Box<LlamaModel>,
     model_path: String,
     n_ctx: u32,
     n_threads: i32,
+    n_batch: u32,
 }
 
 // Safety: LlamaModel wraps a raw pointer to an immutable llama_model C object.
@@ -340,25 +560,37 @@ impl LocalModelSession {
         // llama.cpp silently ignores this on CPU-only builds — safe in both modes.
         #[cfg(feature = "cuda")]
         println!("[Rust Local Models] ⚡ CUDA build — requesting 999 GPU layers");
-        #[cfg(not(feature = "cuda"))]
+        #[cfg(all(not(feature = "cuda"), target_os = "android"))]
+        println!("[Rust Local Models] ℹ️  Android: CPU engine (the GPU path was measured slower on the Adreno 740 and refused on the Pixel, 2026-10-24)");
+        #[cfg(all(not(feature = "cuda"), not(target_os = "android")))]
         println!("[Rust Local Models] ℹ️  CPU-only build — GPU offload disabled");
 
-        let model_params = LlamaModelParams::default().with_n_gpu_layers(999);
+        // Android asks for no GPU layers: with the OpenCL module gone there is no GPU device,
+        // and 999 would only be noise in the engine log. Desktop CUDA keeps 999.
+        let gpu_layers: u32 = if cfg!(target_os = "android") { 0 } else { 999 };
+        let model_params = LlamaModelParams::default().with_n_gpu_layers(gpu_layers);
+        // Memory-mapping stays on everywhere. Turning it off on Android (2026-10-23
+        // experiment) did not make the first reply faster and held the whole model in
+        // working memory; with the GPU path on, the OnePlus froze with 57 MB free
+        // (2026-10-24). Mapped pages can be dropped and re-read under pressure.
         let model = LlamaModel::load_from_file(&BACKEND, path, &model_params)
             .map_err(|e| LLMError::RequestFailed(format!("Failed to load model: {}", e)))?;
 
-        let n_threads = std::thread::available_parallelism()
-            .map(|n| n.get() as i32)
-            .unwrap_or(4);
+        let n_threads = inference_threads();
 
-        let n_ctx = 8192u32;
+        // Phone (2026-10-22): a 4K window and 512-token batches. 8K/8K reserved enough
+        // memory on a 16 GB Pixel that Android killed fifteen other apps when the model
+        // loaded; a phone prompt is a few hundred tokens. Desktop keeps 8K with the batch
+        // equal to the window.
+        let n_ctx: u32 = if cfg!(target_os = "android") { 4096 } else { 8192 };
+        let n_batch: u32 = if cfg!(target_os = "android") { 512 } else { n_ctx };
 
         println!(
-            "[Rust Local Models] ✅ Model loaded ({} threads, {}K context): {}",
-            n_threads, n_ctx / 1024, model_path
+            "[Rust Local Models] ✅ Model loaded ({} threads, {}K context, batch {}): {}",
+            n_threads, n_ctx / 1024, n_batch, model_path
         );
 
-        Ok(Self { model, model_path: model_path.to_string(), n_ctx, n_threads })
+        Ok(Self { kv: Mutex::new(None), model: Box::new(model), model_path: model_path.to_string(), n_ctx, n_batch, n_threads })
     }
 
     /// Run inference on this session. Pass `json_schema` to constrain output to valid JSON.
@@ -370,18 +602,77 @@ impl LocalModelSession {
         temperature: Option<f32>,
         json_schema: Option<&str>,
     ) -> Result<LLMResponse, LLMError> {
-        // n_ctx and n_batch must match — n_batch < prompt length causes the initial decode to fail
-        let ctx_params = LlamaContextParams::default()
-            .with_n_ctx(NonZeroU32::new(self.n_ctx))
-            .with_n_batch(self.n_ctx)
-            .with_n_threads(self.n_threads)
-            .with_n_threads_batch(self.n_threads);
+        self.generate_streaming(messages, max_tokens, temperature, json_schema, None)
+    }
 
-        let mut ctx = self.model
-            .new_context(&BACKEND, ctx_params)
-            .map_err(|e| LLMError::RequestFailed(format!("Failed to create context: {}", e)))?;
+    /// Generate, calling `on_token` with each piece of text as it is written (the local
+    /// path's streaming, 2026-10-22). A foreground call keeps its context between turns
+    /// and reads only the part of the prompt that changed since the previous one (the
+    /// text before the first difference is the same tokens, so its cache entries stand);
+    /// a background call gets a smaller throwaway context so it never disturbs that.
+    pub fn generate_streaming(
+        &self,
+        messages: Vec<Message>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        json_schema: Option<&str>,
+        on_token: Option<&mut dyn FnMut(&str)>,
+    ) -> Result<LLMResponse, LLMError> {
+        let background = IN_BACKGROUND.with(|b| b.get());
+        let interrupted = || LLMError::RequestFailed(INTERRUPTED.to_string());
+        if background && foreground_waiting() { return Err(interrupted()); }
 
-        let prompt = build_prompt_for_model(&self.model_path, &messages);
+        let make_ctx = |n_ctx: u32| -> Result<LlamaContext<'static>, LLMError> {
+            // The batch can never exceed the window (the desktop's 8K batch in a 2K
+            // throwaway context sampled an end-of-text token at once, 2026-10-22).
+            let ctx_params = LlamaContextParams::default()
+                .with_n_ctx(NonZeroU32::new(n_ctx))
+                .with_n_batch(self.n_batch.min(n_ctx))
+                .with_n_threads(self.n_threads)
+                .with_n_threads_batch(self.n_threads);
+            // Safety: the model lives in a Box whose address does not change, and `kv` is
+            // declared before `model` so every context is dropped before the model is.
+            let model: &'static LlamaModel = unsafe { &*(&*self.model as *const LlamaModel) };
+            model.new_context(&BACKEND, ctx_params)
+                .map_err(|e| LLMError::RequestFailed(format!("Failed to create context: {}", e)))
+        };
+
+        if background {
+            // Small, throwaway: a memory call reads a few hundred tokens and writes a few hundred.
+            let n = self.n_ctx.min(2048);
+            let mut ctx = make_ctx(n)?;
+            let (resp, _) = self.run(&mut ctx, n, &[], messages, max_tokens, temperature, json_schema, on_token, background)?;
+            return Ok(resp);
+        }
+
+        let mut guard = self.kv.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() { *guard = Some(KvState { ctx: make_ctx(self.n_ctx)?, tokens: Vec::new() }); }
+        let state = guard.as_mut().unwrap();
+        let prev = std::mem::take(&mut state.tokens);
+        match self.run(&mut state.ctx, self.n_ctx, &prev, messages, max_tokens, temperature, json_schema, on_token, background) {
+            Ok((resp, tokens)) => { state.tokens = tokens; Ok(resp) }
+            Err(e) => { let _ = state.ctx.clear_kv_cache_seq(None, None, None); Err(e) }
+        }
+    }
+
+    /// One generation on `ctx`. `prev` is what the context already holds (empty for a
+    /// fresh one). Returns the response and the tokens the context holds afterwards.
+    #[allow(clippy::too_many_arguments)]
+    fn run(
+        &self,
+        ctx: &mut LlamaContext<'_>,
+        n_ctx: u32,
+        prev: &[LlamaToken],
+        messages: Vec<Message>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        json_schema: Option<&str>,
+        mut on_token: Option<&mut dyn FnMut(&str)>,
+        background: bool,
+    ) -> Result<(LLMResponse, Vec<LlamaToken>), LLMError> {
+        let interrupted = || LLMError::RequestFailed(INTERRUPTED.to_string());
+        let arch = self.model.meta_val_str("general.architecture").ok();
+        let prompt = build_prompt_for_model(&self.model_path, &messages, arch.as_deref());
         let max_output_tokens = max_tokens.unwrap_or(512) as usize;
         let temp = temperature.unwrap_or(0.7);
 
@@ -390,32 +681,64 @@ impl LocalModelSession {
             max_output_tokens
         );
 
-        let tokens = self.model
-            .str_to_token(&prompt, llama_cpp_2::model::AddBos::Always)
-            .map_err(|e| LLMError::RequestFailed(format!("Failed to tokenize prompt: {}", e)))?;
+        // llama-cpp-2 0.1.160 (2026-10-22): tokenisation moved to the vocab. `add_special`
+        // adds BOS only for models that want one (Qwen's template has none); `parse_special`
+        // turns the chat-template markers in the prompt into their tokens, as before.
+        let tokens = self.model.vocab().tokenize(prompt.as_bytes(), true, true);
+        if tokens.is_empty() {
+            return Err(LLMError::RequestFailed("Failed to tokenize prompt: no tokens".to_string()));
+        }
 
-        println!("[Rust Local Models] Prompt: {} tokens (n_batch: {})", tokens.len(), self.n_ctx);
+        println!("[Rust Local Models] Prompt: {} tokens (n_batch: {})", tokens.len(), self.n_batch);
 
-        if tokens.len() > self.n_ctx as usize {
+        if tokens.len() + 64 > n_ctx as usize {
             return Err(LLMError::RequestFailed(format!(
                 "Prompt too long: {} tokens exceeds context window of {}. Shorten conversation history or use a model with larger context.",
-                tokens.len(), self.n_ctx
+                tokens.len(), n_ctx
             )));
         }
 
         let max_output_tokens = max_output_tokens.min(
-            (self.n_ctx as usize).saturating_sub(tokens.len() + 64)
+            (n_ctx as usize).saturating_sub(tokens.len() + 64)
         );
 
-        ctx.clear_kv_cache();
-
-        let mut batch = LlamaBatch::new(tokens.len(), 1);
-        for (i, &token) in tokens.iter().enumerate() {
-            batch.add(token, i as i32, &[0], i == tokens.len() - 1)
-                .map_err(|e| LLMError::RequestFailed(format!("Failed to add token to batch: {}", e)))?;
+        // Keep what the context already holds and matches the new prompt from the start;
+        // drop the rest. At least the last prompt token is always read so there are logits.
+        let mut common = reuse_count(prev, &tokens);
+        if prev.is_empty() || common == 0 {
+            ctx.clear_kv_cache();
+            common = 0;
+        } else if !matches!(ctx.clear_kv_cache_seq(Some(0), Some(common as u32), None), Ok(true)) {
+            ctx.clear_kv_cache();
+            common = 0;
         }
-        ctx.decode(&mut batch)
-            .map_err(|e| LLMError::RequestFailed(format!("Failed to decode prompt ({} tokens): {}", tokens.len(), e)))?;
+
+        // Feed the new part of the prompt in pieces of at most n_batch tokens; only the very
+        // last token asks for logits. A background call steps aside the moment a user turn
+        // is waiting: between prompt pieces and between generated tokens.
+        let t_prompt = std::time::Instant::now();
+        let last = tokens.len() - 1;
+        // A background call reads in small pieces so it can step aside within a few
+        // seconds (a 512-token piece took 22 s on a warm phone, 2026-10-22).
+        let piece = if background { (self.n_batch as usize).min(128) } else { self.n_batch as usize };
+        if !background { emit_prompt_progress(0, tokens.len() - common); }
+        for chunk_start in (common..tokens.len()).step_by(piece) {
+            if background && foreground_waiting() { return Err(interrupted()); }
+            let chunk = &tokens[chunk_start..(chunk_start + piece).min(tokens.len())];
+            if !background { emit_prompt_progress(chunk_start - common, tokens.len() - common); }
+            let mut batch = LlamaBatch::new(chunk.len(), 1);
+            for (i, &token) in chunk.iter().enumerate() {
+                let pos = chunk_start + i;
+                batch.add(token, pos as i32, &[0], pos == last)
+                    .map_err(|e| LLMError::RequestFailed(format!("Failed to add token to batch: {}", e)))?;
+            }
+            ctx.decode(&mut batch)
+                .map_err(|e| LLMError::RequestFailed(format!("Failed to decode prompt ({} tokens): {}", tokens.len(), e)))?;
+        }
+        if !background { emit_prompt_progress(tokens.len() - common, tokens.len() - common); }
+        let new_tokens = tokens.len() - common;
+        println!("[Rust Local Models] Prompt read in {:.1}s ({:.0} tokens/s): {} new tokens, {} kept from the previous turn",
+            t_prompt.elapsed().as_secs_f32(), new_tokens as f32 / t_prompt.elapsed().as_secs_f32().max(0.001), new_tokens, common);
 
         // Grammar-constrained sampling triggers a C-level abort() in llama.cpp when the grammar
         // engine finds no valid tokens under its constraints — killing the whole process with no
@@ -452,21 +775,35 @@ impl LocalModelSession {
         };
 
         let mut output = String::new();
+        let mut pending: Vec<u8> = Vec::new();
+        let mut generated: Vec<LlamaToken> = Vec::new();
         let prompt_len = tokens.len();
         let mut token_count = 0;
 
         for _iteration in 0..max_output_tokens {
+            if background && foreground_waiting() { return Err(interrupted()); }
             let new_token_id = sampler.sample(&ctx, -1);
             sampler.accept(new_token_id);
 
-            if self.model.is_eog_token(new_token_id) {
+            if self.model.vocab().is_eog(new_token_id) {
                 break;
             }
 
-            #[allow(deprecated)]
-            match self.model.token_to_str(new_token_id, llama_cpp_2::model::Special::Plaintext) {
-                Ok(token_str) => output.push_str(&token_str),
-                Err(_) => {}
+            // A token is bytes, and one character can span two tokens. Bytes are kept until
+            // they form whole characters, so nothing is dropped (the old per-token string
+            // conversion silently lost a token whose bytes were not valid on their own).
+            generated.push(new_token_id);
+            pending.extend_from_slice(&self.model.vocab().token_to_piece(new_token_id, false, None));
+            match std::str::from_utf8(&pending) {
+                Ok(s) => { output.push_str(s); if let Some(cb) = on_token.as_mut() { cb(s); } pending.clear(); }
+                Err(e) => {
+                    let valid = e.valid_up_to();
+                    if valid > 0 {
+                        let s = std::str::from_utf8(&pending[..valid]).unwrap_or("");
+                        output.push_str(s); if let Some(cb) = on_token.as_mut() { cb(s); }
+                        pending.drain(..valid);
+                    }
+                }
             }
 
             let next_pos = prompt_len + token_count;
@@ -480,24 +817,29 @@ impl LocalModelSession {
         }
 
         println!("[Rust Local Models] ✅ Generated {} tokens", token_count);
+        if !pending.is_empty() { let s = String::from_utf8_lossy(&pending).into_owned(); if let Some(cb) = on_token.as_mut() { cb(&s); } output.push_str(&s); }
         println!("[Rust Local Models] Output length: {} chars", output.len());
         println!(
             "[Rust Local Models] Output preview: {}...",
             output.chars().take(100).collect::<String>()
         );
 
-        Ok(LLMResponse {
+        let mut held = tokens;
+        held.extend(generated);
+        Ok((LLMResponse {
             content: output.trim().to_string(),
             model: self.model_path.clone(),
             usage: Some(Usage {
-                input_tokens: tokens.len() as u32,
+                input_tokens: held.len() as u32,
                 output_tokens: token_count as u32,
             }),
-        })
+        }, held))
     }
 }
 
-/// Core inference: load model, generate, unload. Public API delegates here.
+/// Core inference through the cached session (until 2026-10-22 this loaded the model
+/// from disk for every call, so a background memory call put a second 2.5 GB copy
+/// in memory next to the cached one).
 fn generate_internal(
     model_path: &str,
     messages: Vec<Message>,
@@ -505,7 +847,7 @@ fn generate_internal(
     temperature: Option<f32>,
     json_schema: Option<&str>,
 ) -> Result<LLMResponse, LLMError> {
-    LocalModelSession::load(model_path)?.generate(messages, max_tokens, temperature, json_schema)
+    with_cached_session(model_path, |session| session.generate(messages, max_tokens, temperature, json_schema))
 }
 
 /// Generate a conversational response using a local GGUF model.
@@ -546,4 +888,62 @@ pub fn query_local_model(model_path: &str, prompt: &str) -> Result<String, LLMEr
     )?;
 
     Ok(response.content)
+}
+
+#[cfg(test)]
+mod engine_smoke {
+    /// Loads the GGUF named by LOCAL_MODEL_PATH and asks it one thing. Ignored by default
+    /// (needs a model file and a minute of CPU); run after an engine-crate bump:
+    ///   LOCAL_MODEL_PATH=/path/model.gguf LD_LIBRARY_PATH=lib/vosk cargo test --lib engine_smoke -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn engine_smoke_generates_text() {
+        let path = std::env::var("LOCAL_MODEL_PATH").expect("LOCAL_MODEL_PATH");
+        let t0 = std::time::Instant::now();
+        let out = super::query_local_model(&path, "Reply with one short sentence: what is the capital of France?")
+            .expect("generation failed");
+        println!("[engine_smoke] {:?} -> {:?}", t0.elapsed(), out);
+        assert!(!out.trim().is_empty(), "empty reply");
+        // Second turn with the same opening text: the kept context should make the read
+        // nearly free (watch the "kept from the previous turn" count in the output).
+        let t1 = std::time::Instant::now();
+        let out2 = super::query_local_model(&path, "Reply with one short sentence: what is the capital of Spain?")
+            .expect("second generation failed");
+        println!("[engine_smoke] second turn {:?} -> {:?}", t1.elapsed(), out2);
+        assert!(!out2.trim().is_empty(), "empty second reply");
+        // A background-style call in between must not disturb the kept context.
+        let out3 = super::background_retry("smoke", 1, || super::query_local_model(&path, "Reply with one short sentence: what is the capital of Germany?")).expect("background call failed");
+        println!("[engine_smoke] background -> {:?}", out3);
+        let t2 = std::time::Instant::now();
+        let out4 = super::query_local_model(&path, "Reply with one short sentence: what is the capital of Italy?")
+            .expect("third generation failed");
+        println!("[engine_smoke] third turn {:?} -> {:?}", t2.elapsed(), out4);
+        assert!(!out4.trim().is_empty(), "empty third reply");
+    }
+}
+
+#[cfg(test)]
+mod kept_context_tests {
+    use super::reuse_count;
+    use llama_cpp_2::token::LlamaToken;
+    fn t(v: &[i32]) -> Vec<LlamaToken> { v.iter().map(|&i| LlamaToken(i)).collect() }
+
+    #[test]
+    fn same_prompt_again_keeps_all_but_the_last_token() {
+        assert_eq!(reuse_count(&t(&[1, 2, 3, 4]), &t(&[1, 2, 3, 4])), 3);
+    }
+    #[test]
+    fn a_longer_prompt_with_the_same_start_keeps_the_start() {
+        assert_eq!(reuse_count(&t(&[1, 2, 3]), &t(&[1, 2, 3, 9, 9])), 3);
+    }
+    #[test]
+    fn divergence_keeps_up_to_the_first_difference() {
+        assert_eq!(reuse_count(&t(&[1, 2, 3, 4, 5]), &t(&[1, 2, 7, 8])), 2);
+    }
+    #[test]
+    fn nothing_held_or_nothing_shared_keeps_nothing() {
+        assert_eq!(reuse_count(&[], &t(&[1, 2])), 0);
+        assert_eq!(reuse_count(&t(&[5, 6]), &t(&[1, 2])), 0);
+        assert_eq!(reuse_count(&t(&[1]), &[]), 0);
+    }
 }

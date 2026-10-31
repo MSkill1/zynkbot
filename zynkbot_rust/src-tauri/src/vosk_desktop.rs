@@ -3,8 +3,17 @@
 //! Both engines share the same mic-capture pipeline via `cpal`, bypassing the
 //! WebView `getUserMedia` problem on Linux Tauri. The engine picked at `start`
 //! determines what happens on `stop`:
-//!   - Vosk: feeds samples into a recognizer live, returns `final_result()`.
-//!   - OpenAI: buffers raw i16 samples, encodes to WAV on stop, uploads.
+//!   - Vosk: feeds samples into a recognizer live. Each finished utterance (Vosk
+//!     ends one at a pause) is kept, and `stop` returns all of them plus the last
+//!     one. Until 2026-10-20 only `final_result()` was returned, which is the text
+//!     of the current utterance alone — everything said before the last pause was
+//!     lost. While recording, the text so far is handed to `on_live` (throttled)
+//!     so the page can show the words as they are spoken.
+//!   - OpenAI: streams the samples to OpenAI's Realtime transcription session
+//!     (`openai_realtime`) so the words show while the user speaks, and keeps the
+//!     raw i16 samples too. On stop the session's text is returned; if the session
+//!     could not be opened (no network, DICTATION_STREAM=0, server error) the kept
+//!     samples are encoded to WAV and uploaded in one go, as before 2026-10-28.
 //!
 //! One recording at a time (global session mutex).
 
@@ -12,11 +21,31 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
 use once_cell::sync::Lazy;
-use vosk::{Model, Recognizer};
+use vosk::{DecodingState, Model, Recognizer};
+
+/// Receives the text recognised so far, every time it changes (at most a few times a second).
+pub type LiveSink = Box<dyn Fn(String) + Send + Sync + 'static>;
+
+/// Vosk recogniser plus the utterances it has already finished.
+struct VoskState {
+    rec: Recognizer,
+    committed: String,
+    last_partial: String,
+    last_emit: Instant,
+}
+
+fn join_text(a: &str, b: &str) -> String {
+    match (a.is_empty(), b.is_empty()) {
+        (true, _) => b.to_string(),
+        (_, true) => a.to_string(),
+        _ => format!("{} {}", a, b),
+    }
+}
 
 #[derive(Clone, Copy)]
 pub enum Engine {
@@ -79,7 +108,7 @@ fn get_model() -> Result<Arc<Model>, String> {
     Ok(arc)
 }
 
-pub fn start(engine: Engine) -> Result<(), String> {
+pub fn start(engine: Engine, on_live: Option<LiveSink>) -> Result<(), String> {
     let mut guard = ACTIVE_SESSION
         .lock()
         .map_err(|e| format!("Session lock poisoned: {e}"))?;
@@ -98,7 +127,7 @@ pub fn start(engine: Engine) -> Result<(), String> {
     let (result_tx, result_rx) = mpsc::channel::<Result<String, String>>();
 
     let thread = thread::spawn(move || {
-        run_audio_thread(engine, model, ready_tx, stop_rx, result_tx);
+        run_audio_thread(engine, model, on_live, ready_tx, stop_rx, result_tx);
     });
 
     match ready_rx.recv() {
@@ -142,6 +171,7 @@ pub fn stop() -> Result<String, String> {
 fn run_audio_thread(
     engine: Engine,
     model: Option<Arc<Model>>,
+    on_live: Option<LiveSink>,
     ready_tx: Sender<Result<(), String>>,
     stop_rx: Receiver<()>,
     result_tx: Sender<Result<String, String>>,
@@ -175,7 +205,12 @@ fn run_audio_thread(
         Engine::Vosk => {
             let m = model.expect("Vosk engine requires preloaded model");
             match Recognizer::new(&m, sample_rate as f32) {
-                Some(r) => Some(Arc::new(Mutex::new(r))),
+                Some(r) => Some(Arc::new(Mutex::new(VoskState {
+                    rec: r,
+                    committed: String::new(),
+                    last_partial: String::new(),
+                    last_emit: Instant::now(),
+                }))),
                 None => {
                     let _ = ready_tx.send(Err("Vosk failed to create recognizer".to_string()));
                     return;
@@ -194,13 +229,30 @@ fn run_audio_thread(
 
     let rec_cb = recognizer.clone();
     let buf_cb = openai_buffer.clone();
+    let live_cb: Option<Arc<LiveSink>> = on_live.map(Arc::new);
+    let live_cb2 = live_cb.clone();
+
+    // OpenAI: open the live session now; the socket connects in the background while
+    // the mic is already running. None here means the one-shot upload runs on stop.
+    let (mut feeder, live_session) = match engine {
+        Engine::OpenAI => match crate::openai_realtime::Session::open(sample_rate, live_cb.clone()) {
+            Ok((f, s)) => (Some(f), Some(s)),
+            Err(e) => {
+                println!("[Dictation] Live stream not used ({e}); the clip is uploaded on stop");
+                (None, None)
+            }
+        },
+        Engine::Vosk => (None, None),
+    };
+    let mut feeder2 = feeder.clone();
 
     let build_result = match sample_format {
         SampleFormat::F32 => device.build_input_stream(
             &stream_config,
             move |data: &[f32], _| {
                 let mono = downmix_f32_to_i16(data, channels);
-                dispatch(&mono, &rec_cb, &buf_cb);
+                dispatch(&mono, &rec_cb, &buf_cb, &live_cb);
+                if let Some(f) = feeder.as_mut() { f.push(&mono); }
             },
             err_cb,
             None,
@@ -209,7 +261,8 @@ fn run_audio_thread(
             &stream_config,
             move |data: &[i16], _| {
                 let mono = downmix_i16(data, channels);
-                dispatch(&mono, &rec_cb, &buf_cb);
+                dispatch(&mono, &rec_cb, &buf_cb, &live_cb2);
+                if let Some(f) = feeder2.as_mut() { f.push(&mono); }
             },
             err_cb,
             None,
@@ -241,12 +294,14 @@ fn run_audio_thread(
 
     let text = match engine {
         Engine::Vosk => match recognizer.unwrap().lock() {
-            Ok(mut r) => {
-                let final_result = r.final_result();
-                Ok(final_result
+            Ok(mut st) => {
+                let last = st
+                    .rec
+                    .final_result()
                     .single()
                     .map(|s| s.text.trim().to_string())
-                    .unwrap_or_default())
+                    .unwrap_or_default();
+                Ok(join_text(&st.committed, &last))
             }
             Err(e) => Err(format!("Recognizer lock poisoned: {e}")),
         },
@@ -256,9 +311,17 @@ fn run_audio_thread(
                 Ok(guard) => Ok(guard.clone()),
                 Err(e) => Err(format!("OpenAI buffer lock poisoned: {e}")),
             };
-            match pcm_result {
-                Ok(pcm) => transcribe_openai(&pcm, sample_rate),
-                Err(e) => Err(e),
+            // The live session's text is the answer when it worked; otherwise the
+            // kept clip goes up the old way, so a dropped socket still yields text.
+            let streamed = live_session.map(|s| s.finish());
+            match (streamed, pcm_result) {
+                (Some(Ok(text)), _) => Ok(text),
+                (Some(Err(e)), Ok(pcm)) => {
+                    eprintln!("[Dictation] Live stream failed ({e}); uploading the clip instead");
+                    transcribe_openai(&pcm, sample_rate)
+                }
+                (None, Ok(pcm)) => transcribe_openai(&pcm, sample_rate),
+                (_, Err(e)) => Err(e),
             }
         }
     };
@@ -267,12 +330,46 @@ fn run_audio_thread(
 
 fn dispatch(
     mono: &[i16],
-    recognizer: &Option<Arc<Mutex<Recognizer>>>,
+    recognizer: &Option<Arc<Mutex<VoskState>>>,
     buffer: &Option<Arc<Mutex<Vec<i16>>>>,
+    on_live: &Option<Arc<LiveSink>>,
 ) {
     if let Some(r) = recognizer {
-        if let Ok(mut rec) = r.lock() {
-            let _ = rec.accept_waveform(mono);
+        if let Ok(mut st) = r.lock() {
+            match st.rec.accept_waveform(mono) {
+                Ok(DecodingState::Finalized) => {
+                    // A pause ended this utterance: keep its text, or the next one
+                    // overwrites it inside the recogniser.
+                    let text = st
+                        .rec
+                        .result()
+                        .single()
+                        .map(|s| s.text.trim().to_string())
+                        .unwrap_or_default();
+                    if !text.is_empty() {
+                        st.committed = join_text(&st.committed, &text);
+                    }
+                    st.last_partial.clear();
+                    if let Some(cb) = on_live {
+                        cb(st.committed.clone());
+                    }
+                    st.last_emit = Instant::now();
+                }
+                Ok(DecodingState::Running) => {
+                    if let Some(cb) = on_live {
+                        if st.last_emit.elapsed() >= Duration::from_millis(200) {
+                            let partial = st.rec.partial_result().partial.trim().to_string();
+                            if partial != st.last_partial {
+                                let live = join_text(&st.committed, &partial);
+                                st.last_partial = partial;
+                                cb(live);
+                            }
+                            st.last_emit = Instant::now();
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
     if let Some(b) = buffer {
@@ -319,9 +416,11 @@ fn transcribe_openai(pcm: &[i16], sample_rate: u32) -> Result<String, String> {
         .mime_str("audio/wav")
         .map_err(|e| format!("MIME error: {e}"))?;
     let form = reqwest::blocking::multipart::Form::new()
-        .text("model", "whisper-1")
+        .text("model", crate::DICTATION_MODEL)
         .part("file", part);
 
+    let secs = pcm.len() as f32 / sample_rate.max(1) as f32;
+    let t_upload = Instant::now();
     let response = client
         .post("https://api.openai.com/v1/audio/transcriptions")
         .header("Authorization", format!("Bearer {api_key}"))
@@ -337,6 +436,7 @@ fn transcribe_openai(pcm: &[i16], sample_rate: u32) -> Result<String, String> {
     let json: serde_json::Value = response
         .json()
         .map_err(|e| format!("Failed to parse OpenAI response: {e}"))?;
+    println!("[⏱️ PERF] Dictation: {:.1}s of audio transcribed in {:.2}s ({})", secs, t_upload.elapsed().as_secs_f32(), crate::DICTATION_MODEL);
     json["text"]
         .as_str()
         .map(|s| s.trim().to_string())

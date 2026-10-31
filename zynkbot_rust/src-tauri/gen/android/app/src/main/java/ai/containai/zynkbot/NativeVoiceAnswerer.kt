@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit
 object NativeVoiceAnswerer {
     private const val TAG = "NativeVoiceAnswerer"
     private const val ERROR_LINE = "Zynkbot couldn't get an answer. Check the A I key in settings."
+    private const val SEARCHING_LINE = "Let me check that."
 
     /** The model's fixed reply when a hands-free transcript is not a request (see the
      *  hands-free note in android_jni.rs). Handled as "nothing to say": close tone, no
@@ -34,11 +35,9 @@ object NativeVoiceAnswerer {
     @Volatile private var tts: TextToSpeech? = null
 
     /**
-     * True from the start of answer() until the reply has finished playing. Hard gate:
-     * WakeWordService refuses to start the microphone listener while this is true, no
-     * matter who asks (the web side's timers, the session's re-arm). Without it the
-     * listener came back mid-reply, heard Zynkbot's own voice, and sent the reply
-     * back as a new question (OnePlus, 2026-09-04).
+     * True from the start of answer() until the reply has finished playing. The page
+     * mirrors it on the Stop button. The microphone is handled by WakeWordService's
+     * state (a turn), not by this flag, since the 2026-10-20 rebuild.
      */
     @Volatile var speaking: Boolean = false
         private set
@@ -60,8 +59,11 @@ object NativeVoiceAnswerer {
 
     @Volatile private var currentSpeaker: SentenceSpeaker? = null
 
-    /** One finished hands-free exchange, queued for the app's chat. */
-    data class Turn(val sessionId: String, val question: String, val answer: String, val at: Long)
+    /** One finished hands-free exchange, queued for the app's chat. `sources` is the
+     *  reply's web_search_results object as JSON text, or "" when there was no search;
+     *  the page attaches it to the answer so the search-sources drop-down appears
+     *  exactly as it does for a typed search (2026-09-22). */
+    data class Turn(val sessionId: String, val question: String, val answer: String, val at: Long, val preAnswer: String = "", val sources: String = "")
 
     private val pendingTurns = java.util.Collections.synchronizedList(mutableListOf<Turn>())
 
@@ -75,9 +77,13 @@ object NativeVoiceAnswerer {
         val arr = org.json.JSONArray()
         synchronized(pendingTurns) {
             for (t in pendingTurns) {
-                arr.put(org.json.JSONObject()
+                val o = org.json.JSONObject()
                     .put("sessionId", t.sessionId).put("question", t.question)
-                    .put("answer", t.answer).put("at", t.at))
+                    .put("answer", t.answer).put("at", t.at).put("preAnswer", t.preAnswer)
+                if (t.sources.isNotEmpty()) {
+                    try { o.put("sources", org.json.JSONObject(t.sources)) } catch (_: Exception) {}
+                }
+                arr.put(o)
             }
             pendingTurns.clear()
         }
@@ -90,7 +96,10 @@ object NativeVoiceAnswerer {
         abortRequested = false
         speaking = true
         try { onSpeakingChanged?.invoke(true) } catch (_: Exception) {}
-        try { WakeWordService.instance?.releaseMicForSession(500) } catch (_: Exception) {}
+        // Inside a turn already (a wake, the session): nothing to do. Outside one (a
+        // page question answered by voice): open a turn so the detector does not hear
+        // this, and close it after.
+        val began = try { WakeWordService.instance?.beginTurn() ?: false } catch (_: Exception) { false }
         try {
             val engine = engine(context) ?: return
             val speaker = SentenceSpeaker(engine)
@@ -100,7 +109,7 @@ object NativeVoiceAnswerer {
         } finally {
             speaking = false
             try { onSpeakingChanged?.invoke(false) } catch (_: Exception) {}
-            try { WakeWordService.instance?.resumeMicAfterSession() } catch (_: Exception) {}
+            if (began) try { WakeWordService.instance?.endTurn() } catch (_: Exception) {}
         }
     }
 
@@ -111,6 +120,15 @@ object NativeVoiceAnswerer {
      * will be spoken (android_jni::HANDS_FREE_NOTE); this is the safety net for
      * models that ignore that. The chat still receives the original markdown.
      */
+    /** Drops the containment guard's banner ("⚠️ WARNING: … Proceeding with caution.")
+     *  that Sovereign mode prepends to a flagged reply, up to its blank line. */
+    fun stripGuardWarning(reply: String): String {
+        val t = reply.trimStart()
+        if (!(t.startsWith("⚠️") || t.startsWith("WARNING:") || t.startsWith("[WARN_ALLOW]"))) return reply
+        val cut = t.indexOf("\n\n")
+        return if (cut < 0) "" else t.substring(cut + 2).trimStart()
+    }
+
     fun cleanForSpeech(raw: String): String {
         var t = raw
         t = t.replace(Regex("```[\\s\\S]*?```"), " ")
@@ -139,20 +157,15 @@ object NativeVoiceAnswerer {
         abortRequested = false
         speaking = true
         try { onSpeakingChanged?.invoke(true) } catch (_: Exception) {}
-        // The speaking flag only blocks *starts* of the wake-word loop. If the loop is
-        // already running (the recording watch re-armed it the moment dictation ended,
-        // before this reply began — Pixel, build23), stop it now, or the phone hears
-        // its own answer and fires on it. Re-armed in the finally below.
-        try { WakeWordService.instance?.releaseMicForSession(500) } catch (_: Exception) {}
+        // A wake or the assistant session has the turn open already; then this is a
+        // no-op and the owner ends the turn. Otherwise this reply is its own turn.
+        val began = try { WakeWordService.instance?.beginTurn() ?: false } catch (_: Exception) { false }
         try {
             return answerInner(context, transcript)
         } finally {
             speaking = false
             try { onSpeakingChanged?.invoke(false) } catch (_: Exception) {}
-            // Speech is over: hand the microphone back to the wake word. Anything that
-            // tried to re-arm while we were speaking was refused, so this is the one
-            // re-arm that counts.
-            try { WakeWordService.instance?.resumeMicAfterSession() } catch (_: Exception) {}
+            if (began) try { WakeWordService.instance?.endTurn() } catch (_: Exception) {}
         }
     }
 
@@ -165,20 +178,45 @@ object NativeVoiceAnswerer {
         var noQuery = false
         try {
             ZynkCore.nativeSendMessage(
-                transcript, "", "", "", "guardian",
+                transcript, "", "", "", "sovereign", // default mode, 2026-09-20 — see App.jsx
                 object : ZynkCore.Callback {
                     override fun onToken(token: String) { speaker.feed(token) }
                     override fun onEvent(name: String, payloadJson: String) {
+                        if (name == "web-search") {
+                            // The model's first answer ("I don't have that stored…") is being
+                            // replaced by a searched one: stop voicing it and start fresh.
+                            speaker.reset()
+                            // The search plus a second model call can take a minute or more,
+                            // and until now that whole stretch was silent after the "sent"
+                            // chime. Mike (2026-09-20) gave up waiting and asked again before
+                            // the first answer had finished. A short spoken cue here buys
+                            // back that time without changing anything about the search itself.
+                            // A brief pause first: stopping the engine and immediately asking it
+                            // to speak again raced silently in the field 2026-09-21 (timing in
+                            // the log matched how long the line takes to say, but nothing was
+                            // heard) — a short gap for the engine to settle after stop() is a
+                            // known workaround for Android's TextToSpeech doing this.
+                            try { Thread.sleep(150) } catch (_: InterruptedException) {}
+                            Log.i(TAG, "Speaking search filler: \"$SEARCHING_LINE\"")
+                            speaker.speakNow(SEARCHING_LINE)
+                            Log.i(TAG, "Search filler call returned (spokeAnything=${speaker.spokeAnything()})")
+                            return
+                        }
                         if (name == "voice-session") {
                             sessionId = try { org.json.JSONObject(payloadJson).optString("session_id", "") } catch (_: Exception) { "" }
                         }
                     }
                     override fun onDone(replyJson: String) {
-                        val replyText = try {
-                            org.json.JSONObject(replyJson).optString("reply_text", "")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Could not parse native reply: ${e.message}"); ""
+                        val parsed = try { org.json.JSONObject(replyJson) } catch (e: Exception) {
+                            Log.w(TAG, "Could not parse native reply: ${e.message}"); null
                         }
+                        // The containment guard's warning banner is for the screen, never
+                        // for speech; the reply is what follows it.
+                        val replyText = stripGuardWarning(parsed?.optString("reply_text", "") ?: "")
+                        // What the model said before an automatic web search; shown as its
+                        // own message above the searched answer (2026-09-20).
+                        val preAnswer = parsed?.optString("pre_search_reply", "") ?: ""
+                        val sources = parsed?.optJSONObject("web_search_results")?.toString() ?: ""
                         Log.i(TAG, "Native reply: \"${replyText.take(80)}\"")
                         if (replyText.trim().startsWith(NO_QUERY)) {
                             Log.i(TAG, "Model judged the transcript not a request — staying silent")
@@ -188,13 +226,20 @@ object NativeVoiceAnswerer {
                         } else if (replyText.isNotBlank()) {
                             // Queue the exchange for the app's chat now, not after speech:
                             // if the app is open it shows the answer while it is being read.
-                            pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis()))
+                            pendingTurns.add(Turn(sessionId, transcript, replyText, System.currentTimeMillis(), preAnswer, sources))
                             try { onTurnCompleted?.invoke() } catch (_: Exception) {}
                         }
                         // Not reported as a real interaction: a fluent TV line the model
                         // chose to answer ("Lindsey Clancy", 2026-09-08) would otherwise
                         // reset the back-off. Only clock commands do (ZynkAssistantSession.answerAndFinish).
                         speaker.finish(replyText)
+                        // The clip's label is decided here and nowhere else: a spoken answer
+                        // is a real wake; NO_QUERY stays false (labelled above). Until
+                        // 2026-10-20 the callers labelled the clip real whenever this
+                        // function returned "handled", which NO_QUERY also does, so every
+                        // TV line the model dismissed trained the verifier as the owner's
+                        // voice (26 of 74 wakes on the Pixel that day).
+                        if (!noQuery && speaker.spokeAnything()) WakeWordService.labelClip(true)
                     }
                     override fun onError(message: String) { failure = message }
                 },
@@ -364,6 +409,16 @@ object NativeVoiceAnswerer {
         /** Nothing to say: drop unspoken text before finish() would voice it. */
         @Synchronized fun discard() { buffer.setLength(0); stopped = true }
 
+        /** A new reply is replacing the current one mid-turn (web search): drop what
+         *  has not been spoken yet, cut what is being spoken, and accept new tokens. */
+        @Synchronized fun reset() {
+            buffer.setLength(0)
+            stopped = false
+            try { engine.stop() } catch (_: Exception) {}
+            pending.clear()
+            synchronized(allDone) { allDone.notifyAll() }
+        }
+
         /** Stop pressed: nothing queued matters any more; release finish() at once. */
         fun abort() {
             pending.clear()
@@ -375,15 +430,22 @@ object NativeVoiceAnswerer {
             while (true) {
                 val idx = sentenceEnd(buffer)
                 if (idx < 0) break
-                val sentence = buffer.substring(0, idx + 1).trim()
+                val sentence = withoutMarker(buffer.substring(0, idx + 1).trim())
                 buffer.delete(0, idx + 1)
                 if (sentence.isNotEmpty()) enqueue(sentence, flush = utterances == 0)
             }
             if (force && buffer.isNotBlank()) {
-                enqueue(buffer.toString().trim(), flush = utterances == 0)
+                val rest = withoutMarker(buffer.toString().trim())
+                if (rest.isNotEmpty()) enqueue(rest, flush = utterances == 0)
                 buffer.setLength(0)
             }
         }
+
+        /** The cloud reply ends with a hidden "MEMORY: yes|no" line for the memory
+         *  pipeline (conversation_engine). The page strips it; the streamed speech did
+         *  not, and a Pixel reply said "memory no" out loud (Matt, 2026-10-25). */
+        private fun withoutMarker(s: String): String =
+            s.replace(Regex("(?i)[\\s*_`(\\[-]*(memory|remember)\\s*[*_`]*\\s*[:\\-—]\\s*(yes|no)[.!)\\]*_`\\s]*$"), "").trim()
 
         /** Index of a sentence terminator followed by whitespace/end, else -1. Requires a
          *  few words first so "e.g." / "1." don't trigger a one-word utterance. */

@@ -1,14 +1,14 @@
 # Zynkbot Database Schema
 
 **Database:** `zynkbot.db` (SQLite, embedded — no server process)
-**Last Updated:** 2026-05-30
+**Last Updated:** 2026-10-25 (added `memory_jobs`, migration 0023)
 **Schema:** Applied automatically via SQLx migrations in `zynkbot_rust/src-tauri/migrations/`
 
 ---
 
 ## Overview
 
-Zynkbot uses SQLite for all persistent storage. The database contains **19 tables and 1 view** across five functional areas: core memory, knowledge base, ZynkSync, ZynkLink, ZChat, and conversation history. Vector similarity search is performed in-process by the Rust backend using Candle ML — no database extension required.
+Zynkbot uses SQLite for all persistent storage. The database contains **21 tables and 1 view** across six functional areas: core memory, knowledge base, ZynkSync, ZynkLink, ZChat, conversation history, and the memory job queue (the count in this sentence was 19 until 2026-10-25; the sections below were numbered 1–20 and `memory_jobs` is 21). Vector similarity search is performed in-process by the Rust backend using Candle ML — no database extension required.
 
 ---
 
@@ -94,21 +94,18 @@ CREATE TABLE memory_links (
     CONSTRAINT memory_links_check CHECK (source_memory_id <> target_memory_id),
     CONSTRAINT memory_links_confidence_check CHECK (confidence >= 0.0 AND confidence <= 1.0),
     CONSTRAINT memory_links_relation_type_check CHECK (
-        relation_type IN ('supports', 'contradicts', 'elaborates',
-                          'reminds_of', 'caused_by', 'quotes', 'resolves')
+        relation_type IN ('contradicts', 'updates', 'related', 'resolves')  -- since 0022
     ),
     UNIQUE (source_memory_id, target_memory_id, relation_type)
 );
 ```
 
-**Relation Types:**
-- `supports` / `supported_by` - One memory supports another
-- `contradicts` / `contradicted_by` - Conflicting information
-- `elaborates` / `elaborated_by` - Adds detail to another memory
-- `reminds_of` - Associative connection
-- `caused_by` / `causes` - Causal relationship
-- `quotes` / `quoted_by` - One memory quotes another
-- `resolves` / `resolved_by` - Conflict resolution
+**Relation Types** (migration 0022, 2026-10-23 — the table was rebuilt to change this CHECK):
+- `related` - Same specific subject; pulled into recall. Absorbed `supports`, `elaborates`, `caused_by`
+- `contradicts` / `contradicted_by` - Conflicting information; the user is asked
+- `updates` / `updated_by` - The source memory replaces the target; the target gets `memories.temporal_status = 'superseded'`
+- `resolves` / `resolved_by` - The user's explanation of a resolved conflict
+- Dropped: `reminds_of`, `quotes`, `mentions` (rows deleted by 0022)
 
 **Indexes:**
 - `idx_memory_links_source` - B-tree on source_memory_id
@@ -145,11 +142,8 @@ CREATE VIEW memory_relationships AS
   SELECT target_memory_id AS memory_id,
          source_memory_id AS related_memory_id,
          CASE relation_type
-           WHEN 'supports' THEN 'supported_by'
            WHEN 'contradicts' THEN 'contradicted_by'
-           WHEN 'elaborates' THEN 'elaborated_by'
-           WHEN 'caused_by' THEN 'causes'
-           WHEN 'quotes' THEN 'quoted_by'
+           WHEN 'updates' THEN 'updated_by'
            WHEN 'resolves' THEN 'resolved_by'
            ELSE relation_type
          END AS relation_type,
@@ -631,6 +625,45 @@ CREATE TABLE zynk_device_certificates (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ```
+
+---
+
+### 21. memory_jobs
+
+**Purpose:** The memory pipeline's background job queue (migration 0023, 2026-10-24). After a reply, the memory work for the message (call 2: the facts; call 3: their links) is a row here; one worker per process runs the rows in order when the model is idle, an interruption by the user's next message leaves the row pending, a real failure retries up to four times, and rows survive an app restart. Before this, a spawned task per message gave up after three interruptions and quick questions lost facts.
+
+**Schema:**
+```sql
+CREATE TABLE IF NOT EXISTS memory_jobs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        TEXT NOT NULL,
+    user_id           TEXT NOT NULL,
+    message           TEXT NOT NULL,
+    backend           TEXT NOT NULL,
+    source_type       TEXT NOT NULL DEFAULT 'conversation',
+    containment_mode  TEXT NOT NULL DEFAULT 'sovereign',
+    explicit_remember INTEGER NOT NULL DEFAULT 0,
+    remember_text     TEXT,
+    user_name         TEXT,
+    recent_turns      TEXT,
+    query_entities    TEXT NOT NULL DEFAULT '[]',
+    status            TEXT NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    error             TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS memory_jobs_status_idx ON memory_jobs(status, id);
+```
+
+**Key Columns:**
+- `message` - the user's message the facts are taken from (never stored as a memory itself; each fact keeps it as `memories.original_text`)
+- `source_type` - `conversation` or `hands_free`, carried onto the memories
+- `explicit_remember` / `remember_text` - a `Remember:` message: the text is stored verbatim and call 2 is skipped
+- `recent_turns` - the last exchange, given to call 2 only so it can resolve pronouns
+- `status` - a `running` row untouched for five minutes is taken again (the app was killed mid-job)
+
+**Code:** `src-tauri/src/memory_jobs.rs` (`enqueue`, `take_next`, `mark`, `ensure_worker`, `process`).
 
 ---
 

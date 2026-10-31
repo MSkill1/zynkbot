@@ -41,3 +41,28 @@ rustflags = ["-C", "target-cpu=x86-64"]
 # passing the LLVM spelling as well only produced an "unknown feature" warning on every
 # Android build (removed 2026-09-13).
 rustflags = ["-C", "target-feature=+fp16"]
+
+[env]
+# SQLite overwrites deleted rows with zeros instead of leaving their bytes in free pages
+# until the file is compacted (2026-10-27). A deleted conversation or memory is then gone
+# from the file, not just from the index. A compile-time default rather than a per-connection
+# PRAGMA because the crate opens connections in ninety places; the bundled SQLite build
+# script reads this variable. Covers desktop and Android alike.
+LIBSQLITE3_FLAGS = "-DSQLITE_SECURE_DELETE"
+# llama.cpp CPU kernels for Android. Until 2026-10-23 this pinned GGML_CPU_ARM_ARCH to
+# "armv8.2-a+dotprod+fp16" (phones from about 2018 on; the 2016 baseline read a 910-token
+# prompt at about 10 tokens/s on a Pixel 10 Pro XL). With the engine's backends built as
+# loadable modules (Cargo.toml, `dynamic-backends`), ggml builds every ARM CPU variant and
+# picks the best one for the phone at start-up, and refuses the pin ("Cannot use both
+# GGML_CPU_ARM_ARCH and GGML_CPU_ALL_VARIANTS"), so the pin is gone.
+# Desktop GPU builds (--features cuda): the engine's CUDA kernels must be position-independent
+# to link into the app; the C++ side already is. Without this, llama-cpp-2 0.1.160 fails at
+# link time with "relocation R_X86_64_PC32 cannot be used against symbol 'stderr'" (KI-098,
+# 2026-10-23). The toolkit reads CUDAFLAGS at configure time, so a changed value needs
+# `cargo clean -p llama-cpp-sys-2` once. Harmless for Android, which has no CUDA.
+CUDAFLAGS = "-Xcompiler -fPIC"
+# Android OpenCL backend (2026-10-23): llama-cpp-sys-2's build script hands these to CMake
+# as OpenCL_INCLUDE_DIR / OpenCL_LIBRARY when its `opencl` feature is on (the NDK has no
+# OpenCL SDK). Paths are relative to this file's parent, so they travel with the repo.
+OPENCL_INCLUDE_DIR = { value = "src-tauri/android-opencl/include", relative = true }
+OPENCL_LIBRARY = { value = "src-tauri/android-opencl/lib/libOpenCL.so", relative = true }

@@ -222,7 +222,7 @@ ANTHROPIC_API_KEY=
 XAI_API_KEY=
 
 # Safety
-ZYNK_CONTAINMENT_MODE=guardian
+ZYNK_CONTAINMENT_MODE=sovereign
 
 # ZynkSync
 ZYNKSYNC_AUTO_SYNC=true
@@ -350,9 +350,12 @@ echo "Would you like to download local LLM models for offline inference?"
 echo "These are not required — you can use API models (OpenAI, Anthropic, xAI) instead."
 echo ""
 echo "Available models:"
-echo "  1. Qwen3 8B (5.0GB)                     - Best all-around; recommended for new users"
-echo "  2. DeepSeek R1 Distill Llama 8B (4.7GB) - Reasoning model; analytical tasks"
-echo "  3. Llama 3.1 8B Lexi Uncensored (4.9GB) - Creative, unfiltered responses"
+echo "  1. Zynkbot model: Qwen3 4B Instruct 2507 (2.4GB) - The model Zynkbot is built around; fast, checksum verified"
+echo "  2. Qwen3 8B (5.0GB)                     - Larger all-around model for a desktop with the RAM"
+echo "  3. DeepSeek R1 Distill Llama 8B (4.7GB) - Reasoning model; analytical tasks"
+echo "  4. Llama 3.1 8B Lexi Uncensored (4.9GB) - Creative, unfiltered responses"
+echo ""
+echo "The app also offers the Zynkbot model at its first start, so this step can be skipped."
 echo ""
 echo "Enter model numbers to download (space-separated, e.g. '1 2 3'), or press Enter to skip."
 echo ""
@@ -365,6 +368,21 @@ if [ -n "$model_choices" ]; then
         case $choice in
             1)
                 echo ""
+                echo "📥 Downloading the Zynkbot model (2.4GB)..."
+                if wget -c https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_0.gguf -O Qwen3-4B-Instruct-2507-Q4_0.gguf; then
+                    echo "   Checking the file..."
+                    if echo "e0ba675d86ab277c61701c6793659b2ae801d95e3be791464c321e6fbf613be2  Qwen3-4B-Instruct-2507-Q4_0.gguf" | sha256sum -c --quiet; then
+                        echo "✅ Zynkbot model downloaded and verified"
+                    else
+                        echo "❌ The downloaded file did not match its checksum; removing it. Run the script again."
+                        rm -f Qwen3-4B-Instruct-2507-Q4_0.gguf
+                    fi
+                else
+                    echo "❌ Failed to download the Zynkbot model (check internet connection)"
+                fi
+                ;;
+            2)
+                echo ""
                 echo "📥 Downloading Qwen3 8B (5.0GB)..."
                 if wget -c https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf -O Qwen3-8B-Q4_K_M.gguf; then
                     echo "✅ Qwen3 8B downloaded"
@@ -372,7 +390,7 @@ if [ -n "$model_choices" ]; then
                     echo "❌ Failed to download Qwen3 8B (check internet connection)"
                 fi
                 ;;
-            2)
+            3)
                 echo ""
                 echo "📥 Downloading DeepSeek R1 Distill Llama 8B (4.7GB)..."
                 if wget -c https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf -O DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf; then
@@ -381,7 +399,7 @@ if [ -n "$model_choices" ]; then
                     echo "❌ Failed to download DeepSeek R1 Distill Llama 8B (check internet connection)"
                 fi
                 ;;
-            3)
+            4)
                 echo ""
                 echo "📥 Downloading Llama 3.1 8B Lexi Uncensored (4.9GB)..."
                 if wget -c https://huggingface.co/bartowski/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF/resolve/main/Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf -O Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf; then

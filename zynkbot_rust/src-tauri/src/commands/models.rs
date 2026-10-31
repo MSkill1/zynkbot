@@ -164,6 +164,171 @@ pub async fn list_user_models() -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// One model file on this device, for the Current Model page's list (2026-10-23).
+#[derive(Debug, serde::Serialize)]
+pub struct LocalModelFile {
+    pub filename: String,
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+/// The model files the engine can see, with sizes. Until 2026-10-23 a phone had no
+/// way to see or remove a model once it was on the device (Matt: "I don't even know
+/// where that folder is").
+#[tauri::command]
+pub async fn list_local_model_files() -> Result<Vec<LocalModelFile>, String> {
+    let user_models_dir = crate::db::get_models_dir().join("user");
+    let mut files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&user_models_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() || !path.extension().map_or(false, |e| e.eq_ignore_ascii_case("gguf")) { continue; }
+            let Some(filename) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            files.push(LocalModelFile { filename: filename.to_string(), path: path.to_string_lossy().to_string(), size_bytes });
+        }
+    }
+    files.sort_by(|a, b| a.filename.to_lowercase().cmp(&b.filename.to_lowercase()));
+    Ok(files)
+}
+
+/// The folder the engine scans for models, created if missing. The desktop downloads a
+/// model from a linked device straight into it; a phone downloads into its share folder
+/// first (so the model can be passed on) and then installs it from there.
+#[tauri::command]
+pub async fn models_user_dir() -> Result<String, String> {
+    let dir = crate::db::get_models_dir().join("user");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create the models folder: {}", e))?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// Make a model file available to the engine without taking it away from where it is
+/// (Matt, 2026-10-23: a model in the share folder stays there so it can be traded on
+/// over Wi-Fi). The file is linked into the models folder, which lists the same file
+/// in two places while using the space once; when the two folders are on different
+/// filesystems it is copied instead. Returns the installed path and how it got there.
+#[tauri::command]
+pub async fn add_model_from_file(path: String) -> Result<serde_json::Value, String> {
+    let models_user = crate::db::get_models_dir().join("user");
+    let (installed, how) = install_model_file(std::path::Path::new(&path), &models_user)?;
+    println!("[RUST] Model {} ({}): {}", installed.display(), how, path);
+    Ok(serde_json::json!({ "path": installed.to_string_lossy(), "how": how }))
+}
+
+pub(crate) fn install_model_file(src: &std::path::Path, models_user: &std::path::Path) -> Result<(std::path::PathBuf, &'static str), String> {
+    if !src.is_file() { return Err(format!("Model file not found: {}", src.display())); }
+    if !src.extension().map_or(false, |e| e.eq_ignore_ascii_case("gguf")) {
+        return Err("Only .gguf model files can be added".to_string());
+    }
+    let filename = src.file_name().ok_or("Model file has no name")?;
+    std::fs::create_dir_all(models_user).map_err(|e| format!("Could not create the models folder: {}", e))?;
+    let dest = models_user.join(filename);
+    if dest.exists() {
+        let same = match (std::fs::canonicalize(src), std::fs::canonicalize(&dest)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+        let same = same || same_file(src, &dest);
+        if same { return Ok((dest, "already")); }
+        return Err(format!("A model named {} is already installed; remove it first", filename.to_string_lossy()));
+    }
+    match std::fs::hard_link(src, &dest) {
+        Ok(()) => Ok((dest, "linked")),
+        Err(_) => {
+            std::fs::copy(src, &dest).map_err(|e| format!("Could not copy the model into the models folder: {}", e))?;
+            Ok((dest, "copied"))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(ma), Ok(mb)) => ma.dev() == mb.dev() && ma.ino() == mb.ino(),
+        _ => false,
+    }
+}
+#[cfg(not(unix))]
+fn same_file(_a: &std::path::Path, _b: &std::path::Path) -> bool { false }
+
+/// Move a model out of the models folder to a place the user chose (desktop "Move to…";
+/// Android does this through the system picker in MainActivity). A rename when the
+/// destination is on the same filesystem, otherwise copy then delete.
+#[tauri::command]
+pub async fn move_user_model(filename: String, destination_path: String) -> Result<String, String> {
+    let models_user = crate::db::get_models_dir().join("user");
+    let dest = move_model_file(&models_user, &filename, std::path::Path::new(&destination_path))?;
+    println!("[RUST] Moved user model {} to {}", filename, dest.display());
+    Ok(dest.to_string_lossy().to_string())
+}
+
+pub(crate) fn move_model_file(models_user: &std::path::Path, filename: &str, destination: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let src = models_user.join(filename);
+    if !src.starts_with(models_user) || filename.contains('/') || filename.contains('\\') {
+        return Err("Invalid filename".to_string());
+    }
+    if !src.is_file() { return Err(format!("Model file not found: {}", filename)); }
+    let dest = if destination.is_dir() { destination.join(filename) } else { destination.to_path_buf() };
+    if dest.exists() { return Err(format!("{} already exists", dest.display())); }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Could not create {}: {}", parent.display(), e))?;
+    }
+    if std::fs::rename(&src, &dest).is_err() {
+        std::fs::copy(&src, &dest).map_err(|e| format!("Could not copy the model: {}", e))?;
+        std::fs::remove_file(&src).map_err(|e| format!("Copied, but could not remove the original: {}", e))?;
+    }
+    Ok(dest)
+}
+
+#[cfg(test)]
+mod model_file_tests {
+    use super::*;
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("zynk_model_files_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+    #[test]
+    fn a_model_in_the_share_is_linked_not_moved_and_adding_again_is_a_no_op() {
+        let d = scratch("link");
+        let share = d.join("share"); let models = d.join("models/user");
+        std::fs::create_dir_all(&share).unwrap();
+        let src = share.join("tiny.gguf"); std::fs::write(&src, b"GGUF").unwrap();
+        let (dest, how) = install_model_file(&src, &models).unwrap();
+        assert!(src.is_file(), "the share copy stays");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"GGUF");
+        assert!(how == "linked" || how == "copied");
+        let (_, again) = install_model_file(&src, &models).unwrap();
+        assert_eq!(again, "already");
+        let other = share.join("other.txt"); std::fs::write(&other, b"x").unwrap();
+        assert!(install_model_file(&other, &models).is_err(), "only .gguf");
+    }
+    #[test]
+    fn a_different_file_with_the_same_name_is_refused() {
+        let d = scratch("clash");
+        let models = d.join("models/user"); std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(models.join("m.gguf"), b"installed").unwrap();
+        let src = d.join("m.gguf"); std::fs::write(&src, b"different").unwrap();
+        let err = install_model_file(&src, &models).unwrap_err();
+        assert!(err.contains("already installed"), "{}", err);
+    }
+    #[test]
+    fn moving_a_model_out_leaves_the_models_folder_and_refuses_bad_names() {
+        let d = scratch("move");
+        let models = d.join("models/user"); std::fs::create_dir_all(&models).unwrap();
+        std::fs::write(models.join("m.gguf"), b"GGUF").unwrap();
+        let out = d.join("elsewhere");
+        let dest = move_model_file(&models, "m.gguf", &out.join("kept.gguf")).unwrap();
+        assert_eq!(dest, out.join("kept.gguf"));
+        assert!(!models.join("m.gguf").exists());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"GGUF");
+        assert!(move_model_file(&models, "../m.gguf", &out).is_err());
+        assert!(move_model_file(&models, "missing.gguf", &out).is_err());
+    }
+}
+
 /// Delete a user model file by filename
 #[tauri::command]
 pub async fn delete_user_model(filename: String) -> Result<(), String> {
@@ -222,6 +387,12 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
     if let Ok(model) = std::env::var("MISTRAL_MODEL") {
         keys.insert("MISTRAL_MODEL".to_string(), serde_json::json!(model));
     }
+    // Web search for local models (2026-10-27).
+    for k in ["BRAVE_SEARCH_API_KEY", "SEARXNG_URL"] {
+        if let Ok(v) = std::env::var(k) {
+            keys.insert(k.to_string(), serde_json::json!(v));
+        }
+    }
     if let Ok(v) = std::env::var("R2_ENDPOINT") {
         keys.insert("R2_ENDPOINT".to_string(), serde_json::json!(v));
     }
@@ -240,39 +411,12 @@ pub async fn get_api_keys() -> Result<serde_json::Value, String> {
 /// Set an API key in the .env file and current session
 #[tauri::command]
 pub async fn set_api_key(key: String, value: String) -> Result<(), String> {
-    let env_path = crate::db::get_app_data_dir().join(".env");
-
-    println!("[API Keys] Selected .env path: {:?}", env_path);
     println!("[API Keys] Saving {} (value length: {} chars)", key, value.len());
-
-    let content = std::fs::read_to_string(&env_path)
-        .unwrap_or_else(|e| {
-            eprintln!("[API Keys] Warning: could not read .env ({}), starting fresh", e);
-            String::new()
-        });
-
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let key_prefix = format!("{}=", key);
-
-    let mut found = false;
-    for line in &mut lines {
-        if line.starts_with(&key_prefix) {
-            *line = format!("{}={}", key, value);
-            found = true;
-            break;
-        }
+    apply_env_key(&key, &value)?;
+    if PROPAGATABLE_KEYS.contains(&key.as_str()) {
+        record_secret(&key, Some(&value)).await;
     }
-
-    if !found {
-        lines.push(format!("{}={}", key, value));
-    }
-
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
-
-    std::env::set_var(&key, &value);
-
-    println!("[API Keys] ✅ Successfully saved {} to .env at {:?}", key, env_path);
+    println!("[API Keys] ✅ Saved {}", key);
     Ok(())
 }
 
@@ -287,16 +431,8 @@ pub async fn set_preferred_backend(backend: String) -> Result<(), String> {
         return Err("backend must not be empty".to_string());
     }
     let env_path = crate::db::get_app_data_dir().join(".env");
-    let content = std::fs::read_to_string(&env_path).unwrap_or_default();
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let prefix = "ZYNK_MODEL_BACKEND=";
-    let line = format!("{}{}", prefix, backend);
-    match lines.iter_mut().find(|l| l.starts_with(prefix)) {
-        Some(existing) => *existing = line,
-        None => lines.push(line),
-    }
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
+    // Quoted when needed: a bare Windows path made the whole file unreadable (KI-083).
+    crate::env_file::upsert(&env_path, "ZYNK_MODEL_BACKEND", &backend)?;
     std::env::set_var("ZYNK_MODEL_BACKEND", &backend);
     println!("[Backend] Preferred backend set to '{}'", backend);
     Ok(())
@@ -305,28 +441,11 @@ pub async fn set_preferred_backend(backend: String) -> Result<(), String> {
 /// Remove an API key from the .env file
 #[tauri::command]
 pub async fn remove_api_key(key: String) -> Result<(), String> {
-    let env_path = crate::db::get_app_data_dir().join(".env");
-
-    let content = std::fs::read_to_string(&env_path)
-        .unwrap_or_else(|e| {
-            eprintln!("[API Keys] Warning: could not read .env ({}), starting fresh", e);
-            String::new()
-        });
-
-    let key_prefix = format!("{}=", key);
-
-    let lines: Vec<String> = content
-        .lines()
-        .filter(|line| !line.starts_with(&key_prefix))
-        .map(|s| s.to_string())
-        .collect();
-
-    std::fs::write(&env_path, lines.join("\n"))
-        .map_err(|e| format!("Failed to write .env file at {:?}: {}", env_path, e))?;
-
-    std::env::remove_var(&key);
-
-    println!("[API Keys] ✅ Removed {} from .env at {:?}", key, env_path);
+    remove_env_key(&key)?;
+    if PROPAGATABLE_KEYS.contains(&key.as_str()) {
+        record_secret(&key, None).await;
+    }
+    println!("[API Keys] ✅ Removed {}", key);
     Ok(())
 }
 
@@ -340,6 +459,48 @@ pub async fn propagate_api_key(key: String, value: String) -> Result<serde_json:
 ///
 /// Name under which the backup encryption key rides along with an API-key push.
 pub const BACKUP_KEY_PUSH_NAME: &str = "ZYNKBOT_BACKUP_KEY";
+
+/// The keys that travel between a user's devices. CUSTOM_* are deliberately absent: the
+/// custom endpoint is machine-local (a phone reaches Ollama through this desktop's proxy,
+/// which substitutes the desktop's model), so a pushed URL or model name would only mislead.
+pub const PROPAGATABLE_KEYS: &[&str] = &[
+    "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+    "OPENAI_API_KEY",    "OPENAI_MODEL",
+    "XAI_API_KEY",       "XAI_MODEL",
+    "MISTRAL_API_KEY",   "MISTRAL_MODEL",
+    "R2_ENDPOINT",       "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
+    // Web search for local models (2026-10-27): a Brave key, or a SearXNG server address.
+    "BRAVE_SEARCH_API_KEY", "SEARXNG_URL",
+];
+
+/// Write one key into this device's .env and the process environment. Used by the
+/// Settings save, the old push route and the outbox receiver, so they cannot drift.
+pub fn apply_env_key(key: &str, value: &str) -> Result<(), String> {
+    let env_path = crate::db::get_app_data_dir().join(".env");
+    crate::env_file::upsert(&env_path, key, value)?;
+    std::env::set_var(key, value);
+    Ok(())
+}
+
+/// Remove one key from this device's .env and the process environment.
+pub fn remove_env_key(key: &str) -> Result<(), String> {
+    let env_path = crate::db::get_app_data_dir().join(".env");
+    crate::env_file::remove(&env_path, key)?;
+    std::env::remove_var(key);
+    Ok(())
+}
+
+/// Record a key in sync_secrets so the outbox carries it to every device (0014). Best
+/// effort: the .env write has already happened, and the next drain re-seeds from the
+/// environment anyway, so a failure here only delays the sync by a cycle.
+pub async fn record_secret(name: &str, value: Option<&str>) {
+    let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await else { return };
+    let _ = match value {
+        Some(v) => crate::sync_outbox::record_secret(&pool, name, v).await,
+        None => crate::sync_outbox::forget_secret(&pool, name).await,
+    };
+    pool.close().await;
+}
 
 /// The UI used to call propagate_api_key once per key, and each call re-ran the
 /// whole peer loop. With the shared client's 30s timeout, a single unreachable
@@ -358,67 +519,27 @@ pub async fn propagate_api_keys(entries: Vec<(String, String)>) -> Result<serde_
             entries.push((BACKUP_KEY_PUSH_NAME.to_string(), key_hex));
         }
     }
-    // Collect what we need and release the lock before doing any network I/O.
-    // Holding ZYNKSYNC_SERVICE across the requests blocked the background sync
-    // loop, which wants the same lock.
-    let (targets, http_client) = {
-        let guard = crate::ZYNKSYNC_SERVICE.lock().await;
-        let service = guard.as_ref().ok_or("ZynkSync not running — start sync first")?;
-        let targets: Vec<(String, String)> = service.get_peers().await
-            .into_iter()
-            .filter(|p| p.paired && !p.host.is_empty())
-            .map(|p| (p.device_id.clone(), p.host.clone()))
-            .collect();
-        (targets, service.get_http_client().await)
-    };
-
-    // Pushing a key on a LAN is a sub-second operation. The shared client's 30s
-    // timeout exists for large sync payloads and is far too long here.
-    const PUSH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-    let mut succeeded = 0usize;
-    let mut failed = 0usize;
-    let mut unreachable: Vec<String> = Vec::new();
-
-    for (device_id, host) in &targets {
-        let short = &device_id[..8.min(device_id.len())];
-        let url = format!("https://{}:57963/api/zynksync/push-api-key", host);
-        let mut peer_ok = 0usize;
-        let mut peer_failed = false;
-
-        for (key, value) in &entries {
-            let payload = serde_json::json!({ "key": key, "value": value });
-            match http_client.post(&url).timeout(PUSH_TIMEOUT).json(&payload).send().await {
-                Ok(r) if r.status().is_success() => { peer_ok += 1; succeeded += 1; }
-                Ok(r) => {
-                    println!("[ZynkSync] ✗ Push {} to {}… returned {}", key, short, r.status());
-                    failed += 1;
-                }
-                Err(e) => {
-                    println!("[ZynkSync] ✗ Push {} to {}… failed: {}", key, short, e);
-                    failed += 1;
-                    // The peer is down; skip its remaining keys rather than paying
-                    // the timeout once per key.
-                    peer_failed = true;
-                    break;
-                }
-            }
-        }
-
-        if peer_failed {
-            unreachable.push(format!("{} ({})", short, host));
-            failed += entries.len().saturating_sub(peer_ok);
-        } else {
-            println!("[ZynkSync] ✓ {} key(s) pushed to {}…", peer_ok, short);
-        }
+    // Since step 5 of the sync rebuild this records each key with the current time and
+    // the outbox carries it to every paired device on the next cycle — the one that is
+    // off gets it when it returns, which the old direct push never managed (KI-055).
+    // Recording with "now" is also what makes a pressed button mean "this value wins".
+    for (key, value) in &entries {
+        record_secret(key, Some(value)).await;
     }
-
+    let peers = {
+        let guard = crate::ZYNKSYNC_SERVICE.lock().await;
+        match guard.as_ref() {
+            Some(service) => service.get_peers().await.into_iter().filter(|p| p.paired).count(),
+            None => 0,
+        }
+    };
     Ok(serde_json::json!({
-        "succeeded": succeeded,
-        "failed": failed,
-        "total": targets.len() * entries.len(),
-        "peers": targets.len(),
-        "unreachable": unreachable,
+        "succeeded": entries.len() * peers,
+        "failed": 0,
+        "total": entries.len() * peers,
+        "peers": peers,
+        "unreachable": Vec::<String>::new(),
+        "queued": true,
     }))
 }
 

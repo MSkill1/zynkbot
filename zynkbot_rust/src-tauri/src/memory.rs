@@ -49,6 +49,12 @@ pub struct Memory {
     /// JSON array of lowercase topic words from the decision call (migration 0011).
     #[sqlx(default)]
     pub tags: Option<String>,
+    /// NULL for a current memory; "completed" once the user answered a check-in question
+    /// with "done" (labs/check_in, 2026-10-29); "superseded" once an "updates" link replaced it with a
+    /// newer memory (migration 0022, 2026-10-23). A superseded memory leaves recall and
+    /// stays visible in Memory Manager as history, with a way back.
+    #[sqlx(default)]
+    pub temporal_status: Option<String>,
     #[sqlx(default)]
     pub similarity: Option<f64>,
 }
@@ -92,6 +98,59 @@ fn blob_to_f32(blob: &[u8]) -> Vec<f32> {
 
 pub fn blob_to_f32_pub(blob: &[u8]) -> Vec<f32> {
     blob_to_f32(blob)
+}
+
+/// The text a memory's embedding is made from: the title and the fact together
+/// ("Weight 305 this morning. User's weight was exactly 305 this morning.") since
+/// 2026-10-25. The recall bench on a real database found the right memory in the
+/// phone's top four for 21/29 questions this way against 19/29 for the fact alone
+/// (labs/recall_bench). A title the content already starts with is not repeated.
+pub const EMBEDDING_SCHEME: &str = "title_fact_v1";
+pub fn embedding_text(title: Option<&str>, content: &str) -> String {
+    match title.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) if !content.trim().to_lowercase().starts_with(&t.to_lowercase()) => format!("{}. {}", t.trim_end_matches('.'), content.trim()),
+        _ => content.trim().to_string(),
+    }
+}
+
+/// Once per database: when the embedding scheme changed, every memory with a title is
+/// re-embedded in the background so recall and the new memories agree. The scheme in
+/// use is kept in app_settings; nothing runs when it already matches.
+pub async fn reembed_if_scheme_changed(pool: &SqlitePool) -> Result<usize, String> {
+    let current: Option<String> = sqlx::query_scalar("SELECT value FROM app_settings WHERE key = 'memory_embedding_scheme'")
+        .fetch_optional(pool).await.map_err(|e| e.to_string())?;
+    if current.as_deref() == Some(EMBEDDING_SCHEME) { return Ok(0); }
+    let rows: Vec<(i32, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, title, content FROM memories WHERE embedding IS NOT NULL AND title IS NOT NULL AND title != ''")
+        .fetch_all(pool).await.map_err(|e| e.to_string())?;
+    println!("[Memory] Embedding scheme {} -> {}: re-embedding {} memories", current.unwrap_or_else(|| "none".into()), EMBEDDING_SCHEME, rows.len());
+    let mut done = 0usize;
+    for chunk in rows.chunks(32) {
+        let texts: Vec<String> = chunk.iter().map(|(_, t, c)| embedding_text(t.as_deref(), c)).collect();
+        let embs = tokio::task::spawn_blocking(move || crate::llm::local_embeddings::generate_local_embeddings_batch(texts, Some(32)))
+            .await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+        for ((id, _, _), e) in chunk.iter().zip(embs) {
+            let blob: Vec<u8> = e.iter().flat_map(|f| f.to_le_bytes()).collect();
+            sqlx::query("UPDATE memories SET embedding = ? WHERE id = ?").bind(blob).bind(id).execute(pool).await.map_err(|e| e.to_string())?;
+            done += 1;
+        }
+    }
+    sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES ('memory_embedding_scheme', ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .bind(EMBEDDING_SCHEME).execute(pool).await.map_err(|e| e.to_string())?;
+    println!("[Memory] Re-embedded {} memories", done);
+    Ok(done)
+}
+
+#[cfg(test)]
+mod embedding_text_tests {
+    #[test]
+    fn title_joins_the_fact_once() {
+        use super::embedding_text as e;
+        assert_eq!(e(Some("Weight 305 this morning"), "User's weight was exactly 305 this morning."), "Weight 305 this morning. User's weight was exactly 305 this morning.");
+        assert_eq!(e(Some("Keto bread: 1g carb per slice"), "Keto bread: 1g carb per slice of the brand I use."), "Keto bread: 1g carb per slice of the brand I use.");
+        assert_eq!(e(None, "I park on level 3"), "I park on level 3");
+        assert_eq!(e(Some("  "), "x"), "x");
+    }
 }
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -198,8 +257,9 @@ async fn fetch_memories_by_ids(
     let sql = format!(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
-                is_syncable, is_shareable, event_type, event_date,
-                link_count, is_ephemeral, expires_at, entities_detected, original_text
+                is_syncable, is_shareable, event_type,
+                CASE WHEN length(event_date) = 10 THEN event_date || 'T00:00:00+00:00' ELSE event_date END AS event_date,
+                link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE id IN ({})",
         placeholders
     );
@@ -327,7 +387,9 @@ pub async fn hybrid_search(
     // Step 1: fetch candidates that have an embedding or entity data
     let mut sql = String::from(
         "SELECT id, embedding, entities_detected FROM memories \
-         WHERE (embedding IS NOT NULL OR (entities_detected IS NOT NULL AND entities_detected != '[]'))",
+         WHERE (embedding IS NOT NULL OR (entities_detected IS NOT NULL AND entities_detected != '[]')) \
+         AND (temporal_status IS NULL OR temporal_status NOT IN ('superseded', 'completed')) \
+         AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now'))",
     );
     // Exclude system memories EXCEPT when explicitly searching the system user.
     // Zynkbot system-doc queries pass user_id = "system"; without this guard the
@@ -430,8 +492,9 @@ pub async fn list_memories(
     let mut sql = String::from(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
-                is_syncable, is_shareable, event_type, event_date,
-                link_count, is_ephemeral, expires_at, entities_detected, original_text
+                is_syncable, is_shareable, event_type,
+                CASE WHEN length(event_date) = 10 THEN event_date || 'T00:00:00+00:00' ELSE event_date END AS event_date,
+                link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE user_id != 'system'",
     );
 
@@ -468,8 +531,9 @@ pub async fn get_memory(
     sqlx::query_as::<_, Memory>(
         "SELECT id, title, content, source_type, session_id, created_at, updated_at, tags,
                 parent_scroll_id, chunk_index, user_id, namespace,
-                is_syncable, is_shareable, event_type, event_date,
-                link_count, is_ephemeral, expires_at, entities_detected, original_text
+                is_syncable, is_shareable, event_type,
+                CASE WHEN length(event_date) = 10 THEN event_date || 'T00:00:00+00:00' ELSE event_date END AS event_date,
+                link_count, is_ephemeral, expires_at, entities_detected, original_text, temporal_status
          FROM memories WHERE id = ?",
     )
     .bind(memory_id)
@@ -610,6 +674,35 @@ pub async fn get_memory_links(
     .await
 }
 
+/// The relationship types the app stores (migration 0022, 2026-10-23). Each one makes
+/// the app do something different: "contradicts" asks the user, "updates" replaces an
+/// older memory and keeps it as history, "related" pulls the linked memory into recall,
+/// "resolves" is the user's own explanation of a settled conflict.
+pub const RELATION_TYPES: [&str; 4] = ["contradicts", "updates", "related", "resolves"];
+
+/// The stored name for a relationship type, including the names used before 0022 (an
+/// older device may still send them). `None` for a type that is no longer stored.
+pub fn normalize_relation_type(t: &str) -> Option<&'static str> {
+    match t {
+        "contradicts" => Some("contradicts"),
+        "updates" => Some("updates"),
+        "related" | "supports" | "elaborates" | "caused_by" => Some("related"),
+        "resolves" => Some("resolves"),
+        _ => None,
+    }
+}
+
+/// Mark a memory as replaced by a newer one (`Some("superseded")`) or current again
+/// (`None`). Bumps updated_at so the change syncs.
+pub async fn set_temporal_status(pool: &SqlitePool, memory_id: i32, status: Option<&str>) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE memories SET temporal_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(status)
+        .bind(memory_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Create a new memory link (semantic relationship).
 #[allow(dead_code)]
 pub async fn create_memory_link(
@@ -621,14 +714,10 @@ pub async fn create_memory_link(
     notes: Option<&str>,
     created_by: &str,
 ) -> Result<i32, sqlx::Error> {
-    let valid_types = [
-        "supports", "contradicts", "elaborates", "reminds_of",
-        "caused_by", "quotes", "resolves", "mentions",
-    ];
-    if !valid_types.contains(&relation_type) {
+    if !RELATION_TYPES.contains(&relation_type) {
         return Err(sqlx::Error::Protocol(format!(
             "Invalid relation_type: {}. Must be one of: {:?}",
-            relation_type, valid_types
+            relation_type, RELATION_TYPES
         )));
     }
     if !(0.0..=1.0).contains(&confidence) {
@@ -736,4 +825,15 @@ pub async fn insert_memory_entities(
         n += r.rows_affected() as usize;
     }
     Ok(n)
+}
+
+/// Write a raised card down so it survives the window being gone (migration 0024).
+pub async fn insert_memory_card(pool: &SqlitePool, user_id: &str, session_id: &str, payload: &serde_json::Value) -> Result<i64, sqlx::Error> {
+    let stored = payload.get("stored_memory_id").and_then(|v| v.as_i64());
+    let conflicting = payload.pointer("/memoryA/id").and_then(|v| v.as_i64());
+    let r = sqlx::query(
+        "INSERT INTO memory_cards (user_id, session_id, stored_memory_id, conflicting_memory_id, payload_json) VALUES (?, ?, ?, ?, ?)")
+        .bind(user_id).bind(session_id).bind(stored).bind(conflicting).bind(payload.to_string())
+        .execute(pool).await?;
+    Ok(r.last_insert_rowid())
 }

@@ -1,6 +1,6 @@
 .chat-message {
-  margin-bottom: 0.5rem;
-  padding: 1rem;
+  margin-bottom: 6px;
+  padding: 10px 16px;
   background: #22232a;
   border-radius: 8px;
   border-left: 3px solid #44475a;
@@ -94,7 +94,7 @@
 }
 
 .message-bot {
-  padding-top: 1rem;
+  padding-top: 0.6rem;
   border-top: 1px solid #282a36;
 }
 
@@ -102,7 +102,43 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 4px;
+}
+
+/* Wide screens (2026-10-29, Matt): the buttons sit on the name line, right-aligned,
+   instead of on a row of their own under the text; a row per message made every
+   exchange about 60 px taller than the early UI. Phones keep the row below, where it
+   stopped landing on top of short replies (2026-09-07). The grid places the name
+   and the buttons on row 1 and everything else full-width below them. */
+@media (min-width: 769px) {
+  .message-user,
+  .message-bot {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 8px;
+    align-items: center;
+  }
+  .message-user > *,
+  .message-bot > * {
+    grid-column: 1 / -1;
+    min-width: 0;
+  }
+  .message-user > .message-header,
+  .message-bot > .message-header {
+    grid-column: 1;
+    grid-row: 1;
+    margin-bottom: 0;
+  }
+  .message-user > .message-action-row,
+  .message-bot > .message-action-row {
+    grid-column: 2;
+    grid-row: 1;
+    margin-top: 0;
+  }
+  .message-user > .message-content,
+  .message-bot > .message-content {
+    margin-top: 4px;
+  }
 }
 
 .message-header strong {
@@ -217,4 +253,15 @@
     border-left: none;
     padding: 0.75rem 0.25rem;
   }
+}
+
+/* The exchange a memory came from, when opened from the Memory Manager (2026-10-16). */
+.chat-message.message-highlight {
+  outline: 2px solid #8be9fd;
+  outline-offset: 4px;
+  border-radius: 8px;
+  transition: outline-color 1.5s ease;
+}
+.chat-message.message-highlight-fade {
+  outline-color: transparent;
 }

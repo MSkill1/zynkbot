@@ -34,6 +34,10 @@ object ZynkCore {
      * its own copy of that logic. The thread id comes back as a "voice-session"
      * event before the first token.
      */
+    /** Give Rust the application context and the notification class, once, at start. */
+    @JvmStatic
+    external fun nativeInit(context: android.content.Context)
+
     @JvmStatic
     external fun nativeSendMessage(
         message: String,

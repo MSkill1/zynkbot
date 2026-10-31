@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import "../styles/ChatMessage.css";
 
-export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit, onReport }) {
+export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit, onReport, onSpeak, isSpeaking }) {
   const [editDraft, setEditDraft] = useState(message.content || "");
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (isEditing) setEditDraft(message.content || ""); }, [isEditing, message.content]);
@@ -16,7 +16,32 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
   };
   // Handle both old format {user, bot} and new format {role, content}
   const isUserMessage = message.role === 'user';
-  const content = message.content;
+  // While a reply streams, its last line may be the hidden "PICTURE:" or "MEMORY:" marker
+  // the backend cuts from the final text; keep it off the screen meanwhile (2026-10-28).
+  // Pictures sent with this message, held while the thread is open; tap one to see it large,
+  // hold it to save it to the gallery (Android).
+  const images = isUserMessage && Array.isArray(message.images) ? message.images : [];
+  const [bigImage, setBigImage] = useState(null);
+  const [saveNote, setSaveNote] = useState('');
+  const holdTimer = React.useRef(null);
+  let content = message.content;
+  if (message.isStreaming && typeof content === 'string') {
+    content = content.replace(/\n[*_`# ]*(PICTURE|MEMORY)\s*:[^\n]*$/i, '');
+  }
+  // The "[Picture: …]" record stays in the stored text for History, sync and the model;
+  // while the picture itself is on screen the line is not shown (Matt, 2026-10-28).
+  if (images.length > 0 && typeof content === 'string') {
+    content = content.replace(/\n?\[Picture:[^\]]*\]\s*/g, '').trim();
+  }
+  const saveToGallery = (img) => {
+    if (!window.AndroidPaths?.saveImageBase64ToGallery) return;
+    if (!window.confirm('Save this picture to the gallery (Pictures/Zynkbot)?')) return;
+    const r = window.AndroidPaths.saveImageBase64ToGallery(img.base64, img.mimeType || 'image/jpeg');
+    setSaveNote(r ? `Could not save: ${r}` : 'Saved to the gallery.');
+    setTimeout(() => setSaveNote(''), 4000);
+  };
+  const holdStart = (img) => { clearTimeout(holdTimer.current); holdTimer.current = setTimeout(() => { holdTimer.current = null; saveToGallery(img); }, 600); };
+  const holdEnd = () => { clearTimeout(holdTimer.current); };
   const recalled_memories = message.recalled_memories || metadata?.recalled_memories || [];
   const schema = metadata?.schema;
   // Set by the backend when the KB button was on but the search found no real
@@ -39,7 +64,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
 
   if (isUserMessage) {
     return (
-      <div className="chat-message">
+      <div className="chat-message" id={message?.id != null ? `message-${message.id}` : undefined}>
         <div className="message-user">
           <div className="message-header">
             <strong>You:</strong>
@@ -76,6 +101,32 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
             </div>
           ) : (
             <>
+              {images.length > 0 && (
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                  {images.map((img, i) => (
+                    <img
+                      key={i}
+                      src={`data:${img.mimeType};base64,${img.base64}`}
+                      alt=""
+                      onClick={() => setBigImage(bigImage === i ? null : i)}
+                      onTouchStart={() => holdStart(img)}
+                      onTouchEnd={holdEnd}
+                      onTouchMove={holdEnd}
+                      onContextMenu={(e) => { e.preventDefault(); saveToGallery(img); }}
+                      title={bigImage === i ? 'Tap to shrink' : 'Tap to enlarge; hold to save to the gallery'}
+                      style={bigImage === i
+                        ? { maxWidth: '100%', maxHeight: '70vh', borderRadius: '8px', cursor: 'zoom-out' }
+                        : { maxWidth: '160px', maxHeight: '160px', borderRadius: '8px', cursor: 'zoom-in', objectFit: 'cover' }}
+                    />
+                  ))}
+                  {saveNote
+                    ? <div style={{ width: '100%', fontSize: '0.75rem', color: '#8be9fd' }}>{saveNote}</div>
+                    : window.AndroidPaths?.saveImageBase64ToGallery && (
+                      // The hold gesture is invisible, so say it once under the pictures (phones only).
+                      <div style={{ width: '100%', fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)' }}>Hold a picture to save it to the gallery</div>
+                    )}
+                </div>
+              )}
               <div className="message-content">{content}</div>
               <div className="message-action-row">
                 <button className="message-action-btn" onClick={handleCopy} title="Copy message">
@@ -101,7 +152,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
 
   // Bot message
   return (
-    <div className="chat-message">
+    <div className="chat-message" id={message?.id != null ? `message-${message.id}` : undefined}>
       <div className="message-bot">
         <div className="message-header">
           <strong>Zynkbot:</strong>
@@ -169,7 +220,7 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
               <button
                 onClick={() => {
                   if (editedQuery.trim()) {
-                    onExecuteWebSearch(message.id, editedQuery.trim(), originalQuery);
+                    onExecuteWebSearch(message.id, editedQuery.trim(), originalQuery, undefined, message.content);
                     setShowSearchPrompt(false);
                   }
                 }}
@@ -311,6 +362,16 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
               aria-label="Report a problem with this reply"
             >
               ⚑ Report
+            </button>
+          )}
+          {onSpeak && (
+            <button
+              className="message-action-btn"
+              onClick={onSpeak}
+              title={isSpeaking ? 'Stop reading' : 'Read this reply aloud'}
+              aria-label={isSpeaking ? 'Stop reading' : 'Read this reply aloud'}
+            >
+              {isSpeaking ? '■ Stop' : '🔊 Read aloud'}
             </button>
           )}
         </div>

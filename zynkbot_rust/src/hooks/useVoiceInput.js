@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export function useVoiceInput() {
   const [isRecording, setIsRecording] = useState(false);
@@ -8,15 +9,34 @@ export function useVoiceInput() {
   const processorRef = useRef(null);
   const streamRef = useRef(null);
   const audioBufferRef = useRef([]);
+  // Live text (2026-10-20): while Vosk is listening, the words recognised so far are
+  // handed to `onLive(text)` as they change — Android through window.__voskLive from
+  // the Kotlin bridge, desktop through the "dictation-live" Tauri event. Since
+  // 2026-10-28 the Linux OpenAI path streams the audio to OpenAI's Realtime session
+  // and sends the same event, and Android's OpenAI dictation goes through the Kotlin
+  // bridge (OpenAiRealtime.kt) with the same window.__voskLive callback, so both
+  // engines show words as they are spoken there too. The browser-audio OpenAI path
+  // (Windows, macOS) still hears the whole clip only when recording stops.
+  const onLiveRef = useRef(null);
+  const liveUnlistenRef = useRef(null);
+  const stopLive = () => {
+    window.__voskLive = null;
+    try { liveUnlistenRef.current?.(); } catch (_) {}
+    liveUnlistenRef.current = null;
+    onLiveRef.current = null;
+  };
 
   const isAndroid = () => !!window.VoskBridge;
   // 'vosk' (offline, no punctuation) or 'openai' (cloud Whisper). Persists in localStorage.
   const getSource = () => localStorage.getItem('zynkbot_voice_input_source') || 'vosk';
 
-  // ── Android / Vosk path ──────────────────────────────────────────────────
+  // ── Android path (both engines, through the Kotlin bridge) ───────────────
 
+  // The bridge picks Vosk or OpenAI from the Voice settings selector (mirrored to the
+  // Kotlin side by setVoiceInputSource); the window.__vosk* callbacks serve both.
   const startRecordingVosk = () => {
     window.__voskPartial = null; // clear any stale wake-word callback before dictation
+    window.__voskLive = (text) => { onLiveRef.current?.(text || ''); };
     setIsRecording(true);
     window.__voskError = (msg) => {
       setIsRecording(false);
@@ -83,12 +103,27 @@ export function useVoiceInput() {
     return wavData;
   };
 
+  // Let go of the microphone and the audio graph. Every failure path calls this:
+  // a stream left open after an error kept the Pixel's native wake-word listener
+  // paused for 13 minutes (2026-09-19) — it pauses whenever anything else records.
+  const releaseMic = () => {
+    try { processorRef.current?.disconnect(); } catch (_) {}
+    processorRef.current = null;
+    try { streamRef.current?.getTracks().forEach(t => t.stop()); } catch (_) {}
+    streamRef.current = null;
+    try { audioContextRef.current?.close(); } catch (_) {}
+    audioContextRef.current = null;
+  };
+
   const startRecordingDesktop = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
       streamRef.current = stream;
+      // Android ends the track itself when the capture pipe breaks; treat that as a
+      // stop so nothing is left holding the microphone.
+      stream.getTracks().forEach(track => { track.onended = () => { if (streamRef.current === stream) { releaseMic(); setIsRecording(false); } }; });
       audioBufferRef.current = [];
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
@@ -102,6 +137,7 @@ export function useVoiceInput() {
       processor.connect(audioContext.destination);
       setIsRecording(true);
     } catch (error) {
+      releaseMic();
       console.error('[VoiceInput] Failed to start recording:', error);
       const isLinux = navigator.platform.toLowerCase().includes('linux') && !window.AndroidPaths;
       alert(isLinux
@@ -110,15 +146,14 @@ export function useVoiceInput() {
     }
   };
 
-  // WebAudio → WAV → OpenAI Whisper. Used by Android when source === 'openai'.
-  // On desktop, both engines use the Rust mic path (this function is unused there).
+  // WebAudio → WAV → OpenAI Whisper. Used by Windows and macOS when source === 'openai'.
+  // Android used it too until 2026-10-28 (now the Kotlin bridge); Linux uses the Rust
+  // mic path for both engines.
   const stopRecordingDesktop = async () => {
     setIsRecording(false);
     setIsTranscribing(true);
     try {
-      if (processorRef.current) { processorRef.current.disconnect(); processorRef.current = null; }
-      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-      if (audioContextRef.current) { await audioContextRef.current.close(); audioContextRef.current = null; }
+      releaseMic();
 
       const totalLength = audioBufferRef.current.reduce((acc, chunk) => acc + chunk.length, 0);
       const audioData = new Float32Array(totalLength);
@@ -131,6 +166,7 @@ export function useVoiceInput() {
       const text = await invoke('transcribe_audio', { audioData: audioArray });
       return text;
     } catch (error) {
+      releaseMic();
       console.error('[VoiceInput] Transcription failed:', error);
       alert('Transcription failed: ' + error);
       return '';
@@ -147,6 +183,9 @@ export function useVoiceInput() {
   const startRecordingDesktopRust = async (source) => {
     const cmd = source === 'openai' ? 'start_openai_recording' : 'start_vosk_recording';
     try {
+      if (onLiveRef.current) {
+        liveUnlistenRef.current = await listen('dictation-live', (e) => { onLiveRef.current?.(e.payload || ''); });
+      }
       await invoke(cmd);
       setIsRecording(true);
     } catch (error) {
@@ -179,12 +218,13 @@ export function useVoiceInput() {
   // navigator.platform reports "Win32" on 64-bit Windows too.
   const isDesktopWindows = () => navigator.platform.toLowerCase().includes('win');
 
-  const startRecording = async () => {
+  const startRecording = async ({ onLive } = {}) => {
     const source = getSource();
+    onLiveRef.current = typeof onLive === 'function' ? onLive : null;
     if (isAndroid()) {
-      // Android WebView is Chromium — getUserMedia works, so OpenAI uses the
-      // same WebAudio path as pre-Vosk. Vosk still goes through the Kotlin bridge.
-      if (source === 'openai') return startRecordingDesktop();
+      // Both engines go through the Kotlin bridge, which reads the selector itself:
+      // Vosk offline, or OpenAI streamed live (2026-10-28; before that OpenAI recorded
+      // here through getUserMedia and heard the whole clip only on stop).
       return startRecordingVosk();
     }
     if (isDesktopLinux()) {
@@ -204,10 +244,8 @@ export function useVoiceInput() {
   const stopRecording = async () => {
     if (!isRecording) return '';
     const source = getSource();
-    if (isAndroid()) {
-      if (source === 'openai') return stopRecordingDesktop();
-      return stopRecordingVosk();
-    }
+    stopLive();
+    if (isAndroid()) return stopRecordingVosk();
     if (isDesktopLinux()) {
       return stopRecordingDesktopRust(source);
     }

@@ -1,0 +1,1591 @@
+{
+ "version": 1,
+ "subject": "Matt",
+ "note": "Memory bench cases (2026-10-22). Extraction: a produced fact matches an expected one when it contains every term in `must`; messages with an empty `expected` should produce nothing; `days_ago` names the event date the fact should carry, relative to the run day; `context` is the exchange just before the message. Relationships: one existing memory per case; expected type among updates/contradicts/related/none (four types since 2026-10-23). Synthetic, plain personal facts; not anyone's private life. 2026-10-24: e71-e84 added from the kinds of junk seen in real use (translation requests, pasted third-party text, questions restated as facts, TV speech) plus dated facts, feelings, and two cases that need the previous turn to resolve a pronoun.",
+ "extraction": [
+  {
+   "id": "e01",
+   "message": "I have a cat named Louie.",
+   "expected": [
+    {
+     "must": [
+      "cat",
+      "louie"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e02",
+   "message": "My favorite breakfast is bacon and eggs.",
+   "expected": [
+    {
+     "must": [
+      "bacon",
+      "eggs"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e03",
+   "message": "I'm 52 and I work as a software developer.",
+   "expected": [
+    {
+     "must": [
+      "52"
+     ]
+    },
+    {
+     "must": [
+      "software"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e04",
+   "message": "My sister Janet lives in Vermont.",
+   "expected": [
+    {
+     "must": [
+      "janet",
+      "vermont"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e05",
+   "message": "I've been feeling really down lately.",
+   "expected": [
+    {
+     "must": [
+      "down"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e06",
+   "message": "I'm planning a trip to Indiana in April.",
+   "expected": [
+    {
+     "must": [
+      "indiana",
+      "april"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e07",
+   "message": "We just adopted a golden retriever puppy. We named him Max.",
+   "expected": [
+    {
+     "must": [
+      "golden",
+      "max"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e08",
+   "message": "My mother's birthday is on the 14th of March.",
+   "expected": [
+    {
+     "must": [
+      "mother",
+      "march"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e09",
+   "message": "I started taking blood pressure medication last week.",
+   "expected": [
+    {
+     "must": [
+      "blood pressure"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e10",
+   "message": "My wife's name is Carol and we've been married 23 years.",
+   "expected": [
+    {
+     "must": [
+      "carol"
+     ]
+    },
+    {
+     "must": [
+      "23"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e11",
+   "message": "I drive a 2019 Subaru Outback.",
+   "expected": [
+    {
+     "must": [
+      "subaru"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e12",
+   "message": "I'm allergic to shellfish.",
+   "expected": [
+    {
+     "must": [
+      "shellfish"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e13",
+   "message": "My daughter Emma just started college at UVM.",
+   "expected": [
+    {
+     "must": [
+      "emma",
+      "college"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e14",
+   "message": "I quit smoking three months ago.",
+   "expected": [
+    {
+     "must": [
+      "smoking"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e15",
+   "message": "I grew up in Rutland.",
+   "expected": [
+    {
+     "must": [
+      "rutland"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e16",
+   "message": "My knee has been hurting since the hike on Saturday.",
+   "expected": [
+    {
+     "must": [
+      "knee"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e17",
+   "message": "I'm learning Spanish with an app, about twenty minutes a day.",
+   "expected": [
+    {
+     "must": [
+      "spanish"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e18",
+   "message": "I don't eat red meat anymore.",
+   "expected": [
+    {
+     "must": [
+      "red meat"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e19",
+   "message": "My brother Dave is coming to visit next weekend.",
+   "expected": [
+    {
+     "must": [
+      "dave",
+      "visit"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e20",
+   "message": "I retired from the post office in 2022.",
+   "expected": [
+    {
+     "must": [
+      "retired"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e21",
+   "message": "Raspberry pie is my favorite. What's a good recipe?",
+   "expected": [
+    {
+     "must": [
+      "raspberry"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e22",
+   "message": "My dog Rex keeps scratching his ears. What could cause that?",
+   "expected": [
+    {
+     "must": [
+      "rex"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e23",
+   "message": "I'm flying to Denver on Thursday for my nephew's wedding. What should I pack?",
+   "expected": [
+    {
+     "must": [
+      "denver"
+     ]
+    },
+    {
+     "must": [
+      "nephew",
+      "wedding"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e24",
+   "message": "Since my hip replacement in June, what exercises are safe?",
+   "expected": [
+    {
+     "must": [
+      "hip"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e25",
+   "message": "My son Tom is turning 16 next month. Any gift ideas?",
+   "expected": [
+    {
+     "must": [
+      "tom",
+      "16"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e26",
+   "message": "I have a cat named Louie, and I'm planning a trip to Indiana in the spring, April probably.",
+   "expected": [
+    {
+     "must": [
+      "cat",
+      "louie"
+     ]
+    },
+    {
+     "must": [
+      "indiana",
+      "april"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e27",
+   "message": "I'm 68, I live alone in Burlington, and my daughter Sarah checks on me on Sundays.",
+   "expected": [
+    {
+     "must": [
+      "68"
+     ]
+    },
+    {
+     "must": [
+      "burlington"
+     ]
+    },
+    {
+     "must": [
+      "sarah",
+      "sunday"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e28",
+   "message": "We're having my parents over for Thanksgiving this year, and my dad just got hearing aids.",
+   "expected": [
+    {
+     "must": [
+      "thanksgiving"
+     ]
+    },
+    {
+     "must": [
+      "hearing"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e29",
+   "message": "I've got a dentist appointment Tuesday at 2 and my car inspection is due at the end of the month.",
+   "expected": [
+    {
+     "must": [
+      "dentist",
+      "tuesday"
+     ]
+    },
+    {
+     "must": [
+      "inspection"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e30",
+   "message": "My neighbor Phil mows my lawn now that my back is bad.",
+   "expected": [
+    {
+     "must": [
+      "phil",
+      "lawn"
+     ]
+    },
+    {
+     "must": [
+      "back"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e31",
+   "message": "I've been anxious about the layoffs at work.",
+   "expected": [
+    {
+     "must": [
+      "anxious"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e32",
+   "message": "I'm going to start a book series about my grandfather's war years.",
+   "expected": [
+    {
+     "must": [
+      "book"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e33",
+   "message": "I finally finished the deck I've been building all summer.",
+   "expected": [
+    {
+     "must": [
+      "deck"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e34",
+   "message": "My goal is to walk 10,000 steps a day this year.",
+   "expected": [
+    {
+     "must": [
+      "10,000"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e35",
+   "message": "I'm thinking about selling the house and moving closer to the kids.",
+   "expected": [
+    {
+     "must": [
+      "house"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e36",
+   "message": "My grandson Oliver was born last night, 7 pounds 4 ounces.",
+   "expected": [
+    {
+     "must": [
+      "oliver"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e37",
+   "message": "My best friend from high school, Rick, passed away in August.",
+   "expected": [
+    {
+     "must": [
+      "rick"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e38",
+   "message": "I usually go to bed around 9 and get up at 5.",
+   "expected": [
+    {
+     "must": [
+      "9"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e39",
+   "message": "I volunteer at the food shelf on Wednesday mornings.",
+   "expected": [
+    {
+     "must": [
+      "food shelf",
+      "wednesday"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e40",
+   "message": "I take metformin twice a day.",
+   "expected": [
+    {
+     "must": [
+      "metformin"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e41",
+   "message": "I used to play trumpet in a jazz band in my twenties.",
+   "expected": [
+    {
+     "must": [
+      "trumpet"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e42",
+   "message": "I prefer tea to coffee.",
+   "expected": [
+    {
+     "must": [
+      "tea"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e43",
+   "message": "My phone number ends in 4471; please remember that for the form.",
+   "expected": [
+    {
+     "must": [
+      "4471"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e44",
+   "message": "We have a camp on Lake Champlain that we open every Memorial Day.",
+   "expected": [
+    {
+     "must": [
+      "lake champlain"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e45",
+   "message": "My cardiologist is Dr. Alvarez.",
+   "expected": [
+    {
+     "must": [
+      "alvarez"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e46",
+   "message": "I lost twelve pounds since January.",
+   "expected": [
+    {
+     "must": [
+      "twelve",
+      "pounds"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e47",
+   "message": "I'm a lifelong Red Sox fan.",
+   "expected": [
+    {
+     "must": [
+      "red sox"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e48",
+   "message": "My daughter is vegetarian so dinner needs a meatless option.",
+   "expected": [
+    {
+     "must": [
+      "daughter",
+      "vegetarian"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e49",
+   "message": "I garden a lot; tomatoes and peppers mostly.",
+   "expected": [
+    {
+     "must": [
+      "tomatoes"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e50",
+   "message": "I was in the Navy for six years after high school.",
+   "expected": [
+    {
+     "must": [
+      "navy"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e51",
+   "message": "What is the capital of France?",
+   "expected": []
+  },
+  {
+   "id": "e52",
+   "message": "What's the weather like in Morocco today?",
+   "expected": []
+  },
+  {
+   "id": "e53",
+   "message": "Good morning!",
+   "expected": []
+  },
+  {
+   "id": "e54",
+   "message": "How are you doing today?",
+   "expected": []
+  },
+  {
+   "id": "e55",
+   "message": "Can you explain how a heat pump works?",
+   "expected": []
+  },
+  {
+   "id": "e56",
+   "message": "What theories have I come up with over the years?",
+   "expected": []
+  },
+  {
+   "id": "e57",
+   "message": "What do you remember about my trips?",
+   "expected": []
+  },
+  {
+   "id": "e58",
+   "message": "Thanks, that was helpful.",
+   "expected": []
+  },
+  {
+   "id": "e59",
+   "message": "This is a test to see if the local model works.",
+   "expected": []
+  },
+  {
+   "id": "e60",
+   "message": "Just testing the response time.",
+   "expected": []
+  },
+  {
+   "id": "e61",
+   "message": "Can you summarize the 2026 report in the knowledge base?",
+   "expected": []
+  },
+  {
+   "id": "e62",
+   "message": "What's in the news today?",
+   "expected": []
+  },
+  {
+   "id": "e63",
+   "message": "Translate 'good evening' into Spanish.",
+   "expected": []
+  },
+  {
+   "id": "e64",
+   "message": "Write a limerick about a cat.",
+   "expected": []
+  },
+  {
+   "id": "e65",
+   "message": "How many ounces are in a pound?",
+   "expected": []
+  },
+  {
+   "id": "e66",
+   "message": "What do you think about the state of geopolitics right now?",
+   "expected": []
+  },
+  {
+   "id": "e67",
+   "message": "Set a timer for ten minutes.",
+   "expected": []
+  },
+  {
+   "id": "e68",
+   "message": "Who won the World Series in 2004?",
+   "expected": []
+  },
+  {
+   "id": "e69",
+   "message": "Can you check whether the wake word is working?",
+   "expected": []
+  },
+  {
+   "id": "e70",
+   "message": "Never mind, forget it.",
+   "expected": []
+  },
+  {
+   "id": "e71",
+   "message": "Please translate: I'm glad you got the money, Mrs. Rivera. Let me know how the ice cream sells.",
+   "expected": []
+  },
+  {
+   "id": "e72",
+   "message": "Translate to Spanish, print only the translation: You look great. I hope you sleep well tonight.",
+   "expected": []
+  },
+  {
+   "id": "e73",
+   "message": "She wrote back: 'Hola Mateo, lamento no haber visto tu mensaje, espero que estés bien, mi nieta está mejor.' What does it say?",
+   "expected": []
+  },
+  {
+   "id": "e74",
+   "message": "Could I put a pinch of sea salt in my coffee every morning? Would it be noticeable?",
+   "expected": []
+  },
+  {
+   "id": "e75",
+   "message": "Is there anything interesting I could do, chemistry-wise, with a jar of old cooking fat?",
+   "expected": []
+  },
+  {
+   "id": "e76",
+   "message": "Are you here? Yeah. You sure you ain't the police, right? I promise. I'm cool if you're cool.",
+   "expected": []
+  },
+  {
+   "id": "e77",
+   "message": "I replaced my kitchen scale yesterday with one that does grams and ounces.",
+   "expected": [
+    {
+     "must": [
+      "scale"
+     ],
+     "days_ago": 1
+    }
+   ]
+  },
+  {
+   "id": "e78",
+   "message": "I switched my phone plan from Verizon to T-Mobile last week.",
+   "expected": [
+    {
+     "must": [
+      "t-mobile"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e79",
+   "message": "Make a note, my weight today was 307.8 and I'm fasting.",
+   "expected": [
+    {
+     "must": [
+      "307.8"
+     ],
+     "days_ago": 0
+    },
+    {
+     "must": [
+      "fasting"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e80",
+   "message": "I've been feeling very depressed since my uncle died last month.",
+   "expected": [
+    {
+     "must": [
+      "depressed"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e81",
+   "message": "My phone plan is with Verizon.",
+   "expected": [
+    {
+     "must": [
+      "verizon"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e82",
+   "message": "I was worried about electrolytes while I was in ketosis, so I added salt.",
+   "expected": [
+    {
+     "must": [
+      "electrolyte"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e83",
+   "context": "Zynkbot: How did Louie's vet visit go?",
+   "message": "He's fine, just needed his shots. The vet said he's a little overweight.",
+   "expected": [
+    {
+     "must": [
+      "louie",
+      "shots"
+     ]
+    },
+    {
+     "must": [
+      "overweight"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e84",
+   "context": "Zynkbot: Where are you thinking of going in April?",
+   "message": "Indiana, to see my sister.",
+   "expected": [
+    {
+     "must": [
+      "indiana",
+      "sister"
+     ]
+    }
+   ]
+  }
+ ],
+ "relationships": [
+  {
+   "id": "r01",
+   "new_fact": "Matt has a cat named Louie.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a cat named Milo.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "contradicts"
+   }
+  },
+  {
+   "id": "r02",
+   "new_fact": "Matt lives in Burlington.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt lives in Rutland.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "contradicts"
+   }
+  },
+  {
+   "id": "r03",
+   "new_fact": "Matt no longer eats red meat.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt loves a good steak.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r04",
+   "new_fact": "Matt quit smoking three months ago.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt smokes a pack a day.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r05",
+   "new_fact": "Matt's sister Janet lives in Vermont.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt's sister Janet lives in Arizona.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "contradicts"
+   }
+  },
+  {
+   "id": "r06",
+   "new_fact": "Matt drives a Subaru Outback.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt drives a Ford F-150.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "contradicts"
+   }
+  },
+  {
+   "id": "r07",
+   "new_fact": "Matt is planning a trip to Indiana in April.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt took a trip to Indiana last April.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r08",
+   "new_fact": "Matt prefers tea to coffee.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt drinks four cups of coffee a day and dislikes tea.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "contradicts"
+   }
+  },
+  {
+   "id": "r09",
+   "new_fact": "Matt has a cat named Louie.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a cat.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r10",
+   "new_fact": "Matt is a lifelong Red Sox fan.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt watches every Red Sox game.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r11",
+   "new_fact": "Matt volunteers at the food shelf on Wednesdays.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt volunteers in the community.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r12",
+   "new_fact": "Matt prefers tea to coffee.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt drinks tea every morning.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r13",
+   "new_fact": "Matt has been feeling anxious about layoffs at work.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has been stressed about work.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r14",
+   "new_fact": "Matt was in the Navy for six years.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt served in the military.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r15",
+   "new_fact": "Matt's cat Louie is grey and twelve years old.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a cat named Louie.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r16",
+   "new_fact": "Matt is flying to Denver on Thursday for his nephew's wedding.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is going to Denver this week.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r17",
+   "new_fact": "Matt's daughter Emma started college at UVM.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a daughter named Emma.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r18",
+   "new_fact": "Matt takes metformin twice a day.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has type 2 diabetes.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r19",
+   "new_fact": "Matt's camp on Lake Champlain opens every Memorial Day.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a camp on Lake Champlain.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r20",
+   "new_fact": "Matt grew up in Rutland.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is from Vermont.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r21",
+   "new_fact": "Matt's cardiologist is Dr. Alvarez.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt sees a cardiologist.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r22",
+   "new_fact": "Matt lost twelve pounds since January.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is trying to lose weight.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r23",
+   "new_fact": "Matt finished building his deck this summer.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt built a bookshelf for the den last year.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r24",
+   "new_fact": "Matt is learning Spanish twenty minutes a day.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt studied French in high school.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r25",
+   "new_fact": "Matt's grandson Oliver was born last night.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt's granddaughter Lily turned three in May.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r26",
+   "new_fact": "Matt played trumpet in a jazz band in his twenties.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt likes listening to Miles Davis.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r27",
+   "new_fact": "Matt has a cat named Louie.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt drives a Subaru Outback.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r28",
+   "new_fact": "Matt prefers tea to coffee.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt's sister Janet lives in Vermont.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r29",
+   "new_fact": "Matt is allergic to shellfish.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt finished building his deck this summer.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r30",
+   "new_fact": "Matt retired from the post office in 2022.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a dentist appointment on Tuesday.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r31",
+   "new_fact": "Matt likes tea more than coffee.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt prefers tea to coffee.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r32",
+   "new_fact": "Matt still has his cat Louie.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a cat named Louie.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r33",
+   "new_fact": "Matt drives a Subaru.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt drives a 2019 Subaru Outback.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r34",
+   "new_fact": "Matt is a Red Sox fan.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is a lifelong Red Sox fan.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r35",
+   "new_fact": "Matt moved to Burlington last month.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt lives in Rutland.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r36",
+   "new_fact": "Matt's doctor switched him from lisinopril to losartan.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt takes lisinopril for his blood pressure.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r37",
+   "new_fact": "Matt just bought a Subaru Outback.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt drives a Ford F-150.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r38",
+   "new_fact": "Matt retired from the post office last spring.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt works at the post office.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r39",
+   "new_fact": "Matt's dog Max passed away in June.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a dog named Max.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r40",
+   "new_fact": "Matt now takes his coffee black.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt takes two sugars in his coffee.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r41",
+   "new_fact": "Matt switched from Verizon to T-Mobile.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt's phone is on Verizon.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r42",
+   "new_fact": "Matt used to play tennis every Saturday but stopped after his knee surgery.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt plays tennis every Saturday.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r43",
+   "new_fact": "Matt has a second cat named Pepper.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a cat named Louie.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r44",
+   "new_fact": "Matt's sister Janet is visiting from Arizona next week.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt's sister Janet lives in Arizona.",
+     "title": null
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "related"
+   }
+  },
+  {
+   "id": "r45",
+   "new_fact": "Matt parked on level five in the airport garage.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt parked on level three at the mall.",
+     "title": "Parked on level three at mall"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "updates"
+   }
+  },
+  {
+   "id": "r46",
+   "new_fact": "Matt parked on level five in the airport garage.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt has a dentist appointment on Thursday.",
+     "title": "Dentist on Thursday"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r47",
+   "new_fact": "Matt wants to retire by sixty.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is going to cut the grocery budget this month.",
+     "title": "Cutting the grocery budget"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  },
+  {
+   "id": "r48",
+   "new_fact": "Matt is flying to Denver this weekend.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt is flying to Boston this weekend.",
+     "title": "Flying to Boston this weekend"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "contradicts"
+   }
+  },
+  {
+   "id": "r49",
+   "new_fact": "Matt is making chili with beef patties for dinner tonight.",
+   "existing": [
+    {
+     "id": 101,
+     "content": "Matt had chicken wings for dinner last night.",
+     "title": "Had chicken wings last night"
+    }
+   ],
+   "expected": {
+    "memory_id": 101,
+    "type": "none"
+   }
+  }
+ ]
+}

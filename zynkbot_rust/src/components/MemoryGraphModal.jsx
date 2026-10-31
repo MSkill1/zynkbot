@@ -5,17 +5,11 @@ import "../styles/MemoryGraphModal.css";
 
 // Relationship type colors - MOVED OUTSIDE component to prevent infinite loop
 const relationColors = {
-  'supports': '#50fa7b',       // Green
-  'supported_by': '#50fa7b',
+  'related': '#8be9fd',        // Cyan
   'contradicts': '#ff5555',    // Red
   'contradicted_by': '#ff5555',
-  'elaborates': '#8be9fd',     // Cyan
-  'elaborated_by': '#8be9fd',
-  'reminds_of': '#f1fa8c',     // Yellow
-  'caused_by': '#bd93f9',      // Purple
-  'causes': '#bd93f9',
-  'quotes': '#ffb86c',         // Orange
-  'quoted_by': '#ffb86c',
+  'updates': '#50fa7b',        // Green
+  'updated_by': '#50fa7b',
   'resolves': '#ff79c6',       // Pink
   'resolved_by': '#ff79c6',
 };
@@ -41,15 +35,34 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
       const allMemories = graphResult.memories || [];
       const allLinks = graphResult.links || [];
 
-      // Build nodes from ALL memories (smaller nodes)
-      const nodes = allMemories.map(memory => ({
-        id: memory.id,
-        name: memory.title || `Memory ${memory.id}`,
-        content: memory.content,
-        namespace: memory.namespace,
-        isCenter: memory.id === memoryId,  // Highlight the selected memory
-        val: memory.id === memoryId ? 8 : 4  // Much smaller nodes to reduce overlap
-      }));
+      // Facts from one message share original_text (one memory per fact since 2026-10-24).
+      // They get the same group number and a short invisible-ish link to each other, so the
+      // layout pulls them into one cluster and the graph shows messages connecting rather
+      // than hundreds of loose dots (Matt, 2026-10-26).
+      const normalise = (t) => t.split(/\s+/).join(' ').toLowerCase();
+      const groupOf = new Map();
+      let nextGroup = 0;
+      const nodes = allMemories.map(memory => {
+        const said = (memory.original_text || '').trim();
+        let group = null;
+        if (said) {
+          const key = normalise(said);
+          if (!groupOf.has(key)) groupOf.set(key, { n: nextGroup++, ids: [] });
+          group = groupOf.get(key);
+          group.ids.push(memory.id);
+        }
+        return {
+          id: memory.id,
+          name: memory.title || `Memory ${memory.id}`,
+          content: memory.content,
+          namespace: memory.namespace,
+          said,
+          group: group ? group.n : null,
+          replaced: memory.temporal_status === 'superseded',
+          isCenter: memory.id === memoryId,  // Highlight the selected memory
+          val: memory.id === memoryId ? 8 : 4  // Much smaller nodes to reduce overlap
+        };
+      });
 
       // Build links from ALL relationships
       const links = allLinks.map(link => ({
@@ -60,6 +73,13 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
         confidence: link.confidence,
         color: relationColors[link.relation_type] || '#6272a4'
       }));
+      // Sibling links: a chain through each message's facts (not every pair, so a
+      // 16-fact message does not add 120 lines).
+      for (const { ids } of groupOf.values()) {
+        for (let i = 1; i < ids.length; i++) {
+          links.push({ id: `same-${ids[i - 1]}-${ids[i]}`, source: ids[i - 1], target: ids[i], label: 'same message', sibling: true, color: 'rgba(98, 114, 164, 0.55)' });
+        }
+      }
 
       setGraphData({ nodes, links });
     } catch (error) {
@@ -113,16 +133,21 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
     const fontSize = node.isCenter ? 14 / globalScale : 12 / globalScale;
     ctx.font = `${fontSize}px Sans-Serif`;
 
-    // Draw node circle
+    // Draw node circle; a replaced memory is grey, a fact that shares its message with
+    // others is purple, a lone memory cyan
     ctx.beginPath();
     ctx.arc(node.x, node.y, node.val, 0, 2 * Math.PI, false);
-    ctx.fillStyle = node.isCenter ? '#50fa7b' : '#8be9fd';
+    ctx.fillStyle = node.isCenter ? '#50fa7b' : node.replaced ? '#6272a4' : node.group !== null ? '#bd93f9' : '#8be9fd';
     ctx.fill();
 
     // Add border
     ctx.strokeStyle = node === selectedNode ? '#f1fa8c' : '#44475a';
     ctx.lineWidth = node === selectedNode ? 2 / globalScale : 1 / globalScale;
     ctx.stroke();
+
+    // Hundreds of labels at once are unreadable: show them zoomed in, or for the
+    // selected and centre nodes
+    if (globalScale < 1.6 && node !== selectedNode && !node.isCenter) return;
 
     // Draw label below node
     ctx.textAlign = 'center';
@@ -159,8 +184,9 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
     ctx.strokeStyle = link.color;
-    ctx.lineWidth = 2 / globalScale;
+    ctx.lineWidth = (link.sibling ? 1 : 2) / globalScale;
     ctx.stroke();
+    if (link.sibling) return; // same-message tie: no arrow, no label
 
     // Draw arrow
     const arrowLength = 10 / globalScale;
@@ -248,28 +274,28 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
           </button>
           <div className="graph-legend">
             <div className="legend-item">
-              <div className="legend-color" style={{ background: '#50fa7b' }}></div>
-              <span>Supports</span>
+              <div className="legend-color" style={{ background: '#8be9fd' }}></div>
+              <span>Related</span>
             </div>
             <div className="legend-item">
               <div className="legend-color" style={{ background: '#ff5555' }}></div>
               <span>Contradicts</span>
             </div>
             <div className="legend-item">
-              <div className="legend-color" style={{ background: '#8be9fd' }}></div>
-              <span>Elaborates</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-color" style={{ background: '#f1fa8c' }}></div>
-              <span>Reminds Of</span>
-            </div>
-            <div className="legend-item">
-              <div className="legend-color" style={{ background: '#bd93f9' }}></div>
-              <span>Causes</span>
+              <div className="legend-color" style={{ background: '#50fa7b' }}></div>
+              <span>Updates</span>
             </div>
             <div className="legend-item">
               <div className="legend-color" style={{ background: '#ff79c6' }}></div>
               <span>Resolves</span>
+            </div>
+            <div className="legend-item">
+              <div className="legend-color" style={{ background: '#bd93f9' }}></div>
+              <span>Same message</span>
+            </div>
+            <div className="legend-item">
+              <div className="legend-color" style={{ background: '#6272a4' }}></div>
+              <span>Replaced</span>
             </div>
           </div>
         </div>
@@ -287,7 +313,7 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
               nodeLabel={node => `${node.name}\n${node.content.substring(0, 100)}...`}
               nodeCanvasObject={paintNode}
               linkCanvasObject={paintLink}
-              linkDirectionalParticles={2}
+              linkDirectionalParticles={link => link.sibling ? 0 : 2}
               linkDirectionalParticleWidth={2}
               onNodeClick={handleNodeClick}
               onNodeHover={handleNodeHover}
@@ -300,8 +326,8 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
                 center: { strength: 0.3 },     // Stronger center force (0.05 → 0.3) keeps weakly-connected components together
                 charge: { strength: -120 },    // Reduce repulsion (-300 default → -120) allows tighter clustering
                 link: {
-                  strength: link => 0.7,       // Strong link force (default 1/Math.min(degree)) keeps all connections visible
-                  distance: 50                 // Minimum link distance for readability
+                  strength: link => link.sibling ? 1 : 0.7,  // Strong link force (default 1/Math.min(degree)) keeps all connections visible
+                  distance: link => link.sibling ? 12 : 50   // Siblings sit tight; relationships at reading distance
                 },
                 radial: {
                   strength: 0.1,               // Reduced (was 0.15) since center force is now stronger
@@ -338,6 +364,23 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
               <strong>Content:</strong>
               <p>{selectedNode.content}</p>
             </div>
+            {selectedNode.group !== null && (() => {
+              const siblings = graphData.nodes.filter(n => n.group === selectedNode.group && n.id !== selectedNode.id);
+              if (siblings.length === 0) return null;
+              return (
+                <div className="related-memories-section">
+                  <strong>From the same message:</strong>
+                  <p style={{ color: '#9aa5c4', fontStyle: 'italic', fontSize: '0.85rem', margin: '4px 0 6px' }}>“{selectedNode.said.length > 160 ? selectedNode.said.substring(0, 160) + '…' : selectedNode.said}”</p>
+                  <div className="related-memories-list">
+                    {siblings.map(n => (
+                      <div key={n.id} className="related-memory-item" onClick={() => { setSelectedNode(n); if (graphRef.current) { graphRef.current.centerAt(n.x, n.y, 1000); graphRef.current.zoom(6, 1000); } }}>
+                        <span className="related-memory-name">{n.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Related Memories List */}
             <div className="related-memories-section">
@@ -346,6 +389,7 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
                 {(() => {
                   // Filter links connected to selected node
                   const connectedLinks = graphData.links.filter(link => {
+                    if (link.sibling) return false;
                     const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
                     const targetId = typeof link.target === 'object' ? link.target.id : link.target;
                     return sourceId === selectedNode.id || targetId === selectedNode.id;
