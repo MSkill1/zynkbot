@@ -8,6 +8,8 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ## Unreleased (on `local-model` after beta 5)
 
+- **The voice profile no longer learns from the television (KI-103).** A wake that ends in a spoken answer counts as the owner's voice for training only if the owner check scored at least 0.80; clock commands count at any score. Six TV voices passed the 0.50 line in one morning and two of them were about to be trained as the owner.
+- **A hands-free line keeps its label when it syncs (KI-104).** The synced message row now carries how the line was entered, so a wake-word turn from the phone no longer shows up as typed on the desktop.
 - **Web search answers stream.** A cloud model's own search (Claude, OpenAI, Grok, Mistral) now sends its answer word by word as it is written instead of all at once after the searches; the sources still attach at the end. Measured first word: 3.5 to 11 s depending on the provider.
 - **The waiting bubble says what it is waiting for** ("Looking through your memories…", "Reading the page…", "Searching the web…", "Waiting for Claude…") and the log records the time to the first word of every reply.
 - **Pictures stay with the thread while it is open.** The newest three pictures go back to the model with the history, so it can compare two photos sent in different messages; after a picture message the model writes one line about what the picture showed, kept under the message in the thread.

@@ -594,6 +594,22 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Voice & Dictation
 
+### KI-103 — The owner-voice check lets some television voices through; an answered TV question is saved into the open thread and counted as a real "Hey Zynk"
+**Status:** Open; the training side fixed 2026-10-31 (an answered turn is a training positive only when the owner check scored at least 0.80; clock commands count at any score; the rest are left out of training). The owner check itself still passes some TV voices.  
+**Affected:** Phones with Hey Zynk on in a room with a television or radio  
+**Description:** In 95 minutes with the TV on, the wake-word model fired 26 times. The owner-voice check stopped 20 and passed 6 (scores 0.56–0.90 against the 0.50 line). Each pass opened a session and sent the next sentence of the broadcast to the model with the hands-free instruction. Two broadcast fragments were correctly answered with NO_QUERY, but a bare "How are you?" (23:44, user asleep) and "Are you deaf?" (07:32) were answered aloud and written into the user's current thread as ordinary turns. Because an answered turn is labelled a real wake for the on-device profile trainer (WakeVerifierTrainer.kt), those two TV voices also became positive training examples.  
+**Impact:** Medium — wrong answers spoken into an empty room, a cloud call per pass, lines in the wrong thread, and a profile that slowly learns the TV. Raising the 0.50 line blocks the owner at a distance (September measurements); the fix is in the verifier and the labelling rule, not the threshold.
+
+---
+
+### KI-104 — A hands-free line arrived on other devices marked as typed (fixed 2026-10-31)
+**Status:** Fixed on `local-model`  
+**Affected:** Every synced thread with wake-word turns  
+**Description:** The synced message row did not carry `input_mode`, so a line saved as `hands_free` on the phone was inserted as `typed` on every other device. Fixed by sending the column; a peer on an older build leaves the receiver's value alone.  
+**Impact:** Low — the thread read the same; only the label was wrong, which matters for anything that treats wake-word turns differently.
+
+---
+
 ### KI-019 — No offline dictation on Windows; Vosk is compiled out rather than unavailable (fixed)
 **Status:** Fixed on `voice`; verified on Windows 2026-09-11 — the four gates below are widened, `build.rs` emits the Windows link-search, MSVC accepted the MinGW import library (the predicted CRT mismatch surfaces only as `LNK4098`, a warning), the NSIS bundle carries the four DLLs and the Vosk model next to `app.exe`, and Vosk and Whisper dictation were both confirmed at runtime. The offline-first guarantee now holds on Windows. KI-020 remains.  
 **Affected (before the fix):** All Windows users — dictation required an OpenAI API key and a network round-trip. Verified again 2026-09-13 from the CI-built installer on the laptop: mic-button dictation works offline with no key.  

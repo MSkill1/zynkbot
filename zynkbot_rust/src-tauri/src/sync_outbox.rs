@@ -243,7 +243,7 @@ async fn load_messages(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
     let in_clause = sync_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
         "SELECT session_id, user_id, role, content, created_at,
-                model_backend, containment_mode, entry_hash, prev_hash, sync_id, sources_json
+                model_backend, containment_mode, entry_hash, prev_hash, sync_id, sources_json, input_mode
          FROM conversation_messages WHERE sync_id IN ({}) ORDER BY created_at ASC, id ASC", in_clause);
     let mut q = sqlx::query(&sql);
     for s in sync_ids { q = q.bind(s); }
@@ -260,6 +260,7 @@ async fn load_messages(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
         prev_hash: row.get("prev_hash"),
         sync_id: row.get("sync_id"),
         sources_json: row.get("sources_json"),
+        input_mode: row.get("input_mode"),
     }).collect())
 }
 
@@ -866,10 +867,11 @@ async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, ms
         Some(id) => {
             sqlx::query(
                 "UPDATE conversation_messages SET content = ?, model_backend = ?, containment_mode = ?,
-                    entry_hash = ?, prev_hash = ?, sources_json = COALESCE(?, sources_json)
+                    entry_hash = ?, prev_hash = ?, sources_json = COALESCE(?, sources_json),
+                    input_mode = COALESCE(?, input_mode)
                  WHERE id = ?")
                 .bind(&msg.content).bind(&msg.model_backend).bind(&msg.containment_mode)
-                .bind(&msg.entry_hash).bind(&msg.prev_hash).bind(&msg.sources_json).bind(id)
+                .bind(&msg.entry_hash).bind(&msg.prev_hash).bind(&msg.sources_json).bind(&msg.input_mode).bind(id)
                 .execute(&mut **tx).await.map_err(|e| format!("outbox: update message: {}", e))?;
             Ok(true)
         }
@@ -883,11 +885,11 @@ async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, ms
             sqlx::query(
                 "INSERT INTO conversation_messages
                      (session_id, user_id, role, content, created_at,
-                      model_backend, containment_mode, entry_hash, prev_hash, sync_id, sources_json)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                      model_backend, containment_mode, entry_hash, prev_hash, sync_id, sources_json, input_mode)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&msg.session_id).bind(local_user_id).bind(&msg.role).bind(&msg.content).bind(msg.created_at)
                 .bind(&msg.model_backend).bind(&msg.containment_mode).bind(&msg.entry_hash).bind(&msg.prev_hash)
-                .bind(sync_id).bind(&msg.sources_json)
+                .bind(sync_id).bind(&msg.sources_json).bind(msg.input_mode.as_deref().unwrap_or("typed"))
                 .execute(&mut **tx).await.map_err(|e| format!("outbox: insert message: {}", e))?;
             Ok(true)
         }

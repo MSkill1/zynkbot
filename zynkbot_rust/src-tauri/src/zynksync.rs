@@ -155,6 +155,10 @@ pub struct SyncConversationMessage {
     /// Sources behind a searched or page-read answer, JSON text (0028).
     #[serde(default)]
     pub sources_json: Option<String>,
+    /// How the line was entered: typed, dictated, hands_free or system (0011). Absent
+    /// from peers older than 2026-10-31, who then keep whatever the receiver has.
+    #[serde(default)]
+    pub input_mode: Option<String>,
     /// The row's name on every device (0013).
     #[serde(default)]
     pub sync_id: Option<String>,

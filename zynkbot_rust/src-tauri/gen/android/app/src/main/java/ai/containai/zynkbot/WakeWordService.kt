@@ -102,6 +102,13 @@ class WakeWordService : Service() {
         const val STRICT_SCORE = 0.90f      // per-chunk score needed while backing off
         const val MISS_WINDOW_MS = 5 * 60_000L
         const val MISSES_TO_BACK_OFF = 3
+        /** A spoken answer alone no longer makes a clip a training positive: the owner
+         *  check must also have scored at least this. On 2026-10-31 the television got
+         *  six wakes past the 0.50 line (0.56–0.90), two were answered ("How are you?",
+         *  "Are you deaf?") and both were about to train the profile as the owner's
+         *  voice (KI-103). Clock commands stay proof at any score; enrollment clips are
+         *  labelled on their own path. */
+        const val TRAIN_REAL_MIN_SCORE = 0.80f
         /** Strict mode (back-off after misses) is switched off as of 2026-09-20. It was not a
          *  TV detector: three ordinary misses in five minutes (a dismissed session, a
          *  one-word transcript, a video playing nearby) locked the owner out for ten
@@ -356,14 +363,22 @@ class WakeWordService : Service() {
 
     /** Stem of the newest trigger clip, so its outcome can be written next to it. */
     @Volatile private var lastClipStem: String? = null
+    @Volatile private var lastVerifierScore = -1f   // owner-check score of the trigger that went through
 
     /** Records how the newest trigger ended, next to its clip: `.real` or `.false`.
      *  Labelled clips are the training set for the personal verifier (no upload;
      *  the files stay under files/zynkbot/wake_triggers). */
-    private fun labelLastClip(real: Boolean) {
+    private fun labelLastClip(real: Boolean, proof: Boolean = false) {
         val stem = lastClipStem ?: return
         try {
             val dir = File(filesDir, "zynkbot/wake_triggers")
+            if (real && !proof && lastVerifierScore >= 0f && lastVerifierScore < TRAIN_REAL_MIN_SCORE) {
+                // Answered, but not surely the owner: left out of training either way
+                // (a stale "false" from an earlier report in the same session goes too).
+                File(dir, "$stem.false").delete()
+                WakeLog.i(TAG, "Clip not used for training: answered, but owner score %.3f < %.2f".format(lastVerifierScore, TRAIN_REAL_MIN_SCORE))
+                return
+            }
             // A trigger reports its outcome more than once as it moves through the session
             // (fruitless first, then answered), so the last report has to win. Without this
             // 27 of 87 clips carried both labels and were useless for training (KI-076).
@@ -373,7 +388,7 @@ class WakeWordService : Service() {
     }
 
     private fun noteOutcome(useful: Boolean) {
-        labelLastClip(useful)
+        labelLastClip(useful, proof = useful)   // only commands report useful = true: proof at any score
         val now = System.currentTimeMillis()
         synchronized(recentMisses) {
             if (useful) {
@@ -913,6 +928,7 @@ class WakeWordService : Service() {
                         embBuffer.clear()
                         return
                     }
+                    lastVerifierScore = vScore
                     saveTriggerClip(score, pooled)
                     consecutiveHighScores = 0
                     cooldownRemaining = COOLDOWN_CHUNKS
