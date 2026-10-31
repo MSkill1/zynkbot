@@ -303,7 +303,7 @@ export default function App() {
     messageDialog(
       'You are now using the local model. It runs entirely on this device and nothing leaves it.\n\n' +
       'What to expect: replies take half a minute to a minute on a phone, so keep questions short. ' +
-      'Memories still save in the background. Web search works here too, just slower; Ensemble and image questions need a cloud model.\n\n' +
+      'Memories still save in the background. Web search works here too, just slower. Image questions need a cloud model, and so does Ensemble on a phone.\n\n' +
       'Switch back any time under Current Model.'
     );
   }, [modelType]);

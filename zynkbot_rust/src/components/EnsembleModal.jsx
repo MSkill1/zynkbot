@@ -336,21 +336,6 @@ export default function EnsembleModal({
               <h3 style={{ color: '#f8f8f2', fontSize: '1rem', marginBottom: '10px' }}>
                 Select Models (minimum 2):
               </h3>
-              {process.env.NODE_ENV === 'production' && availableModels.some(m => m.type === 'local') && (
-                <div style={{
-                  padding: '8px 12px',
-                  marginBottom: '10px',
-                  background: '#21222c',
-                  border: '1px solid #44475a',
-                  borderRadius: '6px',
-                  color: '#6272a4',
-                  fontSize: '0.82rem',
-                  lineHeight: '1.4'
-                }}>
-                  🔒 <strong style={{ color: '#9aa5c4' }}>Local models require the CUDA build</strong> (coming soon).
-                  To use local models in ensemble now, build the developer version from source.
-                </div>
-              )}
               {(hasCustomSelected || hasLocalSelected) && (
                 <div style={{
                   padding: '8px 12px',
@@ -362,7 +347,7 @@ export default function EnsembleModal({
                   fontSize: '0.82rem',
                   lineHeight: '1.4'
                 }}>
-                  ⚠️ <strong>Custom/Ollama and local models share your GPU.</strong> Select one or the other — not both — to avoid CUDA conflicts.
+                  ⚠️ <strong>Custom/Ollama and a local model both use your graphics card's memory.</strong> Pick one or the other, not both.
                 </div>
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -376,7 +361,7 @@ export default function EnsembleModal({
                     : isLocalConflict
                     ? 'Deselect Custom/Ollama first — both use the GPU and will conflict'
                     : isLocalInProd
-                    ? 'Local GGUF models are not supported on Android.'
+                    ? 'The on-device model is not used in Ensemble on a phone.'
                     : undefined;
                   return (
                     <label
