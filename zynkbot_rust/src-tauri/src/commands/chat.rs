@@ -808,6 +808,9 @@ pub async fn generate_reply(
             block.push_str(&format!("\n- Picture {}: sent with this message.", earlier_pictures.len() + n + 1));
         }
         if now > 0 {
+            if !earlier_pictures.is_empty() {
+                block.push_str("\nWhen the user says \"this picture\", they mean the one sent with this message, not an earlier one.");
+            }
             block.push_str("\nAt the very end of your reply, on its own last line, write PICTURE: followed by one plain sentence saying what the picture sent with this message shows (who or what, where; no opinion). That line is the thread's record of the picture and is not part of your answer.");
         }
         let _ = imgs;
@@ -1024,7 +1027,7 @@ pub async fn generate_reply(
 
     } else if forced_backend.to_lowercase().contains("local") || forced_backend.ends_with(".gguf") {
         if image_data.is_some() {
-            return Err("Image attachments are not supported with local models. Please switch to a cloud model (Claude, GPT-4o, or Grok) to use vision.".to_string());
+            return Err("This local model can't read pictures. Switch to a cloud model (Claude, OpenAI, Grok or Mistral) for this question.".to_string());
         }
         // Use local GGUF model
 

@@ -1098,16 +1098,24 @@ export default function App() {
     });
   };
 
-  const handleResumeSession = ({ sessionId: resumedId, messages: pastMessages }) => {
+  const handleResumeSession = ({ sessionId: resumedId, messages: pastMessages, scrollToEnd = true }) => {
     setSessionId(resumedId);
     try { sessionStorage.setItem('zynkbot_session_id', resumedId); } catch (_) {}
     // Rows straight from the database carry their saved sources as text; the page wants the list.
     setMessages((pastMessages || []).map((m) => (m.web_search_results || !m.sources_json) ? m : { ...m, web_search_results: parseSources(m.sources_json) }));
-    // Scroll to bottom after loading
-    setTimeout(() => {
-      const el = document.getElementById('messages-end');
-      if (el) el.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
+    // Open at the last message, not the first. The old code looked for an element
+    // id that nothing has, so a resumed thread stayed at the top (2026-11-01). Three
+    // passes because a long thread's pictures and markdown settle after the first paint.
+    if (!scrollToEnd) return;
+    userScrolledUpRef.current = false;
+    for (const ms of [50, 300, 900]) {
+      setTimeout(() => {
+        const c = chatContainerRef.current;
+        if (!c) return;
+        programmaticScrollRef.current = true;
+        c.scrollTop = c.scrollHeight;
+      }, ms);
+    }
   };
 
   // Open the conversation a memory came from, at the exchange that produced it
@@ -1120,7 +1128,7 @@ export default function App() {
       const pastMessages = await invoke('get_conversation_messages', { sessionId: src.session_id });
       if (!pastMessages || pastMessages.length === 0) { notify('That conversation is empty'); return; }
       memoryManagerRef.current?.close();
-      handleResumeSession({ sessionId: src.session_id, messages: pastMessages || [] });
+      handleResumeSession({ sessionId: src.session_id, messages: pastMessages || [], scrollToEnd: src.message_id == null });
       if (src.message_id != null) {
         setTimeout(() => {
           const el = document.getElementById(`message-${src.message_id}`);
@@ -1587,12 +1595,22 @@ export default function App() {
       // Send up to last 50 messages - backend will apply adaptive limits based on model type
       // (Local models: 8 messages, API models: 40 messages)
       // Format: [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
-      // The newest three pictures in the thread travel with their turns (2026-10-28).
+      // The newest three pictures in the thread travel with their turns (2026-10-28), but
+      // only while the last picture is recent: once more than two user turns have gone by
+      // without one, none are sent again and the one-line records in the text carry on
+      // alone (2026-11-01). All or none, so a comparison never sees one side only.
       const recent = historyBase.slice(-50);
-      let picturesLeft = 3;
+      let turnsSincePicture = 0;
+      for (let i = recent.length - 1; i >= 0; i--) {
+        if (recent[i].role !== 'user') continue;
+        if (Array.isArray(recent[i].images) && recent[i].images.length > 0 && !recent[i].sendFailed) break;
+        turnsSincePicture++;
+      }
+      const stillLooking = (Array.isArray(imageData) && imageData.length > 0) || turnsSincePicture <= 2;
+      let picturesLeft = stillLooking ? 3 : 0;
       const withPictures = new Set();
       for (let i = recent.length - 1; i >= 0 && picturesLeft > 0; i--) {
-        const n = Array.isArray(recent[i].images) ? recent[i].images.length : 0;
+        const n = (Array.isArray(recent[i].images) && !recent[i].sendFailed) ? recent[i].images.length : 0;
         if (n > 0 && n <= picturesLeft) { withPictures.add(i); picturesLeft -= n; }
       }
       const conversationHistory = recent.map((msg, i) => ({
@@ -1730,6 +1748,10 @@ export default function App() {
 
     } catch (error) {
       console.error('Error sending message to Rust:', error);
+      // A turn the backend refused keeps its pictures on screen but they no longer travel
+      // with later turns (2026-11-01: two pictures a local model refused were re-sent to
+      // Claude with the next one, and it described the wrong picture).
+      setMessages(prev => prev.map(msg => msg.id === userMessage.id ? { ...msg, sendFailed: true } : msg));
       // Replace any in-progress streaming placeholder with the error, or add a new error message
       setMessages(prev => {
         const hasStreaming = prev.some(msg => msg.isStreaming);

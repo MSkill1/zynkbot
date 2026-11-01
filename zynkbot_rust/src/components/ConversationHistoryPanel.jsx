@@ -40,10 +40,13 @@ function groupSessions(sessions, currentSessionId) {
     // (or an empty one that arrived from another device) has no messages. Only the
     // current thread is worth showing in that state.
     if (!s.message_count) continue;
-    // Pinned conversations sit in their own group at the top, whatever their date.
-    const label = s.pinned ? "Pinned" : dateLabel(s.last_active);
-    if (!groups[label]) groups[label] = [];
-    groups[label].push(s);
+    // Pinned conversations sit in their own group at the top, and also under their
+    // date, so one used today is still found under Today (2026-11-01).
+    const labels = s.pinned ? ["Pinned", dateLabel(s.last_active)] : [dateLabel(s.last_active)];
+    for (const label of labels) {
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(s);
+    }
   }
   return groups;
 }
@@ -137,6 +140,15 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
       setMessages([]);
     }
   }, [isOpen, isHipaaMode, loadSessions]);
+
+  // A thread opens at its last message, not its first (2026-11-01); the list
+  // itself goes back to the top.
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = selectedSession && !isLoadingMessages ? el.scrollHeight : 0;
+  }, [selectedSession, isLoadingMessages, messages]);
 
   const openSession = async (session) => {
     setSelectedSession(session);
@@ -371,7 +383,7 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
       )}
 
       {/* Content — direction:rtl moves scrollbar to left edge, away from main app scrollbar */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 0", direction: "rtl" }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "8px 0", direction: "rtl" }}>
 
         {/* Session list */}
         {!selectedSession && (
