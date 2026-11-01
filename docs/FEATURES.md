@@ -180,12 +180,12 @@ Every completed exchange is automatically saved to a local database. Conversatio
 
 **Features:**
 - Sessions grouped by date (Today / Yesterday / This Week / Month)
-- Full-text search across all past conversations
+- Search across all past conversations: results come as one list, threads whose title contains the text first, then by date, and under each result a line of the newest message that contains the text
 - Date range filter to narrow results
-- View complete message history for any session
+- View complete message history for any session; a thread opens at its last message
 - **Resume** — reload a past session into the active chat, restoring full conversation context
 - Delete individual sessions
-- **Pin** a conversation (pin icon on its row) and it sits in a "Pinned" group at the top of the list whatever its date; pinned state is included in cloud backups <!-- added by Claude 2026-09-09, review -->
+- **Pin** a conversation (pin icon on its row) and it sits in a "Pinned" group at the top of the list whatever its date, and also under its own date group; pinned state is included in cloud backups <!-- added by Claude 2026-09-09, review -->
 - **Thread restore after a restart**: when the app is opened fresh (after an update, a crash or being swiped away), it asks the backend which conversation was current; if that thread has messages and is not the one the page already has, it is put back on screen instead of an empty chat. This is what keeps hands-free "Hey Zynk" turns, which join the current thread from outside the page, from disappearing. <!-- added by Claude 2026-09-09, review -->
 
 **HIPAA mode:** Conversation history is completely disabled. No records are written — raw conversation text is more sensitive than extracted facts, and disabling both is the correct default.
@@ -229,7 +229,7 @@ Adding a document only puts the file in Zynkbot's folder. Before Zynkbot can tal
 - Word documents (.docx and .doc)
 
 **How it works:**
-1. Index files via Settings → Knowledge Base
+1. Index files on the Knowledge Base page (System Controls → Knowledge Base); the page has Sort (Name, Size, Newest) and a Find box above both lists
 2. Documents chunked and embedded as vectors using hybrid search (semantic + keyword)
 3. Click the 📚 **KB button** in the message input window to search your documents for one message; click again to lock it on across all messages (📚 **KB LOCK**); click once more to turn off
 4. Relevant chunks retrieved and included in conversation context
@@ -427,12 +427,13 @@ Attach images to any message when using a vision-capable cloud model.
 
 **Supported formats:** JPG, JPEG, PNG, GIF, WebP, BMP
 
-**Supported models:** Anthropic Claude, OpenAI GPT-4o, xAI Grok. Mistral and local GGUF models do not support vision.
+**Supported models:** Anthropic Claude, OpenAI, xAI Grok and Mistral. Local GGUF models do not read pictures; the app says so and asks for a cloud model.
 
 **How to use:**
 1. Click the 📎 attach button in the chat input
 2. Select an image file
 3. A thumbnail preview appears — type your question and send
+4. The picture stays in the bubble as a thumbnail (tap to enlarge) while the thread is open; after a picture message the model writes a one-line record of what it showed, kept under the message. The newest three pictures go back to the model with the next turns, all or none, as long as the last picture arrived within the previous two turns, so "compare them" and "which looks better?" work; after that the one-line records carry on alone. Reopened from History, the thumbnails are gone and the records remain.
 
 **On Android:** tap 📎 to attach an image from your gallery, or use the camera icon to take a photo directly. Vision works with any supported API model (Claude, GPT-4o, Grok). Local GGUF models (desktop only) do not support vision.
 

@@ -2128,7 +2128,7 @@ export default function App() {
         <ControlsMenuButton
           icon="🤖"
           title="Current Model"
-          subtitle={availableModels.find(m => m.id === modelType)?.name || 'Loading models…'}
+          subtitle={(availableModels.find(m => m.id === modelType)?.name || 'Loading models…') + (containmentMode === 'child' ? ' · Child mode uses OpenAI' : '')}
           accent="#bd93f9"
           onClick={() => setControlsPage('model')}
         />
@@ -2195,8 +2195,16 @@ export default function App() {
       {/* System Controls pages: one at a time, on top of the sidebar. */}
       {controlsPage === 'model' && (
         <ControlsPage icon="🤖" title="Current Model" accent="#bd93f9" introKey="model" intro={<>Zynkbot answers with the model marked here. A cloud model needs a key from that company, entered below, and your messages go to it; under its API terms they are not used to train on or to profile you, which is why Zynkbot uses keys and not a subscription. A model file on this device works offline and nothing leaves the device. <b>Try this:</b> switch models and ask the same question twice.</>}
-          subtitle={(availableModels.find(m => m.id === modelType)?.name || 'No model selected').replace(/\.gguf$/i, '')}
+          subtitle={(availableModels.find(m => m.id === modelType)?.name || 'No model selected').replace(/\.gguf$/i, '') + (containmentMode === 'child' ? ' · Child mode uses OpenAI' : '')}
           onClose={() => setControlsPage(null)}>
+          {/* Child mode sends every answer to OpenAI whatever is marked (2026-11-01: the row
+              still said Claude and Matt took it for a bug). The choice is kept for when the
+              mode changes back, so the rows stay clickable, just dimmed. */}
+          {containmentMode === 'child' && (
+            <div className="page-note" style={{ margin: '0 0 10px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,184,108,0.12)', border: '1px solid #ffb86c', color: '#f8f8f2', fontSize: '0.9rem' }}>
+              Child mode is on: every answer goes to OpenAI, whichever model is marked here. Your choice is kept for when you leave Child mode.
+            </div>
+          )}
           {/* ui-redo (2026-10-24): one page for the choice and the keys. Rows instead of a
               drop-down; the keys and servers section that was its own window sits below. */}
           <div className="model-rows">
@@ -2205,14 +2213,18 @@ export default function App() {
               const isLocal = (m.type || m.model_type) === 'local' || m.id.endsWith('.gguf');
               const file = isLocal ? localModelFiles.find(f => f.path === m.id || m.id.endsWith(f.filename)) : null;
               const selected = modelType === m.id;
+              const isOpenAI = /openai|gpt/i.test(m.id);
+              const dimmed = containmentMode === 'child' && !isOpenAI;
               return (
                 <div key={m.id} className={`model-row${selected ? ' selected' : ''}`} role="button" tabIndex={0}
+                  style={dimmed ? { opacity: 0.5 } : undefined}
+                  title={dimmed ? 'Not used while Child mode is on' : undefined}
                   onClick={() => setModelType(m.id)}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setModelType(m.id); }}>
                   <span className="controls-menu-icon">{isLocal ? '📱' : '☁️'}</span>
                   <div className="controls-menu-text">
                     <b>{isLocal ? m.name.replace(/\.gguf$/i, '') : m.name}</b>
-                    <small>{isLocal ? `On this device, offline, slower${file ? ' · ' + formatModelSize(file.size_bytes) : ''}` : 'Cloud model, uses its key below'}</small>
+                    <small>{isLocal ? `On this device, offline, slower${file ? ' · ' + formatModelSize(file.size_bytes) : ''}` : (containmentMode === 'child' && isOpenAI ? 'Cloud model · used while Child mode is on' : 'Cloud model, uses its key below')}</small>
                   </div>
                   {file && (
                     <span className="model-row-actions" onClick={(e) => e.stopPropagation()}>
