@@ -1313,8 +1313,9 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     {KeySaveModal}
     <div className="modal-overlay" onClick={onClose}>
       <div className="memory-manager-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="modal-header">
+        {/* Header. Wraps so the Storage panel (flex-basis 100%) drops under the buttons
+            instead of sitting beside them and squeezing the title (2026-11-01). */}
+        <div className="modal-header" style={{ flexWrap: 'wrap' }}>
           <h2>Memory Manager</h2>
           {onDeviceModel && <div style={{ fontSize: '0.85rem', color: '#9aa5c4', flex: '1 1 100%' }}>{onDeviceNote}</div>}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>

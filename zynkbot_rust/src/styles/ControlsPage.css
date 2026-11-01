@@ -34,7 +34,15 @@
 /* A row that holds a control (Containment Mode's drop-down) instead of opening a page. */
 .controls-menu-row { cursor: default; }
 .controls-menu-row:hover { filter: none; }
+/* The open list follows the dark select, not the page's white default: on Linux the
+   native popup took the white background and the select's light text, so the containment
+   modes were white on white (Matt, 2026-11-01). */
+.controls-menu-select option {
+  background: #1e1f29;
+  color: #f8f8f2;
+}
 .controls-menu-select {
+  color-scheme: dark;
   flex-shrink: 0;
   max-width: 45%;
   padding: 8px 10px;

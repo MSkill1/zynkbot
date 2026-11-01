@@ -265,9 +265,40 @@
   font-weight: 600;
   font-size: 0.95rem;
   margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* The whole name, wrapped, never cut: the end is the extension (Matt, 2026-11-01). */
+  overflow-wrap: anywhere;
+}
+
+/* Sort and Find row above both lists, the same look as the ZynkLink file browser. */
+.kb-sort-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0 10px;
+  font-size: 0.8rem;
+  color: #9aa5c4;
+}
+.kb-sort-btn {
+  padding: 2px 10px;
+  background: #44475a;
+  color: #f8f8f2;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.kb-sort-btn.active { background: #6272a4; font-weight: 700; }
+.kb-find {
+  flex: 1 1 140px;
+  min-width: 120px;
+  margin-left: 6px;
+  padding: 3px 8px;
+  background: #282a36;
+  color: #f8f8f2;
+  border: 1px solid #44475a;
+  border-radius: 6px;
+  font-size: 0.85rem;
 }
 
 .kb-doc-meta,

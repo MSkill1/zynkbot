@@ -27,6 +27,11 @@ pub struct ConversationSession {
     pub containment_mode: Option<String>,
     /// Held at the top of the history list regardless of date.
     pub pinned: bool,
+    /// Search only (2026-11-01): a piece of the newest message that contains the search
+    /// text, so the list can show why a thread matched. None outside a text search.
+    #[sqlx(default)]
+    #[serde(default)]
+    pub match_snippet: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -362,25 +367,36 @@ pub async fn search(
     }
 
     // LIKE for case-insensitive partial matching (SQLite LIKE is case-insensitive for ASCII).
-    let pattern = format!("%{}%", query.trim());
+    // Threads whose title matches come first, then the rest by date; each row carries a
+    // piece of the newest matching message (2026-11-01: a search for "business" listed
+    // five threads that mentioned it in passing above the one named for it).
+    let needle = query.trim().to_string();
+    let pattern = format!("%{}%", needle);
     sqlx::query_as::<_, ConversationSession>(
-        "SELECT DISTINCT s.id, s.session_id, s.user_id, s.title,
+        "SELECT s.id, s.session_id, s.user_id, s.title,
                 s.started_at, s.last_active, s.message_count,
-                s.model_backend, s.containment_mode, s.pinned
+                s.model_backend, s.containment_mode, s.pinned,
+                (SELECT substr(m2.content, max(1, instr(lower(m2.content), lower(?)) - 50), 160)
+                   FROM conversation_messages m2
+                  WHERE m2.session_id = s.session_id AND m2.content LIKE ?
+                  ORDER BY m2.created_at DESC LIMIT 1) AS match_snippet
          FROM conversation_sessions s
-         JOIN conversation_messages m ON m.session_id = s.session_id
          WHERE s.user_id = ?
-           AND (m.content LIKE ? OR s.title LIKE ?)
+           AND (s.title LIKE ? OR EXISTS (SELECT 1 FROM conversation_messages m
+                                          WHERE m.session_id = s.session_id AND m.content LIKE ?))
            AND s.last_active >= ?
            AND s.last_active <= ?
-         ORDER BY s.pinned DESC, s.last_active DESC
+         ORDER BY (s.title LIKE ?) DESC, s.last_active DESC
          LIMIT 50",
     )
+    .bind(&needle)
+    .bind(&pattern)
     .bind(user_id)
     .bind(&pattern)
     .bind(&pattern)
     .bind(date_from_val)
     .bind(&date_to_val)
+    .bind(&pattern)
     .fetch_all(pool)
     .await
 }

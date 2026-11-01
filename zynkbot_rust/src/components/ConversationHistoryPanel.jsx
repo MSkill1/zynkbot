@@ -269,7 +269,16 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
     }
   };
 
-  const groups = groupSessions(sessions, currentSessionId);
+  // While searching, the list is one group in the backend's order: title matches
+  // first, then by date, each with the text that matched (2026-11-01).
+  const groups = searchQuery.trim() ? { "Results": sessions } : groupSessions(sessions, currentSessionId);
+  // The matched text with the search word made bold.
+  const snippetWithHit = (text) => {
+    const q = searchQuery.trim();
+    const i = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
+    if (i < 0) return text;
+    return <>{text.slice(0, i)}<b style={{ color: "#f8f8f2" }}>{text.slice(i, i + q.length)}</b>{text.slice(i + q.length)}</>;
+  };
 
   return (
     <div className="conv-history-panel" style={panelStyle}>
@@ -438,6 +447,11 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
                       ) : (
                         <div style={{ color: "#f8f8f2", fontSize: "0.9rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {session.title || `Voice conversation · ${new Date(session.started_at).toLocaleDateString()}`}
+                        </div>
+                      )}
+                      {session.match_snippet && (
+                        <div style={{ color: "#a4acd0", fontSize: "0.78rem", marginTop: "2px", fontStyle: "italic", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          …{snippetWithHit(session.match_snippet.replace(/\s+/g, " "))}…
                         </div>
                       )}
                       <div style={{ color: "#a4acd0", fontSize: "0.75rem", marginTop: "3px" }}>

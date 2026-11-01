@@ -14,6 +14,23 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded
   const [indexingProgress, setIndexingProgress] = useState(null);
   const [kbFolderPath, setKbFolderPath] = useState('');
   const [expandedFolders, setExpandedFolders] = useState(new Set(['_root']));
+  // Sort and Find for both lists (Matt, 2026-11-01: dozens of documents need more than
+  // name order), the same controls as the ZynkLink file browser. The sort is remembered.
+  const [sortBy, setSortBy] = useState(() => { try { return localStorage.getItem('kb.sort') || 'name'; } catch (_) { return 'name'; } });
+  const changeSort = (k) => { setSortBy(k); try { localStorage.setItem('kb.sort', k); } catch (_) {} };
+  const [findText, setFindText] = useState('');
+  const fileExt = (n) => ((n || '').match(/\.([a-z0-9]+)$/i)?.[1] || '').toUpperCase();
+  const sortAndFind = (list, nameOf, sizeOf, dateOf) => {
+    const q = findText.trim().toLowerCase();
+    const out = list.filter((x) => !q || nameOf(x).toLowerCase().includes(q));
+    const byName = (a, b) => nameOf(a).toLowerCase().localeCompare(nameOf(b).toLowerCase());
+    if (sortBy === 'size') out.sort((a, b) => (sizeOf(b) || 0) - (sizeOf(a) || 0) || byName(a, b));
+    else if (sortBy === 'newest') out.sort((a, b) => new Date(dateOf(b) || 0) - new Date(dateOf(a) || 0) || byName(a, b));
+    else out.sort(byName);
+    return out;
+  };
+  const shownDocuments = sortAndFind(documents, (d) => d.file_name, (d) => d.file_size, (d) => d.indexed_at);
+  const shownFiles = sortAndFind(availableFiles, (f) => f.name, (f) => f.size, (f) => f.modified);
 
   // Build folder tree structure from flat document list
   const buildFolderTree = (docs) => {
@@ -403,6 +420,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded
                   <div className="kb-doc-info">
                     <div className="kb-doc-name">{doc.file_name}</div>
                     <div className="kb-doc-meta">
+                      {fileExt(doc.file_name) && <><span>{fileExt(doc.file_name)}</span><span className="kb-separator">•</span></>}
                       <span>{formatFileSize(doc.file_size)}</span>
                       <span className="kb-separator">•</span>
                       <span>{doc.chunk_count} chunks</span>
@@ -505,13 +523,23 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded
               </div>
             )}
 
+            {documents.length + availableFiles.length > 1 && (
+              <div className="kb-sort-row">
+                <span>Sort:</span>
+                {[['name', 'Name'], ['size', 'Size'], ['newest', 'Newest']].map(([k, label]) => (
+                  <button key={k} className={`kb-sort-btn${sortBy === k ? ' active' : ''}`} onClick={() => changeSort(k)}>{label}</button>
+                ))}
+                <input className="kb-find" type="text" value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="Find by name…" aria-label="Find a document by name" />
+              </div>
+            )}
+
             {/* Sections body — flex so both sections share available height */}
             <div className="kb-body">
 
             {/* Indexed Documents Section */}
             <div className="kb-section">
               <div className="kb-section-header">
-                <h3>Indexed Documents ({documents.length})</h3>
+                <h3>Indexed Documents ({findText ? `${shownDocuments.length} of ${documents.length}` : documents.length})</h3>
               </div>
               <p className="kb-hint" style={{ margin: '0 0 10px' }}>Zynkbot's own user guides are indexed too, and are read whenever you ask about Zynkbot itself.</p>
 
@@ -542,7 +570,8 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded
                 </div>
               ) : (
                 <div className="kb-document-list">
-                  {Object.values(buildFolderTree(documents)).map(folder =>
+                  {shownDocuments.length === 0 && <p className="kb-hint">No indexed document matches "{findText}".</p>}
+                  {Object.values(buildFolderTree(shownDocuments)).map(folder =>
                     renderFolderTree(folder)
                   )}
                 </div>
@@ -552,7 +581,7 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded
             {/* Available Files Section */}
             <div className="kb-section">
               <div className="kb-section-header">
-                <h3>Available Files ({availableFiles.length})</h3>
+                <h3>Available Files ({findText ? `${shownFiles.length} of ${availableFiles.length}` : availableFiles.length})</h3>
                 <div className="kb-section-actions">
                   {window.AndroidPaths?.copyToKnowledgeBase && (
                     <button
@@ -592,13 +621,15 @@ export default function KnowledgeBaseManager({ isOpen, onClose, userId, embedded
                 </div>
               ) : (
                 <div className="kb-file-list">
-                  {availableFiles.map((file, index) => (
+                  {shownFiles.length === 0 && <p className="kb-hint">No file matches "{findText}".</p>}
+                  {shownFiles.map((file, index) => (
                     <div key={index} className="kb-file-item">
                       <div className="kb-file-main">
                         <div className="kb-file-icon">📄</div>
                         <div className="kb-file-info">
                           <div className="kb-file-name">{file.name}</div>
                           <div className="kb-file-meta">
+                            {fileExt(file.name) && <><span>{fileExt(file.name)}</span><span className="kb-separator">•</span></>}
                             <span>{formatFileSize(file.size)}</span>
                           </div>
                         </div>

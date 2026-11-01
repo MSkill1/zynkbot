@@ -178,14 +178,17 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
   // Remembered per browser; folders keep their place, files inside each folder follow it.
   const [sortBy, setSortBy] = useState(() => { try { return localStorage.getItem('zfb.sort') || 'name'; } catch (_) { return 'name'; } });
   const changeSort = (k) => { setSortBy(k); try { localStorage.setItem('zfb.sort', k); } catch (_) {} };
+  // Find narrows the list as you type (2026-11-01, added with the Knowledge Base's).
+  const [findText, setFindText] = useState('');
   const sortedFiles = React.useMemo(() => {
     const name = (f) => f.relative_path.replace(/\\/g, '/').split('/').pop().toLowerCase();
-    const out = [...files];
+    const q = findText.trim().toLowerCase();
+    const out = files.filter((f) => !q || name(f).includes(q));
     if (sortBy === 'size') out.sort((a, b) => (b.file_size || 0) - (a.file_size || 0) || name(a).localeCompare(name(b)));
     else if (sortBy === 'newest') out.sort((a, b) => new Date(b.last_modified || 0) - new Date(a.last_modified || 0) || name(a).localeCompare(name(b)));
     else out.sort((a, b) => name(a).localeCompare(name(b)));
     return out;
-  }, [files, sortBy]);
+  }, [files, sortBy, findText]);
 
   // A ticking "now" so the progress panel re-renders ~every second to update
   // speed/ETA without needing a new event from the backend.
@@ -575,6 +578,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
               {[['name', 'Name'], ['size', 'Size'], ['newest', 'Newest']].map(([k, label]) => (
                 <button key={k} className={`zfb-sort-btn${sortBy === k ? ' active' : ''}`} onClick={() => changeSort(k)}>{label}</button>
               ))}
+              <input className="zfb-find" type="text" value={findText} onChange={(e) => setFindText(e.target.value)} placeholder="Find by name…" aria-label="Find a file by name" />
             </div>
           )}
           {loading ? (

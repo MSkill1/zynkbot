@@ -467,6 +467,7 @@
 .zfb-sort-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 4px 0 10px;
   font-size: 0.8rem;
@@ -482,3 +483,14 @@
   font-size: 0.78rem;
 }
 .zfb-sort-btn.active { background: #6272a4; font-weight: 700; }
+.zfb-find {
+  flex: 1 1 140px;
+  min-width: 120px;
+  margin-left: 6px;
+  padding: 3px 8px;
+  background: #282a36;
+  color: #f8f8f2;
+  border: 1px solid #44475a;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
