@@ -1306,6 +1306,7 @@ pub async fn generate_reply(
             expires_at: mem.expires_at.map(|dt| dt.to_string()),
             entities_detected: mem.entities_detected.clone(),
             original_text: mem.original_text.clone(),
+            temporal_status: mem.temporal_status.clone(),
         })
         .collect();
 

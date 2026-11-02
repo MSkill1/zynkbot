@@ -809,6 +809,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
           </span>
         )}
         <span style={{ color: '#6272a4', fontSize: '0.75rem', flex: 1 }}>
+          <span title="Memory ID" style={{ marginRight: '8px' }}>#{mem.id}</span>
           {inGroup ? '' : new Date(mem.created_at).toLocaleDateString()}
         </span>
         <input
@@ -872,11 +873,10 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 </span>
               )}
             </div>
-            {!inGroup && (
-              <span className="memory-date">
-                {new Date(mem.created_at).toLocaleDateString()}
-              </span>
-            )}
+            <span className="memory-date">
+              <span title="Memory ID" style={{ marginRight: '8px' }}>#{mem.id}</span>
+              {!inGroup && new Date(mem.created_at).toLocaleDateString()}
+            </span>
           </div>
         </div>
       </div>
@@ -1163,8 +1163,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       <div className="detail-row">
                         <strong>Status:</strong> {passingText(selectedMemory)}
                         <div style={{ marginTop: '6px' }}>
-                          <button type="button" className="edit-button" style={{ height: '36px', padding: '0 14px' }} title="Keep this memory: it stops expiring and stays in recall" onClick={() => handleKeep(selectedMemory.id)}>
-                            Keep
+                          <button type="button" className="edit-button" style={{ height: '36px', padding: '0 14px' }} title="This memory stops expiring and stays in recall for good" onClick={() => handleKeep(selectedMemory.id)}>
+                            Keep as a long-term memory
                           </button>
                         </div>
                       </div>
@@ -1615,8 +1615,8 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     {selectedMemory.expires_at && !selectedMemory.temporal_status && (
                       <div className="detail-row">
                         <strong>Status:</strong> {passingText(selectedMemory)}{' '}
-                        <button type="button" onClick={() => handleKeep(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="Keep this memory: it stops expiring and stays in recall">
-                          Keep
+                        <button type="button" onClick={() => handleKeep(selectedMemory.id)} className="edit-button" style={{ marginLeft: '8px' }} title="This memory stops expiring and stays in recall for good">
+                          Keep as a long-term memory
                         </button>
                       </div>
                     )}

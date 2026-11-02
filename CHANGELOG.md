@@ -6,8 +6,17 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## Unreleased (on `local-model` after beta 5)
+## Unreleased
 
+Nothing yet.
+
+## [0.9.6-beta5] — 2026-10-27, re-cut 2026-11-02 as build 2 <!-- branch local-model; entries for 10-26/27 drafted by Claude, for Matt's review -->
+
+### Build 2 (2026-11-02): added since the first cut on 27 October
+
+The same version number; the first cut was replaced on GitHub. Testers install this one over the first.
+
+- **Memory Manager shows the done mark, and the ID on every row.** The command that fills the list returned a record without the done/replaced field, so a plan already marked done still read as a passing fact and offered Keep, on every device. Each row now carries its number (#3291) before the date, and the Keep button reads "Keep as a long-term memory".
 - **The voice profile no longer learns from the television (KI-103).** A wake that ends in a spoken answer counts as the owner's voice for training only if the owner check scored at least 0.80; clock commands count at any score. Six TV voices passed the 0.50 line in one morning and two of them were about to be trained as the owner.
 - **A hands-free line keeps its label when it syncs (KI-104).** The synced message row now carries how the line was entered, so a wake-word turn from the phone no longer shows up as typed on the desktop.
 - **Web search answers stream.** A cloud model's own search (Claude, OpenAI, Grok, Mistral) now sends its answer word by word as it is written instead of all at once after the searches; the sources still attach at the end. Measured first word: 3.5 to 11 s depending on the provider.
@@ -50,7 +59,6 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - **ZynkLink file browser:** files in your own share folder can be removed or moved (desktop: save dialog; Android: the system picker); a Sort row (Name, Size, Newest) above the list, remembered; the download cancel button is labelled "Cancel"; "Browse shared files on this device" looks like the other buttons.
 - **Keys page:** each provider group folds; closed on open, the header still says whether the key is set.
 
-## [0.9.6-beta5] — 2026-10-27 <!-- branch local-model; entries for 10-26/27 drafted by Claude, for Matt's review -->
 
 ### Timer, alarm and stopwatch (Android; branch `timer`, 2026-10-25)
 - Zynkbot runs its own timers and alarms instead of handing them to the phone's clock app. They ring with the screen off or the app closed (the fix for a timer that was confirmed but never rang, #29), say what they are, and ring for 30 seconds unless stopped by "Hey Zynk", the Stop button in the app, or Stop on the notification. Several at once, each with a chip above the message box and a notification, both with Cancel. New commands: "check timer", "stop timer" / "cancel timer" / "cancel the ten minute timer", "cancel alarm" / "cancel the 7 30 alarm", "check alarms", "stop stopwatch", "reset stopwatch", "check stopwatch". Needs Android's "Alarms & reminders" switch for Zynkbot, offered on the Voice page.

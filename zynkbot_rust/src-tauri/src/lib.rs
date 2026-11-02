@@ -278,6 +278,10 @@ pub struct Memory {
     entities_detected: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     original_text: Option<String>,
+    /// "completed" / "superseded" (see memory::Memory). Was missing here, so Memory
+    /// Manager never saw the done mark and still offered Keep (2026-11-02).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    temporal_status: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]

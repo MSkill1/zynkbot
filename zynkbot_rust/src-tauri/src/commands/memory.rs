@@ -76,6 +76,7 @@ pub async fn list_memories(
             expires_at: mem.expires_at.map(|dt| dt.to_string()),
             entities_detected: mem.entities_detected.clone(),
             original_text: mem.original_text.clone(),
+            temporal_status: mem.temporal_status.clone(),
         })
         .collect();
 
@@ -419,6 +420,7 @@ pub async fn get_memory(memory_id: i32) -> Result<Option<Memory>, String> {
         expires_at: mem.expires_at.map(|dt| dt.to_string()),
         entities_detected: mem.entities_detected.clone(),
         original_text: mem.original_text.clone(),
+        temporal_status: mem.temporal_status.clone(),
     });
 
     Ok(memory)
