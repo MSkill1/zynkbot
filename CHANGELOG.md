@@ -14,6 +14,7 @@ Nothing yet.
 
 ### Since the beta 5 pre-release (27 October)
 
+- **The cloud backup carries your API keys.** The provider keys, model choices and web-search settings go into the encrypted backup with the memories and conversations, and a restore puts back any the device does not have. The storage settings and the backup key are not included: both are needed to reach the backup in the first place.
 - **Restore from the cloud backup shows up after a fresh install.** Restored memories and conversations were written under the user ID they had when backed up; a fresh install has a new ID, so the app showed nothing after "restored 851 memories". Every restored row now belongs to the user doing the restore.
 - **The downloaded Zynkbot model is selected on its own** once the first-run download finishes on a computer. Before, the placeholder choice saved at first start was kept, and the model had to be picked by hand on the Current Model page.
 - **Sophro is the Zynkbot model.** The first-run offer, and the Download button on the Current Model page, now fetch Sophro-4B-memory-v1 (Qwen3-4B-Instruct-2507 fine-tuned on memory extraction, Q4_0, 2.4 GB) from containai.ai, checksum verified. Beta 5 fetched the plain Qwen3-4B file from Hugging Face.

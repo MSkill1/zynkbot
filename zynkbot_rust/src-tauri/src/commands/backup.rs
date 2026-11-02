@@ -406,9 +406,19 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
 
     pool.close().await;
 
+    // The API keys, model choices and search settings this device holds (Matt,
+    // 2026-11-02: a fresh install restored from the cloud should come back with its
+    // keys). The storage settings and the backup key stay out: both are needed to
+    // reach the backup in the first place.
+    let keys_json: Vec<serde_json::Value> = backup_key_names().iter()
+        .filter_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()).map(|v| serde_json::json!({ "name": k, "value": v })))
+        .collect();
+    let key_count = keys_json.len();
+
     let bundle = serde_json::json!({
         "version": 2,
         "memories": memories_json,
+        "keys": keys_json,
         "conversations": {
             "sessions": sessions_json,
             "messages": messages_json,
@@ -420,8 +430,8 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     let encrypted = encrypt_bytes(&key, &payload)?;
 
     r2_put(&cfg, "backup.enc", encrypted).await?;
-    println!("[Backup] Backed up {} memories, {} sessions, {} messages for user {}",
-        count, session_count, message_count, user_id);
+    println!("[Backup] Backed up {} memories, {} sessions, {} messages, {} keys for user {}",
+        count, session_count, message_count, key_count, user_id);
     Ok(serde_json::json!({
         "success": true,
         "count": count,
@@ -561,6 +571,27 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
 
     pool.close().await;
 
+    // Keys from the backup that this device does not hold yet. A key already here
+    // wins. Recorded as a secret too, so a later sync carries it to the peers.
+    let mut keys_restored = 0usize;
+    if let Some(keys) = parsed.get("keys").and_then(|v| v.as_array()) {
+        let allowed = backup_key_names();
+        for k in keys {
+            let (Some(name), Some(value)) = (k.get("name").and_then(|v| v.as_str()), k.get("value").and_then(|v| v.as_str())) else { continue };
+            if !allowed.contains(&name) || value.trim().is_empty() { continue; }
+            let missing = std::env::var(name).map(|v| v.trim().is_empty()).unwrap_or(true);
+            if !missing { continue; }
+            match crate::commands::models::apply_env_key(name, value) {
+                Ok(()) => {
+                    crate::commands::models::record_secret(name, Some(value)).await;
+                    println!("[Backup] Key {} put back from the backup", name);
+                    keys_restored += 1;
+                }
+                Err(e) => eprintln!("[Backup] Could not put back key {}: {}", name, e),
+            }
+        }
+    }
+
     // Push to peers: clear their tombstones then sync the restored memories.
     if inserted > 0 {
         let service_opt = {
@@ -596,11 +627,19 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         "sessions_skipped": sessions_skipped,
         "messages_inserted": messages_inserted,
         "messages_skipped": messages_skipped,
+        "keys_restored": keys_restored,
         "message": format!(
-            "Restored {} memories ({} already here{}), {} conversations ({} messages)",
-            inserted, skipped, deleted_note, sessions_inserted, messages_inserted
+            "Restored {} memories ({} already here{}), {} conversations ({} messages){}",
+            inserted, skipped, deleted_note, sessions_inserted, messages_inserted,
+            if keys_restored > 0 { format!(", {} keys", keys_restored) } else { String::new() }
         )
     }))
+}
+
+/// The settings a backup carries: the provider keys, model choices and web-search
+/// settings that travel between paired devices, minus the storage settings.
+fn backup_key_names() -> Vec<&'static str> {
+    crate::commands::models::PROPAGATABLE_KEYS.iter().copied().filter(|k| !k.starts_with("R2_")).collect()
 }
 
 /// What restoring the memories of a backup did.

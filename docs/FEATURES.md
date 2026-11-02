@@ -394,7 +394,7 @@ See [NETWORKING_FEATURES.md](NETWORKING_FEATURES.md) for detailed documentation:
 - **ZynkSync** - Memory synchronization across your devices
 - **ZynkLink** - File sharing between paired devices
 - **ZChat** - Device-to-device messaging
-- **Cloud backup** - Encrypted backup and restore of memories and conversation history to your own storage bucket (see the Cloud Backup section there)
+- **Cloud backup** - Encrypted backup and restore of memories, conversation history and API keys (with model choices and web-search settings) to your own storage bucket (see the Cloud Backup section there)
 
 ---
 
