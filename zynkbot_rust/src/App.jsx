@@ -2240,7 +2240,7 @@ export default function App() {
           {localModelFiles.length === 0 && (
             <div style={{ margin: '6px 0 10px' }}>
               <button className="model-add-btn" disabled={zbDownload.active} onClick={handleDownloadZbModel}
-                title="Qwen3-4B-Instruct-2507 Q4_0 from Hugging Face, checked against its checksum">
+                title="Sophro-4B-memory-v1 Q4_0 from containai.ai, checked against its checksum">
                 {zbDownload.active ? (zbDownload.verifying ? 'Checking the file…' : `Downloading… ${zbDownload.percent}%${zbDownload.total ? ' (' + formatModelSize(zbDownload.downloaded) + ' of ' + formatModelSize(zbDownload.total) + ')' : ''}`) : '⬇ Download the Zynkbot model (2.4 GB)'}
               </button>
               <div style={{ fontSize: '0.8rem', color: '#9aa5c4', marginTop: '4px' }}>

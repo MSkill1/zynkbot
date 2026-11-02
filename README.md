@@ -340,7 +340,7 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 **Local Models (Privacy-First):**
 
 - Place `.gguf` files in `zynkbot_rust/src-tauri/models/user/`
-- The Zynkbot model: Qwen3-4B-Instruct-2507, the Q4_0 file from unsloth (`Qwen3-4B-Instruct-2507-Q4_0.gguf`, 2.4 GB). The setup wizard offers to download it at first run. On a phone it is the only model offered
+- The Zynkbot model: Sophro-4B-memory-v1, a Q4_0 fine-tune of Qwen3-4B-Instruct-2507 for memory extraction (`Sophro-4B-memory-v1-Q4_0.gguf`, 2.4 GB, from containai.ai). The setup wizard offers to download it at first run. On a phone it is the only model offered
 - Alternatives: Qwen3 8B, DeepSeek R1 Distill Llama 8B, Llama 3.1 8B Lexi Uncensored V2 — optional download included in installation script
 - No API key needed — runs completely offline
 - CPU works; NVIDIA GPU with CUDA gives 10–100x faster responses (automatically configured by the installer if you have the CUDA toolkit — see [GPU Acceleration](#gpu-acceleration) below)

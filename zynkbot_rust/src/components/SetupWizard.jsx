@@ -12,7 +12,7 @@ const ZB_MODEL_ID = 'zb-qwen3-4b';
 const USER_MODELS = [
   // The Zynkbot model (2026-10-27): the model the app is built around, phone-sized; offered
   // on every platform, the only one offered on a phone.
-  { id: ZB_MODEL_ID,      name: 'Zynkbot model (Qwen3 4B)',          desc: 'The model Zynkbot is built around. Phone-sized, fast, no key needed', size: '2.4GB' },
+  { id: ZB_MODEL_ID,      name: 'Sophro 4B, the Zynkbot model',      desc: 'Zynkbot\'s own model, Qwen3 4B tuned for memory. Phone-sized, fast, no key needed', size: '2.4GB' },
   { id: 'qwen3-8b',       name: 'Qwen3 8B',                        desc: 'Larger all-around model for a computer with the RAM', size: '5.0GB' },
   { id: 'deepseek-r1-8b', name: 'DeepSeek R1 Distill Llama 8B',    desc: 'Reasoning and analytical tasks',               size: '4.7GB' },
   { id: 'llama-lexi-8b',  name: 'Llama 3.1 8B Lexi Uncensored',    desc: 'Creative, unfiltered responses',               size: '4.9GB' },
@@ -261,7 +261,7 @@ export default function SetupWizard({ onComplete }) {
     return (
       <div data-modal="" style={S.overlay}>
         <div style={S.card}>
-          <div style={S.title}>The Zynkbot model</div>
+          <div style={S.title}>Sophro, the Zynkbot model</div>
           <p style={S.body}>
             {zb.name}, {zb.size}. It answers on this phone with no key and nothing sent anywhere;
             a first question in a thread takes 10 to 20 seconds, later ones under 10.

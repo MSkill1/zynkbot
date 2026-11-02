@@ -122,10 +122,10 @@ The API Keys page (Settings → API Keys) lists one fold per provider, closed un
 - The Current Model page lists the model files on this device with their sizes, with **Move to…** and **Remove** for each (added 2026-10-23)
 - Models are auto-discovered and appear in the model picker
 - No API key needed - runs completely offline
-- A fresh install offers the Zynkbot model at the end of setup, on every platform (2.4 GB download from Hugging Face, checksum verified, resumable); "Later" leaves a Download button on the Current Model page
+- A fresh install offers the Zynkbot model at the end of setup, on every platform (2.4 GB download from containai.ai, checksum verified, resumable); "Later" leaves a Download button on the Current Model page
 
 **Recommended models:**
-- **Zynkbot model: Qwen3-4B-Instruct-2507, Q4_0** (2.4GB) - The model Zynkbot is built around; phone-sized and fast; the exact unsloth file (a Q4_K_M of the same model from elsewhere scored lower and read prompts 40% slower on a Pixel)
+- **Zynkbot model: Sophro-4B-memory-v1, Q4_0** (2.4GB) - Qwen3-4B-Instruct-2507 fine-tuned on memory extraction; phone-sized and fast; the Q4_0 file (a Q4_K_M of the same model from elsewhere scored lower and read prompts 40% slower on a Pixel)
 - **Qwen3 8B** (5.0GB) - Larger all-around model for a desktop with the RAM
 - **DeepSeek R1 Distill Llama 8B** (4.7GB) and **Llama 3.1 8B Lexi Uncensored** (4.9GB) - alternatives offered by the installers
 

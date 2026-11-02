@@ -138,10 +138,12 @@ async fn download_file(
 }
 
 pub const ZB_MODEL_ID: &str = "zb-qwen3-4b";
-pub const ZB_MODEL_URL: &str = "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_0.gguf";
-pub const ZB_MODEL_FILE: &str = "Qwen3-4B-Instruct-2507-Q4_0.gguf";
-pub const ZB_MODEL_BYTES: u64 = 2_375_773_280;
-pub const ZB_MODEL_SHA256: &str = "e0ba675d86ab277c61701c6793659b2ae801d95e3be791464c321e6fbf613be2";
+// Sophro-4B-memory-v1 (2026-11-02): Qwen3-4B-Instruct-2507 fine-tuned on memory extraction,
+// Q4_0 so the Snapdragon GPU and NPU paths can use the same file; served from containai.ai.
+pub const ZB_MODEL_URL: &str = "https://containai.ai/zynkbot/models/Sophro-4B-memory-v1-Q4_0.gguf";
+pub const ZB_MODEL_FILE: &str = "Sophro-4B-memory-v1-Q4_0.gguf";
+pub const ZB_MODEL_BYTES: u64 = 2_369_545_152;
+pub const ZB_MODEL_SHA256: &str = "da0a9b08e9be4f2a9d806b85f70ce90c824e8e0fb8fe53c79958a84e0c5f5b1b";
 
 /// The whole file hashed after the download; a mismatch removes the file and says so.
 fn verify_sha256(path: &std::path::Path, expected: &str) -> Result<(), String> {
@@ -251,9 +253,9 @@ pub async fn download_user_model(app: AppHandle, model_id: String) -> Result<(),
         .map_err(|e| format!("Failed to create user models dir: {}", e))?;
 
     let (url, filename, sha256): (&str, &str, Option<&str>) = match model_id.as_str() {
-        // The ZB model (Matt, 2026-10-23): the phone's model, Q4_0 so the Snapdragon GPU and
-        // NPU paths can use the same file; the exact unsloth file, a Q4_K_M from elsewhere
-        // scored far lower and read prompts 40% slower. 2.4 GB; checksum from the repo.
+        // The ZB model: Sophro, the Q4_0 fine-tune of Qwen3-4B-Instruct-2507 (the base file was
+        // chosen 2026-10-23: a Q4_K_M from elsewhere scored far lower and read prompts 40%
+        // slower). 2.4 GB; checksum of the published file.
         "zb-qwen3-4b" => (ZB_MODEL_URL, ZB_MODEL_FILE, Some(ZB_MODEL_SHA256)),
         "qwen3-8b" => (
             "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
@@ -309,9 +311,9 @@ mod zb_model_tests {
     }
 
     #[test]
-    fn the_zb_model_entry_is_the_exact_unsloth_file() {
-        assert!(ZB_MODEL_URL.ends_with("/Qwen3-4B-Instruct-2507-Q4_0.gguf"));
-        assert!(ZB_MODEL_URL.contains("unsloth/"));
+    fn the_zb_model_entry_is_sophro_from_containai() {
+        assert!(ZB_MODEL_URL.ends_with("/Sophro-4B-memory-v1-Q4_0.gguf"));
+        assert!(ZB_MODEL_URL.starts_with("https://containai.ai/"));
         assert_eq!(ZB_MODEL_SHA256.len(), 64);
         assert!(ZB_MODEL_BYTES > 2_000_000_000);
     }
