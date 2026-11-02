@@ -1,8 +1,8 @@
 # ZynkCluster: Distributed MoE Proof of Concept
 
-**Status:** Design Phase (Illustrative Code Examples)
+**Status:** Design Phase (Illustrative Code Examples). The layer-split milestone of the RAM-first plan was measured 29 Oct–2 Nov 2026 with stock llama.cpp; the expert-split architecture below is still unbuilt.
 **Purpose:** Demonstrate architectural approach to distributed Mixture of Experts inference
-**Requirements:** 2+ devices with GPU support for testing (NVIDIA CUDA or AMD ROCm)
+**Requirements:** for the expert split below, 2+ devices with GPU support (NVIDIA CUDA or AMD ROCm); for the layer split already measured, any two wired machines with enough RAM between them
 
 > **Newer direction (17 Oct 2026):** [`ZYNKCLUSTER_RAM_FIRST_PLAN.md`](ZYNKCLUSTER_RAM_FIRST_PLAN.md)
 > supersedes the VRAM-based hardware sizing in this document for the big-model path. The
@@ -18,7 +18,7 @@
 
 ## Overview
 
-This directory contains architectural examples for distributed Mixture of Experts (MoE) inference. The code shown here is **illustrative only** - it demonstrates the intended architecture but is not currently executable without appropriate hardware.
+This directory contains architectural examples for distributed Mixture of Experts (MoE) inference. The code shown here is **illustrative only** - it demonstrates the intended architecture and has never been run. What *has* run is llama.cpp's own RPC layer split across two home machines, including a 63 GB model across a 62 GB desktop and a 16 GB laptop; see the step 1 results in [`ZYNKCLUSTER_RAM_FIRST_PLAN.md`](ZYNKCLUSTER_RAM_FIRST_PLAN.md).
 
 ### What the Code Examples Actually Implement
 
@@ -363,7 +363,7 @@ ZynkCluster applies MoE's inherent expert-level parallelism to a deployment cont
 
 **Key Takeaway:** The device pairing infrastructure built for ZynkSync (memory synchronization) can be extended for compute clustering, making this a natural evolution of Zynkbot's architecture rather than a separate system. Same discovery, same auth, same networking — different payload.
 
-**Status:** Design phase complete, awaiting hardware availability or community collaboration for proof of concept implementation.
+**Status:** Design phase complete for the expert split; not implemented. The simpler layer split was demonstrated on two home machines in Oct–Nov 2026 (results in the RAM-first plan), which is the current path; the expert split is step 3 of that plan and is weighed there against prefix caching and pipelined prefill.
 
 ---
 

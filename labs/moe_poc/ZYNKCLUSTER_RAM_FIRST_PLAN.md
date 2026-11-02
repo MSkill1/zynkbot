@@ -68,7 +68,9 @@ Capability tiers from the session, unchanged: Qwen3-235B and MiniMax-M2.7 around
 mark; GLM-5.3-Flash and DeepSeek-V3.2 a step below the top; GLM-5.3 and DeepSeek-V4-Pro
 top tier (~90%); Kimi-K3 out of reach.
 
-**Footprint** is total parameters at 4-bit plus about 10% for quantisation metadata,
+**PCs @64 GB** divides the footprint by 64; measured 2 Nov 2026, a node holds about 50 GB of
+model safely once the operating system, KV cache and compute buffers are counted, so read the
+column as a lower bound and expect about 20% more machines. **Footprint** is total parameters at 4-bit plus about 10% for quantisation metadata,
 embeddings kept at higher precision, and a modest KV cache. **Read per word** is active
 parameters at 4-bit plus the same 10%. **Decode ceiling** is read-per-word divided by
 25–35 GB/s; it is an upper bound that ignores compute and network, and it is explained
@@ -328,6 +330,20 @@ this document survive a real link. Prefill did **not** improve (run 1 3.8 → 3.
 the link. The step 1 "done when" test passes wired (run 1b within a tenth of the estimate).
 Write-up: `~/Documents/Zynk_related/zynkcluster_step1_wired_2026-11-01.md` (local).
 
+**Further wired tests (2 November 2026).** Steady-state RPC traffic re-counted on the wire:
+**13 messages and ~65 KB per word** with the output layer local (the 22 counted on 29 Oct
+included first-token setup). Layer sweep on the 20B model: each layer moved to the laptop
+adds 5.6 ms per word net and the fixed per-hop cost is within noise of zero; on prefill the
+laptop is ~7× slower per layer than the desktop. A 3,455-token prompt took 42 s on the
+desktop CPU alone and ~85 s in either split, the laptop's 6–7 layers alone costing twice the
+whole desktop. **Prefix caching works over the split with stock llama.cpp**
+(`--prompt-cache`): the second run of the same long prompt did no prefill at all. And the
+capacity claim was demonstrated: **gpt-oss-120b (63.4 GB) answered across the 62 GB desktop
+and the 16 GB laptop** at 5.1 words/s decode, 412 ms/token prefill, with the 3090 limited to
+8 layers to stand in for a 16 GB card. The desktop-alone attempt at the same model hung the
+machine (memory exhaustion, 2 GB swap): count ~50 GB usable per 64 GB node, not 64.
+Write-up: `~/Documents/Zynk_related/zynkcluster_step1_wired_2026-11-01.md` (local).
+
 **What this changes in the plan.** Step 2 stays, but wired from day one, with messages per
 word as the first thing measured, and with the output layer on the main host. Step 3's
 ordering question (expert split vs pipelined prefill and prefix caching) tilts toward the
@@ -447,7 +463,7 @@ Two consequences of that removal, both measured from the repository:
 
 ---
 
-**Document Version:** 1.2
-**Last Updated:** 1 November 2026
+**Document Version:** 1.3
+**Last Updated:** 2 November 2026
 **Author:** Matt Skillman (notes from a working session with Claude)
 **License:** See main repository LICENSE file

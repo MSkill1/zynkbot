@@ -31,7 +31,7 @@ The local small model keeps answering the everyday things in the meantime.
   memory, per-person rules. This is the standing-instructions tier
   (always-loaded, user-authored rules) applied per account.
 - **The hardware can be cheap.** Step 1 ran on a desktop and a laptop that were already
-  owned. The RAM-first plan prices a three-tower cluster for an 80%-tier model at roughly a
+  owned, and on 2 Nov 2026 that pair ran a model larger than either machine's memory. The RAM-first plan prices a three-tower cluster for an 80%-tier model at roughly a
   used-car-repair budget. If that holds, the same setup serves a school classroom, a
   clinic, or an education programme somewhere without reliable connectivity or with data
   that may not leave the building. Out of the box: the small local model. When a stronger
@@ -42,7 +42,8 @@ The local small model keeps answering the everyday things in the meantime.
 Honest list, so the note does not oversell itself.
 
 1. Step 2 of the RAM-first plan has to show that the speed model predicts real used
-   towers, wired, within about a third. Step 1 only measured one WiFi pair.
+   towers within about a third. Step 1 measured one desktop–laptop pair, WiFi and wired,
+   including a 63 GB model across the two (2 Nov 2026); towers are still unmeasured.
 2. Prefill has to be tamed (prefix caching, pipelined prefill), or "wait a minute" becomes
    "wait ten".
 3. llama.cpp's RPC server is unauthenticated. It has to sit behind ZynkSync pairing and
