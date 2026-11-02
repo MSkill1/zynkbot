@@ -486,7 +486,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(session_id)
-        .bind(sess["user_id"].as_str().unwrap_or(&user_id))
+        .bind(&user_id)
         .bind(sess["title"].as_str())
         .bind(sess["started_at"].as_str())
         .bind(sess["last_active"].as_str())
@@ -542,7 +542,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(session_id)
-        .bind(msg["user_id"].as_str().unwrap_or(&user_id))
+        .bind(&user_id)
         .bind(role)
         .bind(content)
         .bind(created_at)
@@ -619,6 +619,9 @@ pub struct RestoredMemories {
 /// restored rows should win; J39 showed two deleted memories returning to every device).
 /// Restored rows keep the backup's created_at as their updated_at, so a peer's later
 /// deletion outranks them when they sync out.
+/// Every restored row belongs to the user doing the restore. A fresh install has a new
+/// user id; keeping the backup's id put 851 memories where the app never looked
+/// (desktop, 2026-11-02).
 pub async fn restore_memories_into(pool: &sqlx::SqlitePool, user_id: &str, memories: &[serde_json::Value]) -> RestoredMemories {
     let mut out = RestoredMemories::default();
     for mem in memories {
@@ -682,7 +685,7 @@ pub async fn restore_memories_into(pool: &sqlx::SqlitePool, user_id: &str, memor
         .bind(&content)
         .bind(mem["source_type"].as_str())
         .bind(mem["session_id"].as_str())
-        .bind(mem["user_id"].as_str().unwrap_or(user_id))
+        .bind(user_id)
         .bind(mem["namespace"].as_str().unwrap_or("general"))
         .bind(mem["is_syncable"].as_bool().unwrap_or(true))
         .bind(mem["is_shareable"].as_bool().unwrap_or(false))
