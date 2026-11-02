@@ -10,11 +10,9 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 Nothing yet.
 
-## [0.9.6-beta5] — 2026-10-27, re-cut 2026-11-02 as build 2 <!-- branch local-model; entries for 10-26/27 drafted by Claude, for Matt's review -->
+## [0.9.6] — 2026-11-02 <!-- branch local-model; the 27 Oct pre-release was 0.9.6-beta5; entries for 10-26/27 drafted by Claude, for Matt's review -->
 
-### Build 2 (2026-11-02): added since the first cut on 27 October
-
-The same version number; the first cut was replaced on GitHub. Testers install this one over the first.
+### Since the beta 5 pre-release (27 October)
 
 - **Memory Manager shows the done mark, and the ID on every row.** The command that fills the list returned a record without the done/replaced field, so a plan already marked done still read as a passing fact and offered Keep, on every device. Each row now carries its number (#3291) before the date, and the Keep button reads "Keep as a long-term memory".
 - **The voice profile no longer learns from the television (KI-103).** A wake that ends in a spoken answer counts as the owner's voice for training only if the owner check scored at least 0.80; clock commands count at any score. Six TV voices passed the 0.50 line in one morning and two of them were about to be trained as the owner.
