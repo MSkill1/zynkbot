@@ -317,13 +317,24 @@ For scale, the 3090 alone decodes this model at ~5 ms per word.
    of streaming bandwidth on this machine. The split's compute terms then predict ~100 ms
    for run 1b against 141 ms measured, with the remainder being the hop.
 
+**Wired rerun (1 November 2026).** Same machines, build, model and prompt over a direct
+2.5 GbE cable (0.21 ms median round trip, 281 MB/s, vs 4.2 ms and 17 MB/s on WiFi).
+Decode per word: run 1 222 → **127 ms**, run 1b 141 → **106 ms**, run 2 81 → **57 ms**
+(17.7 words/s), baseline unchanged at 66 ms. Predictions written down before the runs, from
+the ~22-messages-per-word count and the new round trip, were 110 / 105 / 60–65 ms. The
+network term is now under 10 ms per boundary per word, so the layer-split decode figures in
+this document survive a real link. Prefill did **not** improve (run 1 3.8 → 3.0 s, run 2
+3.5 → 3.3 s, still 2–6× the desktop alone): it is bound by the slow node's arithmetic, not
+the link. The step 1 "done when" test passes wired (run 1b within a tenth of the estimate).
+Write-up: `~/Documents/Zynk_related/zynkcluster_step1_wired_2026-11-01.md` (local).
+
 **What this changes in the plan.** Step 2 stays, but wired from day one, with messages per
 word as the first thing measured, and with the output layer on the main host. Step 3's
 ordering question (expert split vs pipelined prefill and prefix caching) tilts toward the
 latter: the expert split needs ~75 exchanges per word and the stock protocol already spent
 22 on one boundary.
 
-**Not shown by this test.** No wired run exists; every network figure is WiFi. One prompt,
+**Not shown by this test.** The wired rerun above covers the link; what remains is: one prompt,
 one output length, n = 1 per timed run (a 3× llama-bench repeat agreed for the CPU-only
 split; the CUDA+RPC bench rows disagreed with the timed runs and were not investigated).
 No long-context run. The laptop is a poor stand-in for an office tower in both bandwidth
@@ -365,8 +376,9 @@ metadata, probably a carried-over config, and is a minor thing to re-check at so
 - **Effective DDR4 bandwidth on actual used towers** — the 25–35 GB/s assumption carries
   every speed figure here and is cheap to measure on the first machine bought. Step 1 adds:
   use an *inference* bandwidth, about two thirds of the streaming-read figure on the desktop.
-- **Messages per word on a wired link.** Step 1 counted ~22 per boundary per word over WiFi;
-  the wired cost is predicted (~5 ms), not measured. First measurement for step 2.
+- ~~**Messages per word on a wired link.**~~ Measured indirectly 1 Nov 2026: the wired runs
+  matched predictions built on the ~22-per-word count to within a few ms. A direct re-count on
+  the wire is still worth doing in step 2.
 - **Whether llama.cpp's RPC can be made leaner** (graph reuse across words, fewer allocation
   queries) before any custom protocol is written. Worth a look at upstream issues first.
 - ~~Active parameters for MiniMax-M2.7, GLM-5.3, Kimi-K3~~ — resolved above.
@@ -435,7 +447,7 @@ Two consequences of that removal, both measured from the repository:
 
 ---
 
-**Document Version:** 1.1
-**Last Updated:** 29 October 2026
+**Document Version:** 1.2
+**Last Updated:** 1 November 2026
 **Author:** Matt Skillman (notes from a working session with Claude)
 **License:** See main repository LICENSE file
