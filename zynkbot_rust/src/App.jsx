@@ -761,6 +761,14 @@ export default function App() {
           localStorage.setItem('zynkbot_preferred_model', defaultModel.id);
           console.log('[Models] First run — defaulting to:', defaultModel.id);
         }
+      } else if (stored === 'local' && models.find(m => (m.type || m.model_type) === 'local')) {
+        // The placeholder "local" was saved at first start, before any model existed
+        // (desktop, 2026-11-02: the downloaded Zynkbot model was never selected, the
+        // user had to pick it). A real local file is here now: choose it.
+        const firstLocal = models.find(m => (m.type || m.model_type) === 'local');
+        setModelType(firstLocal.id);
+        localStorage.setItem('zynkbot_preferred_model', firstLocal.id);
+        console.log('[Models] Placeholder "local" and a local model is present — selecting:', firstLocal.id);
       } else if (stored === 'local' && !models.find(m => m.id === 'local' || (m.type || m.model_type) === 'local')) {
         // Stale 'local' stored value but no local models available (e.g. Android after a
         // desktop-only install migrated over). Fall through to custom/API instead of leaving

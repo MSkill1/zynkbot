@@ -14,6 +14,7 @@ Nothing yet.
 
 ### Since the beta 5 pre-release (27 October)
 
+- **The downloaded Zynkbot model is selected on its own** once the first-run download finishes on a computer. Before, the placeholder choice saved at first start was kept, and the model had to be picked by hand on the Current Model page.
 - **Sophro is the Zynkbot model.** The first-run offer, and the Download button on the Current Model page, now fetch Sophro-4B-memory-v1 (Qwen3-4B-Instruct-2507 fine-tuned on memory extraction, Q4_0, 2.4 GB) from containai.ai, checksum verified. Beta 5 fetched the plain Qwen3-4B file from Hugging Face.
 - **Memory Manager shows the done mark, and the ID on every row.** The command that fills the list returned a record without the done/replaced field, so a plan already marked done still read as a passing fact and offered Keep, on every device. Each row now carries its number (#3291) before the date, and the Keep button reads "Keep as a long-term memory".
 - **The voice profile no longer learns from the television (KI-103).** A wake that ends in a spoken answer counts as the owner's voice for training only if the owner check scored at least 0.80; clock commands count at any score. Six TV voices passed the 0.50 line in one morning and two of them were about to be trained as the owner.
