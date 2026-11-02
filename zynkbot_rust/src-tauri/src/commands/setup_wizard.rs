@@ -139,8 +139,9 @@ async fn download_file(
 
 pub const ZB_MODEL_ID: &str = "zb-qwen3-4b";
 // Sophro-4B-memory-v1 (2026-11-02): Qwen3-4B-Instruct-2507 fine-tuned on memory extraction,
-// Q4_0 so the Snapdragon GPU and NPU paths can use the same file; served from containai.ai.
-pub const ZB_MODEL_URL: &str = "https://containai.ai/zynkbot/models/Sophro-4B-memory-v1-Q4_0.gguf";
+// Q4_0 so the Snapdragon GPU and NPU paths can use the same file; published on Hugging Face
+// (containai.ai served it at 10 Mbit/s, Hugging Face at the full line rate, 2026-11-02).
+pub const ZB_MODEL_URL: &str = "https://huggingface.co/GenerallyTso/Sophro-4B-memory-v1/resolve/main/Sophro-4B-memory-v1-Q4_0.gguf";
 pub const ZB_MODEL_FILE: &str = "Sophro-4B-memory-v1-Q4_0.gguf";
 pub const ZB_MODEL_BYTES: u64 = 2_369_545_152;
 pub const ZB_MODEL_SHA256: &str = "da0a9b08e9be4f2a9d806b85f70ce90c824e8e0fb8fe53c79958a84e0c5f5b1b";
@@ -311,9 +312,9 @@ mod zb_model_tests {
     }
 
     #[test]
-    fn the_zb_model_entry_is_sophro_from_containai() {
+    fn the_zb_model_entry_is_sophro_from_hugging_face() {
         assert!(ZB_MODEL_URL.ends_with("/Sophro-4B-memory-v1-Q4_0.gguf"));
-        assert!(ZB_MODEL_URL.starts_with("https://containai.ai/"));
+        assert!(ZB_MODEL_URL.starts_with("https://huggingface.co/GenerallyTso/"));
         assert_eq!(ZB_MODEL_SHA256.len(), 64);
         assert!(ZB_MODEL_BYTES > 2_000_000_000);
     }

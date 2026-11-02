@@ -26,13 +26,13 @@ Models will appear in the app's model selector after placing them in this direct
 
 ### The Zynkbot model: Sophro-4B-memory-v1 ⭐ **Recommended**
 - **Size:** 2.4GB
-- **File:** `Sophro-4B-memory-v1-Q4_0.gguf`, a Q4_0 fine-tune of Qwen3-4B-Instruct-2507 (Apache-2.0), served from containai.ai
+- **File:** `Sophro-4B-memory-v1-Q4_0.gguf`, a Q4_0 fine-tune of Qwen3-4B-Instruct-2507 (Apache-2.0), published at https://huggingface.co/GenerallyTso/Sophro-4B-memory-v1
 - **Use Case:** The model Zynkbot is built around. Phone-sized, fast, no key needed
 - **How you get it:** The setup wizard offers to download it at first run. On a phone it is the only model offered. A download that is interrupted continues where it stopped, and the file is checked against its checksum before it is used. If you choose Later, the download stays on the Current Model page
 - **Download by hand:**
   ```bash
   cd ~/zynkbot/zynkbot_rust/src-tauri/models/user
-  wget https://containai.ai/zynkbot/models/Sophro-4B-memory-v1-Q4_0.gguf
+  wget https://huggingface.co/GenerallyTso/Sophro-4B-memory-v1/resolve/main/Sophro-4B-memory-v1-Q4_0.gguf
   ```
 
 The models below are alternatives. The setup wizard offers them on a computer, not on a phone.
