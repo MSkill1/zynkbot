@@ -887,6 +887,14 @@ pub async fn get_full_memory_graph(
     // word, in the text of every other memory.
     let texts: Vec<(i32, String)> = memories.iter().map(|m| (m.id, m.content.to_lowercase())).collect();
     widen_by_text(&mut entities, &texts);
+    {
+        let mut top: Vec<(usize, String)> = entities.iter()
+            .map(|e| (e["memory_ids"].as_array().map_or(0, |a| a.len()), e["name"].as_str().unwrap_or("").to_string()))
+            .collect();
+        top.sort_by(|a, b| b.0.cmp(&a.0));
+        let shown: Vec<String> = top.iter().take(12).map(|(n, name)| format!("{} {}", name, n)).collect();
+        println!("[Rust] Map hubs: {}", shown.join(", "));
+    }
 
     pool.close().await;
 
@@ -951,8 +959,11 @@ pub(crate) fn widen_by_text(entities: &mut [serde_json::Value], texts: &[(i32, S
     let is_word = |c: char| c.is_alphanumeric();
     for e in entities.iter_mut() {
         let key = e["key"].as_str().unwrap_or("").to_string();
+        let kind = e["kind"].as_str().unwrap_or("thing");
         let mut ids: Vec<i32> = e["memory_ids"].as_array().map(|a| a.iter().filter_map(|v| v.as_i64().map(|n| n as i32)).collect()).unwrap_or_default();
-        if ids.len() < 2 || key.len() < 3 { continue; }
+        // Only people, places and organisations: a "thing" is often an ordinary word
+        // ("gate", "level", "American") that would gather everything.
+        if ids.len() < 2 || key.len() < 4 || kind == "thing" { continue; }
         for (id, text) in texts {
             if ids.contains(id) { continue; }
             let mut from = 0;
@@ -1003,6 +1014,22 @@ pub(crate) fn is_map_noise(key: &str) -> bool {
 /// ("Dr" + "Harper" -> "Dr Harper"), word-pieces, short tokens and weak scores dropped.
 pub(crate) fn named_things_from_ner(raw: &str) -> Vec<(String, String)> {
     let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(raw) else { return Vec::new() };
+    let label_of = |it: &serde_json::Value| it.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    // The finder also writes whole names with a bare label ("Elden Ring ", MISC) beside
+    // the word pieces; when it has, those are the names, and the pieces are not.
+    let whole: Vec<&serde_json::Value> = items.iter()
+        .filter(|it| { let l = label_of(it); !l.is_empty() && !l.starts_with("B-") && !l.starts_with("I-") })
+        .collect();
+    if !whole.is_empty() {
+        return whole.into_iter().filter_map(|it| {
+            let name = it.get("word").and_then(|v| v.as_str())?.trim();
+            let score = it.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0);
+            if name.chars().count() < 3 || name.contains("##") || score < 0.6 { return None; }
+            let label = label_of(it);
+            let kind = if label.contains("PER") { "person" } else if label.contains("LOC") { "place" } else if label.contains("ORG") { "org" } else { "thing" };
+            Some((name.to_string(), kind.to_string()))
+        }).collect();
+    }
     let mut out: Vec<(String, String, i64)> = Vec::new(); // name, kind, end offset
     for it in items {
         let Some(word) = it.get("word").and_then(|v| v.as_str()).map(str::trim) else { continue };
@@ -1044,13 +1071,23 @@ mod graph_tests {
             ("Vermont".to_string(), "place".to_string()),
         ]);
         assert!(named_things_from_ner("not json").is_empty());
+        // Whole names beside the pieces: the whole names win, the pieces are dropped
+        let both = r###"[{"end":3,"label":"B-ORG","score":0.55,"start":0,"word":"Use"},
+                       {"end":46,"label":"B-ORG","score":0.89,"start":41,"word":"Elden"},
+                       {"end":51,"label":"I-MISC","score":0.51,"start":47,"word":"Ring"},
+                       {"end":11,"label":"MISC","score":0.85,"start":0,"word":"Elden Ring "},
+                       {"end":20,"label":"LOC","score":0.97,"start":13,"word":"Vermont"}]"###;
+        assert_eq!(named_things_from_ner(both), vec![
+            ("Elden Ring".to_string(), "thing".to_string()),
+            ("Vermont".to_string(), "place".to_string()),
+        ]);
     }
 
     #[test]
     fn a_known_thing_is_found_in_the_text_of_other_memories_as_a_whole_word() {
         let mut ents = vec![
             serde_json::json!({ "key": "vermont", "name": "Vermont", "kind": "place", "memory_ids": [1, 2] }),
-            serde_json::json!({ "key": "gate", "name": "Gate", "kind": "thing", "memory_ids": [1] }),
+            serde_json::json!({ "key": "gate", "name": "Gate", "kind": "thing", "memory_ids": [1, 6] }),
         ];
         let texts = vec![
             (1, "i live in vermont".to_string()),
@@ -1061,7 +1098,7 @@ mod graph_tests {
         ];
         super::widen_by_text(&mut ents, &texts);
         assert_eq!(ents[0]["memory_ids"], serde_json::json!([1, 2, 3, 5]), "whole-word mentions join, 'vermonters' does not");
-        assert_eq!(ents[1]["memory_ids"], serde_json::json!([1]), "a thing in one memory is not widened");
+        assert_eq!(ents[1]["memory_ids"], serde_json::json!([1, 6]), "a thing is not widened, only people, places and organisations");
     }
 
     #[test]

@@ -294,6 +294,7 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
       ctx.lineWidth = (selected ? 3 : 2) / globalScale;
       ctx.stroke();
       // The biggest hubs are named at any zoom; the rest as you come closer
+      node.labelBox = null;
       const named = selected || node.rank < 12 || (globalScale > 0.7 && node.rank < 40) || globalScale > 1.3;
       if (!named) return;
       const fontSize = Math.min(13, 10 + node.count / 4) / globalScale;
@@ -301,11 +302,12 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
       const w = ctx.measureText(node.name).width;
       const ly = node.y + node.val + fontSize * 0.8;
       const pad = 2 / globalScale;
-      if (!selected && !claimLabel({ x1: node.x - w / 2 - pad, x2: node.x + w / 2 + pad, y1: ly - fontSize / 2 - pad, y2: ly + fontSize / 2 + pad })) return;
+      if (!selected && !claimLabel({ x1: node.x - w / 2 - pad, x2: node.x + w / 2 + pad, y1: ly - fontSize / 2 - pad, y2: ly + fontSize / 2 + pad })) { node.labelBox = null; return; }
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = selected ? '#f8f8f2' : hubColors[node.kind];
       ctx.fillText(node.name, node.x, ly);
+      node.labelBox = { w: w + 2 * pad, h: fontSize + 2 * pad, y: ly }; // the name is part of the touch area
       return;
     }
 
@@ -341,6 +343,10 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
     ctx.arc(node.x, node.y, node.val + (node.hub ? 16 : 10) / globalScale, 0, 2 * Math.PI, false);
     ctx.fillStyle = color;
     ctx.fill();
+    if (node.hub && node.labelBox) {
+      const b = node.labelBox;
+      ctx.fillRect(node.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+    }
   }, []);
 
   const paintLink = useCallback((link, ctx, globalScale) => {
@@ -422,7 +428,7 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
         </div>
 
         <div className="graph-container" ref={containerRef}>
-          {!isLoading && memoryNodes.length > 0 && (
+          {!isLoading && !selectedNode && memoryNodes.length > 0 && (
           <div className="graph-legend">
             {graphData.namespaces.filter(n => n.name !== '_zynkbot').slice(0, LEGEND_NAMESPACES).map(n => (
               <div className="legend-item" key={n.name} title={`${n.count} memories`}>
