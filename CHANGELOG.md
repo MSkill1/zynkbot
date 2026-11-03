@@ -8,12 +8,13 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ## Unreleased
 
-- **Hands-free works after a reboot or an update without opening the app first.** The wake-word service starts on its own in both cases, and the native answer path then found no API keys and no model, because only the app's screen loaded the settings file; the phone said "Zynkbot couldn't get an answer, check the API settings". The hands-free path now loads the settings file itself.
+Nothing yet.
 
 ## [0.9.6] — 2026-11-02 <!-- branch local-model; the 27 Oct pre-release was 0.9.6-beta5; entries for 10-26/27 drafted by Claude, for Matt's review -->
 
 ### Since the beta 5 pre-release (27 October)
 
+- **Hands-free works after a reboot or an update without opening the app first.** The wake-word service starts on its own in both cases, and the native answer path then found no API keys and no model, because only the app's screen loaded the settings file; the phone said "Zynkbot couldn't get an answer, check the API settings". The hands-free path now loads the settings file itself.
 - **"Updated" notice with Undo.** When a memory replaces an older one on its own (cloud models decide this themselves), the line above the message box now stays for 30 seconds and carries an Undo button that puts the older memory back as current, keeping both. Before, the line faded after 12 seconds and could only be dismissed.
 - **Two first-run texts corrected.** The local-model notice said replies take half a minute to a minute on a phone; it now says a few seconds. The chat page's introduction names all four buttons under the box (KB, paper clip for a file, picture for a photo from the gallery, camera) and no longer suggests telling Zynkbot about dinner, which the Kitchen kit will cover.
 - **"Hey Zynk" answers only a voice it has been taught.** Until the phone holds a voice profile that passed its test, a wake is ignored, and switching the wake word on opens the teaching window: say "Hey Zynk" twenty times with the Voice page open and the TV off. A wake counts toward the twenty only while the page is open, so a television cannot fill it while you are away. The profile then travels to your other devices with the API keys and goes into the cloud backup, so a fresh install restored from the cloud wakes to your voice without teaching again. The profile that used to be built into the app (one person's voice, keyed to a user id that a fresh install changes) is gone: after the fresh installs of 2 November every phone was back to answering the television.
