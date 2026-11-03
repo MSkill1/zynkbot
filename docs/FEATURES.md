@@ -285,7 +285,7 @@ Professional database-style interface for managing your memories.
 - Filter by namespace (personal, work, family, etc.)
 - Edit memory content and metadata
 - Delete unwanted memories
-- See memory relationships (contradicts, supports, etc.) — see [Memory Relationship Graph](architecture_and_development/MEMORY_RELATIONSHIP_GRAPH.md) for a full explanation of the graph, its practical uses, and its research potential
+- See a memory's relationships (updates, contradicts, related, same message) in words on its panel, or as a picture in the graph window — see [Memory Relationships](architecture_and_development/MEMORY_RELATIONSHIP_GRAPH.md) for what they are, what they are for, and their research potential
 
 ---
 

@@ -253,7 +253,7 @@ export default function WhyZynkbotModal({ isOpen, onClose }) {
 
           <div className="cta-checklist">
             <div className="cta-item">✓ Switch between 5 containment modes (Guardian, Child, Sovereign, Witness, HIPAA)</div>
-            <div className="cta-item">✓ View and edit your memories in real-time with graph visualization</div>
+            <div className="cta-item">✓ View and edit your memories, and see what each one updates or contradicts</div>
             <div className="cta-item">✓ Test API models (Claude, GPT, Grok) or add local .gguf models</div>
             <div className="cta-item">✓ Pair devices with ZynkSync for memory synchronization</div>
             <div className="cta-item">✓ Share files with ZynkLink across your network</div>

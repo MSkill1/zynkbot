@@ -56,7 +56,7 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 - **Pure Rust ML** - Embeddings, NER, and safety classification run on the Candle framework — no Python runtime
 - **Multi-Model Ensemble** - Query multiple AI models simultaneously with consensus detection
 - **Contradiction Detection** - Automatically surfaces conflicting memories and asks you to resolve them
-- **Memory Graph** - Visual relationship map of all stored memories; explore contradictions, connections, and context
+- **Memory Relationships** - Every memory keeps its links to the others: what it updates, what it contradicts, what came from the same message. Shown in words on each memory, and as a picture in the Memory Manager
 - **Cross-Device Sync** - ZynkSync syncs memories, conversations, settings and your voice profile across your own devices
 - **Cloud Backup** - Encrypted backup of memories, conversations, keys and voice profile to your own storage bucket; a fresh install restores itself from it
 - **Hey Zynk** - Hands-free on Android: a wake word that answers only the voice it has been taught, with timers, alarms and a stopwatch by voice
@@ -281,11 +281,11 @@ As of two years ago, I had no experience with Rust and only an interest. When it
   <tr>
     <td align="center" width="50%">
       <img src="assets/graph_contradicts.png" alt="Memory contradiction detail">
-      <br><em>Zoomed in — red edges show contradictions between memories, blue elaborates, yellow reminds_of. Click any node to inspect content and related memories.</em>
+      <br><em>The relationship picture, zoomed in: a red line is a contradiction, green an update, cyan a related memory. Tap a dot to read the memory and what it links to.</em>
     </td>
     <td align="center" width="50%">
       <img src="assets/graph_global.png" alt="Memory graph overview">
-      <br><em>The full memory graph — every stored memory and its relationships. Zoom out to see the complete picture as it grows over time.</em>
+      <br><em>Zoomed out: every memory and its links. The words on each memory's panel are the everyday view; the picture is a second way of looking at the same relationships.</em>
     </td>
   </tr>
 </table>
@@ -579,7 +579,7 @@ Copyright (c) 2024-2026 Matthew Skillman / ContainAI
 - **[Installation Guides](docs/)** - Platform-specific setup instructions
 - **[Model Architecture](docs/architecture_and_development/MODEL_ARCHITECTURE.md)** - System design and ML pipeline
 - **[Memory Processing Pipeline](docs/architecture_and_development/MEMORY_PROCESSING_PIPELINE.md)** - How memory search and storage works
-- **[Memory Relationship Graph](docs/architecture_and_development/MEMORY_RELATIONSHIP_GRAPH.md)** - The graph visualization: what it shows, practical uses, and research potential
+- **[Memory Relationships](docs/architecture_and_development/MEMORY_RELATIONSHIP_GRAPH.md)** - The links between memories: what they are, what they are for today, and their research potential
 - **[Prompt Construction Pipeline](docs/architecture_and_development/PROMPT_CONSTRUCTION_PIPELINE.md)** - How prompts are assembled
 - **[Database Schema](docs/architecture_and_development/DATABASE_SCHEMA.md)** - Database structure
 - **[Models](docs/MODELS.md)** - Model information and management

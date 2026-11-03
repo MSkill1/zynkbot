@@ -1,8 +1,8 @@
 # Memory Relationship Graph
 
-The Memory Relationship Graph is one of Zynkbot's most distinctive features. It visualizes not just what you know, but how you think — the connections, tensions, and causal chains between everything you have shared with your companion.
+What is distinctive about Zynkbot is not a picture but a record: every memory keeps its relationships to the others — what it updates, what it contradicts, what it is related to, what came out of the same message. Those relationships are what the chat uses to know that a memory was replaced or disputed, and the Memory Manager shows them in words on each memory's panel. Together they record not just what you know but how your understanding changed.
 
-This document covers what the graph is, what it is useful for today, and what could theoretically be done with this kind of data in the future — with your full knowledge and consent.
+The Memory Relationship Graph window in the Memory Manager draws the same relationships as dots and lines. It is one way of looking at them, and the least used: a personal store of several hundred facts is a scatter of small clusters at any zoom, and it is under review for v1.0 (2026-11-03). Nothing in this document depends on the picture; it is about the relationships themselves — what they are, what they are useful for today, and what could theoretically be done with this kind of data in the future, with your full knowledge and consent.
 
 ---
 
@@ -10,7 +10,7 @@ This document covers what the graph is, what it is useful for today, and what co
 
 Each **node** is a stored memory: a fact, belief, experience, or statement you have shared with Zynkbot.
 
-Each **edge** is a relationship the system detected between two memories, classified into one of five active types:
+Each **edge** is a relationship the system detected between two memories, classified into one of four types:
 
 | Relationship | Meaning |
 |---|---|
@@ -154,4 +154,4 @@ For developers and researchers working with graph data directly:
 
 ---
 
-*The memory relationship graph is an early-stage implementation. Relationship detection accuracy, graph export tooling, and research participation infrastructure are all areas of active development. See [ROADMAP.md](../ROADMAP.md) for planned improvements.*
+*The relationships are an early-stage implementation. Relationship detection accuracy, export tooling, and research participation infrastructure are all areas of active development. See [ROADMAP.md](../ROADMAP.md) for planned improvements. Relationships travel between your devices by ZynkSync; as of 2026-11-03 they are not in the cloud backup, so a restore brings the memories back without them (fix planned for v1.0).*

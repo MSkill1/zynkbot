@@ -815,7 +815,6 @@ cp ~/zynkbot_backup_20260530.db ~/.local/share/zynkbot/zynkbot.db
 **Planned:**
 - Compression for old memories (archiving memories beyond a configurable age threshold, relevant for HIPAA-regulated deployments)
 - Automatic expiration cleanup job for ephemeral memories (currently ephemeral memories are filtered at query time; a background job would purge expired rows to keep the table lean)
-- Memory graph visualization support (the relationship graph exists in `memory_links`; this refers to surfacing it as an interactive visual in the UI)
 - Cleanup of `zynk_link_manifest` (legacy duplicate of `zynk_file_manifest`; requires a migration to unify on one table)
 - Population of `entry_hash` / `prev_hash` in `conversation_messages` for MemoryVault tamper-evidence chain (v2.0)
 - TLS certificate infrastructure using `zynk_device_certificates` for encrypted device communication
