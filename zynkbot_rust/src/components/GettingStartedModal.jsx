@@ -75,11 +75,12 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
             <li>Click the <strong>⚙️ Settings</strong> button in the bottom left corner</li>
             <li>Scroll down to the demo section</li>
             <li>Click <strong>👨‍🔬 Load Einstein Demo</strong></li>
-            <li>Wait a few seconds while 59 memories and relationships load</li>
+            <li>Wait a few seconds while the memories and their links load</li>
             <li>The page will reload automatically when complete</li>
           </ol>
           <div className="info-box">
-            <strong>What this does:</strong> Loads Einstein's memories from a first-person perspective.
+            <strong>What this does:</strong> Loads Einstein's life as Zynkbot would have remembered it had he typed it in:
+            what he said, the facts kept from each message, and the links between them.
             Zynkbot will treat you as Einstein and respond as your personal AI assistant.
           </div>
         </div>
@@ -94,7 +95,7 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
           <ol>
             <li>Click <strong>📚 Memory Manager</strong> button in the Recent Memories section</li>
             <li>Browse through Einstein's memories and relationships</li>
-            <li>Click the <strong>🕸️ Graph View</strong> tab to see memory connections</li>
+            <li>Click <strong>🗺️ View on the map</strong> to see the people, places and things they share</li>
             <li>Try editing or deleting a memory, then ask a related question</li>
             <li>Notice how Zynkbot's response changes based on your edits</li>
           </ol>

@@ -146,7 +146,7 @@ For developers and researchers working with graph data directly:
 - `relation_type` — one of the relationship types listed above (`supports`, `contradicts`, `elaborates`, `caused_by`, `reminds_of`, plus reserved types `quotes` and `resolves`)
 - `confidence` — float 0.0–1.0
 - `notes` — optional free-text annotation
-- `created_by` — who/what created this edge (`system`, `einstein-seed`, or a user identifier)
+- `created_by` — who/what created this edge (`system`, or `user` for a link the user made or a "resolves" explanation)
 
 **Graph format for export:** The graph is representable as a standard directed property graph. Export to GraphML, JSON-LD, or Cypher (Neo4j) format is a natural target for a future snap-in or CLI tool.
 

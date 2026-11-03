@@ -27,7 +27,8 @@ const namespaceColors = {
 };
 const sparePalette = ['#c084fc', '#4ade80', '#2dd4bf', '#e879f9', '#a3e635', '#38bdf8', '#fca5a5'];
 
-const HUB_MIN_MEMORIES = 3;      // a thing mentioned once or twice is not a hub
+const HUB_MIN_MEMORIES = 3;      // a thing mentioned once or twice is not a hub...
+const SMALL_MAP = 200;           // ...except on a small map (the demo, a new user), where two memories make one
 const HUB_MAX = 80;              // the biggest hubs; a phone cannot read more
 const LEGEND_NAMESPACES = 6;     // the biggest namespaces named in the legend
 const MEMBER_DISTANCE = 26;      // a memory sits this close to its hub
@@ -84,6 +85,24 @@ function mapExtent(nodes) {
   return { cx, cy, r: Math.max(r, 40) };
 }
 
+// Text is drawn in screen pixels, not map units: a font set in map units and scaled by the
+// zoom comes out with wrong letter spacing on WebKitGTK (the Linux desktop), which hints the
+// glyphs at the unscaled size. Returns the width in map units.
+function screenText(ctx, globalScale, text, x, y, px, { bold = false, align = 'center', baseline = 'middle', color = '#f8f8f2', measureOnly = false } = {}) {
+  ctx.save();
+  ctx.scale(1 / globalScale, 1 / globalScale);
+  ctx.font = `${bold ? 'bold ' : ''}${px}px Sans-Serif`;
+  const w = ctx.measureText(text).width;
+  if (!measureOnly) {
+    ctx.textAlign = align;
+    ctx.textBaseline = baseline;
+    ctx.fillStyle = color;
+    ctx.fillText(text, x * globalScale, y * globalScale);
+  }
+  ctx.restore();
+  return w / globalScale;
+}
+
 export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, onNavigate }) {
   const [graphData, setGraphData] = useState({ nodes: [], links: [], namespaces: [], hubCount: 0 });
   const [isLoading, setIsLoading] = useState(false);
@@ -110,7 +129,7 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
     const ext = mapExtent(graphData.nodes);
     if (!fg || !ext || !size.width || !size.height) return;
     fg.centerAt(ext.cx, ext.cy, ms);
-    fg.zoom(Math.max(0.05, Math.min(size.width, size.height) / (2.3 * ext.r)), ms);
+    fg.zoom(Math.max(0.05, Math.min(size.width, size.height) / (1.9 * ext.r)), ms);
   }, [graphData.nodes, size]);
 
   const fetchGraphData = useCallback(async () => {
@@ -139,7 +158,7 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
       const present = new Set(allMemories.map(m => m.id));
       const hubs = allEntities
         .map(e => ({ ...e, memory_ids: (e.memory_ids || []).filter(id => present.has(id)) }))
-        .filter(e => e.memory_ids.length >= HUB_MIN_MEMORIES)
+        .filter(e => e.memory_ids.length >= (allMemories.length < SMALL_MAP ? 2 : HUB_MIN_MEMORIES))
         .sort((a, b) => b.memory_ids.length - a.memory_ids.length)
         .slice(0, HUB_MAX);
       const hubsOf = new Map(); // memory id -> [hub node id]
@@ -297,22 +316,21 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
       node.labelBox = null;
       const named = selected || node.rank < 12 || (globalScale > 0.7 && node.rank < 40) || globalScale > 1.3;
       if (!named) return;
-      const fontSize = Math.min(13, 10 + node.count / 4) / globalScale;
-      ctx.font = `bold ${fontSize}px Sans-Serif`;
-      const w = ctx.measureText(node.name).width;
+      const px = Math.min(13, 10 + node.count / 4);
+      const fontSize = px / globalScale;
+      const w = screenText(ctx, globalScale, node.name, 0, 0, px, { bold: true, measureOnly: true });
       const ly = node.y + node.val + fontSize * 0.8;
       const pad = 2 / globalScale;
       if (!selected && !claimLabel({ x1: node.x - w / 2 - pad, x2: node.x + w / 2 + pad, y1: ly - fontSize / 2 - pad, y2: ly + fontSize / 2 + pad })) { node.labelBox = null; return; }
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = selected ? '#f8f8f2' : hubColors[node.kind];
-      ctx.fillText(node.name, node.x, ly);
+      screenText(ctx, globalScale, node.name, node.x, ly, px, { bold: true, color: selected ? '#f8f8f2' : hubColors[node.kind] });
       node.labelBox = { w: w + 2 * pad, h: fontSize + 2 * pad, y: ly }; // the name is part of the touch area
       return;
     }
 
+    // A memory is a dot: never smaller than a couple of screen pixels, however far out
+    const r = Math.max(node.val, 2.5 / globalScale);
     ctx.beginPath();
-    ctx.arc(node.x, node.y, node.val, 0, 2 * Math.PI, false);
+    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
     ctx.fillStyle = node.isCenter ? '#50fa7b' : node.replaced ? '#44475a' : node.color;
     ctx.fill();
     ctx.strokeStyle = selected ? '#f8f8f2' : node.replaced ? '#6272a4' : 'rgba(30, 31, 41, 0.9)';
@@ -323,17 +341,14 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
     // selected and centre memories
     if (globalScale < 1.6 && !selected && !node.isCenter) return;
     const label = node.name;
-    const fontSize = (node.isCenter ? 13 : 11) / globalScale;
-    ctx.font = `${fontSize}px Sans-Serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    const textWidth = ctx.measureText(label).width;
+    const px = node.isCenter ? 13 : 11;
+    const fontSize = px / globalScale;
+    const textWidth = screenText(ctx, globalScale, label, 0, 0, px, { measureOnly: true });
     const padding = 3 / globalScale;
-    const labelY = node.y + node.val + 4 / globalScale;
+    const labelY = node.y + r + 4 / globalScale;
     ctx.fillStyle = 'rgba(40, 42, 54, 0.92)';
     ctx.fillRect(node.x - textWidth / 2 - padding, labelY - padding, textWidth + padding * 2, fontSize + padding * 2);
-    ctx.fillStyle = node.isCenter ? '#50fa7b' : '#f8f8f2';
-    ctx.fillText(label, node.x, labelY);
+    screenText(ctx, globalScale, label, node.x, labelY, px, { baseline: 'top', color: node.isCenter ? '#50fa7b' : '#f8f8f2' });
   }, [selectedNode]);
 
   // A finger-sized touch area on every node, whatever the zoom
@@ -384,16 +399,12 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
     const midX = (start.x + end.x) / 2;
     const midY = (start.y + end.y) / 2;
     const fontSize = 9 / globalScale;
-    ctx.font = `${fontSize}px Sans-Serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
     const text = link.label;
-    const textWidth = ctx.measureText(text).width;
+    const textWidth = screenText(ctx, globalScale, text, 0, 0, 9, { measureOnly: true });
     const padding = 3 / globalScale;
     ctx.fillStyle = 'rgba(40, 42, 54, 0.9)';
     ctx.fillRect(midX - textWidth / 2 - padding, midY - fontSize / 2 - padding, textWidth + padding * 2, fontSize + padding * 2);
-    ctx.fillStyle = link.color;
-    ctx.fillText(text, midX, midY);
+    screenText(ctx, globalScale, text, midX, midY, 9, { color: link.color });
   }, []);
 
   if (!isOpen) return null;

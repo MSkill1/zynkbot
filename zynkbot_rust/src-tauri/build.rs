@@ -1,6 +1,4 @@
 fn main() {
-    println!("cargo:rerun-if-changed=seeds/einstein_seed.sql");
-
     // Short git hash, stamped into "Report a problem" output. "unknown" when git
     // is absent (source tarball, CI without history).
     let git_hash = std::process::Command::new("git")

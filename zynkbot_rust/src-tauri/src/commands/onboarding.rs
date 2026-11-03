@@ -1,4 +1,4 @@
-use crate::{insert_memory, extract_names_from_response, read_user_profile, write_user_profile, kb_rag, nlp_enhancer};
+use crate::{insert_memory, extract_names_from_response, read_user_profile, write_user_profile, kb_rag};
 
 /// Store an onboarding response as a memory
 #[tauri::command]
@@ -495,236 +495,33 @@ mod shipped_guides_tests {
     }
 }
 
-/// Apply the pre-computed Einstein seed (first install + reinstall)
+/// Load the Einstein demo (src/einstein_demo.rs): the memories, their named things,
+/// embeddings and the links between them, written as the memory system writes them.
 #[tauri::command]
 pub async fn apply_einstein_seed(user_id: String) -> Result<serde_json::Value, String> {
-    println!("[Einstein] Applying pre-computed Einstein seed for user: {}", user_id);
-
-    let seed_sql = include_str!("../../seeds/einstein_seed.sql");
-    let sql = seed_sql
-        .replace("ZYNKBOT_SEED_USER_ID", &user_id)
-        .replace("'::vector", "'")
-        .replace("'::jsonb", "'");
-
+    println!("[Einstein] Loading the Einstein demo for user: {}", user_id);
     let db_url = crate::db::get_db_url();
     let pool = sqlx::SqlitePool::connect(&db_url)
         .await
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
-
-    let statements: Vec<&str> = sql.split(";\n").collect();
-    let mut memories_loaded = 0;
-    let mut relationships_created = 0;
-
-    for stmt in &statements {
-        let sql_lines: String = stmt.lines()
-            .filter(|l| !l.trim_start().starts_with("--"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let trimmed = sql_lines.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let full_stmt = format!("{};", trimmed);
-        match sqlx::query(&full_stmt).execute(&pool).await {
-            Ok(result) => {
-                let rows = result.rows_affected();
-                if full_stmt.contains("INSERT INTO memories") { memories_loaded += rows; }
-                else if full_stmt.contains("INSERT INTO memory_links") { relationships_created += rows; }
-            }
-            Err(e) => println!("[Einstein] ⚠️ Statement error (skipping): {}", e),
-        }
-    }
-
-    let emb_rows: Vec<(i32, Option<Vec<u8>>)> = sqlx::query_as::<_, (i32, Option<Vec<u8>>)>(
-        "SELECT id, embedding FROM memories WHERE session_id = 'einstein-demo-session' AND user_id = ?"
-    )
-    .bind(&user_id)
-    .fetch_all(&pool)
-    .await
-    .unwrap_or_default();
-
-    let mut converted = 0usize;
-    for (id, raw) in emb_rows {
-        if let Some(bytes) = raw {
-            if let Ok(text) = std::str::from_utf8(&bytes) {
-                if text.starts_with('[') {
-                    if let Ok(floats) = serde_json::from_str::<Vec<f32>>(text) {
-                        let blob: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
-                        let _ = sqlx::query("UPDATE memories SET embedding = ? WHERE id = ?")
-                            .bind(&blob)
-                            .bind(id)
-                            .execute(&pool)
-                            .await;
-                        converted += 1;
-                    }
-                }
-            }
-        }
-    }
-    if converted > 0 {
-        println!("[Einstein] Converted {} text embeddings to BLOB format", converted);
-    }
-
+    let (memories, links) = crate::einstein_demo::load(&pool, &user_id).await?;
     pool.close().await;
 
     let profile_path = crate::db::get_user_profile_path();
     let profile = serde_json::json!({
         "full_name": "Albert Einstein",
-        "preferred_name": "Albert",
+        "preferred_name": crate::einstein_demo::NAME,
         "demo_persona": true
     });
     if let Ok(json) = serde_json::to_string_pretty(&profile) {
         std::fs::write(&profile_path, json).ok();
         println!("[Einstein] Wrote user_profile.json with Einstein persona");
     }
-
-    println!("[Einstein] ✅ Applied seed: {} memories, {} relationships", memories_loaded, relationships_created);
-
+    println!("[Einstein] ✅ Loaded {} memories and {} links", memories, links);
     Ok(serde_json::json!({
         "success": true,
-        "loaded_count": memories_loaded,
-        "relationships_created": relationships_created,
-        "message": format!("Einstein restored: {} memories, {} relationships", memories_loaded, relationships_created)
-    }))
-}
-
-/// Load small Einstein demo (10 memories) for fast testing
-#[tauri::command]
-pub async fn load_small_einstein_demo(user_id: String) -> Result<serde_json::Value, String> {
-    println!("[Rust] load_small_einstein_demo called for user: {} (10 memories only)", user_id);
-
-    let einstein_memories = vec![
-        ("My Birth", "I was born on March 14, 1879, in Ulm, Germany. My parents were Hermann Einstein and Pauline Koch.", "biography", vec!["birth", "family"]),
-        ("The Compass", "When I was 5, my father showed me a compass. The invisible force fascinated me.", "biography", vec!["childhood", "physics"]),
-        ("Learning Violin", "My mother made sure I learned violin from age 6. I named my violin 'Lina'.", "personal", vec!["music", "violin"]),
-        ("Patent Office", "From 1902-1909, I worked as a patent examiner in Bern, Switzerland.", "career", vec!["employment", "patent_office"]),
-        ("Marriage to Mileva", "I married Mileva Marić in January 1903. We had three children together.", "personal", vec!["marriage", "family"]),
-        ("My Miracle Year", "In 1905, I published four groundbreaking papers that revolutionized physics.", "science", vec!["1905", "breakthrough"]),
-        ("E=mc² Equation", "I derived E=mc², showing that energy and mass are interchangeable.", "science", vec!["energy", "formula"]),
-        ("General Relativity", "Between 1907-1915, I developed general relativity, describing gravity as spacetime curvature.", "science", vec!["gravity", "relativity"]),
-        ("I had three children", "Lieserl (whose fate remains unknown), Hans Albert (who became a professor), and Eduard (who struggled with schizophrenia).", "personal", vec!["children", "family"]),
-        ("Zionism Support", "I support Zionism and was offered the presidency of Israel in 1952, which I declined.", "politics", vec!["israel", "zionism"]),
-    ];
-
-    println!("[Rust] Connecting to database...");
-    let db_url = crate::db::get_db_url();
-    let pool = sqlx::SqlitePool::connect(&db_url)
-        .await
-        .map_err(|e| format!("Failed to connect to database: {}", e))?;
-
-    let session_id = "einstein-demo-small-session";
-    sqlx::query("DELETE FROM memories WHERE session_id = ?")
-        .bind(session_id)
-        .execute(&pool)
-        .await
-        .map_err(|e| format!("Failed to delete old memories: {}", e))?;
-
-    let total_memories = einstein_memories.len();
-    println!("[Rust] Generating embeddings for {} memories (batch)...", total_memories);
-
-    let contents: Vec<String> = einstein_memories
-        .iter()
-        .map(|(_, content, _, _)| content.to_string())
-        .collect();
-
-    let contents_for_embeddings = contents.clone();
-    let embeddings = tokio::task::spawn_blocking(move || {
-        crate::llm::local_embeddings::generate_local_embeddings_batch(contents_for_embeddings, None)
-    })
-    .await
-    .map_err(|e| format!("Failed to run batch embedding task: {}", e))?
-    .map_err(|e| format!("Batch embedding generation failed: {}", e))?;
-
-    println!("[Rust] ✅ Generated {} embeddings!", embeddings.len());
-
-    println!("[Rust] Extracting entities for all memories (batch)...");
-    let all_contents_for_entities = contents;
-    let all_entities = tokio::task::spawn_blocking(move || {
-        let enhancer = nlp_enhancer::NLPEnhancer::new();
-        enhancer.extract_entities_batch(&all_contents_for_entities)
-            .into_iter()
-            .map(|entities| {
-                serde_json::json!(entities.iter().map(|e| {
-                    serde_json::json!({
-                        "word": e.word,
-                        "label": e.label,
-                        "score": e.score,
-                        "start": e.start,
-                        "end": e.end
-                    })
-                }).collect::<Vec<_>>())
-            })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .map_err(|e| format!("Failed to extract entities: {}", e))?;
-
-    println!("[Rust] ✅ Extracted entities!");
-
-    println!("[Rust] Detecting events for all memories (batch)...");
-    let all_contents_for_events: Vec<String> = einstein_memories
-        .iter()
-        .map(|(_, content, _, _)| content.to_string())
-        .collect();
-
-    let all_events = tokio::task::spawn_blocking(move || {
-        let enhancer = nlp_enhancer::NLPEnhancer::new();
-        all_contents_for_events
-            .iter()
-            .map(|content| enhancer.detect_event(content))
-            .collect::<Vec<_>>()
-    })
-    .await
-    .map_err(|e| format!("Failed to detect events: {}", e))?;
-
-    println!("[Rust] ✅ Detected events! Inserting into database...");
-
-    let mut memory_ids = Vec::new();
-    for (idx, ((((title, content, namespace, tags), embedding), entities), (event_type, event_date))) in
-        einstein_memories.into_iter()
-            .zip(embeddings.into_iter())
-            .zip(all_entities.into_iter())
-            .zip(all_events.into_iter())
-            .enumerate() {
-
-        println!("[Rust] Inserting {}/{} - {} (event: {:?})",
-            idx + 1, total_memories, title, event_type);
-
-        let embedding_vec = embedding.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<u8>>();
-        let _tags_vec: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
-
-        let memory_id = sqlx::query_scalar::<_, i32>(
-            "INSERT INTO memories (
-                title, content, namespace, user_id, session_id,
-                embedding, source_type, is_syncable, is_shareable,
-                entities_detected, event_type, event_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            RETURNING id"
-        )
-        .bind(title)
-        .bind(content)
-        .bind(namespace)
-        .bind(&user_id)
-        .bind(session_id)
-        .bind(&embedding_vec)
-        .bind("demo_data")
-        .bind(true)
-        .bind(false)
-        .bind(&entities)
-        .bind(event_type.as_deref())
-        .bind(event_date)
-        .fetch_one(&pool)
-        .await
-        .map_err(|e| format!("Failed to insert memory: {}", e))?;
-
-        memory_ids.push(memory_id);
-    }
-
-    println!("[Rust] ✅ Loaded {} small Einstein demo memories!", total_memories);
-
-    Ok(serde_json::json!({
-        "success": true,
-        "message": format!("Successfully loaded {} Einstein demo memories (small test set)", total_memories),
-        "memory_ids": memory_ids
+        "loaded_count": memories,
+        "relationships_created": links,
+        "message": format!("Einstein loaded: {} memories, {} links", memories, links)
     }))
 }

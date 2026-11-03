@@ -280,20 +280,20 @@ As of two years ago, I had no experience with Rust and only an interest. When it
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="assets/graph_contradicts.png" alt="Memory contradiction detail">
-      <br><em>The relationship picture, zoomed in: a red line is a contradiction, green an update, cyan a related memory. Tap a dot to read the memory and what it links to.</em>
+      <img src="assets/map_zoomed.png" alt="Memory map, zoomed in on one memory">
+      <br><em>The memory map, zoomed in: a red line is a contradiction, pink the explanation that resolves it, green an update, purple a related memory. The rings are the people and places the memories share. Tap anything to read it.</em>
     </td>
     <td align="center" width="50%">
-      <img src="assets/graph_global.png" alt="Memory graph overview">
-      <br><em>Zoomed out: every memory and its links. The words on each memory's panel are the everyday view; the picture is a second way of looking at the same relationships.</em>
+      <img src="assets/map_whole.png" alt="Memory map of the Einstein demo">
+      <br><em>The whole map of the Einstein demo: memories coloured by category, gathered around the people, places and things they mention.</em>
     </td>
   </tr>
 </table>
 
 <p align="center">
-  <img src="assets/conradiction_modal.png" alt="Contradiction resolution modal" width="800">
+  <img src="assets/conflict_card.png" alt="The conflict card: a new statement against a stored memory" width="800">
 </p>
-<p align="center"><em>When a contradiction is detected between two memories, Zynkbot surfaces both and asks you to resolve it — never silently overwrites your data.</em></p>
+<p align="center"><em>When a new statement contradicts a stored memory, Zynkbot shows both and asks you how to resolve it — it never silently overwrites your data.</em></p>
 
 **[→ Memory System Details](docs/FEATURES.md#-persistent-semantic-memory)**
 

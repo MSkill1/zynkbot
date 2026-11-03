@@ -2311,7 +2311,7 @@ export default function App() {
               try {
                 const confirmed = await confirmDialog(
                   'Load Einstein Demo\n\n' +
-                  'This will load Einstein\'s 59 pre-built memories and relationships into your memory database.\n\n' +
+                  'This will load Einstein\'s memories, as Zynkbot would have kept them, and the links between them.\n\n' +
                   'Make sure you have already cleared your memories in Memory Manager before continuing.\n\n' +
                   'This takes only a few seconds.\n\n' +
                   'Continue?'
@@ -2339,7 +2339,7 @@ export default function App() {
                   `✅ Einstein Demo Loaded!\n\n` +
                   `📚 Memories: ${result.loaded_count}\n` +
                   `🔗 Relationships: ${result.relationships_created || 0}\n\n` +
-                  `Check Memory Manager to explore the memory graph!`
+                  `Open the Memory Manager to read them, and the Map to see how they connect.`
                 );
                 window.location.reload();
               } catch (error) {
@@ -2376,7 +2376,7 @@ export default function App() {
             Load Einstein Demo
           </button>
           <p style={{fontSize: '0.85rem', color: '#9aa5c4', lineHeight: '1.4'}}>
-            Loads Einstein's <strong>59 pre-built memories</strong> and relationships into your memory database in seconds.
+            Loads Einstein's life as Zynkbot would have remembered it: <strong>67 memories</strong> and the links between them, in seconds.
             <br />Clear your memories in Memory Manager first if needed, then click to explore the Einstein demo.
           </p>
           </div>
@@ -3546,7 +3546,7 @@ export default function App() {
               marginTop: '20px',
               fontStyle: 'italic'
             }}>
-              ⏳ Creating 59 memories with embeddings and relationships...
+              ⏳ Creating the memories, their embeddings and links...
             </p>
           </div>
         </div>
