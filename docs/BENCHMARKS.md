@@ -150,7 +150,31 @@ under the wrong format.
 **Status.** mem4 is a candidate for the phone, named **Sophro-4B-memory-v1** (from
 *sophrosyne*, the Greek word for soundness of mind and self-restraint, which is the habit the
 training is for: store what was said, nothing more). File `Sophro-4B-memory-v1-Q4_0.gguf`,
-2.37 GB. It has not yet been used day to day; that test comes before any decision to ship it.
+2.37 GB. Since 0.9.6 it is the model Zynkbot downloads at first run (from
+huggingface.co/GenerallyTso/Sophro-4B-memory-v1).
+
+**Did the tuning cost the model anything else?** Standard benchmarks, 2026-11-02/03, both
+models the exact Q4_0 files the app ships, served by llama.cpp on the desktop GPU at
+temperature 0 through lm-evaluation-harness 0.4.13 (`labs/sophro_eval/run_all.sh`):
+
+| Benchmark | What it measures | Base Qwen3-4B Q4_0 | Sophro-4B-memory-v1 |
+|---|---|---|---|
+| IFEval, prompt-level strict (541) | following written instructions exactly | 81.3% | 81.2% |
+| IFEval, prompt-level loose | the same, lenient scoring | 84.8% | 85.4% |
+| GSM8K, 8-shot chain of thought, strict (1,319) | arithmetic word problems | 80.0% | 83.8% |
+| MMLU, 25 questions per subject (1,425), first answer letter | general knowledge, 57 subjects | 71.6% | 71.4% |
+| MMLU, the same answers, harness's bare-letter scoring | | 54.7% | 24.0% |
+
+Arithmetic is a little better, instruction following and knowledge are unchanged. Two
+notes on reading the table. The harness's stock MMLU scorer accepts only the bare letter;
+Sophro writes "D. 0,4" where the base writes "D" (bare letters on 456 replies against
+1,027), so right answers scored as wrong, and the first-letter line
+(`labs/sophro_eval/rescore_mmlu.py`) is the one that measures knowledge. And the IFEval tie
+hides one real change: on the 31 prompts that demand a reply in another language, Sophro
+passes 23 and the base 30, because Sophro slides into repeating a phrase in Hindi, Marathi,
+Nepali and Bengali (16 run-on or blank replies against the base's 5); on the 510 English
+prompts Sophro is at 81.6% and the base at 80.4%. Zynkbot only uses the model in English,
+but it is a known limit of the fine-tune.
 
 ## 4. Running the benches
 
