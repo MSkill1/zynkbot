@@ -1848,22 +1848,21 @@ async fn load_einstein_demo_legacy(user_id: String) -> Result<serde_json::Value,
                 _ => 0.0,
             };
 
-            // Map similarity + entity overlap to relationship type (no API, no rules engine)
+            // Similarity + entity overlap to a relationship, in the four types of migration
+            // 0022: the two strong tiers are "related"; the loose "reminds_of" tier of the
+            // old design is not drawn at all (2026-11-03).
             let (relation_type, notes) = if similarity_score > 0.75 && entity_overlap > 0.25 {
-                ("elaborates", format!(
+                ("related", format!(
                     "Very high semantic similarity ({:.0}%) with shared entities — adds detail to the same topic",
                     similarity_score * 100.0
                 ))
             } else if similarity_score > 0.60 {
-                ("supports", format!(
+                ("related", format!(
                     "High semantic similarity ({:.0}%) — reinforces or agrees with existing memory",
                     similarity_score * 100.0
                 ))
             } else {
-                ("reminds_of", format!(
-                    "Moderate semantic similarity ({:.0}%) — loosely connected topics",
-                    similarity_score * 100.0
-                ))
+                continue;
             };
 
             // Skip if link already exists in either direction

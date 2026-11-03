@@ -1033,7 +1033,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
               <button
                 onClick={() => setShowGraphModal(true)}
                 style={{ padding: '5px 12px', background: '#bd93f9', color: '#282a36', border: 'none', borderRadius: '6px', fontWeight: 'bold', fontSize: '0.8rem', cursor: 'pointer' }}
-              >🔗 Graph</button>
+              >🗺️ Map</button>
               <button
                 onClick={handleBulkDelete}
                 disabled={selectedMemoryIds.length === 0}
@@ -1221,7 +1221,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       Relationships ({relationships.length})
                     </span>
                     <button onClick={() => setShowGraphModal(true)} className="graph-button" style={{ padding: '6px 12px', fontSize: '0.85rem' }}>
-                      🔗 View Graph
+                      🗺️ View on the map
                     </button>
                   </div>
                   {relationships.length === 0 ? (
@@ -1702,7 +1702,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                     disabled={!selectedMemory}
                     title={selectedMemory ? "View interactive knowledge graph" : "Select a memory first"}
                   >
-                    🔗 View Graph
+                    🗺️ View on the map
                   </button>
                 </div>
                 {relationships.length === 0 ? (

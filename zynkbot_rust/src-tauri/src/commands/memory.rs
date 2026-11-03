@@ -803,7 +803,7 @@ pub async fn get_full_memory_graph(
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
 
     let mut sql = String::from(
-        "SELECT id, title, content, namespace, original_text, created_at, temporal_status FROM memories WHERE TRUE"
+        "SELECT id, title, content, namespace, original_text, created_at, temporal_status, entities_detected FROM memories WHERE TRUE"
     );
     if user_id.is_some() { sql.push_str(" AND user_id = ?"); }
     if namespace.is_some() { sql.push_str(" AND namespace = ?"); }
@@ -819,6 +819,8 @@ pub async fn get_full_memory_graph(
         original_text: Option<String>,
         created_at: String,
         temporal_status: Option<String>,
+        /// The name-finder's raw spans, written at storage on every device.
+        entities_detected: Option<String>,
     }
 
     let mut query = sqlx::query_as::<_, MemoryNode>(&sql);
@@ -852,9 +854,43 @@ pub async fn get_full_memory_graph(
             .map_err(|e| format!("Failed to query memory links: {}", e))?
     };
 
+    // The people, places and things each memory mentions (memory_entities, 0011). The
+    // map draws a hub for each one with two or more memories, so a life clusters around
+    // Vermont and Alexandra rather than hanging as loose dots (Matt, 2026-11-03).
+    let entity_rows: Vec<(i32, String, String, String)> = if memory_ids.is_empty() {
+        Vec::new()
+    } else {
+        let in_clause = memory_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let sql = format!(
+            "SELECT memory_id, name, canonical, kind FROM memory_entities WHERE memory_id IN ({}) ORDER BY id",
+            in_clause
+        );
+        let mut q = sqlx::query_as::<_, (i32, String, String, String)>(&sql);
+        for id in &memory_ids { q = q.bind(id); }
+        q.fetch_all(&pool).await.map_err(|e| format!("Failed to query memory entities: {}", e))?
+    };
+    // Memories the enrich job has not reached carry only the name-finder's raw output in
+    // entities_detected, a column that syncs and is backed up (memory_entities is neither).
+    let covered: std::collections::HashSet<i32> = entity_rows.iter().map(|r| r.0).collect();
+    let mut entity_rows = entity_rows;
+    for m in &memories {
+        if covered.contains(&m.id) { continue; }
+        if let Some(raw) = m.entities_detected.as_deref() {
+            for (name, kind) in named_things_from_ner(raw) {
+                entity_rows.push((m.id, name.clone(), name.to_lowercase(), kind));
+            }
+        }
+    }
+    let mut entities = group_entities(entity_rows);
+    // The name-finder misses many plain mentions ("vermont" in lower case, a name mid-
+    // sentence), so a thing it has found in two memories is also looked for, as a whole
+    // word, in the text of every other memory.
+    let texts: Vec<(i32, String)> = memories.iter().map(|m| (m.id, m.content.to_lowercase())).collect();
+    widen_by_text(&mut entities, &texts);
+
     pool.close().await;
 
-    println!("[Rust] Found {} memories and {} links", memories.len(), links.len());
+    println!("[Rust] Found {} memories, {} links and {} named things", memories.len(), links.len(), entities.len());
 
     let nodes: Vec<serde_json::Value> = memories
         .iter()
@@ -883,9 +919,178 @@ pub async fn get_full_memory_graph(
     Ok(serde_json::json!({
         "memories": nodes,
         "links": edges,
+        "entities": entities,
         "memory_count": nodes.len(),
         "link_count": edges.len()
     }))
+}
+
+/// One entry per distinct thing (by its canonical name), with the memories that mention
+/// it, in first-seen order. The name shown is the first spelling seen.
+pub(crate) fn group_entities(rows: Vec<(i32, String, String, String)>) -> Vec<serde_json::Value> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_key: std::collections::HashMap<String, (String, String, Vec<i32>)> = std::collections::HashMap::new();
+    for (memory_id, name, _canonical, kind) in rows {
+        let canonical = map_key(&name);
+        if canonical.chars().count() < 3 || is_map_noise(&canonical) { continue; }
+        let entry = by_key.entry(canonical.clone()).or_insert_with(|| {
+            order.push(canonical.clone());
+            (name, kind, Vec::new())
+        });
+        if !entry.2.contains(&memory_id) { entry.2.push(memory_id); }
+    }
+    order.into_iter().map(|key| {
+        let (name, kind, ids) = by_key.remove(&key).expect("grouped");
+        serde_json::json!({ "key": key, "name": name, "kind": kind, "memory_ids": ids })
+    }).collect()
+}
+
+/// Every entity already in two memories gains the memories whose text contains its key as
+/// a whole word. Texts are lower case; the key is the map key (already lower case).
+pub(crate) fn widen_by_text(entities: &mut [serde_json::Value], texts: &[(i32, String)]) {
+    let is_word = |c: char| c.is_alphanumeric();
+    for e in entities.iter_mut() {
+        let key = e["key"].as_str().unwrap_or("").to_string();
+        let mut ids: Vec<i32> = e["memory_ids"].as_array().map(|a| a.iter().filter_map(|v| v.as_i64().map(|n| n as i32)).collect()).unwrap_or_default();
+        if ids.len() < 2 || key.len() < 3 { continue; }
+        for (id, text) in texts {
+            if ids.contains(id) { continue; }
+            let mut from = 0;
+            let mut hit = false;
+            while let Some(pos) = text[from..].find(&key) {
+                let start = from + pos;
+                let end = start + key.len();
+                let before_ok = start == 0 || !text[..start].chars().next_back().map_or(false, is_word);
+                let after_ok = end >= text.len() || !text[end..].chars().next().map_or(false, is_word);
+                if before_ok && after_ok { hit = true; break; }
+                from = end;
+            }
+            if hit { ids.push(*id); }
+        }
+        e["memory_ids"] = serde_json::json!(ids);
+    }
+}
+
+/// The grouping key for a name on the map: lower case, common Latin accents folded
+/// (Avendaño and Avendano are one person), a possessive stripped (Baldur's -> baldur),
+/// outer punctuation trimmed.
+pub(crate) fn map_key(name: &str) -> String {
+    let folded: String = name.trim().chars().flat_map(|c| c.to_lowercase()).map(|c| match c {
+        'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => 'a', 'é' | 'è' | 'ê' | 'ë' => 'e', 'í' | 'ì' | 'î' | 'ï' => 'i',
+        'ó' | 'ò' | 'ô' | 'ö' | 'õ' => 'o', 'ú' | 'ù' | 'û' | 'ü' => 'u', 'ñ' => 'n', 'ç' => 'c', 'ß' => 's',
+        '’' | '‘' => '\'', _ => c,
+    }).collect();
+    let trimmed = folded.trim_matches(|c: char| !c.is_alphanumeric());
+    let no_possessive = trimmed.strip_suffix("'s").unwrap_or(trimmed);
+    no_possessive.trim_matches(|c: char| !c.is_alphanumeric()).to_string()
+}
+
+/// Names the name-finder marks that are not a thing in anyone's life: the speaker and
+/// the assistant, honorifics on their own, days, months, the odd pronoun.
+pub(crate) fn is_map_noise(key: &str) -> bool {
+    const NOISE: &[&str] = &[
+        "user", "use", "you", "zynkbot", "mr", "mrs", "ms", "dr", "sir", "the", "and",
+        "today", "tomorrow", "yesterday", "tonight", "week", "month", "year",
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        "january", "february", "march", "april", "may", "june", "july", "august",
+        "september", "october", "november", "december",
+    ];
+    NOISE.contains(&key)
+}
+
+/// Names out of the name-finder's raw spans (`[{"word","label","score","start","end"}]`,
+/// labels B-PER/I-PER, B-LOC, B-ORG, B-MISC): a span's pieces are joined into one name
+/// ("Dr" + "Harper" -> "Dr Harper"), word-pieces, short tokens and weak scores dropped.
+pub(crate) fn named_things_from_ner(raw: &str) -> Vec<(String, String)> {
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(raw) else { return Vec::new() };
+    let mut out: Vec<(String, String, i64)> = Vec::new(); // name, kind, end offset
+    for it in items {
+        let Some(word) = it.get("word").and_then(|v| v.as_str()).map(str::trim) else { continue };
+        let label = it.get("label").and_then(|v| v.as_str()).unwrap_or("");
+        let score = it.get("score").and_then(|v| v.as_f64()).unwrap_or(1.0);
+        let start = it.get("start").and_then(|v| v.as_i64()).unwrap_or(-1);
+        let end = it.get("end").and_then(|v| v.as_i64()).unwrap_or(-1);
+        if word.is_empty() || word.starts_with("##") || score < 0.6 { continue; }
+        let kind = if label.contains("PER") { "person" } else if label.contains("LOC") { "place" } else if label.contains("ORG") { "org" } else { "thing" };
+        let continues = label.starts_with("I-")
+            && out.last().map_or(false, |(_, k, prev_end)| k == kind && start >= 0 && start - *prev_end <= 1);
+        if continues {
+            let last = out.last_mut().unwrap();
+            if start == last.2 { last.0.push_str(word); } else { last.0.push(' '); last.0.push_str(word); }
+            last.2 = end;
+        } else {
+            out.push((word.to_string(), kind.to_string(), end));
+        }
+    }
+    out.into_iter()
+        .filter(|(name, _, _)| name.chars().count() >= 3)
+        .map(|(name, kind, _)| (name, kind))
+        .collect()
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::{group_entities, named_things_from_ner};
+
+    #[test]
+    fn name_finder_spans_become_whole_names() {
+        let raw = r###"[{"end":2,"label":"B-PER","score":0.63,"start":0,"word":"Dr"},
+                      {"end":9,"label":"I-PER","score":0.99,"start":3,"word":"Harper"},
+                      {"end":20,"label":"B-LOC","score":0.98,"start":13,"word":"Vermont"},
+                      {"end":24,"label":"B-MISC","score":0.3,"start":22,"word":"Ox"},
+                      {"end":30,"label":"B-ORG","score":0.9,"start":26,"word":"##ing"}]"###;
+        assert_eq!(named_things_from_ner(raw), vec![
+            ("Dr Harper".to_string(), "person".to_string()),
+            ("Vermont".to_string(), "place".to_string()),
+        ]);
+        assert!(named_things_from_ner("not json").is_empty());
+    }
+
+    #[test]
+    fn a_known_thing_is_found_in_the_text_of_other_memories_as_a_whole_word() {
+        let mut ents = vec![
+            serde_json::json!({ "key": "vermont", "name": "Vermont", "kind": "place", "memory_ids": [1, 2] }),
+            serde_json::json!({ "key": "gate", "name": "Gate", "kind": "thing", "memory_ids": [1] }),
+        ];
+        let texts = vec![
+            (1, "i live in vermont".to_string()),
+            (3, "the vermont trip was good".to_string()),
+            (4, "vermonters are friendly".to_string()),
+            (5, "vermont.".to_string()),
+            (6, "baldur's gate".to_string()),
+        ];
+        super::widen_by_text(&mut ents, &texts);
+        assert_eq!(ents[0]["memory_ids"], serde_json::json!([1, 2, 3, 5]), "whole-word mentions join, 'vermonters' does not");
+        assert_eq!(ents[1]["memory_ids"], serde_json::json!([1]), "a thing in one memory is not widened");
+    }
+
+    #[test]
+    fn map_keys_fold_accents_and_possessives() {
+        assert_eq!(super::map_key("Avendaño"), "avendano");
+        assert_eq!(super::map_key("Baldur’s"), "baldur");
+        assert_eq!(super::map_key("Baldur's Gate"), "baldur's gate");
+        assert_eq!(super::map_key(" Vermont, "), "vermont");
+        assert!(super::is_map_noise("user") && super::is_map_noise("mrs") && !super::is_map_noise("marta"));
+    }
+
+    #[test]
+    fn things_are_grouped_by_canonical_name_with_their_memories() {
+        let rows = vec![
+            (1, "Vermont".to_string(), "vermont".to_string(), "place".to_string()),
+            (2, "vermont".to_string(), "vermont".to_string(), "place".to_string()),
+            (2, "Alexandra".to_string(), "alexandra".to_string(), "person".to_string()),
+            (2, "Vermont".to_string(), "vermont".to_string(), "place".to_string()),
+            (3, "User".to_string(), "user".to_string(), "person".to_string()),
+            (3, "September".to_string(), "september".to_string(), "thing".to_string()),
+        ];
+        let out = group_entities(rows);
+        assert_eq!(out.len(), 2, "the speaker and a month are not things on the map");
+        assert_eq!(out[0]["name"], "Vermont");
+        assert_eq!(out[0]["kind"], "place");
+        assert_eq!(out[0]["memory_ids"], serde_json::json!([1, 2]));
+        assert_eq!(out[1]["key"], "alexandra");
+        assert_eq!(out[1]["memory_ids"], serde_json::json!([2]));
+    }
 }
 
 /// Delete expired ephemeral memories (HIPAA compliance)

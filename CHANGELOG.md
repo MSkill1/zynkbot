@@ -6,9 +6,10 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
-## Unreleased
+## Unreleased <!-- branch v1 -->
 
-Nothing yet.
+- **The memory map replaces the relationship graph.** The Memory Manager's picture used to draw only the lines between facts, which with real relationships is a scatter of short chains. It now draws a hub for every person, place, organisation or thing that two or more memories mention, with the memories around it, tinted by namespace so health, kitchen and politics form their own regions, and the relationships (updates, contradicts, related) on top. Tap a hub for everything about it; tap a memory for what it mentions and what it relates to. The hubs come from the name-finder's output stored with each memory, which syncs and is backed up, so the map is the same on every device and grows as you talk.
+- The Einstein demo's links are made in the four current relationship types; the loose "reminds of" tier of the old design is no longer drawn.
 
 ## [0.9.6] — 2026-11-02 <!-- branch local-model; the 27 Oct pre-release was 0.9.6-beta5; entries for 10-26/27 drafted by Claude, for Matt's review -->
 
