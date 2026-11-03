@@ -381,6 +381,8 @@ Reach the Zynkbot running on your own desktop, with all its memories, from a web
 
 What it is not: Zynkbot loaded "online". The model, the memories and the keys stay on the desktop; the browser is a window onto it, and when the desktop is off, so is Zynkbot. Decide tunnel versus relay when it is scheduled; the tunnel route could ship as documentation plus the browser session alone.
 
+**Leaving nothing behind in the browser** (Matt, 2026-11-03: a public terminal). The page is served with no-store, so nothing is cached between visits; memories and replies travel as data for the page, never as files; the sign-in lives only in the page's memory, never in a cookie or a saved form, and expires after a few minutes idle; the recommended use is a private window. What that cannot cover is the machine itself (a keylogger or screen recorder on a public terminal sees the session), so the feature is described as "your Zynkbot from your own device on any network", and a borrowed machine as something it tolerates.
+
 ### Camera photos: save to the gallery too? (open question, Matt 2026-09-20)
 
 Right now Zynkbot's own in-app camera button (the one in the composer) only keeps the photo long enough to attach it to the message — it lives in a temp cache file, never saved anywhere permanent, and is not in the phone's gallery or the Zynkbot share folder. Matt, while testing B4: a photo taken this way should probably end up in both places, so it's easy to find and easy to share again later.
