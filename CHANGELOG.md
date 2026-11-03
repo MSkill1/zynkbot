@@ -8,7 +8,8 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ## Unreleased
 
-Nothing yet.
+- **"Updated" notice with Undo.** When a memory replaces an older one on its own (cloud models decide this themselves), the line above the message box now stays for 30 seconds and carries an Undo button that puts the older memory back as current, keeping both. Before, the line faded after 12 seconds and could only be dismissed.
+- **Two first-run texts corrected.** The local-model notice said replies take half a minute to a minute on a phone; it now says a few seconds. The chat page's introduction names all four buttons under the box (KB, paper clip for a file, picture for a photo from the gallery, camera) and no longer suggests telling Zynkbot about dinner, which the Kitchen kit will cover.
 
 ## [0.9.6] — 2026-11-02 <!-- branch local-model; the 27 Oct pre-release was 0.9.6-beta5; entries for 10-26/27 drafted by Claude, for Matt's review -->
 

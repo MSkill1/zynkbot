@@ -302,7 +302,7 @@ export default function App() {
     try { localStorage.setItem('zynkbot_local_model_intro_seen', '1'); } catch (_) {}
     messageDialog(
       'You are now using the local model. It runs entirely on this device and nothing leaves it.\n\n' +
-      'What to expect: replies take half a minute to a minute on a phone, so keep questions short. ' +
+      'What to expect: replies take a few seconds on a phone, longer for a long answer. ' +
       'Memories still save in the background. Web search works here too, just slower. Image questions need a cloud model, and so does Ensemble on a phone.\n\n' +
       'Switch back any time under Current Model.'
     );
@@ -406,6 +406,9 @@ export default function App() {
   // One quiet line above the input when a memory replaced an older one (Matt, 2026-10-23:
   // "so you know something changed without a card"). Fades on its own.
   const [memoryUpdateNotice, setMemoryUpdateNotice] = useState('');
+  // The replaced memory's id while the notice is up, so an Undo can put it back
+  // (Matt, 2026-11-03: "there should be a button, so they can revert it").
+  const [memoryUpdateUndo, setMemoryUpdateUndo] = useState(null);
   // The same line carries other one-sentence notices (Ensemble on the local model,
   // 2026-10-24); showNotice sets it and clears it after 12 s.
   const noticeTimer = useRef(null);
@@ -428,8 +431,9 @@ export default function App() {
       } catch (_) {
         setMemoryUpdateNotice('Updated: a memory replaced an older one. The old one is kept as history in Memory Manager.');
       }
+      setMemoryUpdateUndo(old_memory_id ?? null);
       clearTimeout(timer);
-      timer = setTimeout(() => setMemoryUpdateNotice(''), 12000);
+      timer = setTimeout(() => { setMemoryUpdateNotice(''); setMemoryUpdateUndo(null); }, 30000);
     }).then(fn => { unlisten = fn; });
     return () => { if (unlisten) unlisten(); clearTimeout(timer); };
   }, []);
@@ -2708,7 +2712,7 @@ export default function App() {
                 {messages.length === 0 ? (
                   introSeen('chat')
                     ? <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
-                    : <PageIntro introKey="chat" accent="#8be9fd" noLink>Type or dictate a message. Under the box, <b>KB</b> searches your documents and the paper clip attaches files and photos. Zynkbot remembers what you tell it about yourself, here on this device; Memory Manager shows what it kept, and you can edit or delete any of it. With your own API key, the model company answers each question and bills you for it; under its API terms it does not use your messages to train on or to build a profile of you, the way a chat subscription can. <b>Try this:</b> tell it what you cooked tonight and how it went.</PageIntro>
+                    : <PageIntro introKey="chat" accent="#8be9fd" noLink>Type or dictate a message. Under the box: <b>KB</b> searches your documents, the paper clip attaches a file, the picture button attaches a photo from your gallery, and the camera takes one. Zynkbot remembers what you tell it about yourself, here on this device; Memory Manager shows what it kept, and you can edit or delete any of it. With your own API key, the model company answers each question and bills you for it; under its API terms it does not use your messages to train on or to build a profile of you, the way a chat subscription can.</PageIntro>
                 ) : (
                   (() => {
                     // Find indices of the last user message and last assistant message
@@ -2876,11 +2880,29 @@ export default function App() {
 
             {memoryUpdateNotice && (
               <div
-                onClick={() => setMemoryUpdateNotice('')}
+                onClick={() => { setMemoryUpdateNotice(''); setMemoryUpdateUndo(null); }}
                 title="Tap to dismiss"
-                style={{ fontSize: '0.8rem', color: '#9aa5c4', padding: '4px 8px', marginTop: '6px', borderLeft: '3px solid #50fa7b', background: '#282a36', borderRadius: '4px', cursor: 'pointer' }}
+                style={{ fontSize: '0.8rem', color: '#9aa5c4', padding: '4px 8px', marginTop: '6px', borderLeft: '3px solid #50fa7b', background: '#282a36', borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px' }}
               >
-                🔁 {memoryUpdateNotice}
+                <span style={{ flex: 1 }}>🔁 {memoryUpdateNotice}</span>
+                {memoryUpdateUndo != null && (
+                  <button
+                    type="button"
+                    title="Put the older memory back as current; both are kept"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const id = memoryUpdateUndo;
+                      setMemoryUpdateUndo(null);
+                      try {
+                        await invoke('restore_memory', { memoryId: id });
+                        showNotice('Put back: the older memory is current again. Both are in Memory Manager.');
+                      } catch (err) {
+                        showNotice(`Could not put it back: ${err}`);
+                      }
+                    }}
+                    style={{ padding: '3px 10px', borderRadius: '4px', border: '1px solid #6272a4', background: '#44475a', color: '#f8f8f2', cursor: 'pointer', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                  >Undo</button>
+                )}
               </div>
             )}
             {/* INPUT LAYOUT: Textarea + 2x2 Button Grid */}
