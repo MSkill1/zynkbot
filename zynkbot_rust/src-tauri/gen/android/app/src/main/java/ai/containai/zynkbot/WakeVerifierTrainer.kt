@@ -96,7 +96,6 @@ object WakeVerifierTrainer {
         if (busy) return false
         busy = true
         try {
-            resetMislabelledSetOnce(context)
             val dir = clipDir(context)
             if (!dir.isDirectory) return false
             if (modelDir != null) backfillFeatures(dir, File(modelDir))
@@ -195,30 +194,9 @@ object WakeVerifierTrainer {
         if (f.isFile) JSONObject(f.readText()) else null
     } catch (_: Exception) { null }
 
-    /** Clips labelled before 2026-10-20 cannot be trusted: a wake the model dismissed as
-     *  NO_QUERY was written up as real by the callers (see NativeVoiceAnswerer), so a
-     *  phone that sat by a television trained its profile on the television. There is
-     *  no way to tell those clips apart afterwards, so the whole set and the profile
-     *  built from it go, once, and collection starts again with the corrected labels.
-     *  The marker file keeps this from ever running twice. */
-    private fun resetMislabelledSetOnce(context: Context) {
-        val marker = File(context.filesDir, "zynkbot/wake-word-models/labels_v2")
-        if (marker.exists()) return
-        try {
-            val dir = clipDir(context)
-            var files = 0; var real = 0; var falseN = 0
-            dir.listFiles()?.forEach { f ->
-                when { f.name.endsWith(".real") -> real++; f.name.endsWith(".false") -> falseN++ }
-                if (f.delete()) files++
-            }
-            val profile = profileFile(context).delete()
-            stateFile(context).delete()
-            marker.parentFile?.mkdirs()
-            marker.writeText("labels corrected 2026-10-20\n")
-            WakeLog.i(TAG, "Wake clip set reset (labels before 2026-10-20 were unreliable): $files files removed " +
-                "($real real, $falseN false)${if (profile) ", on-phone profile removed" else ""}; collecting again")
-        } catch (e: Exception) { WakeLog.w(TAG, "Clip set reset failed: ${e.message}") }
-    }
+    // The one-off reset of clips labelled before 2026-10-20 is gone (2026-11-03): every
+    // phone it was for has been reinstalled since, and on a fresh install its first run
+    // deleted a voice profile that had just arrived by sync (OnePlus, 04:56).
 
     // ── features ─────────────────────────────────────────────────────────────
 

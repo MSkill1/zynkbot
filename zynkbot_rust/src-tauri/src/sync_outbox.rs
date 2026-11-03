@@ -330,6 +330,14 @@ pub async fn restore_env_from_secrets(pool: &SqlitePool) -> Result<usize, String
         .fetch_all(pool).await.map_err(|e| format!("outbox: read secrets: {}", e))?;
     let mut restored = 0;
     for (name, value) in rows {
+        // The voice profile goes back to its file if the file is missing (2026-11-03).
+        if name == crate::wake_profile::WAKE_PROFILE_PUSH_NAME {
+            if !crate::wake_profile::has_wake_profile() && crate::wake_profile::install_wake_profile(&value).is_ok() {
+                println!("[ZynkSync] wake-word voice profile put back from this device's own records");
+                restored += 1;
+            }
+            continue;
+        }
         if !crate::commands::models::PROPAGATABLE_KEYS.contains(&name.as_str()) || value.trim().is_empty() { continue; }
         let missing = std::env::var(&name).map(|v| v.trim().is_empty()).unwrap_or(true);
         if missing {
