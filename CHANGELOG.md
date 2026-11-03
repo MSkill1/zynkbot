@@ -8,7 +8,7 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ## Unreleased
 
-Nothing yet.
+- **Hands-free works after a reboot or an update without opening the app first.** The wake-word service starts on its own in both cases, and the native answer path then found no API keys and no model, because only the app's screen loaded the settings file; the phone said "Zynkbot couldn't get an answer, check the API settings". The hands-free path now loads the settings file itself.
 
 ## [0.9.6] — 2026-11-02 <!-- branch local-model; the 27 Oct pre-release was 0.9.6-beta5; entries for 10-26/27 drafted by Claude, for Matt's review -->
 

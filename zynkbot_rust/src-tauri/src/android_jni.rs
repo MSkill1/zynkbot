@@ -34,7 +34,25 @@ use std::sync::Arc;
 static NOTIFY: once_cell::sync::OnceCell<(JavaVM, GlobalRef, GlobalRef)> = once_cell::sync::OnceCell::new();
 
 #[no_mangle]
+/// The settings file (API keys, the chosen model) is loaded into the process environment
+/// by the Tauri app's setup. The wake-word service starts on its own after a reboot or an
+/// app update, without the app's screen, and before 2026-11-03 a hands-free turn in that
+/// state found no keys and answered "no AI backend is configured" (OnePlus, 08:40, right
+/// after an install over the top). Load the file here too; env_file::load never overrides
+/// a variable already set, so whichever side runs first wins and the other is a no-op.
+static ENV_LOADED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+fn ensure_env_loaded() {
+    ENV_LOADED.get_or_init(|| {
+        let path = crate::db::get_app_data_dir().join(".env");
+        match crate::env_file::load(&path) {
+            Ok((n, _)) => println!("[ZynkCore JNI] {} setting(s) loaded from {}", n, path.display()),
+            Err(e) => eprintln!("[ZynkCore JNI] no settings file loaded ({}): {}", path.display(), e),
+        }
+    });
+}
+
 pub extern "C" fn Java_ai_containai_zynkbot_ZynkCore_nativeInit(mut env: JNIEnv, _class: JClass, context: JObject) {
+    ensure_env_loaded();
     let Ok(vm) = env.get_java_vm() else { return };
     let Ok(class) = env.find_class("ai/containai/zynkbot/ZynkNotify") else { eprintln!("[Android] ZynkNotify class not found"); return };
     let (Ok(class_ref), Ok(ctx_ref)) = (env.new_global_ref(class), env.new_global_ref(context)) else { return };
@@ -210,6 +228,7 @@ pub extern "system" fn Java_ai_containai_zynkbot_ZynkCore_nativeSendMessage<'loc
     // resolve_voice_backend(). Fails closed (reports an error) rather than handing
     // generate_reply a backend guaranteed to fail, so the caller's fallback to the
     // WebView/notification path — which the user's own model selection covers — runs.
+    ensure_env_loaded();
     let backend = if backend_arg.is_empty() {
         match resolve_voice_backend() {
             Some(b) => b,
