@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import PageIntro from './PageIntro';
 import { openUrl } from '@tauri-apps/plugin-opener';
 
@@ -224,6 +224,15 @@ export default function VoiceModal({
   const enrollCall = (fn) => () => { try { fn(); } catch (_) {} readEnroll(); };
   // The explanation shown before teaching starts: 'start' (first time) or 'again'.
   const [teachInfo, setTeachInfo] = useState(null);
+  // Switching the wake word on with no voice on file opens that explanation at once
+  // (2026-11-03): until the phone is taught, "Hey Zynk" answers nothing, so the switch
+  // alone would look broken.
+  const wasEnabled = useRef(heyZynkEnabled);
+  useEffect(() => {
+    const turnedOn = heyZynkEnabled && !wasEnabled.current;
+    wasEnabled.current = heyZynkEnabled;
+    if (turnedOn && enroll && !enroll.enforcing && enroll.state !== 'active') setTeachInfo('start');
+  }, [heyZynkEnabled, enroll]);
 
   if (!isOpen) return null;
 
@@ -313,14 +322,15 @@ export default function VoiceModal({
             </p>
 
             {/* Teach Zynkbot your voice (2026-10-22): Start, then say "Hey Zynk" 20 times;
-                each one is saved as a real clip and only chimes, and until the twenty are
-                in the wake word answers nothing (paused: it does not count either). The
-                phone then trains its personal verifier from them and, if it tests well
-                enough, enforces it (WakeWordService enrollment, WakeVerifierTrainer). */}
+                each one is saved as a real clip and only chimes, and only while this page
+                is open (2026-11-03). The phone then trains its personal verifier from them
+                and, if it tests well enough, enforces it; until a profile enforces, the
+                wake word answers nothing (WakeWordService enrollment, WakeVerifierTrainer). */}
             {heyZynkEnabled && enroll && (() => {
               const s = enroll.state;
-              const collecting = s === 'active' || s === 'paused';
-              const done = s === 'done' || enroll.enforcing;
+              const collecting = s === 'active';
+              const done = enroll.enforcing;
+              const needsAnother = s === 'done' && !enroll.enforcing;
               const btn = (label, onClick, primary) => (
                 <button onClick={onClick} style={{
                   padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', whiteSpace: 'nowrap',
@@ -333,12 +343,12 @@ export default function VoiceModal({
                     <span style={labelStyle}>{collecting ? 'Say "Hey Zynk", wait for the count, say it again' : 'Teach Zynkbot your voice'}</span>
                     <div style={mutedStyle}>
                       {collecting
-                        ? (s === 'paused'
-                          ? 'Paused: nothing counts. Until the twenty are in, "Hey Zynk" does not answer.'
-                          : 'Move around: facing the phone, facing away, at arm\'s length, from across the room. Somewhere quiet. Until the twenty are in, "Hey Zynk" only counts; it does not answer.')
+                        ? 'Keep this page open; nothing counts while it is closed. TV off. Move around: facing the phone, facing away, from across the room. Until the twenty are in, "Hey Zynk" only counts; it does not answer.'
                         : done
-                          ? (enroll.enforcing ? 'Done. A "Hey Zynk" that does not sound like you is ignored.' : 'Done. It keeps learning as you use it.')
-                          : 'Say "Hey Zynk" twenty times so it learns to tell you from the TV. Take your time; the count is kept.'}
+                          ? 'Done. A "Hey Zynk" that does not sound like you is ignored. It keeps learning as you use it.'
+                          : needsAnother
+                            ? 'Those twenty were not clear enough to tell you from other sounds, so "Hey Zynk" stays off. Teach it again somewhere quieter.'
+                            : 'Until you do, "Hey Zynk" is ignored. Say it twenty times so it learns to tell you from the TV. Take your time; the count is kept.'}
                     </div>
                   </div>
                   {collecting && (
@@ -347,9 +357,7 @@ export default function VoiceModal({
                       <div style={{ fontSize: '0.7rem', color: '#9aa5c4' }}>of {enroll.needed}</div>
                     </div>
                   )}
-                  {s === 'active' && btn('Pause', enrollCall(() => window.WakeWordBridge.pauseEnrollment(true)), false)}
-                  {s === 'paused' && btn('Resume', enrollCall(() => window.WakeWordBridge.pauseEnrollment(false)), true)}
-                  {!collecting && btn(done ? 'Teach again' : 'Start', () => setTeachInfo(done ? 'again' : 'start'), !done)}
+                  {!collecting && btn(done || needsAnother ? 'Teach again' : 'Start', () => setTeachInfo(done || needsAnother ? 'again' : 'start'), !done)}
                 </div>
               );
             })()}
@@ -362,15 +370,18 @@ export default function VoiceModal({
                   <h3 style={{ margin: '0 0 10px 0', color: '#8be9fd', fontSize: '1.05rem' }}>Teach Zynkbot your voice</h3>
                   <div style={{ color: '#f8f8f2', fontSize: '0.88rem', lineHeight: 1.5 }}>
                     <p style={{ margin: '0 0 10px 0' }}>
-                      Say "Hey Zynk" twenty times. Wait for the count to move between each one, and move
-                      around: facing the phone, facing away, from across the room.
+                      Zynkbot needs to know your voice before "Hey Zynk" will answer, so that a
+                      television or someone else cannot set it off.
                     </p>
                     <p style={{ margin: '0 0 10px 0' }}>
-                      When the twenty are in, Zynkbot builds a profile of your voice and starts ignoring
-                      wake words that do not sound like you. It keeps learning from every "Hey Zynk" you
-                      use. A television may still set it off at first; that should fade as it learns.
+                      Say "Hey Zynk" twenty times, with the TV off and this page open. Wait for the count
+                      to move between each one, and move around: facing the phone, facing away, from
+                      across the room. Nothing counts while this page is closed, so take your time.
                     </p>
-                    <p style={{ margin: '0 0 10px 0' }}>Until the twenty are in, "Hey Zynk" will not answer questions.</p>
+                    <p style={{ margin: '0 0 10px 0' }}>
+                      When the twenty are in, Zynkbot builds a profile of your voice, keeps learning from
+                      every "Hey Zynk" you use, and sends the profile to your other devices.
+                    </p>
                     {teachInfo === 'again' && (
                       <p style={{ margin: '0 0 10px 0', color: '#ffb86c' }}>Starting over clears the voice clips already on this phone.</p>
                     )}

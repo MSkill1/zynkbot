@@ -16,6 +16,7 @@ macro_rules! eprintln {
 // Module declarations
 pub mod app_log;            // In-memory log tail for bug reports, and the on-disk log
 pub mod env_file;           // The .env settings file: quoting, tolerant loading (KI-083)
+pub mod wake_profile;       // The taught wake-word voice profile: synced and backed up like a key (2026-11-03)
 #[cfg(test)]
 mod sync_harness_tests; // two-peer ZynkSync harness (docs/TESTING.md)
 #[cfg(test)]

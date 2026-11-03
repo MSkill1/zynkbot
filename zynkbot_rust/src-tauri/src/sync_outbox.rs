@@ -351,6 +351,11 @@ pub async fn seed_secrets_from_env(pool: &SqlitePool) -> Result<usize, String> {
             held.push((crate::commands::models::BACKUP_KEY_PUSH_NAME.to_string(), hex.trim().to_ascii_lowercase()));
         }
     }
+    // The taught wake-word voice profile travels the same way (2026-11-03); the trainer
+    // on the phone writes the file, this picks it up at the next drain.
+    if let Some(profile) = crate::wake_profile::read_wake_profile() {
+        held.push((crate::wake_profile::WAKE_PROFILE_PUSH_NAME.to_string(), profile));
+    }
     let mut recorded = 0;
     for (name, value) in held {
         let current: Option<String> = sqlx::query_scalar("SELECT value FROM sync_secrets WHERE name = ?")
@@ -901,7 +906,10 @@ async fn apply_message(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, ms
 /// A key this device has never held is taken. The backup key goes to its file, not .env.
 async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Result<bool, String> {
     let is_backup_key = sec.name == crate::commands::models::BACKUP_KEY_PUSH_NAME;
-    if !is_backup_key && !crate::commands::models::PROPAGATABLE_KEYS.contains(&sec.name.as_str()) {
+    let is_wake_profile = sec.name == crate::wake_profile::WAKE_PROFILE_PUSH_NAME;
+    // The backup key and the voice profile go to their files, not to .env.
+    let to_file = is_backup_key || is_wake_profile;
+    if !to_file && !crate::commands::models::PROPAGATABLE_KEYS.contains(&sec.name.as_str()) {
         eprintln!("[ZynkSync] outbox: key '{}' is not propagatable, ignored", sec.name);
         return Ok(false);
     }
@@ -916,7 +924,7 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
             // row recorded from a key file that was later edited by hand would otherwise
             // leave the two apart. (Also what makes b02 deterministic: both harness peers
             // share one process environment, so the phone "already holds" the key.)
-            if value == &sec.value && !is_backup_key {
+            if value == &sec.value && !to_file {
                 let have = std::env::var(&sec.name).ok();
                 if have.as_deref() != Some(sec.value.as_str()) {
                     crate::commands::models::apply_env_key(&sec.name, &sec.value)?;
@@ -938,6 +946,8 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
         .execute(&mut **tx).await.map_err(|e| format!("outbox: store secret: {}", e))?;
     if is_backup_key {
         crate::commands::backup::install_pushed_backup_key(&sec.value)?;
+    } else if is_wake_profile {
+        crate::wake_profile::install_wake_profile(&sec.value)?;
     } else {
         crate::commands::models::apply_env_key(&sec.name, &sec.value)?;
     }

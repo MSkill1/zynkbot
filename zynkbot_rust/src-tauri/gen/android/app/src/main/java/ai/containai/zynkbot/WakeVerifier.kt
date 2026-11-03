@@ -10,17 +10,21 @@ import kotlin.math.max
  * Personal wake-word verifier (2026-09-08): a logistic regression over the same
  * 16×96 embedding window the classifier fires on, trained on the desktop from
  * this user's own "Hey Zynk" clips against every false-trigger clip collected.
- * Runs entirely on the phone; nothing is uploaded. Weights ship as
- * assets/wake-word-models/hey_zynk_verifier.json (standardiser mean/scale,
- * coefficients, intercept, threshold). While `enforce` is false it only logs.
+ * Runs entirely on the phone; nothing is uploaded. The weights are the file
+ * zynkbot/wake-word-models/hey_zynk_verifier.json in the app data folder
+ * (standardiser mean/scale, coefficients, intercept, threshold), written by the
+ * on-phone trainer or received from the owner's other devices through sync or the
+ * cloud backup (2026-11-03; nothing ships inside the APK any more, so no one's
+ * voice is in the download). No profile that enforces: the wake word answers nothing.
  */
 class WakeVerifier private constructor(
     private val mean: FloatArray, private val scale: FloatArray,
     private val coef: FloatArray, private val intercept: Float, val threshold: Float, val trained: String,
     private val owners: Set<String>,
 ) {
-    /** A verifier is personal: it enforces only for the user it was trained on
-     *  (the asset's "owners" lists Zynkbot user ids, .zynk_user_id). The user id is
+    /** A verifier is personal. "owners" is "*" (whoever holds this file: the phone
+     *  wrote it from its owner's clips, or it came through the owner's own account or
+     *  backup) or a list of Zynkbot user ids, as older files wrote. The user id is
      *  the same on every device that user pairs and survives a reinstall once the
      *  phone is re-paired; a device id does not (a fresh install on 2026-09-09 got a
      *  new device id and the verifier silently stopped enforcing). For anyone else
@@ -34,12 +38,17 @@ class WakeVerifier private constructor(
     }
     companion object {
         private const val TAG = "WakeVerifier"
-        /** A verifier file in the app's data folder wins over the one built into the
-         *  APK, so a personal profile can arrive without a release (2026-09-15). */
-        fun load(context: Context, quiet: Boolean = false): WakeVerifier? = try {
-            val local = java.io.File(context.filesDir, "zynkbot/wake-word-models/hey_zynk_verifier.json")
-            val (text, source) = if (local.isFile) local.readText() to "data folder"
-                                 else context.assets.open("wake-word-models/hey_zynk_verifier.json").bufferedReader().readText() to "built in"
+        fun profileFile(context: Context) = java.io.File(context.filesDir, "zynkbot/wake-word-models/hey_zynk_verifier.json")
+
+        /** The phone's profile file, or null when there is none (never taught, and nothing
+         *  received). Until 2026-11-03 a profile built into the APK stood in; it was one
+         *  person's voice and enforced only for that person's user id, which a fresh
+         *  install changes, so it silently stopped working (2026-09-09 and 2026-11-02). */
+        fun load(context: Context, quiet: Boolean = false): WakeVerifier? {
+            val local = profileFile(context)
+            if (!local.isFile) { if (!quiet) WakeLog.i(TAG, "No voice profile on this phone yet"); return null }
+            return try {
+            val text = local.readText(); val source = "data folder"
             val j = JSONObject(text)
             fun arr(k: String): FloatArray { val a = j.getJSONArray(k); return FloatArray(a.length()) { a.getDouble(it).toFloat() } }
             val owners = mutableSetOf<String>()
@@ -48,6 +57,7 @@ class WakeVerifier private constructor(
                 j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"), owners)
                 .also { if (!quiet) WakeLog.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
         } catch (e: Exception) { WakeLog.w(TAG, "No verifier: ${e.message}"); null }
+        }
 
         /** The shift-invariant part of the features: per-dimension mean and max over the
          *  window (2 × dim numbers). This is what the on-phone trainer stores per clip

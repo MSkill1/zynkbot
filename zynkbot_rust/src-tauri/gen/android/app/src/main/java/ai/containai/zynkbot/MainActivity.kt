@@ -807,13 +807,12 @@ class MainActivity : TauriActivity() {
         fun markAnswered() { WakeWordService.reportOutcome(true) }
 
         /** Voice enrollment (2026-10-22): the Voice page's "Teach Zynkbot your voice" card.
-         *  Status is {state: none|active|paused|done, count, needed, enforcing, profile}. */
+         *  Status is {state: none|active|done, count, needed, enforcing, profile}. The card
+         *  asks every 1.5 s while open; a teaching wake counts only then (2026-11-03). */
         @JavascriptInterface
         fun enrollmentStatus(): String = WakeWordService.enrollmentStatus(this@MainActivity).toString()
         @JavascriptInterface
         fun startEnrollment() { WakeWordService.startEnrollment(this@MainActivity) }
-        @JavascriptInterface
-        fun pauseEnrollment(paused: Boolean) { WakeWordService.setEnrollmentPaused(this@MainActivity, paused) }
 
         // The three ONNX models ship inside the APK under assets/wake-word-models/
         // (~3 MB). They are copied out to filesDir rather than read in place because

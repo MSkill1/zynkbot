@@ -50,13 +50,16 @@ import kotlin.math.sqrt
  * clip's features and label even after pruning its audio. So the profile gets better or
  * stays the same; it cannot drift.
  *
- * Enforcement is automatic (2026-10-22): a written profile lists this phone's user id as
- * its owner, so WakeVerifier enforces it, when either the profile it replaces already
- * enforced here (enforcement is never switched off by a retrain) or the candidate's
- * held-out numbers clear AUTO_ENFORCE_KEEP and AUTO_ENFORCE_STOP. Below that bar the
- * owners list is empty and the verifier only logs ("would reject"). A profile built into
- * the APK for a named owner (hey_zynk_verifier.json with its own heldout_keep/stop) is
- * the profile in use until the phone's own candidate is at least as good.
+ * Enforcement is automatic (2026-10-22): a written profile names "*" as its owner, so
+ * WakeVerifier enforces it wherever the file is (2026-11-03: it travels to the owner's
+ * other devices by sync and by the cloud backup, and a fresh install changes the user
+ * id, so a user id in the file is the wrong key), when either the profile it replaces
+ * already enforced here (enforcement is never switched off by a retrain) or the
+ * candidate's held-out numbers clear AUTO_ENFORCE_KEEP and AUTO_ENFORCE_STOP. Below that
+ * bar the owners list is empty, the verifier only logs ("would reject"), and the wake
+ * word stays off until a better profile is taught. A profile received from another
+ * device carries its held-out numbers inside it and is the profile in use until this
+ * phone's own candidate is at least as good.
  */
 object WakeVerifierTrainer {
     private const val TAG = "WakeVerifierTrainer"
@@ -134,9 +137,11 @@ object WakeVerifierTrainer {
             val inUse = profileInUse(context)
             val inUseEnforces = inUse?.optJSONArray("owners")?.let { a ->
                 (0 until a.length()).any { a.optString(it) == "*" || (userId.isNotEmpty() && a.optString(it) == userId) } } ?: false
+            // The numbers of the profile in use: from this phone's training state if it
+            // trained it, else from inside the file (one received from another device).
             val keepOld: Float; val stopOld: Float
-            if (profileFile(context).isFile) { keepOld = state.optDouble("heldout_keep", -1.0).toFloat(); stopOld = state.optDouble("heldout_stop", -1.0).toFloat() }
-            else if (inUseEnforces) { keepOld = inUse!!.optDouble("heldout_keep", -1.0).toFloat(); stopOld = inUse.optDouble("heldout_stop", -1.0).toFloat() }
+            if (inUse != null && state.has("heldout_keep")) { keepOld = state.optDouble("heldout_keep", -1.0).toFloat(); stopOld = state.optDouble("heldout_stop", -1.0).toFloat() }
+            else if (inUse != null && inUseEnforces) { keepOld = inUse.optDouble("heldout_keep", -1.0).toFloat(); stopOld = inUse.optDouble("heldout_stop", -1.0).toFloat() }
             else { keepOld = -1f; stopOld = -1f }
             val heldOutLine = "held out: keeps %.0f%% of own wakes, stops %.0f%% of negatives".format(Locale.US, keepNew * 100, stopNew * 100)
             if (keepOld >= 0f) {
@@ -152,7 +157,7 @@ object WakeVerifierTrainer {
                 }
             }
             val enforce = inUseEnforces || (keepNew >= AUTO_ENFORCE_KEEP && stopNew >= AUTO_ENFORCE_STOP)
-            val owners = JSONArray().apply { if (enforce) put(if (userId.isNotEmpty()) userId else "*") }
+            val owners = JSONArray().apply { if (enforce) put("*") }
             val json = JSONObject()
                 .put("version", 3)
                 .put("trained", "on this phone $stamp from ${pos.size} real clips vs ${neg.size} own false + ${generic.size} generic negatives")
@@ -161,7 +166,7 @@ object WakeVerifierTrainer {
                 .put("scale", JSONArray(model.scale.map { it.toDouble() }))
                 .put("coef", JSONArray(model.coef.map { it.toDouble() }))
                 .put("intercept", model.intercept.toDouble())
-                .put("owners", owners)   // this phone's user id: enforce; empty: log-only (see the class note)
+                .put("owners", owners)   // "*": enforce wherever this file is; empty: log-only (see the class note)
                 .put("heldout_keep", keepNew.toDouble()).put("heldout_stop", stopNew.toDouble())
                 .put("note", "Trained on the phone from the owner's labelled wake clips (WakeVerifierTrainer). A noise/TV filter, not a voice lock.")
             profileFile(context).parentFile?.mkdirs()
@@ -183,11 +188,11 @@ object WakeVerifierTrainer {
     private fun userId(context: Context): String =
         try { File(context.filesDir, "zynkbot/.zynk_user_id").readText().trim() } catch (_: Exception) { "" }
 
-    /** The profile WakeVerifier.load would pick up right now: the phone's own file, else
-     *  the one built into the APK. Null if neither parses. */
+    /** The profile WakeVerifier.load would pick up right now: the phone's file (taught
+     *  here or received). Null if there is none or it does not parse. */
     private fun profileInUse(context: Context): JSONObject? = try {
         val f = profileFile(context)
-        JSONObject(if (f.isFile) f.readText() else context.assets.open("wake-word-models/hey_zynk_verifier.json").bufferedReader().readText())
+        if (f.isFile) JSONObject(f.readText()) else null
     } catch (_: Exception) { null }
 
     /** Clips labelled before 2026-10-20 cannot be trusted: a wake the model dismissed as

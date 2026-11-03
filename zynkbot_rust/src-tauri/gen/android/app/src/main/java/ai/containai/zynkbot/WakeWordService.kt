@@ -130,15 +130,20 @@ class WakeWordService : Service() {
         // ── voice enrollment (2026-10-22) ───────────────────────────────────────
         // The Voice page's "Teach Zynkbot your voice" card: the owner taps Start and says the
         // wake word ENROLL_CLIPS times; each wake is saved as a real clip and only chimes.
-        // Until the count is reached the wake word answers nothing; paused, it does not
-        // count either (a television cannot add to the twenty while the owner is away).
-        // The on-phone trainer builds the profile from the clips (WakeVerifierTrainer).
-        // State lives in one marker file so it survives restarts: active, paused, done; no
-        // file means never enrolled.
+        // A wake counts only while the card is on screen (2026-11-03: the card asks for the
+        // status every 1.5 s, so a wake more than CARD_OPEN_MS after the last ask is the
+        // television talking to an empty room, not the owner teaching). The on-phone
+        // trainer builds the profile from the clips (WakeVerifierTrainer). State lives in
+        // one marker file so it survives restarts: active, paused, done; no file means
+        // never enrolled ("paused", from before 2026-11-03, reads as active). Until a
+        // profile enforces, the wake word answers nothing.
         const val ENROLL_CLIPS = 20
+        const val CARD_OPEN_MS = 5_000L
+        @Volatile private var cardSeenAt = 0L
+        private fun cardIsOpen() = System.currentTimeMillis() - cardSeenAt < CARD_OPEN_MS
         private fun enrollMarker(context: Context) = File(context.filesDir, "zynkbot/wake-word-models/enrolling")
         @JvmStatic fun enrollmentState(context: Context): String =
-            try { enrollMarker(context).readText().trim().ifEmpty { "none" } } catch (_: Exception) { "none" }
+            try { enrollMarker(context).readText().trim().ifEmpty { "none" }.let { if (it == "paused") "active" else it } } catch (_: Exception) { "none" }
 
         /** Begin, or begin again: the clip set, the phone's own profile and its training
          *  state go, so the profile that comes out of this is built from these clips alone
@@ -154,12 +159,11 @@ class WakeWordService : Service() {
             WakeLog.i(TAG, "Voice enrollment started: $n clip files removed; collecting $ENROLL_CLIPS wake clips")
         }
 
-        @JvmStatic fun setEnrollmentPaused(context: Context, paused: Boolean) {
-            if (enrollmentState(context) in setOf("active", "paused")) enrollMarker(context).writeText(if (paused) "paused\n" else "active\n")
-        }
-
-        /** What the card shows: state, clips so far, and whether a profile enforces here. */
+        /** What the card shows: state, clips so far, and whether a profile enforces here.
+         *  Asking also tells the service the card is on screen, which is what lets a
+         *  teaching wake count. */
         @JvmStatic fun enrollmentStatus(context: Context): org.json.JSONObject {
+            cardSeenAt = System.currentTimeMillis()
             val v = WakeVerifier.load(context, quiet = true)
             return org.json.JSONObject().put("state", enrollmentState(context)).put("count", clipStats(context).getInt("real"))
                 .put("needed", ENROLL_CLIPS).put("enforcing", v?.enforcesOn(context) == true).put("profile", v?.trained ?: "")
@@ -358,6 +362,17 @@ class WakeWordService : Service() {
     //     stronger detection for ten minutes;
     //  3. faster close on no speech (in ZynkAssistantSession).
     private var verifier: WakeVerifier? = null
+    private var verifierStamp = -1L                    // modification time of the profile file the loaded verifier came from
+
+    /** The verifier for the profile file as it is now: reloaded when the file changed
+     *  (the trainer wrote one, a profile arrived by sync or restore, or teaching again
+     *  removed it). Cheap: one stat per wake. */
+    private fun currentVerifier(): WakeVerifier? {
+        val f = WakeVerifier.profileFile(this)
+        val stamp = if (f.isFile) f.lastModified() else 0L
+        if (stamp != verifierStamp) { verifier = WakeVerifier.load(this); verifierStamp = stamp }
+        return verifier
+    }
     private val recentMisses = ArrayDeque<Long>()      // wall-clock ms of empty / NO_QUERY sessions
     @Volatile private var strictUntil = 0L             // while now < strictUntil: 4 hits, score ≥ 0.9
 
@@ -765,9 +780,7 @@ class WakeWordService : Service() {
         Thread {
             try {
                 if (delayMs > 0) Thread.sleep(delayMs)
-                if (WakeVerifierTrainer.trainIfDue(this, loadedModelDir)) {
-                    verifier = WakeVerifier.load(this)
-                }
+                if (WakeVerifierTrainer.trainIfDue(this, loadedModelDir)) currentVerifier()
             } catch (e: Exception) { WakeLog.w(TAG, "Verifier training: ${e.message}") }
         }.start()
     }
@@ -892,8 +905,8 @@ class WakeWordService : Service() {
                     // a real clip, chime, and stop there: no turn, and no verifier (there may
                     // not be one yet). At ENROLL_CLIPS the profile trains.
                     val enrolling = enrollmentState(this)
-                    if (enrolling == "paused") {
-                        WakeLog.i(TAG, "Detection ignored: voice teaching is paused (score=%.3f)".format(Locale.US, score))
+                    if (enrolling == "active" && !cardIsOpen()) {
+                        WakeLog.i(TAG, "Teaching wake ignored: the Voice page is not open (score=%.3f)".format(Locale.US, score))
                         consecutiveHighScores = 0
                         cooldownRemaining = COOLDOWN_CHUNKS / 2
                         embBuffer.clear()
@@ -914,13 +927,23 @@ class WakeWordService : Service() {
                         }
                         return
                     }
-                    val v = verifier ?: WakeVerifier.load(this).also { verifier = it }
+                    val v = currentVerifier()
                     val vScore = v?.score(flatEmb, EMB_WINDOW, EMB_SIZE) ?: -1f
                     val enforcing = v != null && v.enforcesOn(this)
+                    if (!enforcing) {
+                        // No voice on file, or one that did not test well enough: the wake
+                        // word answers nothing (2026-11-03). The Voice page says so and offers
+                        // teaching; nothing is saved, because nothing could label it.
+                        WakeLog.i(TAG, "Detection ignored: no voice profile enforces here yet (score=$score, verifier=%.3f)".format(Locale.US, vScore))
+                        consecutiveHighScores = 0
+                        cooldownRemaining = COOLDOWN_CHUNKS / 2
+                        embBuffer.clear()
+                        return
+                    }
                     val wouldReject = v != null && vScore >= 0f && vScore <= v.threshold
-                    WakeLog.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS vad=%.2f verifier=%.3f%s%s".format(
-                        level, voice, vScore, if (wouldReject && !enforcing) " (verifier would reject, log-only)" else "", if (strict) " (strict mode)" else ""))
-                    if (wouldReject && enforcing) {
+                    WakeLog.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS vad=%.2f verifier=%.3f%s".format(
+                        level, voice, vScore, if (strict) " (strict mode)" else ""))
+                    if (wouldReject) {
                         WakeLog.i(TAG, "Detection ignored: verifier says not the owner (%.3f <= %.2f)".format(vScore, v!!.threshold))
                         saveTriggerClip(score, pooled)
                         consecutiveHighScores = 0
@@ -1028,7 +1051,7 @@ class WakeWordService : Service() {
                 // "Send my wake-word clips" count went backwards even with frequent real use
                 // (Matt, 2026-09-21: 12 real clips over 12 hours' use, dropped to 11).
                 val allWavs = dir.listFiles { f -> f.name.endsWith(".wav") }?.toList() ?: emptyList()
-                val keepCount = if (verifier?.enforcesOn(this) == true) TRIGGER_CLIPS_KEPT else TRIGGER_CLIPS_KEPT_UNVERIFIED
+                val keepCount = if (currentVerifier()?.enforcesOn(this) == true) TRIGGER_CLIPS_KEPT else TRIGGER_CLIPS_KEPT_UNVERIFIED
                 val (real, rest) = allWavs.partition { File(dir, it.name.removeSuffix(".wav") + ".real").exists() }
                 rest.sortedByDescending { it.name }
                     .drop(keepCount)

@@ -410,9 +410,14 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     // 2026-11-02: a fresh install restored from the cloud should come back with its
     // keys). The storage settings and the backup key stay out: both are needed to
     // reach the backup in the first place.
-    let keys_json: Vec<serde_json::Value> = backup_key_names().iter()
+    let mut keys_json: Vec<serde_json::Value> = backup_key_names().iter()
         .filter_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty()).map(|v| serde_json::json!({ "name": k, "value": v })))
         .collect();
+    // The taught wake-word voice profile rides with the keys (2026-11-03), so a fresh
+    // install restored from the cloud wakes to its owner's voice without teaching again.
+    if let Some(profile) = crate::wake_profile::read_wake_profile() {
+        keys_json.push(serde_json::json!({ "name": crate::wake_profile::WAKE_PROFILE_PUSH_NAME, "value": profile }));
+    }
     let key_count = keys_json.len();
 
     let bundle = serde_json::json!({
@@ -578,7 +583,21 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         let allowed = backup_key_names();
         for k in keys {
             let (Some(name), Some(value)) = (k.get("name").and_then(|v| v.as_str()), k.get("value").and_then(|v| v.as_str())) else { continue };
-            if !allowed.contains(&name) || value.trim().is_empty() { continue; }
+            if value.trim().is_empty() { continue; }
+            if name == crate::wake_profile::WAKE_PROFILE_PUSH_NAME {
+                // The voice profile: a phone that already has one keeps it.
+                if crate::wake_profile::has_wake_profile() { continue; }
+                match crate::wake_profile::install_wake_profile(value) {
+                    Ok(()) => {
+                        crate::commands::models::record_secret(name, Some(value)).await;
+                        println!("[Backup] Wake-word voice profile put back from the backup");
+                        keys_restored += 1;
+                    }
+                    Err(e) => eprintln!("[Backup] Could not put back the voice profile: {}", e),
+                }
+                continue;
+            }
+            if !allowed.contains(&name) { continue; }
             let missing = std::env::var(name).map(|v| v.trim().is_empty()).unwrap_or(true);
             if !missing { continue; }
             match crate::commands::models::apply_env_key(name, value) {
