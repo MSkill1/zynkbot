@@ -4,9 +4,9 @@
 
 *By [ContainAI](https://containai.ai) – Building ethical AI infrastructure*
 
-Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same Rust backend — memory system, ML inference, and encrypted device sync — runs on Android and desktop. It connects to Claude, GPT, Grok, or Mistral through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required — for typical conversational use, expect an estimated $5–15/month in API costs, versus $20/month per provider for subscription apps ([cost breakdown](API_COSTS.md)). Local GGUF models are supported for fully offline, zero-cost use on desktop. Android uses cloud API models or Ollama proxied from a paired desktop over your home network.
+Zynkbot is a private AI assistant for your phone and computer, built in Rust. The same Rust backend — memory system, ML inference, and encrypted device sync — runs on Android and desktop. It runs its own local model, or connects to Claude, GPT, Grok, or Mistral through your own API keys; your conversations and memory stay on your devices and sync privately between them over encrypted LAN. No subscriptions required — for typical conversational use, expect an estimated $5–15/month in API costs, versus $20/month per provider for subscription apps ([cost breakdown](API_COSTS.md)). Local GGUF models give fully offline, zero-cost use on every platform: Sophro, Zynkbot's own 4B model, is downloaded at first run on phones and computers alike. Android can also use cloud API models, or Ollama proxied from a paired desktop over your home network.
 
-**Current Status**: [![GitHub Release](https://img.shields.io/github/v/release/MSkill1/zynkbot?label=latest)](https://github.com/MSkill1/zynkbot/releases/latest) [![Beta](https://img.shields.io/badge/main%20branch-v0.9.6--beta5-orange)](https://github.com/MSkill1/zynkbot/releases) — desktop (Windows, Linux) + Android beta. The `main` branch tracks the current beta; stable releases are tagged. iOS planned.
+**Current Status**: [![GitHub Release](https://img.shields.io/github/v/release/MSkill1/zynkbot?label=latest)](https://github.com/MSkill1/zynkbot/releases/latest) [![Release](https://img.shields.io/badge/main%20branch-v0.9.6-green)](https://github.com/MSkill1/zynkbot/releases) — desktop (Windows, Linux) + Android. The `main` branch holds the current release (0.9.6, 3 November 2026); releases are tagged. iOS planned.
 
 <img src="assets/main.png" alt="Zynkbot main interface" width="800">
 
@@ -57,7 +57,9 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 - **Multi-Model Ensemble** - Query multiple AI models simultaneously with consensus detection
 - **Contradiction Detection** - Automatically surfaces conflicting memories and asks you to resolve them
 - **Memory Graph** - Visual relationship map of all stored memories; explore contradictions, connections, and context
-- **Cross-Device Sync** - ZynkSync syncs memories across your own devices
+- **Cross-Device Sync** - ZynkSync syncs memories, conversations, settings and your voice profile across your own devices
+- **Cloud Backup** - Encrypted backup of memories, conversations, keys and voice profile to your own storage bucket; a fresh install restores itself from it
+- **Hey Zynk** - Hands-free on Android: a wake word that answers only the voice it has been taught, with timers, alarms and a stopwatch by voice
 - **File Sharing** - ZynkLink transfers files directly between paired Zynkbot users
 - **ZChat** - Direct device-to-device messaging without cloud relay
 - **Web Search** - On-demand live web search when current information is needed: through your cloud model's own search tool, or Brave, a SearXNG server or DuckDuckGo for local models
@@ -84,7 +86,7 @@ Development testing validates that features work under controlled conditions. It
 - Does the hybrid memory search surface the right memories for your queries?
 - Does ZynkLink work across your devices and network setup?
 
-v1.0 and mobile development depend on what we learn in this phase. If you have a GitHub account, [open an issue](https://github.com/MSkill1/zynkbot/issues). If you'd prefer to contact the project directly, feedback is always welcome at matt@containai.ai.
+v1.0 depends on what we learn in this phase. If you have a GitHub account, [open an issue](https://github.com/MSkill1/zynkbot/issues). If you'd prefer to contact the project directly, feedback is always welcome at matt@containai.ai.
 
 ---
 
@@ -100,13 +102,13 @@ Pre-built binaries are available for Android, Linux, and Windows — no compilat
 |---|---|
 | Android | `.apk` (arm64) |
 | Linux | `.deb` (amd64), `.AppImage`, or `.rpm` |
-| Windows | `.exe` installer or `.msi` |
+| Windows | `.exe` installer |
 
 **Android:** Download the APK and tap to install. Android will prompt you to allow installation from unknown sources — this is a one-time prompt per device.
 
 Once Zynkbot is on both your phone and desktop, open System Controls → ZynkSync on each device and pair them. The new device has everything within a minute; after that, a change on any device reaches the others within seconds whenever they're on the same network, and waits for any that aren't.
 
-> ⚠️ **Local models are CPU-only in pre-built desktop binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected. Android uses API models only in Phase 1.
+> ⚠️ **Local models are CPU-only in pre-built desktop binaries.** They work but can have 60+ second responses on some hardware. For optimized local model performance with CUDA support, clone and use the developer install below. API models (Claude, GPT-4, Grok) are unaffected. On Android, Sophro runs on the phone's own processor.
 
 ### Developer Install (from source)
 
@@ -594,7 +596,7 @@ Copyright (c) 2024-2026 Matthew Skillman / ContainAI
 
 ---
 
-**Status**: Feature-complete v0.9, open beta (July 2026)
+**Status**: v0.9.6 released 3 November 2026; open beta on the road to v1.0
 **Platform**: Windows 10+, Linux (Ubuntu 22.04+, Arch, Fedora), Android
 **Mobile**: Android beta available (see Releases); iOS planned
 **Organization**: [ContainAI](https://containai.ai) – Ethical AI infrastructure
