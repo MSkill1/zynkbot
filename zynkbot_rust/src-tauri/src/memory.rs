@@ -88,6 +88,8 @@ struct HybridRow {
     id: i32,
     embedding: Option<Vec<u8>>,
     entities_detected: Option<String>,
+    namespace: String,
+    tags: Option<String>,
 }
 
 fn blob_to_f32(blob: &[u8]) -> Vec<f32> {
@@ -245,6 +247,194 @@ fn entity_overlap_score(entities_json: &Option<String>, query_entities: &[String
     (matches as f64) / (query_entities.len() as f64)
 }
 
+// ============================================================================
+// QUERY HINTS: what a question says about where to look (2026-11-04)
+// ============================================================================
+
+/// Beyond its meaning (the embedding) and the names in it (the name finder), a question
+/// carries two signals the extractor already writes on every memory: the namespace its
+/// words point at ("my family" → family, "my weight" → health) and its content words,
+/// which the tags on a memory often repeat ("parents", "funeral"). Neither was read at
+/// recall before 2026-11-04, so "What can you tell me about my family?" scored the family
+/// facts under the 0.35 line: the word "family" is in neither "Albert's parents were
+/// Hermann Einstein and Pauline Koch" nor its names. Built once per question.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QueryHints {
+    /// Canonical namespaces the question's words point at; empty when it names no topic.
+    pub namespaces: Vec<String>,
+    /// The question's content words, lowercased and stemmed, matched against tags.
+    pub words: Vec<String>,
+}
+
+/// What a namespace hint and a tag match add to the hybrid score. A hint is a nudge, not
+/// a filter: the extractor files some family facts under "personal", and what someone eats
+/// is filed under health as often as kitchen. Set from the hint bench (labs/recall_bench,
+/// 2026-11-04): tags at 0.25 lifted seven of 46 questions on a real database and hurt one
+/// by a place; the namespace boost is what finds the Einstein demo's family facts for
+/// "What can you tell me about my family?" (not returned before, 2nd with 0.05, 1st with
+/// 0.15), but at 0.15 it also pushed a health memory from 21st to 47th for a question
+/// that read as kitchen, past the cloud limit of 30, so 0.05.
+pub const NAMESPACE_BOOST: f64 = 0.05;
+pub const TAG_WEIGHT: f64 = 0.25;
+
+/// Words that mark a question as being about a namespace. Plurals are listed, the words
+/// are matched whole, and a question can point at more than one namespace.
+const NAMESPACE_WORDS: &[(&str, &[&str])] = &[
+    ("family", &["family", "families", "mother", "mom", "mum", "father", "dad", "parent", "parents",
+        "son", "sons", "daughter", "daughters", "child", "children", "kid", "kids", "brother", "brothers",
+        "sister", "sisters", "sibling", "siblings", "wife", "husband", "spouse", "grandmother", "grandma",
+        "grandfather", "grandpa", "grandparents", "granddaughter", "grandson", "grandchildren", "aunt",
+        "uncle", "cousin", "cousins", "nephew", "niece", "relative", "relatives", "in-laws", "married",
+        "marriage", "wedding", "divorce", "divorced"]),
+    ("health", &["health", "healthy", "doctor", "doctors", "medical", "medicine", "medication",
+        "medications", "prescription", "weight", "diet", "keto", "blood", "glucose", "ketone", "ketones",
+        "symptom", "symptoms", "sick", "illness", "disease", "hospital", "therapy", "therapist", "sleep",
+        "exercise", "fitness", "pain", "injury", "allergy", "allergies", "dentist",
+        // what someone eats is health as much as kitchen; the extractor files it both ways
+        "eat", "ate", "eating", "food", "foods", "meal", "meals", "carbs", "calories", "nutrition"]),
+    ("kitchen", &["recipe", "recipes", "cook", "cooking", "cooked", "bake", "baking", "baked", "meal",
+        "meals", "breakfast", "lunch", "dinner", "supper", "eat", "ate", "eating", "food", "foods",
+        "grocery", "groceries", "ingredient", "ingredients", "bread", "snack", "snacks", "kitchen",
+        "oven", "fridge", "carbs", "calories"]),
+    ("work", &["job", "project", "projects", "meeting", "meetings", "client", "clients", "business",
+        "deadline", "deadlines", "company", "boss", "colleague", "colleagues", "coworker", "coworkers",
+        "office", "customer", "customers", "workplace"]),
+    ("career", &["career", "hired", "hiring", "salary", "promotion", "promoted", "employer", "resume",
+        "interview", "interviews", "profession", "retire", "retired", "retirement"]),
+    ("education", &["school", "schools", "university", "college", "degree", "studied", "studying",
+        "class", "classes", "course", "courses", "teacher", "teachers", "student", "students", "lecture",
+        "exam", "exams", "homework", "graduated", "graduation"]),
+    ("travel", &["travel", "traveling", "travelling", "trip", "trips", "vacation", "journey", "flight",
+        "flights", "hotel", "visited", "abroad", "airport", "passport", "itinerary"]),
+    ("hobbies", &["hobby", "hobbies", "game", "games", "gaming", "guitar", "piano", "band", "sailing",
+        "fishing", "hunting", "garden", "gardening", "hiking", "camping", "painting", "photography",
+        "chess", "knitting", "woodworking", "collecting", "collection"]),
+    ("technology", &["computer", "computers", "software", "hardware", "app", "apps", "laptop", "code",
+        "coding", "programming", "server", "servers", "network", "wifi", "router", "printer", "password",
+        "passwords", "linux", "windows", "android"]),
+    ("politics", &["politics", "political", "election", "elections", "vote", "voting", "government",
+        "president", "congress", "senate", "policy"]),
+    ("science", &["science", "scientific", "physics", "chemistry", "biology", "experiment", "research",
+        "quantum", "relativity"]),
+    ("philosophy", &["philosophy", "philosophical", "belief", "beliefs", "religion", "religious", "faith",
+        "ethics", "ethical", "spiritual"]),
+    ("achievements", &["award", "awards", "prize", "prizes", "achievement", "achievements",
+        "accomplishment", "accomplishments", "medal", "trophy"]),
+    ("biography", &["born", "childhood", "hometown", "ancestry", "ancestors", "heritage", "funeral",
+        "died", "upbringing"]),
+];
+
+/// Words a question is made of that say nothing about its topic.
+const QUESTION_STOP_WORDS: &[&str] = &[
+    "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "at", "for", "with", "from", "by",
+    "about", "into", "out", "up", "down", "over", "again", "than", "then", "there", "here", "this",
+    "that", "these", "those", "it", "its", "i", "me", "my", "mine", "myself", "you", "your", "yours",
+    "we", "our", "us", "he", "she", "they", "them", "his", "her", "their", "what", "which", "who",
+    "whom", "whose", "when", "where", "why", "how", "is", "are", "was", "were", "be", "been", "being",
+    "am", "do", "does", "did", "doing", "have", "has", "had", "having", "can", "could", "would",
+    "should", "will", "shall", "may", "might", "must", "tell", "told", "know", "knew", "remember",
+    "recall", "think", "thought", "say", "said", "like", "want", "need", "please", "something",
+    "anything", "everything", "nothing", "thing", "things", "stuff", "still", "also", "really",
+    "just", "much", "many", "more", "most", "any", "some", "all", "both", "each", "few", "other",
+    "such", "no", "not", "nor", "only", "own", "same", "so", "too", "very", "yet", "ever", "never",
+    "always", "now", "get", "got", "give", "let", "make", "made", "use", "used", "going", "go",
+    "went", "come", "came", "one", "ones", "way", "lot", "lots", "kind", "sort", "far",
+];
+
+/// A word reduced for matching: lowercased, punctuation stripped, a plural ending removed.
+fn stem_word(word: &str) -> String {
+    let w: String = word
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '\'')
+        .collect::<String>()
+        .to_lowercase();
+    let w = w.trim_matches(|c| c == '-' || c == '\'').to_string();
+    let w = w.strip_suffix("'s").map(str::to_string).unwrap_or(w);
+    let n = w.chars().count();
+    if n > 4 && w.ends_with("ies") {
+        format!("{}y", &w[..w.len() - 3])
+    } else if n > 4 && (w.ends_with("ses") || w.ends_with("xes") || w.ends_with("shes") || w.ends_with("ches")) {
+        w[..w.len() - 2].to_string()
+    } else if n > 3 && w.ends_with('s') && !w.ends_with("ss") {
+        w[..w.len() - 1].to_string()
+    } else {
+        w
+    }
+}
+
+/// Read a question for the namespaces it points at and the words worth matching.
+pub fn query_hints(question: &str) -> QueryHints {
+    let raw: Vec<String> = question
+        .split(|c: char| c.is_whitespace() || matches!(c, ',' | '.' | '?' | '!' | ';' | ':' | '"' | '(' | ')' | '/'))
+        .filter(|t| !t.is_empty())
+        .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    let mut namespaces: Vec<String> = Vec::new();
+    for (ns, markers) in NAMESPACE_WORDS {
+        let hit = raw.iter().any(|t| {
+            let t = t.strip_suffix("'s").unwrap_or(t);
+            markers.contains(&t)
+        });
+        if hit && !namespaces.iter().any(|n| n == ns) {
+            namespaces.push((*ns).to_string());
+        }
+    }
+
+    let mut words: Vec<String> = Vec::new();
+    for t in &raw {
+        if QUESTION_STOP_WORDS.contains(&t.as_str()) {
+            continue;
+        }
+        let w = stem_word(t);
+        if w.chars().count() >= 3 && !QUESTION_STOP_WORDS.contains(&w.as_str()) && !words.contains(&w) {
+            words.push(w);
+        }
+    }
+    QueryHints { namespaces, words }
+}
+
+/// Fraction of the question's words that appear in a memory's tags (a tag is one or
+/// more words; each is stemmed the same way as the question).
+fn tag_overlap_score(tags_json: &Option<String>, words: &[String]) -> f64 {
+    if words.is_empty() {
+        return 0.0;
+    }
+    let tag_words: Vec<String> = tags_json
+        .as_ref()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .map(|tags| {
+            tags.iter()
+                .flat_map(|t| t.split(|c: char| c.is_whitespace() || c == '-' || c == '_' || c == '/').map(stem_word).collect::<Vec<_>>())
+                .filter(|w| !w.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if tag_words.is_empty() {
+        return 0.0;
+    }
+    let matches = words.iter().filter(|w| tag_words.contains(w)).count();
+    (matches as f64) / (words.len() as f64)
+}
+
+/// The hybrid score of one memory for one question. `semantic` is the cosine between the
+/// embeddings, `entity` the share of the question's names found in the memory (60/40 blend
+/// when any name matches, meaning alone otherwise, as since 2025), `namespace_hit` whether
+/// the memory sits in a namespace the question points at, `tag_overlap` the share of the
+/// question's words found in the memory's tags. The two hint terms are added on top, so a
+/// memory just under the threshold on meaning gets in when the question names its topic.
+pub fn hybrid_score(semantic: f64, entity: f64, namespace_hit: bool, tag_overlap: f64, namespace_boost: f64, tag_weight: f64) -> f64 {
+    let base = if entity > 0.0 { (entity * 0.6) + (semantic * 0.4) } else { semantic };
+    base + if namespace_hit { namespace_boost } else { 0.0 } + tag_weight * tag_overlap
+}
+
+/// For the bench: the share of a question's words found in these tags.
+#[cfg(test)]
+pub fn tag_overlap_score_pub(tags_json: &Option<String>, words: &[String]) -> f64 {
+    tag_overlap_score(tags_json, words)
+}
+
 /// Fetch full Memory rows for a list of IDs (similarity field left as None, set by caller).
 async fn fetch_memories_by_ids(
     pool: &SqlitePool,
@@ -374,6 +564,7 @@ pub async fn hybrid_search(
     pool: &SqlitePool,
     query_embedding: Vec<f32>,
     query_entities: Vec<String>,
+    hints: &QueryHints,
     user_id: Option<&str>,
     session_id: Option<&str>,
     namespace: Option<&str>,
@@ -386,7 +577,7 @@ pub async fn hybrid_search(
 
     // Step 1: fetch candidates that have an embedding or entity data
     let mut sql = String::from(
-        "SELECT id, embedding, entities_detected FROM memories \
+        "SELECT id, embedding, entities_detected, namespace, tags FROM memories \
          WHERE (embedding IS NOT NULL OR (entities_detected IS NOT NULL AND entities_detected != '[]')) \
          AND (temporal_status IS NULL OR temporal_status NOT IN ('superseded', 'completed')) \
          AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now'))",
@@ -432,12 +623,9 @@ pub async fn hybrid_search(
 
             let entity =
                 entity_overlap_score(&r.entities_detected, &query_entities_lower);
-
-            let score = if entity > 0.0 {
-                (entity * 0.6) + (semantic * 0.4)
-            } else {
-                semantic
-            };
+            let namespace_hit = hints.namespaces.iter().any(|n| *n == r.namespace);
+            let tags = tag_overlap_score(&r.tags, &hints.words);
+            let score = hybrid_score(semantic, entity, namespace_hit, tags, NAMESPACE_BOOST, TAG_WEIGHT);
 
             if score >= MIN_SIMILARITY || entity > 0.0 {
                 Some((r.id, score))
@@ -836,4 +1024,70 @@ pub async fn insert_memory_card(pool: &SqlitePool, user_id: &str, session_id: &s
         .bind(user_id).bind(session_id).bind(stored).bind(conflicting).bind(payload.to_string())
         .execute(pool).await?;
     Ok(r.last_insert_rowid())
+}
+
+#[cfg(test)]
+mod query_hint_tests {
+    use super::*;
+
+    #[test]
+    fn a_family_question_points_at_family_and_keeps_its_topic_words() {
+        let h = query_hints("What can you tell me about my family?");
+        assert_eq!(h.namespaces, vec!["family"]);
+        assert_eq!(h.words, vec!["family"]);
+        let h = query_hints("Tell me about my parents.");
+        assert_eq!(h.namespaces, vec!["family"]);
+        assert_eq!(h.words, vec!["parent"]);
+    }
+
+    #[test]
+    fn a_question_can_point_at_more_than_one_namespace() {
+        let h = query_hints("What is my family's religious background?");
+        assert!(h.namespaces.contains(&"family".to_string()));
+        assert!(h.namespaces.contains(&"philosophy".to_string()));
+        assert!(h.words.contains(&"religiou".to_string()) || h.words.contains(&"religious".to_string()));
+    }
+
+    #[test]
+    fn a_question_with_no_topic_has_no_namespace() {
+        let h = query_hints("What did I say yesterday?");
+        assert!(h.namespaces.is_empty());
+        let h = query_hints("Where do I live?");
+        assert!(h.namespaces.is_empty());
+        assert_eq!(h.words, vec!["live"]);
+    }
+
+    #[test]
+    fn tags_match_on_stemmed_words() {
+        let tags = Some(r#"["parents","departure"]"#.to_string());
+        assert!((tag_overlap_score(&tags, &["parent".to_string()]) - 1.0).abs() < 1e-9);
+        let tags = Some(r#"["family background","religion"]"#.to_string());
+        let words = query_hints("What is my family's religious background?").words;
+        assert!(tag_overlap_score(&tags, &words) > 0.0);
+        assert_eq!(tag_overlap_score(&None, &words), 0.0);
+        assert_eq!(tag_overlap_score(&Some("[]".into()), &words), 0.0);
+        assert_eq!(tag_overlap_score(&tags, &[]), 0.0);
+    }
+
+    #[test]
+    fn hints_add_to_the_score_and_never_take_from_it() {
+        let plain = hybrid_score(0.30, 0.0, false, 0.0, NAMESPACE_BOOST, TAG_WEIGHT);
+        assert!((plain - 0.30).abs() < 1e-9);
+        let boosted = hybrid_score(0.30, 0.0, true, 0.5, NAMESPACE_BOOST, TAG_WEIGHT);
+        assert!(boosted > plain);
+        assert!((boosted - (0.30 + NAMESPACE_BOOST + 0.5 * TAG_WEIGHT)).abs() < 1e-9);
+        // the 60/40 blend for a name match is unchanged
+        let named = hybrid_score(0.30, 1.0, false, 0.0, NAMESPACE_BOOST, TAG_WEIGHT);
+        assert!((named - 0.72).abs() < 1e-9);
+    }
+
+    #[test]
+    fn stemming_folds_plurals_and_possessives() {
+        assert_eq!(stem_word("parents"), "parent");
+        assert_eq!(stem_word("families"), "family");
+        assert_eq!(stem_word("family's"), "family");
+        assert_eq!(stem_word("classes"), "class");
+        assert_eq!(stem_word("ALS"), "als");
+        assert_eq!(stem_word("glass"), "glass");
+    }
 }

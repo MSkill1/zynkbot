@@ -235,6 +235,108 @@ async fn weight_bench() {
     println!("written {}", path.display());
 }
 
+/// Do the question's hints (the namespace its words point at, its words against the
+/// memory's tags) help recall, and at what weight? Same database copy and questions as
+/// `recall_bench`, stored embeddings only; the formula is `memory::hybrid_score` with the
+/// hint weights varied. The six family questions added 2026-11-04 have no name in them,
+/// which is where the hints should matter; the other forty must not get worse.
+///
+///   RECALL_BENCH_DB=/path/copy.db LD_LIBRARY_PATH=lib/vosk \
+///   cargo test --features cuda --lib hint_bench -- --ignored --nocapture
+#[tokio::test]
+#[ignore]
+async fn hint_bench() {
+    let db = std::env::var("RECALL_BENCH_DB").expect("RECALL_BENCH_DB");
+    let set_path = std::env::var("RECALL_BENCH_SET").unwrap_or_else(|_| "../../labs/recall_bench/cases.json".into());
+    let out_dir = std::env::var("RECALL_BENCH_OUT").map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| dirs::home_dir().unwrap().join("Documents/Zynk_related/recall_bench"));
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let set: Set = serde_json::from_str(&std::fs::read_to_string(&set_path).expect("case file")).expect("case json");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}?mode=ro", db)).await.expect("db");
+    let raw: Vec<(i32, Option<String>, String, Option<String>, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT id, entities_detected, namespace, tags, embedding FROM memories \
+         WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status != 'superseded') \
+         AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now'))")
+        .bind(&set.user_id).fetch_all(&pool).await.expect("rows");
+    let rows: Vec<(i32, Option<String>, String, Option<String>, Option<Vec<f32>>)> = raw.into_iter()
+        .map(|(id, ents, ns, tags, emb)| (id, ents, ns, tags, emb.map(|b| crate::memory::blob_to_f32_pub(&b)))).collect();
+
+    // (name, namespace boost, tag weight, namespace admission: how far under the threshold
+    // a memory in a named namespace is still let in, without being moved up)
+    let settings: Vec<(&str, f64, f64, f64)> = vec![
+        ("no hints (before)", 0.0, 0.0, 0.0),
+        ("tags 0.25", 0.0, 0.25, 0.0),
+        ("tags 0.30", 0.0, 0.30, 0.0),
+        ("ns admit 0.15 + tags 0.25", 0.0, 0.25, 0.15),
+        ("ns 0.05 + tags 0.25", 0.05, 0.25, 0.0),
+        ("ns 0.05 + admit 0.10 + tags 0.25", 0.05, 0.25, 0.10),
+        ("ns 0.15 + tags 0.25", 0.15, 0.25, 0.0),
+        ("ns 0.20 + tags 0.30", 0.20, 0.30, 0.0),
+    ];
+    const THRESHOLD: f64 = 0.35;
+
+    let enhancer = crate::nlp_enhancer::NLPEnhancer::new();
+    let mut table = String::from("| # | question | names | namespaces | words | ");
+    table.push_str(&settings.iter().map(|f| f.0).collect::<Vec<_>>().join(" | "));
+    table.push_str(" |\n|---|---|---|---|---|");
+    table.push_str(&"---|".repeat(settings.len()));
+    table.push('\n');
+    let mut hits: Vec<(usize, usize, f64)> = vec![(0, 0, 0.0); settings.len()];
+    let mut topic_hits: Vec<(usize, usize, f64)> = vec![(0, 0, 0.0); settings.len()];
+    let mut scored_cases = 0usize;
+    let mut topic_cases = 0usize;
+    for (ci, case) in set.cases.iter().enumerate() {
+        if case.expect.is_empty() { continue; }
+        scored_cases += 1;
+        let qe = crate::llm::local_embeddings::generate_local_embedding(&case.q).expect("q embed");
+        let ents: Vec<String> = enhancer.extract_entities(&case.q).into_iter().map(|e| e.word.to_lowercase()).filter(|e| e.len() > 1).collect();
+        let hints = crate::memory::query_hints(&case.q);
+        let topic = ents.is_empty() && !hints.namespaces.is_empty();
+        if topic { topic_cases += 1; }
+        let mut cells = Vec::new();
+        for (si, (_, ns_boost, tag_w, admit)) in settings.iter().enumerate() {
+            let mut scores: Vec<(i32, f64)> = rows.iter().filter_map(|(id, stored_ents, ns, tags, emb)| {
+                let s = emb.as_ref().map(|e| crate::llm::local_embeddings::cosine_similarity(&qe, e) as f64).unwrap_or(0.0);
+                let e = entity_overlap(stored_ents, &ents);
+                let ns_hit = hints.namespaces.iter().any(|n| n == ns);
+                let t = crate::memory::tag_overlap_score_pub(tags, &hints.words);
+                let score = crate::memory::hybrid_score(s, e, ns_hit, t, *ns_boost, *tag_w);
+                let line = if ns_hit { THRESHOLD - admit } else { THRESHOLD };
+                if score >= line || e > 0.0 { Some((*id, score)) } else { None }
+            }).collect();
+            scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            let rank = rank_of(&scores, &case.expect);
+            if let Some(rk) = rank {
+                for h in [&mut hits[si]].into_iter().chain(if topic { Some(&mut topic_hits[si]) } else { None }) {
+                    if rk <= 4 { h.0 += 1; } if rk <= 10 { h.1 += 1; } h.2 += 1.0 / rk as f64;
+                }
+            }
+            cells.push(rank.map(|r| r.to_string()).unwrap_or_else(|| "–".into()));
+        }
+        table.push_str(&format!("| {} | {} | {} | {} | {} | {} |\n", ci + 1, case.q, ents.join(", "),
+            hints.namespaces.join(", "), hints.words.join(", "), cells.join(" | ")));
+    }
+    let summarise = |hits: &Vec<(usize, usize, f64)>, n: usize| {
+        let mut s = String::from("| setting | found in top 4 (phone) | found in top 10 (cloud) | mean reciprocal rank |\n|---|---|---|---|\n");
+        for (si, f) in settings.iter().enumerate() {
+            let (h4, h10, mrr) = hits[si];
+            s.push_str(&format!("| {} | {}/{} | {}/{} | {:.2} |\n", f.0, h4, n, h10, n, if n > 0 { mrr / n as f64 } else { 0.0 }));
+        }
+        s
+    };
+    let report = format!(
+        "# Hint bench {}\n\n{} memories in the database copy; {} scored questions, {} of them topic questions (no name, a namespace in the words). \
+         Rank of the first expected memory when the namespace boost and the tag weight are added to the hybrid score (threshold {}); – means not returned at all.\n\n\
+         ## All questions\n\n{}\n## Topic questions only\n\n{}\n## Per question (rank)\n\n{}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M"), rows.len(), scored_cases, topic_cases, THRESHOLD,
+        summarise(&hits, scored_cases), summarise(&topic_hits, topic_cases), table);
+    println!("\n{}", report);
+    let tag = std::env::var("RECALL_BENCH_TAG").unwrap_or_default();
+    let path = out_dir.join(format!("HINTS_{}{}.md", chrono::Local::now().format("%Y-%m-%d"), tag));
+    std::fs::write(&path, &report).unwrap();
+    println!("written {}", path.display());
+}
+
 /// Probe: what the built-in guide search returns for a question, with the same call and
 /// threshold chat.rs uses. RECALL_BENCH_DB=<db copy> GUIDE_Q="How do I ...?"
 #[tokio::test]

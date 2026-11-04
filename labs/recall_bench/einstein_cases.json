@@ -1,0 +1,62 @@
+{
+ "note": "Einstein demo (einstein_demo.rs loaded 2026-11-03 into the screenshot instance): the family questions that failed by hand on 2026-11-03.",
+ "user_id": "54668de4-ded2-4d1a-a1d3-96469a3edf59",
+ "cases": [
+  {
+   "q": "What can you tell me about my family?",
+   "expect": [
+    84,
+    87,
+    94,
+    113,
+    131,
+    139,
+    145
+   ]
+  },
+  {
+   "q": "What do you know about my parents and my children?",
+   "expect": [
+    84,
+    87,
+    94,
+    131,
+    145
+   ]
+  },
+  {
+   "q": "Tell me about my wife.",
+   "expect": [
+    113,
+    139
+   ]
+  },
+  {
+   "q": "What happened to my sons?",
+   "expect": [
+    131,
+    145,
+    94
+   ]
+  },
+  {
+   "q": "What did I win the Nobel Prize for?",
+   "expect": [
+    118
+   ]
+  },
+  {
+   "q": "What instrument do I play?",
+   "expect": [
+    88
+   ]
+  },
+  {
+   "q": "What do I do for fun?",
+   "expect": [
+    125,
+    88
+   ]
+  }
+ ]
+}

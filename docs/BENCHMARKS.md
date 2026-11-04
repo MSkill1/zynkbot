@@ -114,6 +114,33 @@ themselves (a newer memory on the same subject outranking the expected older one
 the case file would then need refreshing for) and the search. It is recorded here, unresolved,
 so the 10-27 numbers are read with it in mind.
 
+**The hint bench, 2026-11-04** (`hint_bench` in the same file; `HINTS_2026-11-04.md` and
+`HINTS_2026-11-04_einstein_demo.md` in the results folder). Recall read a question for its
+meaning and its names and nothing else; the namespace a question points at ("my family",
+"my weight") and its content words against the tags on each memory were stored on every
+memory and never read. The bench scores the same questions with those two signals added to
+the hybrid score at several weights, on the 2026-10-29 copy of the real database (661
+memories, the 40 questions plus six family questions with no name in them) and on the
+Einstein demo (67 memories, seven questions, `labs/recall_bench/einstein_cases.json`).
+
+| Setting | Real database, in top 4 | in top 10 | MRR | Einstein demo, in top 4 | MRR |
+|---|---|---|---|---|---|
+| before (meaning + names) | 27 / 46 | 29 / 46 | 0.54 | 4 / 7 | 0.40 |
+| tags 0.25 | 30 / 46 | 31 / 46 | 0.59 | 4 / 7 | 0.48 |
+| namespace 0.05 + tags 0.25 (shipped) | 30 / 46 | 31 / 46 | 0.61 | 6 / 7 | 0.60 |
+| namespace 0.15 + tags 0.25 | 30 / 46 | 31 / 46 | 0.61 | 6 / 7 | 0.69 |
+
+Reading: the tag match is a clear gain on the real database (seven questions up, one down a
+place: "What is my mailing address?" 22nd → 2nd, "How old is my house?" 33rd → 5th, the
+"word-match component" the roadmap asked for). The namespace nudge is what finds the demo's
+family facts for "What can you tell me about my family?" (not returned → 2nd at 0.05, 1st at
+0.15), but a namespace is a crowd: at 0.15, "What am I planning for dinner tonight?" read as
+kitchen and its health memory fell from 21st to 47th, past the cloud limit of 30, so 0.05.
+Food words now point at health as well as kitchen, which removed a second such miss. The
+real database's own family questions ranked first before and after: its family memories
+carry the words the questions use; the demo's did not. Still unsolved: "What do I do for
+fun?" (no name, no topic word, the memory says "sailing").
+
 ## 3. The fine-tuned phone model
 
 **Where:** `labs/finetune/` on the `finetune` branch (scripts, data tools, results).

@@ -1,5 +1,5 @@
 {
-  "note": "Recall bench (2026-10-25): questions against Matt's own memory database (a read-only copy, RECALL_BENCH_DB), each with the ids of the memories that answer it. Scored by where the first expected memory ranks under the production hybrid search, for four ways of embedding a memory: the stored fact (current), title+fact, fact+source message, and the source message alone (what the old pipeline stored). Ids are those of Matt's desktop database on 2026-10-25; the file is a labs tool, not a product test.",
+  "note": "Recall bench (2026-10-25): questions against Matt's own memory database (a read-only copy, RECALL_BENCH_DB), each with the ids of the memories that answer it. Scored by where the first expected memory ranks under the production hybrid search, for four ways of embedding a memory: the stored fact (current), title+fact, fact+source message, and the source message alone (what the old pipeline stored). Ids are those of Matt's desktop database on 2026-10-25; the file is a labs tool, not a product test. Six topic questions with no name in them (family) were added 2026-11-04 for the hint bench; their ids are from the 2026-10-29 15:00 backup of the same database.",
   "user_id": "cc591dcc-2d80-4aed-a924-5e313645d6ba",
   "cases": [
     {
@@ -272,6 +272,64 @@
       "q": "What was I adding to my Hannaford list?",
       "expect": [
         3272
+      ]
+    },
+    {
+      "q": "What can you tell me about my family?",
+      "expect": [
+        3063,
+        3092,
+        3096,
+        3097,
+        3098,
+        3093,
+        2894,
+        3290,
+        2458,
+        1900
+      ]
+    },
+    {
+      "q": "Tell me about my parents.",
+      "expect": [
+        3063,
+        3092,
+        3098,
+        2894
+      ]
+    },
+    {
+      "q": "What do you know about my sister?",
+      "expect": [
+        3092,
+        3093,
+        3094
+      ]
+    },
+    {
+      "q": "What happened with my uncle?",
+      "expect": [
+        3062,
+        2961,
+        2999,
+        3167
+      ]
+    },
+    {
+      "q": "Tell me about my grandmother.",
+      "expect": [
+        1900,
+        2928,
+        3168,
+        2800
+      ]
+    },
+    {
+      "q": "What is my family's religious background?",
+      "expect": [
+        3097,
+        3098,
+        3093
       ]
     }
   ]

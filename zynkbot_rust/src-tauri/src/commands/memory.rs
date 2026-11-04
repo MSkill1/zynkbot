@@ -1201,6 +1201,7 @@ pub async fn pre_check_memory(
         &pool,
         query_embedding,
         query_entities,
+        &memory::QueryHints::default(),
         Some(&user_id),
         None,
         None,

@@ -507,10 +507,13 @@ pub async fn generate_reply(
         (user_id.as_str(), None)  // Search user's memories, filter system memories manually below
     };
 
+    let query_hints = crate::memory::query_hints(&query);
+    println!("[RUST] Query hints: namespaces {:?}, words {:?}", query_hints.namespaces, query_hints.words);
     let recalled_memories = crate::memory::hybrid_search(
         &db_pool,
         query_embedding,
         query_entities.clone(),  // Clone so we can use it again for entity search
+        &query_hints,
         Some(search_user_id),
         None,  // Don't filter by session - search ALL memories across all sessions!
         namespace_filter,  // Search system namespace if Zynkbot query, else all namespaces
@@ -1708,6 +1711,7 @@ pub async fn run_ensemble(
         &db_pool,
         query_embedding,
         query_entity_strings,
+        &crate::memory::query_hints(&search_query),
         Some(&user_id),
         None, // No session filter - search all sessions
         None, // No namespace filter
@@ -2601,10 +2605,13 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             // Do a BROADER search for relationship detection (more memories, lower threshold)
             // This ensures we catch relationships even if the memory wasn't in the top 5 for conversation
 
+            // No hints here: the text is the user's message, not a question, and the
+            // relationship search should keep finding memories by meaning and names alone.
             let relationship_search_results = match crate::memory::hybrid_search(
                 &db_pool,
                 message_embedding.clone(),
                 query_entities.clone(),
+                &crate::memory::QueryHints::default(),
                 Some(&bg_user_id),
                 None,  // All sessions
                 None,  // All namespaces

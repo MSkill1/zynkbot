@@ -405,7 +405,9 @@ The ring plays at full alarm volume and the phone's generic software echo cancel
 
 Relationship candidates are chosen by embedding similarity and entities alone; the only use of time today is the stored date printed on each memory line in the prompt. Parked until the fact-per-message pipeline has run for a while: if related facts go unlinked, add time as a candidate source, not a score. Facts from the same conversation session as candidates regardless of similarity; facts whose event dates fall within a few days of each other; and the two dates in the classifier prompt so it can tell an update (weeks apart) from siblings (same afternoon). Not for recall ranking: a recency weight is a decay on exactly the old facts the recall bench wants back, and its misses were semantic.
 
-### Recall: a word-match component beside meaning (after beta 5; Matt 2026-10-26)
+### Recall: a word-match component beside meaning (after beta 5; Matt 2026-10-26) — done 2026-11-04
+Done as two hints read from the question: its content words against the memory's tags, and the namespace its words point at, both added to the score (`memory::query_hints`, weights 0.25 and 0.05, measured in `docs/BENCHMARKS.md`, hint bench). "What is my mailing address?" went from 22nd to 2nd, "How old is my house?" from 33rd to 5th; "Where do I live?" is still 69th (no word in it that a tag repeats). The original note follows.
+
 The recall bench shows short questions with no name in them ranking badly ("Where do I live?" 55th, "What is my mailing address?" 16th, "How old is my house?" 29th on 2026-10-27) while every name-bearing question is found first. Meaning-only search is the weak side; a plain word-match score (the question's content words against the memory's text) added to the blend is the next thing to measure on the bench.
 
 ### LiteRT-LM GPU path (after v1.0; survey 2026-10-26)

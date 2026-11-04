@@ -142,30 +142,36 @@ Entities: ["san francisco", "max"]
 
 **Function:** `memory::hybrid_search()`
 
-**Formula:**
+**Formula** (`memory::hybrid_score`, hints since 2026-11-04):
 ```
-Final Score = {
+base = {
   IF entity_count > 0:
     (entity_overlap % × 0.6) + (semantic_similarity × 0.4)
   ELSE:
     semantic_similarity
 }
+Final Score = base + (0.05 if the memory's namespace is one the question points at)
+                   + 0.25 × tag_overlap
 
 Where:
   entity_overlap % = shared_entities / query_entities (clamped 0-1)
   semantic_similarity = cosine_similarity (Rust-side, in-process via Candle)
+  the question's namespaces and words = memory::query_hints(question): a word list per
+    canonical namespace ("parents" → family, "weight" → health, "dinner" → kitchen) and the
+    question's content words, stemmed, with stop words removed
+  tag_overlap = share of the question's words found in the memory's tags (stemmed)
 ```
 
 **Search Approach:**
 
-All candidates with an embedding or entity data are fetched from SQLite. Cosine similarity is computed in Rust for each candidate. Entity overlap is scored by comparing extracted entities from the query against stored JSON. Results are ranked by hybrid score and the top 15 (API) or 7 (local) returned. No SQL vector operators are used — vector math runs entirely in the Rust process.
+All candidates with an embedding or entity data are fetched from SQLite with their namespace and tags. Cosine similarity is computed in Rust for each candidate. Entity overlap is scored by comparing extracted entities from the query against stored JSON; the namespace and tag hints are read from the question once (`query_hints`) and applied per candidate. Results are ranked by hybrid score and the top 30 (API) or 10 (local) returned. No SQL vector operators are used — vector math runs entirely in the Rust process.
 
 **Thresholds:**
-- Minimum similarity: 35% (0.35)
-- Entity overlap weight: 60%
-- Semantic weight: 40%
+- Minimum score: 0.35 (a memory with any name match is kept regardless)
+- Entity overlap weight: 60%, semantic weight: 40%
+- Namespace nudge: 0.05; tag weight: 0.25 — a nudge, never a filter (the extractor files some family facts under "personal", and what someone eats under health as often as kitchen). Set on the recall bench, see `docs/BENCHMARKS.md`.
 
-**Result:** The limit is 15 memories for API calls and 7 for local calls. Entity and semantic results are combined in a single ranked list — entity overlap is weighted at 60%, semantic similarity at 40%. Additional memories are then added via one-hop graph traversal (see Step 5).
+**Result:** The limit is 30 memories for API calls and 10 for local calls, in one ranked list. Additional memories are then added via one-hop graph traversal (see Step 5).
 
 #### Step 4: Zynkbot Query Routing
 
