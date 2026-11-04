@@ -42,7 +42,11 @@ fn main() {
         let mut module_names: Vec<String> = Vec::new();
         if let Some((_, out)) = newest {
             // Drop engine files from an earlier build first; a module that no longer exists
-            // must not ride along, and libllama-common.so (65 MB, nothing links it) never does.
+            // must not ride along, and libllama-common.so (65 MB) rides along only in a debug
+            // build: the release app library has no reference to it (the optimiser drops the
+            // unused `common` paths), but the debug one keeps one, and without the file the
+            // app aborts at start with "libllama-common.so not found" (2026-11-04).
+            let keep_common = std::env::var("PROFILE").as_deref() == Ok("debug");
             if let Ok(entries) = std::fs::read_dir(&jni) {
                 for e in entries.flatten() {
                     let name = e.file_name().to_string_lossy().into_owned();
@@ -57,7 +61,7 @@ fn main() {
                     for e in entries.flatten() {
                         let p = e.path();
                         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-                        if !name.ends_with(".so") || name == "libllama-common.so" { continue; }
+                        if !name.ends_with(".so") || (name == "libllama-common.so" && !keep_common) { continue; }
                         if std::fs::copy(&p, jni.join(&name)).is_ok() {
                             copied += 1;
                             if sub == "backends" { module_names.push(name); }
