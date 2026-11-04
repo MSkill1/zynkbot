@@ -43,6 +43,18 @@ JAVA_HOME=~/android-studio/jbr npm run tauri android build -- --debug --apk --ta
 JAVA_HOME=~/android-studio/jbr npm run tauri android build -- --aab --target aarch64            # Play upload
 ```
 
+A debug build compiles OpenSSL from source (its cache is per profile) and `make` calls
+`aarch64-linux-android-ranlib` by bare name, so the NDK's tool folder must be on the path or the
+build fails at the end with "aarch64-linux-android-ranlib: not found" (2026-11-04). Check the exit
+code and the APK's version stamp before using the output: a failed build leaves the previous APK
+in place.
+
+```
+PATH=~/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH \
+  JAVA_HOME=~/android-studio/jbr npm run tauri android build -- --debug --apk --target aarch64
+~/Android/Sdk/build-tools/*/aapt2 dump badging <apk> | grep -o "versionName='[^']*'"
+```
+
 Sign a debug build with the debug keystore (release builds are signed by Gradle from `keystore.properties`):
 
 ```
