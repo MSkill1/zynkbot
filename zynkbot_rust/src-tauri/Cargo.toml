@@ -192,6 +192,13 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.libsqlite3-sys]
 opt-level = 3
+# llama.cpp built as in release even in debug builds: the NDK's clang (r30) crashes with
+# "malloc(): invalid size" emitting debug info for ggml's ARM repack.cpp (the armv9 variants;
+# Android debug build, 2026-11-04), at -O0 and at -O2 alike, and an unoptimised engine would be
+# unusably slow anyway. opt-level 3 with debug off is what makes the cmake step use Release.
+[profile.dev.package.llama-cpp-sys-2]
+opt-level = 3
+debug = false
 
 [target.'cfg(target_os = "android")'.dependencies]
 # `dynamic-backends`: the engine's CPU variants are separate .so files loaded at start-up by
