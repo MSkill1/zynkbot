@@ -79,10 +79,14 @@ else
 fi
 
 # 2. The long-running services
+wake_on=0
 if svc_foreground ".WakeWordService"; then
+  wake_on=1
   t=$(svc_block ".WakeWordService" | grep -o 'types=0x[0-9a-f]*' | head -1)
   record PASS "Wake-word service in the foreground" "$t (0x80 = microphone)"
-else record FAIL "Wake-word service in the foreground" "not running or not foreground"; fi
+else record FAIL "Wake-word service in the foreground" "not running: Hey Zynk is off on this phone, or the system stopped the service; the checks that need it below are skipped"; fi
+wake_ok() { [ "$wake_on" = 0 ] || svc_foreground ".WakeWordService"; }
+wake_note() { [ "$wake_on" = 0 ] && echo " (wake service was off at the start, not checked)"; }
 if svc_foreground ".SyncForegroundService"; then
   t=$(svc_block ".SyncForegroundService" | grep -o 'types=0x[0-9a-f]*' | head -1)
   record PASS "Sync service in the foreground" "$t (0x1 = dataSync)"
@@ -112,8 +116,10 @@ if [ -r "$DESKTOP_DB" ] && command -v sqlite3 >/dev/null; then
 else record SKIP "Sync round trip with the desktop" "desktop database not readable here"; fi
 
 # 5. The share provider (ZynkLink's files, as the Files app sees them)
-root=$(A content query --uri "content://$PKG.share/root" | clean)
-if echo "$root" | grep -q 'root_id=zynkbot'; then
+root=$(adb -s "$SERIAL" shell content query --uri "content://$PKG.share/root" 2>&1 | clean)
+if echo "$root" | grep -q 'requires that you obtain access'; then
+  record SKIP "Share provider answers" "this Android build does not let the shell open a documents provider; check it from the Files app by hand"
+elif echo "$root" | grep -q 'root_id=zynkbot'; then
   kids=$(A content query --uri "content://$PKG.share/document/root/children" | clean | grep -c '^Row:')
   record PASS "Share provider answers" "root 'Zynkbot' listed, $kids entries under it"
 else record FAIL "Share provider answers" "${root:-no rows}"; fi
@@ -128,10 +134,14 @@ for i in $(seq 1 45); do
   lc=$(adb -s "$SERIAL" logcat -d 2>/dev/null | clean | grep -E 'ZynkAssistantSession|WakeWordService')
   [ -z "$shown" ] && echo "$lc" | grep -q 'Session shown' && shown=$(( $(date +%s) - t0 ))
   [ -n "$shown" ] && echo "$lc" | grep -q '→ LISTENING' && back=$(( $(date +%s) - t0 )) && break
+  [ -n "$shown" ] && [ "$wake_on" = 0 ] && [ "$i" -ge 12 ] && break
 done
 if [ -n "$shown" ] && [ -n "$back" ]; then
   eng=$(echo "$lc" | grep -o 'engine=[a-z]*' | head -1)
   record PASS "Assistant session opens and returns" "session shown ($eng), wake service back to LISTENING ${back}s after the assist key"
+elif [ -n "$shown" ] && [ "$wake_on" = 0 ]; then
+  eng=$(echo "$lc" | grep -o 'engine=[a-z]*' | head -1)
+  record PASS "Assistant session opens" "session shown ($eng); no hand-back to check, the wake service was off"
 elif [ -n "$shown" ]; then
   record FAIL "Assistant session opens and returns" "session shown but the wake service did not return to LISTENING within 45 s"
 else
@@ -163,8 +173,8 @@ A am start -n "$PKG/.MainActivity" >/dev/null; sleep 4
 pid_before=$(app_pid)
 A input keyevent KEYCODE_BACK; sleep 5
 pid_after=$(app_pid)
-if [ -n "$pid_after" ] && [ "$pid_after" = "$pid_before" ] && svc_foreground ".WakeWordService" && svc_foreground ".SyncForegroundService" && port_listening; then
-  record PASS "Survives Back" "same process ($pid_after), both services foreground, port open"
+if [ -n "$pid_after" ] && [ "$pid_after" = "$pid_before" ] && wake_ok && svc_foreground ".SyncForegroundService" && port_listening; then
+  record PASS "Survives Back" "same process ($pid_after), sync service foreground, port open$(wake_note)"
 else
   record FAIL "Survives Back" "pid before=$pid_before after=$pid_after; wake fg=$(svc_foreground .WakeWordService && echo y || echo n) sync fg=$(svc_foreground .SyncForegroundService && echo y || echo n) port=$(port_listening && echo open || echo closed)"
 fi
@@ -174,10 +184,10 @@ adb -s "$SERIAL" logcat -c 2>/dev/null
 A input keyevent KEYCODE_SLEEP; sleep 12
 pid_dark=$(app_pid)
 dark_ok=0
-[ -n "$pid_dark" ] && [ "$pid_dark" = "$pid_before" ] && svc_foreground ".WakeWordService" && port_listening && dark_ok=1
+[ -n "$pid_dark" ] && [ "$pid_dark" = "$pid_before" ] && wake_ok && port_listening && dark_ok=1
 scr=$(adb -s "$SERIAL" logcat -d 2>/dev/null | clean | grep -E 'WakeWordService' | grep -iE 'screen|off|doze' | head -1 | sed 's/.*WakeWordService: //')
 A input keyevent KEYCODE_WAKEUP; sleep 2
-if [ "$dark_ok" = 1 ]; then record PASS "Survives screen off" "same process, wake service foreground, port open${scr:+; log: $scr}"
+if [ "$dark_ok" = 1 ]; then record PASS "Survives screen off" "same process, port open$(wake_note)${scr:+; log: $scr}"
 else record FAIL "Survives screen off" "pid=$pid_dark (was $pid_before), wake fg=$(svc_foreground .WakeWordService && echo y || echo n), port=$(port_listening && echo open || echo closed)"; fi
 
 # 10. Nothing crashed during the run
