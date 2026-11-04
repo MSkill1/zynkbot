@@ -278,6 +278,11 @@ export default function App() {
     <>Include "<strong>Zynkbot</strong>" in your question to ask about its own features — e.g. "Zynkbot, how does Ensemble mode work?"</>,
     <>The <strong>mic button</strong> lets you dictate your message — transcribed locally on-device, no internet needed.</>,
     <>Dictate anywhere you used to type: tap the <strong>mic</strong>, then <strong>Copy</strong>, then <strong>Clear</strong>.</>,
+    <>The <strong>Mode</strong> menu above the conversation changes how Zynkbot behaves: Normal, Tool, Debate, Premise or Editing. It goes back to Normal when you next open the app.</>,
+    <><strong>Tool mode</strong> does exactly what you ask and nothing more — no commentary, no suggestions, no questions back. Good for lists, conversions and quick lookups.</>,
+    <><strong>Debate mode</strong> pushes back on weak reasoning and names the weakest point in what you say. Ask it to "argue the other side" and it will, at full strength.</>,
+    <><strong>Premise mode</strong> takes whatever you state as true for the conversation and reasons from there, with no fact-checking — useful for what-ifs and thinking something through.</>,
+    <><strong>Editing mode</strong> turns Zynkbot into a proofreader: paste text and it fixes grammar, spelling and clarity, keeps your wording and tone, and returns only the text.</>,
   ];
   const [tipIdx, setTipIdx] = useState(() => Math.floor(Math.random() * TIPS.length));
   const [editingMessageId, setEditingMessageId] = useState(null);
