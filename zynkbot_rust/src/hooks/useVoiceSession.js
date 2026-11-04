@@ -479,17 +479,6 @@ export function useVoiceSession({ setMessages }) {
       setWakeWordDownloadProgress(0);
     };
     window.__nativeSpeaking = (on) => setIsNativeSpeaking(!!on);
-    // Last-resort hand-off only: the native path could not answer (no speech
-    // engine, model call failed), so it opened the app with the transcript.
-    window.__handleScreenOffTranscript = (transcript) => {
-      if (!transcript?.trim()) return;
-      trace('[WakeWord] transcript handed to the app by the native fallback: ' + transcript);
-      // Captured hands-free: the reply must be spoken regardless of the in-app setting.
-      handsFreeRef.current = true;
-      wakeTriggeredRef.current = true;
-      setTimeout(() => handleSendMessageRef.current?.(transcript.trim()), 2000);
-    };
-
     // Native prefs may lag localStorage (older build, cleared app data): push the
     // current engine choice before arming so the session matches the selector.
     try { window.AndroidPaths?.setVoiceInputSource?.(localStorage.getItem('zynkbot_voice_input_source') || 'vosk'); } catch (_) {}
@@ -507,7 +496,6 @@ export function useVoiceSession({ setMessages }) {
       window.__wakeWordState = null;
       window.__wakeWordDownloadProgress = null;
       window.__wakeWordDownloadError = null;
-      window.__handleScreenOffTranscript = null;
       window.__nativeSpeaking = null;
       clearTimeout(wakeWordRestartTimerRef.current);
       if (window.WakeWordBridge) window.WakeWordBridge.stop();

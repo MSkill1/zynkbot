@@ -162,6 +162,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 **Affected:** Any phone where `Settings.Secure.assistant` names Zynkbot but `voice_interaction_service` is empty. Read-only for an app, so it cannot be repaired from inside Zynkbot; re-picking the assistant in Settings → Default apps sets it.
 **Description:** `WakeWordService` hands each trigger to `ZynkAssistantService.instance`; when the system has not bound that service the instance is null and the trigger silently takes the retained in-service dictation path. That path had drifted from the session (sent tone after the reply, 12 s cap, detector re-armed during the spoken reply), which is how the 2026-09-12 wake-word bugs were found.
 **Post-beta decision (2026-09-12):** remove the fallback dictation path; when the assistant service is not bound, say so on screen with the settings shortcut. See ROADMAP.
+**Done 2026-11-04 (`v1`):** the fallback path is removed. When the assistant service is not bound, or refuses a session, the wake service logs "Assistant service not bound … hands-free turn dropped", plays the closing tone and posts one "Hands-free needs setup" notification per service run; tapping it opens the Default-apps picker. The transcript notification and the app-side receiver that went with the fallback are gone too.
 
 ---
 

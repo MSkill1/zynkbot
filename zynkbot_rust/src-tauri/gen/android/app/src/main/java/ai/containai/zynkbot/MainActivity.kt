@@ -1072,58 +1072,9 @@ class MainActivity : TauriActivity() {
     }
     private fun escJs(s: String) = s.replace("\\", "\\\\").replace("'", "\\'")
 
-    // Handle transcript delivered by WakeWordService after a screen-off detection.
-    // Called from onNewIntent (app already running) and onResume (app just launched).
-    private fun handleScreenOffTranscript(intent: Intent?) {
-        val transcript = intent?.getStringExtra("wake_word_transcript") ?: return
-        // Consume the extra so it doesn't fire twice
-        intent.removeExtra("wake_word_transcript")
-
-        // Wake the screen and dismiss the keyguard so the user sees the response
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-            )
-        }
-
-        // Give WebView ~800ms to resume after screen-on before firing the transcript
-        Handler(Looper.getMainLooper()).postDelayed({
-            fireJs("window.__handleScreenOffTranscript&&window.__handleScreenOffTranscript('${escJs(transcript)}');")
-        }, 800)
-    }
-
-    // Holds a transcript received via onNewIntent() while the activity was stopped.
-    // Delivered in onResume() once the WebView is live, not in onNewIntent() where
-    // the WebView is paused and evaluateJavascript() silently drops.
-    private var pendingWakeTranscript: String? = null
-
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        setIntent(intent)
-        // Store transcript instead of firing immediately — the WebView is paused here.
-        // onResume() will pick it up once the WebView is live.
-        intent.getStringExtra("wake_word_transcript")?.let { transcript ->
-            pendingWakeTranscript = transcript
-            intent.removeExtra("wake_word_transcript")
-            // Re-apply show-when-locked flags on every delivery. The flags set in onCreate()
-            // may not survive the stop→resume cycle, so refresh them here before onResume().
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                setShowWhenLocked(true)
-                setTurnScreenOn(true)
-            } else {
-                @Suppress("DEPRECATION")
-                window.addFlags(
-                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                )
-            }
-        }
+        setIntent(intent)   // onResume reads the extras (open_assistant_picker)
     }
 
     // Back used to finish the activity, and Tauri's Android runtime then exits the whole
@@ -1222,16 +1173,11 @@ class MainActivity : TauriActivity() {
         // Mid-reply and the user opened the app: the in-app Stop button takes over,
         // so drop the assistant session's Z overlay (it would sit over the UI).
         ZynkAssistantSession.current?.hideOverlay()
-        // Deliver transcript stored by onNewIntent() (stopped-activity path), or
-        // fall back to checking the creation intent (fresh-launch path).
-        val pending = pendingWakeTranscript
-        pendingWakeTranscript = null
-        if (pending != null) {
-            Handler(Looper.getMainLooper()).postDelayed({
-                fireJs("window.__handleScreenOffTranscript&&window.__handleScreenOffTranscript('${escJs(pending)}');")
-            }, 800)
-        } else {
-            handleScreenOffTranscript(intent)
+        // The wake service's "Hands-free needs setup" notification was tapped (KI-051):
+        // open the Default-apps picker straight away.
+        if (intent?.getBooleanExtra("open_assistant_picker", false) == true) {
+            intent.removeExtra("open_assistant_picker")
+            openAssistantPicker()
         }
     }
 

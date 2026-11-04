@@ -72,8 +72,6 @@ class WakeWordService : Service() {
         const val VAD_SKIP_AFTER_FRAMES = 62
         const val VAD_MAX_FAILURES = 5      // consecutive gate errors before it is switched off for this run
         const val TRIGGER_CLIP_CHUNKS = 40  // ~3.2 s: covers the models' full context (~2.5 s)
-        const val MAX_LISTEN_MS = 30_000L   // hard cap on one dictation, ongoing speech cannot extend it (12 s cut off dictated paragraphs; matches ZynkAssistantSession since 2026-09-12)
-        const val MAX_QUERY_WORDS = 60      // longer than any question; TV dialogue is not a query
         const val TRIGGER_CLIPS_KEPT = 20   // newest clips kept under files/zynkbot/wake_triggers (phones with an enforcing verifier)
         const val TRIGGER_CLIPS_KEPT_UNVERIFIED = 60   // no verifier yet: keep enough to train one (Matt's took 33 real clips)
         const val CLIPS_NEEDED_FOR_VERIFIER = 20       // real clips before "Send my wake-word clips" lights up: one taught set (ENROLL_CLIPS)
@@ -571,7 +569,8 @@ class WakeWordService : Service() {
             }
         }
 
-        // Pre-load Vosk model in background so it's ready for screen-off dictation.
+        // Pre-load the Vosk model in the background: the app's mic button and the assistant
+        // session's Vosk choice share it (Dictation.kt) and start without a reload.
         if (sharedVoskModel == null) {
             Thread {
                 val voskDir = File(filesDir, "vosk-model")
@@ -1082,7 +1081,7 @@ class WakeWordService : Service() {
     // ── A wake ────────────────────────────────────────────────────────────────
 
     /** The detector fired (audio thread). The turn runs on its own thread: chime, then
-     *  the assistant session if the system has bound it, else the in-service copy. */
+     *  the assistant session if the system has bound it, else a notice that hands-free needs setup. */
     private fun onWake() {
         WakeLog.i(TAG, "Wake word — starting a turn")
         if (ZynkTimer.ringing) ZynkTimer.stopRinging(this)   // any wake silences a ringing timer
@@ -1101,7 +1100,7 @@ class WakeWordService : Service() {
             // Preferred path: hand the turn to the assistant session (the OS-blessed
             // route — no Activity, no WebView, no notification). Only possible while
             // Zynkbot holds the digital-assistant role and the system has bound the
-            // service; otherwise keep the in-service copy so nothing regresses.
+            // service; otherwise the turn ends with a notice.
             val assistant = ZynkAssistantService.instance
             if (assistant != null && assistant.triggerSession()) {
                 WakeLog.i(TAG, "Wake word handed off to the assistant session")
@@ -1109,98 +1108,9 @@ class WakeWordService : Service() {
                 try { wakeLock?.acquire(90_000L) } catch (_: Exception) {}
                 return@Thread
             }
-            // Seen on the GrapheneOS Pixel (2026-09-12): the assistant role is held but
-            // Settings.Secure.voice_interaction_service was never set, so the system never
-            // bound ZynkAssistantService and every trigger landed here without a trace.
-            if (assistant == null) WakeLog.w(TAG, "Assistant service not bound (voice_interaction_service unset?) — using in-service dictation")
-            startInServiceDictation()
-        }.start()
-    }
-
-    /** The in-service copy of a turn's dictation: Vosk, hands-free timers, then
-     *  [answerNatively]. The assistant session has the better-kept copy (it honours
-     *  the Vosk/Whisper selector); they merge in step 3 of the rebuild. */
-    private fun startInServiceDictation() {
-        val model = sharedVoskModel ?: run {
-            WakeLog.w(TAG, "No Vosk model available for screen-off dictation")
-            releaseWakeLock()
-            endTurn()
-            return
-        }
-        val d = Dictation(Dictation.Engine.VOSK, model, null, timers = true, listener = object : Dictation.Listener {
-            override fun onFinal(text: String?) {
-                if (text == null) {
-                    WakeLog.w(TAG, "Screen-off dictation cancelled or failed")
-                    releaseWakeLock()
-                    endTurn()
-                    return
-                }
-                WakeLog.i(TAG, "Screen-off transcript: \"$text\"")
-                Thread { answerNatively(text) }.start()
-            }
-        })
-        if (!dictate(d, ownsTurn = true)) {
-            WakeLog.w(TAG, "Dictation refused in state ${mic.state}")
-            releaseWakeLock()
-            endTurn()
-        }
-    }
-
-    // Answer a screen-off transcript entirely natively: no Activity, no WebView,
-    // no notification. Falls back to deliverTranscriptToApp() (the WebView/
-    // notification path) if anything in the native path fails or produces no
-    // speakable reply, so a locked-screen query still gets answered somehow.
-    // Shared with ZynkAssistantSession — see NativeVoiceAnswerer.
-    private fun answerNatively(transcript: String) {
-        if (transcript.isBlank()) {
-            WakeLog.i(TAG, "Empty transcript — not waking screen")
-            noteOutcome(false)   // a wake that led to nothing: a false clip for the trainer (the session path already did this)
-            releaseWakeLock()
-            endTurn()
-            return
-        }
-        // Local sanity gate, free: one word is noise, sixty is a TV programme.
-        val words = transcript.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (words.size < 2 || words.size > MAX_QUERY_WORDS) {
-            WakeLog.i(TAG, "Transcript rejected (${words.size} words) — not a question")
-            noteOutcome(false)
-            releaseWakeLock()
-            if (MainActivity.fruitlessTone(this)) playTone(R.raw.wake_chime_close)
-            endTurn()
-            return
-        }
-        // "Sent" tone before anything slow, as ZynkAssistantSession does: until
-        // 2026-09-12 this path played it after the spoken reply, so the user waited
-        // through the whole round trip in silence and then heard "sent" at the end.
-        VoiceCommands.parse(transcript)?.let { cmd ->
-            Thread {
-                playTone(R.raw.wake_chime_close)
-                val ok = VoiceCommands.execute(this, cmd)
-                WakeLog.i(TAG, "Voice command ${cmd::class.simpleName}: ${if (ok) "done" else "FAILED"}")
-                NativeVoiceAnswerer.say(this, if (ok) VoiceCommands.confirmation(this, cmd) else VoiceCommands.FAILED_LINE)
-                releaseWakeLock()
-                endTurn()
-            }.start()
-            return
-        }
-        WakeLog.i(TAG, "Answering natively: \"$transcript\"")
-
-        // The 25s detection wake lock (acquired for chime+dictation) is too short
-        // for a network round trip plus speech; extend it for this attempt.
-        try { wakeLock?.acquire(90_000L) } catch (_: Exception) {}
-
-        Thread {
-            playTone(R.raw.wake_chime_close)
-            val spoke = NativeVoiceAnswerer.answer(this, transcript)   // labels the clip itself
-            if (spoke) {
-                releaseWakeLock()
-                endTurn()
-            } else {
-                deliverTranscriptToApp(transcript)
-                // On GrapheneOS the app only opens when the notification is tapped, so
-                // waiting for its JS would leave the wake word off: the turn ends here.
-                endTurn()
-            }
+            // No session: say so rather than answer some other way (KI-051; the
+            // in-service copy of the turn was removed 2026-11-04).
+            assistantUnavailable(unbound = assistant == null)
         }.start()
     }
 
@@ -1229,65 +1139,44 @@ class WakeWordService : Service() {
         }
     }
 
-    private fun deliverTranscriptToApp(transcript: String) {
-        if (transcript.isBlank()) {
-            WakeLog.i(TAG, "Empty transcript — not waking screen")
-            releaseWakeLock()
-            return
-        }
-        WakeLog.i(TAG, "Delivering transcript to app: \"$transcript\"")
-
-        val activityIntent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-            putExtra("wake_word_transcript", transcript)
-        }
-
-        val pm = getSystemService(PowerManager::class.java)
-        val screenOn = pm.isInteractive
-
-        // On standard Android, try startActivity() directly when the screen is on and the
-        // app is minimized. Requires SYSTEM_ALERT_WINDOW ("Draw over other apps").
-        // Skip on GrapheneOS — its kernel patches block background activity launches even
-        // with that permission; the notification tap is the correct path there.
-        if (screenOn && !isGrapheneOS()) {
-            try {
-                startActivity(activityIntent)
-                WakeLog.i(TAG, "Direct startActivity succeeded")
-            } catch (e: Exception) {
-                WakeLog.w(TAG, "Direct startActivity failed: ${e.message}")
+    /** No assistant session for this wake: the system never bound ZynkAssistantService
+     *  (KI-051: the role is held but voice_interaction_service was never set) or it
+     *  refused to open one. Until 2026-11-04 the service ran its own copy of the turn
+     *  here (Vosk dictation, the native answer, a transcript notification), which had
+     *  drifted from the session and answered differently without a trace. Now the turn
+     *  ends with the closing tone, a loud log line, and one notification per service run
+     *  that opens the Default-apps picker. */
+    private fun assistantUnavailable(unbound: Boolean) {
+        WakeLog.w(TAG, if (unbound) "Assistant service not bound (voice_interaction_service unset?) — hands-free turn dropped: Zynkbot must be the digital assistant"
+                       else "Assistant session refused to open — hands-free turn dropped")
+        noteOutcome(false)
+        playTone(R.raw.wake_chime_close)
+        if (!assistantNoticePosted) {
+            assistantNoticePosted = true
+            val open = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                putExtra("open_assistant_picker", true)
             }
+            val pending = android.app.PendingIntent.getActivity(
+                this, TRANSCRIPT_NOTIFICATION_ID, open,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            val text = "Zynkbot must be the phone's digital assistant to answer \"Hey Zynk\". Tap to choose it under Default apps."
+            val notification = NotificationCompat.Builder(this, TRANSCRIPT_CHANNEL_ID)
+                .setContentTitle("Hands-free needs setup")
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pending)
+                .setAutoCancel(true)
+                .build()
+            getSystemService(NotificationManager::class.java).notify(TRANSCRIPT_NOTIFICATION_ID, notification)
         }
-
-        // Always post the notification as a tap-to-open fallback (GrapheneOS, or when
-        // startActivity is blocked). It used to carry a full-screen intent that opened
-        // the app on a locked screen; that permission is restricted by Google Play to
-        // alarm and calling apps, and the native assistant path answers without
-        // opening the app, so the notification is now tap-to-open only.
-        // Use FLAG_CANCEL_CURRENT so each delivery gets a fresh PendingIntent with the
-        // correct transcript. FLAG_UPDATE_CURRENT + FLAG_IMMUTABLE conflict: IMMUTABLE
-        // prevents UPDATE_CURRENT from changing extras, so subsequent deliveries would
-        // carry the first transcript forever.
-        val pendingIntent = android.app.PendingIntent.getActivity(
-            this, TRANSCRIPT_NOTIFICATION_ID, activityIntent,
-            android.app.PendingIntent.FLAG_CANCEL_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = NotificationCompat.Builder(this, TRANSCRIPT_CHANNEL_ID)
-            .setContentTitle("Zynkbot")
-            .setContentText("\"${transcript.take(60)}\"")
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setContentIntent(pendingIntent)          // fires when user taps the notification
-            .setAutoCancel(true)
-            .build()
-        getSystemService(NotificationManager::class.java)
-            .notify(TRANSCRIPT_NOTIFICATION_ID, notification)
-
         releaseWakeLock()
-
-        // Closing tone (faster/higher pitch = "done"): the listening window is over.
-        Thread { playTone(R.raw.wake_chime_close) }.start()
+        endTurn()
     }
+    @Volatile private var assistantNoticePosted = false
 
     private fun releaseWakeLock() {
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (_: Exception) {}
@@ -1310,17 +1199,6 @@ class WakeWordService : Service() {
         return out
     }
 
-    // GrapheneOS blocks background activity launches (startActivity from a foreground
-    // service) even when SYSTEM_ALERT_WINDOW is granted. Detect it via a system property
-    // it exposes; fall back to checking Build.DISPLAY if reflection fails.
-    private fun isGrapheneOS(): Boolean = try {
-        val sp = Class.forName("android.os.SystemProperties")
-        val get = sp.getMethod("get", String::class.java, String::class.java)
-        (get.invoke(null, "org.grapheneos.version", "") as String).isNotEmpty()
-    } catch (_: Exception) {
-        Build.DISPLAY.contains("graphene", ignoreCase = true)
-    }
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
@@ -1330,11 +1208,11 @@ class WakeWordService : Service() {
                 description = "Listens for the wake word in the background"
                 setShowBadge(false)
             })
-            // HIGH importance: the transcript notification should be seen at once
+            // HIGH importance: a hands-free turn that could not run should be seen at once
             nm.createNotificationChannel(NotificationChannel(
-                TRANSCRIPT_CHANNEL_ID, "Wake Word Response", NotificationManager.IMPORTANCE_HIGH
+                TRANSCRIPT_CHANNEL_ID, "Hands-free notices", NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Wakes the screen to deliver a Hey Zynk voice query"
+                description = "Tells you when Hey Zynk cannot answer hands-free"
                 lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
                 setShowBadge(false)
             })
