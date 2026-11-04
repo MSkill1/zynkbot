@@ -55,6 +55,14 @@ PATH=~/Android/Sdk/ndk/30.0.15729638/toolchains/llvm/prebuilt/linux-x86_64/bin:$
 ~/Android/Sdk/build-tools/*/aapt2 dump badging <apk> | grep -o "versionName='[^']*'"
 ```
 
+Two more things only the debug build needs, both handled in the repo (2026-11-04): `Cargo.toml` builds
+`llama-cpp-sys-2` as in release even in the dev profile (the NDK's clang crashes emitting debug
+info for ggml's ARM `repack.cpp`), and `build.rs` copies `libllama-common.so` into jniLibs for a
+debug build only (the debug app library references it; the release one does not). The debug APK
+is about 1.4 GB (the app library is 620 MB unstripped), so over wireless ADB it takes 20 to 25
+minutes to arrive; `adb push` it to `/data/local/tmp` and `pm install` from there rather than
+`adb install`, which shows nothing while it waits.
+
 Sign a debug build with the debug keystore (release builds are signed by Gradle from `keystore.properties`):
 
 ```
