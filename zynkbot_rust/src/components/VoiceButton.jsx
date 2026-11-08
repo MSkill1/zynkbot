@@ -28,6 +28,17 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, onLive, disa
         await startRecording({ onLive });
       }
     },
+    // Send was pressed while recording (2026-11-08): the words shown so far are what
+    // goes, so the microphone is released and the final transcript is not handed over.
+    discardRecording: async () => {
+      if (!isRecording) return;
+      try {
+        await stopRecording();
+      } finally {
+        if (onLive) onLive(null);
+        announceDictation(false);
+      }
+    },
   }));
 
   const handleClick = async () => {

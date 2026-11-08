@@ -523,6 +523,9 @@ export default function App() {
   // finished transcript then takes their place. `before`/`after` are the text around
   // that spot, fixed for the whole recording.
   const liveDictationRef = useRef(null);
+  // Set when Send ends a recording: live words and the final transcript that still arrive
+  // from that recording are dropped until it reports itself over (onLive(null)).
+  const dictationDiscardRef = useRef(false);
   const padJoin = (before, text, after) => {
     const leadPad = before && text && !/\s$/.test(before) ? ' ' : '';
     const trailPad = after && text && !/^\s/.test(after) ? ' ' : '';
@@ -534,9 +537,11 @@ export default function App() {
       // Recording over. If no final transcript replaced the live words, drop them.
       const live = liveDictationRef.current;
       liveDictationRef.current = null;
+      dictationDiscardRef.current = false;
       if (live && live.showing) setInput(`${live.before}${live.after}`);
       return;
     }
+    if (dictationDiscardRef.current) return;
     if (!liveDictationRef.current) {
       const el = inputTextareaRef.current;
       const current = input;
@@ -555,7 +560,7 @@ export default function App() {
     });
   };
   const handleDictationTranscript = (text) => {
-    if (!text) return;
+    if (!text || dictationDiscardRef.current) return;
     const live = liveDictationRef.current;
     if (!live) return insertTranscriptAtCursor(text);
     liveDictationRef.current = null;
@@ -1494,6 +1499,16 @@ export default function App() {
 
   const handleSendMessage = async (message, options = {}) => {
     if (!message.trim()) return;
+    // Send while dictating (Matt, 2026-11-08, Pixel): the box holds the words recognised
+    // so far and those are what goes; the recording ends here and its final transcript is
+    // dropped. Until now the microphone stayed on after Send, and every later live update
+    // put the recording's surrounding text back into the emptied box, so text the user
+    // had sent or deleted kept coming back (and was what the Copy button then copied).
+    if (window.__dictationActive && voiceButtonRef.current?.discardRecording) {
+      dictationDiscardRef.current = true;
+      liveDictationRef.current = null;
+      voiceButtonRef.current.discardRecording();
+    }
     myAnchorRef.current = Date.now() + 1000; // this device is writing now: no other device's older news moves it
 
     // Capture and reset wake flags before any early returns
@@ -2584,7 +2599,7 @@ export default function App() {
                     onMouseOver={(e) => { if (!copyAllDone) { e.currentTarget.style.background = 'rgba(98,114,164,0.45)'; } }}
                     onMouseOut={(e) => { if (!copyAllDone) { e.currentTarget.style.background = 'rgba(98,114,164,0.25)'; } }}
                   >
-                    {copyAllDone ? 'Copied!' : 'Copy'}
+                    {copyAllDone ? 'Copied!' : 'Copy all'}
                   </button>
                 )}
                 <button

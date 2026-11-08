@@ -613,6 +613,14 @@ Deletions are not propagated at all (no tombstones), which is #12.
 
 ## Voice & Dictation
 
+### KI-107 — Send did not end a running dictation; text already sent or deleted came back into the box, and the thread's "Copy" button read as a message copy (fixed on `v1`, 2026-11-08; to be checked on the Pixel)
+**Status:** Fixed on `v1` 2026-11-08. Reported by Matt the same day from the Pixel as two things: Send does not stop the recording, and copying from the box "frequently" gives text he had already deleted, while the "copy button in the conversation window" copies the whole thread.  
+**Affected:** Every device with live dictation (Android since the 2026-10-20 rebuild, the desktop with Vosk or OpenAI dictation). The label applies everywhere.  
+**Description:** Live dictation shows the words recognised so far at the cursor, between the text that was before and after the cursor when the recording started; those two pieces are fixed for the recording. Send knew nothing about the recording: the message went and the box emptied, but the microphone stayed on, and every live update after that put `before + words + after` back into the box, so text the user had just sent or deleted kept returning, and the box's Copy button copied it. The whole-thread copy is a separate thing: the button in the thread header was labelled "Copy" with the explanation ("Copy the whole conversation") only in a hover tooltip, which a phone never shows, so on a phone it looked like a copy of the message in view.  
+**Fix:** Send ends a running dictation: the words shown are what goes, the microphone is released (`discardRecording` on the voice button), and the recording's remaining live words and final transcript are dropped until it reports itself over. The header button now says "Copy all". Not changed: editing the box by hand while a recording is running still loses the edit at the next live update, since the surrounding text is fixed for the recording; stop first, then edit.
+
+---
+
 ### KI-103 — The owner-voice check lets some television voices through; an answered TV question is saved into the open thread and counted as a real "Hey Zynk"
 **Status:** Open; the training side fixed 2026-10-31 (an answered turn is a training positive only when the owner check scored at least 0.80; clock commands count at any score; the rest are left out of training). The owner check itself still passes some TV voices.  
 **Affected:** Phones with Hey Zynk on in a room with a television or radio  
