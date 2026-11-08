@@ -498,7 +498,6 @@ export default function App() {
   );
   const [showSnapInModal, setShowSnapInModal] = useState(false);
   const [isLoadingEinstein, setIsLoadingEinstein] = useState(false);
-  const [copyAllDone, setCopyAllDone] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 768);
   const memoryManagerRef = useRef(null);
   const conversationEndRef = useRef(null);
@@ -523,8 +522,9 @@ export default function App() {
   // finished transcript then takes their place. `before`/`after` are the text around
   // that spot, fixed for the whole recording.
   const liveDictationRef = useRef(null);
-  // Set when Send ends a recording: live words and the final transcript that still arrive
-  // from that recording are dropped until it reports itself over (onLive(null)).
+  // Set while Send is ending a recording: live words that still arrive from it are not
+  // applied to the box (Send takes the final transcript itself), and a second Send is
+  // ignored; cleared when the recording reports itself over (onLive(null)).
   const dictationDiscardRef = useRef(false);
   const padJoin = (before, text, after) => {
     const leadPad = before && text && !/\s$/.test(before) ? ' ' : '';
@@ -1107,19 +1107,6 @@ export default function App() {
     myAnchorRef.current = Date.now(); // a deliberate new conversation: stay until another device writes after this
   };
 
-  const handleCopyAll = () => {
-    const text = messages
-      .map(msg => {
-        const label = msg.role === 'user' ? 'You' : 'Zynkbot';
-        return `${label}: ${msg.content}`;
-      })
-      .join('\n\n');
-    navigator.clipboard.writeText(text).then(() => {
-      setCopyAllDone(true);
-      setTimeout(() => setCopyAllDone(false), 1500);
-    });
-  };
-
   const handleResumeSession = ({ sessionId: resumedId, messages: pastMessages, scrollToEnd = true }) => {
     setSessionId(resumedId);
     try { sessionStorage.setItem('zynkbot_session_id', resumedId); } catch (_) {}
@@ -1498,17 +1485,23 @@ export default function App() {
   };
 
   const handleSendMessage = async (message, options = {}) => {
-    if (!message.trim()) return;
-    // Send while dictating (Matt, 2026-11-08, Pixel): the box holds the words recognised
-    // so far and those are what goes; the recording ends here and its final transcript is
-    // dropped. Until now the microphone stayed on after Send, and every later live update
-    // put the recording's surrounding text back into the emptied box, so text the user
-    // had sent or deleted kept coming back (and was what the Copy button then copied).
-    if (window.__dictationActive && voiceButtonRef.current?.discardRecording) {
+    // Send while dictating (Matt, 2026-11-08, Pixel): the recording ends here and its
+    // final transcript goes in place of the live words, so what was said before Send
+    // but not yet on screen is sent too, not cut off (the live words lag the speech and
+    // the final pass re-reads the whole clip). If the recording gives nothing back, the
+    // words shown go as they are. Until now the microphone stayed on after Send, and every
+    // later live update put the recording's surrounding text back into the emptied box,
+    // so text the user had sent or deleted kept coming back (and was what the box's Copy
+    // button then copied).
+    if (window.__dictationActive && voiceButtonRef.current?.finishRecording) {
+      if (dictationDiscardRef.current) return; // a second Send while the first waits for the transcript
+      const live = liveDictationRef.current;
       dictationDiscardRef.current = true;
+      const finalText = await voiceButtonRef.current.finishRecording(); // the mic button shows its spinner meanwhile
+      if (finalText) message = live ? padJoin(live.before, finalText, live.after).value : finalText;
       liveDictationRef.current = null;
-      voiceButtonRef.current.discardRecording();
     }
+    if (!message.trim()) return;
     myAnchorRef.current = Date.now() + 1000; // this device is writing now: no other device's older news moves it
 
     // Capture and reset wake flags before any early returns
@@ -2580,28 +2573,6 @@ export default function App() {
                 >
                   ✏️ New
                 </button>
-                {messages.length > 0 && (
-                  <button
-                    onClick={handleCopyAll}
-                    title="Copy the whole conversation"
-                    style={{
-                      padding: '5px 12px',
-                    whiteSpace: 'nowrap',
-                      background: copyAllDone ? 'rgba(80,250,123,0.2)' : 'rgba(98,114,164,0.25)',
-                      color: copyAllDone ? '#50fa7b' : '#8be9fd',
-                      border: '1px solid ' + (copyAllDone ? '#50fa7b' : '#6272a4'),
-                      borderRadius: '6px',
-                      cursor: 'pointer',
-                      fontSize: '0.8rem',
-                      fontWeight: '600',
-                      transition: 'all 0.2s',
-                    }}
-                    onMouseOver={(e) => { if (!copyAllDone) { e.currentTarget.style.background = 'rgba(98,114,164,0.45)'; } }}
-                    onMouseOut={(e) => { if (!copyAllDone) { e.currentTarget.style.background = 'rgba(98,114,164,0.25)'; } }}
-                  >
-                    {copyAllDone ? 'Copied!' : 'Copy all'}
-                  </button>
-                )}
                 <button
                   onClick={() => setShowConversationHistory(true)}
                   disabled={containmentMode === 'hipaa'}
