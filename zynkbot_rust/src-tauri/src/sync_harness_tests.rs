@@ -1181,3 +1181,60 @@ fn b31_a_clean_sync_round_records_when_it_happened() {
         assert!((chrono::Utc::now() - at).num_seconds() < 30);
     });
 }
+
+// ---------------------------------------------------------------------------
+// 34. The address a peer's request comes from is taken only when the device there answers
+//     as that peer (KI-105, 2026-11-08). Mike's PC reached his phone through a VPN tunnel,
+//     the phone stored the tunnel address and nothing it sent that way arrived (#34);
+//     Matt's laptop reaches the phones through the desktop, so its requests carry the
+//     desktop's address, where the desktop answers.
+// ---------------------------------------------------------------------------
+#[test]
+fn b34_an_address_where_another_device_answers_is_not_taken() {
+    rt_test(async {
+        let a = Peer::spawn("oneplus").await;
+        let b = Peer::spawn("laptop").await;
+        let c = Peer::spawn("desktop").await;
+        b.pair_with(&a).await;
+        c.pair_with(&a).await;
+        a.sync_with(&b).await;
+        async fn port_of(a: &Peer, id: &str) -> u16 {
+            a.svc.transport.peers.read().await.get(id).map(|p| p.port).unwrap_or(0)
+        }
+        let b_id = b.device_id();
+        assert_eq!(port_of(&a, &b_id).await, b.port, "setup: a knows b's real port");
+
+        // b reaches a carrying the desktop's port: what a request forwarded by c looks like.
+        let client = b.svc.transport.http_client.read().await.clone();
+        let heartbeat = |claimed_port: String| {
+            let client = client.clone();
+            let url = format!("https://127.0.0.1:{}/api/presence/heartbeat", a.port);
+            let target = a.device_id();
+            let me = b.device_id();
+            async move {
+                client.post(&url)
+                    .header("x-device-port", claimed_port)
+                    .header("x-target-device-id", target)
+                    .json(&serde_json::json!({ "device_id": me }))
+                    .send().await.expect("heartbeat reaches a")
+            }
+        };
+        let r = heartbeat(c.port.to_string()).await;
+        assert!(r.status().is_success(), "heartbeat answered {}", r.status());
+        assert_eq!(port_of(&a, &b_id).await, b.port, "a took an address where the desktop answers");
+        let on_disk: i64 = sqlx::query_scalar("SELECT port FROM zynk_devices WHERE device_id = ?")
+            .bind(b.device_id()).fetch_one(&a.pool).await.unwrap();
+        assert_eq!(on_disk as u16, b.port, "the wrong address reached the disk");
+
+        // An address where nothing answers is not taken either (the tunnel case).
+        let r = heartbeat("1".to_string()).await;
+        assert!(r.status().is_success(), "heartbeat answered {}", r.status());
+        assert_eq!(port_of(&a, &b_id).await, b.port, "a took an address where nothing answers");
+
+        // b's real address still works: a sync round from a reaches b.
+        a.add_memory("the bakery closes at two on Sundays").await;
+        a.sync_with(&b).await;
+        assert!(b.memory_contents().await.iter().any(|m| m == "the bakery closes at two on Sundays"),
+            "a no longer reaches b at its real address");
+    });
+}

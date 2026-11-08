@@ -141,6 +141,9 @@ pub struct Transport {
     pub(crate) peer_last_synced: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
     /// Debounce for connection-error logging per peer.
     pub(crate) last_conn_error_logged: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+    /// Per peer: the last candidate address (host:port) that did not answer as that peer,
+    /// and when it was tried; the same candidate is not probed again for ten minutes (KI-105).
+    pub(crate) address_probe_failed: Arc<RwLock<HashMap<String, (String, DateTime<Utc>)>>>,
     /// Failed pairing attempts per client IP — the code is invalidated after 5.
     pub(crate) failed_pairing_attempts: Arc<RwLock<HashMap<String, u32>>>,
     /// The pairing code currently on offer.
@@ -162,11 +165,48 @@ impl Transport {
             peer_last_seen: Arc::new(RwLock::new(HashMap::new())),
             peer_last_synced: Arc::new(RwLock::new(HashMap::new())),
             last_conn_error_logged: Arc::new(RwLock::new(HashMap::new())),
+            address_probe_failed: Arc::new(RwLock::new(HashMap::new())),
             failed_pairing_attempts: Arc::new(RwLock::new(HashMap::new())),
             pairing_code: Arc::new(RwLock::new(None)),
             server_port: Arc::new(RwLock::new(None)),
             shutdown_tx: Arc::new(RwLock::new(None)),
         }
+    }
+
+    // ---- address probe (KI-105) ---------------------------------------------
+
+    /// Does the device at `host:port` answer as `device_id`? A GET of its public info
+    /// route through the pinned-certificate client, three seconds at most. Err carries
+    /// the reason: no answer, or another device's id. A candidate that failed is not
+    /// tried again for ten minutes (`address_probe_failed`); within that window the
+    /// answer is Err with no network traffic.
+    pub(crate) async fn address_answers_as(&self, device_id: &str, host: &str, port: u16) -> Result<(), String> {
+        let candidate = format!("{}:{}", host, port);
+        if let Some((addr, when)) = self.address_probe_failed.read().await.get(device_id) {
+            if *addr == candidate && Utc::now().signed_duration_since(*when).num_seconds() < 600 {
+                return Err(String::new());
+            }
+        }
+        let client = self.http_client.read().await.clone();
+        let url = format!("https://{}/api/zynksync/info", candidate);
+        let outcome = match client.get(&url).timeout(std::time::Duration::from_secs(3)).send().await {
+            Ok(r) if r.status().is_success() => match r.json::<serde_json::Value>().await {
+                Ok(v) => match v["device_id"].as_str() {
+                    Some(id) if id == device_id => Ok(()),
+                    Some(id) => Err(format!("answered as {} ({})", v["device_name"].as_str().unwrap_or("?"), id)),
+                    None => Err("answered without a device id".to_string()),
+                },
+                Err(e) => Err(format!("gave an unreadable answer ({})", e)),
+            },
+            Ok(r) => Err(format!("answered with {}", r.status())),
+            Err(e) => Err(format!("gave no answer ({})", e)),
+        };
+        if outcome.is_err() {
+            self.address_probe_failed.write().await.insert(device_id.to_string(), (candidate, Utc::now()));
+        } else {
+            self.address_probe_failed.write().await.remove(device_id);
+        }
+        outcome
     }
 
     // ---- identity and port -------------------------------------------------
@@ -508,6 +548,22 @@ pub async fn inject_verified_device(
                     if new_ip.is_some() || new_port.is_some() {
                         let ip_to_store = new_ip.clone().or(known_ip).unwrap_or_default();
                         let port_to_store = new_port.map(|p| p as i64).or(known_port).unwrap_or(DEFAULT_SYNC_PORT as i64);
+                        // The source address of a request is where the peer's traffic came
+                        // from, not always where the peer can be reached (KI-105, 2026-11-08):
+                        // a request through a VPN tunnel carries the tunnel address, which
+                        // works in one direction only (Mike's #34), and one through a router
+                        // that forwards for the peer carries the router's address, where a
+                        // different device answers (Matt's laptop behind the desktop). The
+                        // address is taken only once the device there has answered as this
+                        // peer; otherwise the one we hold stays.
+                        if let Err(reason) = transport.address_answers_as(&device_id, &ip_to_store, port_to_store as u16).await {
+                            if !reason.is_empty() {
+                                println!("[ZynkSync] {} reached us from {}:{} but that address {}; keeping its known address", device_name, ip_to_store, port_to_store, reason);
+                            }
+                            transport.last_conn_error_logged.write().await.remove(&device_id);
+                            req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
+                            return next.run(req).await;
+                        }
                         let _ = sqlx::query("UPDATE zynk_devices SET device_ip = ?, port = ? WHERE device_id = ?")
                             .bind(&ip_to_store).bind(port_to_store).bind(&device_id)
                             .execute(&transport.db_pool).await;

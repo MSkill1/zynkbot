@@ -1225,6 +1225,9 @@ impl ZynkSyncService {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            if let Some(note) = misdirected_note(status.as_u16(), &body) {
+                return Err(format!("outbox pull from {} went to {}: {}", peer.device_name, peer.url, note));
+            }
             return Err(format!("outbox pull from {} rejected: {} {}", peer.device_name, status, body.chars().take(300).collect::<String>()));
         }
         let v: serde_json::Value = response.json().await.map_err(|e| format!("outbox pull: bad reply: {}", e))?;
@@ -1236,6 +1239,16 @@ impl ZynkSyncService {
             more: v["more"].as_bool().unwrap_or(false),
         })
     }
+}
+
+/// A 421 from a peer's address means a different device answers there: the address we
+/// hold for the peer is wrong (KI-105). The answer names the device that did answer.
+fn misdirected_note(status: u16, body: &str) -> Option<String> {
+    if status != 421 { return None; }
+    let who = serde_json::from_str::<serde_json::Value>(body).ok()
+        .and_then(|v| v["this_device"].as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "another device".to_string());
+    Some(format!("a different device ({}) answers at that address, so the address we hold is wrong; it is corrected when the peer's own address answers as it", who))
 }
 
 /// reqwest's Display hides the cause ("error sending request for url"); the chain has it.
@@ -1256,6 +1269,9 @@ async fn post_batch(client: &reqwest::Client, endpoint: &str, target_device_id: 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
+        if let Some(note) = misdirected_note(status.as_u16(), &body) {
+            return Err(format!("outbox batch went to {}: {}", endpoint, note));
+        }
         return Err(format!("outbox batch rejected: {} {}", status, body.chars().take(300).collect::<String>()));
     }
     response.json::<OutboxReceipt>().await.map_err(|e| format!("outbox: bad receipt: {}", e))

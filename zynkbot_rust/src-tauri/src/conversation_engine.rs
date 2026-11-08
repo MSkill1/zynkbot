@@ -391,7 +391,7 @@ After you indicate a web search is needed, the user will be shown your suggested
             // the memories line and the web-search rule; the explanations around them went,
             // and the "ask for missing details first" line (2026-10-20, written for GPT) is
             // left out so a 4B model answers rather than questions back.
-            format!("{opening}You are Zynkbot, a warm, honest, direct companion. Never claim to be human or to replace the people in the user's life. Say so when you are unsure. Do not flatter; no cheering on, no therapy language. When someone shares grief or frustration, acknowledge it before solutions.\n\nStored memories below are the user's own history; treat them as facts about their life. When you list plans or things coming up, say when each was mentioned (the date in front of the memory).\n\nFor news, weather, prices or recent events, output: WEB_SEARCH_NEEDED: [query]. Never for the date or time, or for the user's own history.\n\n")
+            format!("{opening}You are Zynkbot, a warm, honest, direct companion. Never claim to be human or to replace the people in the user's life. Say so when you are unsure. Do not flatter; no cheering on, no therapy language. When someone shares grief or frustration, acknowledge it before solutions.\n\nStored memories below are the user's own history; treat them as facts about their life. When you list plans or things coming up, say when each was mentioned (the date in front of the memory). What the user tells you is saved for them automatically: never ask whether they want it remembered, and never say you have no record of what they just said. When a memory answers the question, state the fact plainly; do not announce that you remember.\n\nFor news, weather, prices or recent events, output: WEB_SEARCH_NEEDED: [query]. Never for the date or time, or for the user's own history.\n\n")
         } else {
             // Slim prompt for local models: task-first framing so fact extraction (PART 1)
             // is understood as a primary output requirement, not an afterthought.
@@ -701,7 +701,9 @@ mod on_device_prompt_tests {
         // 165 → 190 on 2026-10-26 for the "say you do not have it" line (Matt); 190 → 210 the same day
         // for the "already happened" line (the funeral read as a plan). 210 → 225 on 2026-10-29 for
         // the "give the date in front of each memory" line when listing plans (Matt).
-        assert!(instructions.split_whitespace().count() < 225, "{} words", instructions.split_whitespace().count());
+        // 225 → 270 on 2026-11-08 for the two memory lines of KI-106 (saved automatically, never
+        // ask; state a recalled fact plainly).
+        assert!(instructions.split_whitespace().count() < 270, "{} words", instructions.split_whitespace().count());
         assert!(p.contains("WEB_SEARCH_NEEDED"));
     }
     #[test]
@@ -733,6 +735,18 @@ mod on_device_prompt_tests {
         assert!(api.contains("MEMORY: yes") && !api.contains("MEMORY_EXTRACT"));
         let on = ConversationEngine::new().with_on_device(true).build_prompt("hi", None, None, false, None);
         assert!(!on.contains("MEMORY:"), "the on-device model is not asked for a marker");
+    }
+    #[test]
+    fn on_device_prompt_says_memory_is_automatic() {
+        // KI-106 (2026-11-08): Sophro asked "is that something you want me to remember?" to a
+        // plain statement and prefixed later replies with "I remember now"; the prompt had
+        // never told it that saving happens on its own.
+        let on = ConversationEngine::new().with_on_device(true).build_prompt("I live at 12 Oak St.", None, None, false, Some("Joe"));
+        assert!(on.contains("saved for them automatically"));
+        assert!(on.contains("never ask whether they want it remembered"));
+        assert!(on.contains("do not announce that you remember"));
+        let cloud = ConversationEngine::new().build_prompt("I live at 12 Oak St.", None, None, true, Some("Joe"));
+        assert!(!cloud.contains("saved for them automatically"), "the cloud prompt has the MEMORY line instead");
     }
     #[test]
     fn on_device_recalls_four_memories() {

@@ -41,8 +41,12 @@ class MicStream(private val tag: String = "MicStream") {
         if (isOpen) return true
         val minBuf = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val bufSize = maxOf(minBuf, CHUNK_SAMPLES * 2 * 8)
+        // VOICE_RECOGNITION, not MIC (KI-069, Mike's #35, 2026-11-08): the source speech
+        // recognisers use, which asks the phone's audio path for its own filtering (road hum,
+        // echo) where the chip has it. MIC is the raw stream. One shared stream feeds the wake
+        // detector, the verifier and dictation, so all three ride on this choice.
         val rec = try {
-            AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize)
+            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufSize)
         } catch (e: Exception) {
             WakeLog.e(tag, "AudioRecord init failed: ${e.message}"); return false
         }
