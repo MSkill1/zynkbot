@@ -461,11 +461,6 @@ export function useVoiceSession({ setMessages }) {
   useEffect(() => {
     if (!window.WakeWordBridge) return;
 
-    // Route through the Kotlin bridge as well as the browser console: the WebView's
-    // own console output was not reaching logcat, so a real TV-test run (2026-09-05)
-    // left nine firings with zero trace of what this in-app path actually did.
-    const trace = (m) => { try { window.WakeWordBridge?.log?.(m); } catch (_) {} console.log(m); };
-
     // There is deliberately no in-app "Hey Zynk" handler any more. Every wake-word
     // trigger, screen on or off, app in front or not, is handled natively by the
     // assistant session (chime, Vosk dictation, listening cap, fragment gate, voice
