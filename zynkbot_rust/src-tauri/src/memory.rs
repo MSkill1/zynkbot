@@ -395,8 +395,34 @@ pub fn query_hints(question: &str) -> QueryHints {
     QueryHints { namespaces, words }
 }
 
+/// Words that count as each other when a question's words are matched against tags
+/// (2026-11-08). The extractor tags a memory with the words of the fact ("house",
+/// "address"), and a question often asks with a different one: "Where do I live?" has no
+/// word any tag on the home facts repeats, so on the recall bench it ranked 69th with the
+/// tag match of 2026-11-04 in place. Each row is one group; a question word in a group
+/// matches a tag word anywhere in the same group. Words are in their stemmed form (see
+/// `stem_word`): singular, lowercase. Kept small and plain on purpose: a wide table would
+/// match memories that share a theme but not the fact, and the bench is the judge.
+const TAG_SYNONYMS: &[&[&str]] = &[
+    &["live", "living", "lived", "home", "house", "housing", "address", "mailing", "residence", "reside", "residing", "apartment"],
+    &["birthday", "birthdate", "born", "birth"],
+    &["phone", "telephone", "cellphone", "smartphone", "mobile"],
+    &["job", "employer", "employment", "occupation", "profession", "workplace"],
+    &["car", "vehicle", "truck", "automobile"],
+];
+
+/// The words that count as `word` for tag matching: itself, plus its synonym group.
+fn tag_equivalents(word: &str) -> Vec<&str> {
+    let mut out = vec![word];
+    if let Some(group) = TAG_SYNONYMS.iter().find(|g| g.contains(&word)) {
+        out.extend(group.iter().copied().filter(|w| *w != word));
+    }
+    out
+}
+
 /// Fraction of the question's words that appear in a memory's tags (a tag is one or
-/// more words; each is stemmed the same way as the question).
+/// more words; each is stemmed the same way as the question). A word also counts when a
+/// tag carries one of its synonyms (`TAG_SYNONYMS`).
 fn tag_overlap_score(tags_json: &Option<String>, words: &[String]) -> f64 {
     if words.is_empty() {
         return 0.0;
@@ -414,7 +440,10 @@ fn tag_overlap_score(tags_json: &Option<String>, words: &[String]) -> f64 {
     if tag_words.is_empty() {
         return 0.0;
     }
-    let matches = words.iter().filter(|w| tag_words.contains(w)).count();
+    let matches = words
+        .iter()
+        .filter(|w| tag_equivalents(w.as_str()).iter().any(|eq| tag_words.iter().any(|t| t == eq)))
+        .count();
     (matches as f64) / (words.len() as f64)
 }
 
@@ -1079,6 +1108,40 @@ mod query_hint_tests {
         // the 60/40 blend for a name match is unchanged
         let named = hybrid_score(0.30, 1.0, false, 0.0, NAMESPACE_BOOST, TAG_WEIGHT);
         assert!((named - 0.72).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_question_word_matches_a_tag_that_says_the_same_thing_another_way() {
+        // "Where do I live?" against a memory tagged with the house: the one case the bench
+        // still missed after 2026-11-04.
+        let words = query_hints("Where do I live?").words;
+        assert_eq!(words, vec!["live"]);
+        let house = Some(r#"["house","bathroom"]"#.to_string());
+        assert!((tag_overlap_score(&house, &words) - 1.0).abs() < 1e-9);
+        let address = Some(r#"["address","gift","plush"]"#.to_string());
+        assert!((tag_overlap_score(&address, &words) - 1.0).abs() < 1e-9);
+        // the other way round, and in the plural
+        let words = query_hints("What is my mailing address?").words;
+        let homes = Some(r#"["homes"]"#.to_string());
+        assert!((tag_overlap_score(&homes, &words) - 1.0).abs() < 1e-9);
+        // a tag that shares no group stays a miss
+        let bank = Some(r#"["banking","chase"]"#.to_string());
+        assert_eq!(tag_overlap_score(&bank, &query_hints("Where do I live?").words), 0.0);
+        // a word outside every group matches only itself
+        assert_eq!(tag_equivalents("bathroom"), vec!["bathroom"]);
+        assert!(tag_equivalents("phone").contains(&"mobile"));
+    }
+
+    #[test]
+    fn the_synonym_table_is_in_stemmed_form_and_each_word_sits_in_one_group() {
+        let mut seen: Vec<&str> = Vec::new();
+        for group in TAG_SYNONYMS {
+            for w in group.iter() {
+                assert_eq!(stem_word(w), *w, "{w} is not in its stemmed form");
+                assert!(!seen.contains(w), "{w} appears in two groups");
+                seen.push(w);
+            }
+        }
     }
 
     #[test]
