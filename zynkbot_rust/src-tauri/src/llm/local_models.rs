@@ -23,7 +23,7 @@ use std::sync::Mutex;
 fn build_prompt_for_model(model_path: &str, messages: &[Message], arch: Option<&str>) -> String {
     let file_name = model_path.to_lowercase();
     let arch = arch.unwrap_or("").to_lowercase();
-    let known = ["qwen", "deepseek", "llama-3", "llama3", "dolphin", "openhermes", "tinyllama", "gemma", "lfm", "granite", "smollm", "mistral", "phi-3", "phi-4", "phi3", "phi4", "phi-2", "phi2"];
+    let known = ["qwen", "deepseek", "llama-3", "llama3", "dolphin", "openhermes", "tinyllama", "gemma", "lfm", "granite", "smollm", "mistral", "ministral", "phi-3", "phi-4", "phi3", "phi4", "phi-2", "phi2"];
     let model_name = if known.iter().any(|k| file_name.contains(k)) || arch.is_empty() {
         file_name
     } else {
@@ -34,6 +34,7 @@ fn build_prompt_for_model(model_path: &str, messages: &[Message], arch: Option<&
             a if a.starts_with("gemma") => "gemma".to_string(),
             a if a.starts_with("llama") => "llama-3".to_string(),
             a if a.starts_with("phi3") => "phi-3".to_string(),
+            a if a.starts_with("mistral") => "mistral-instruct".to_string(),
             a if a.starts_with("granite") || a.starts_with("lfm") || a.starts_with("smollm") => "lfm".to_string(),
             a => a.to_string(),
         }
@@ -64,7 +65,9 @@ fn build_prompt_for_model(model_path: &str, messages: &[Message], arch: Option<&
     } else if model_name.contains("lfm") || model_name.contains("granite") || model_name.contains("smollm") {
         // LFM2, Granite 4 and SmolLM3 all use ChatML markers.
         ("ChatML", build_chatml_prompt(messages, false))
-    } else if model_name.contains("mistral") && model_name.contains("instruct") {
+    } else if (model_name.contains("mistral") && model_name.contains("instruct")) || model_name.contains("ministral") {
+        // Ministral 3 (2025-12) is "ministral", not "mistral", in its file name; it takes the
+        // same [INST] format (its newer template adds [SYSTEM_PROMPT] tags, which it does not need).
         ("Mistral Instruct", build_mistral_instruct_prompt(messages))
     } else if model_name.contains("phi-3") || model_name.contains("phi-4")
            || model_name.contains("phi3") || model_name.contains("phi4") {
@@ -897,6 +900,16 @@ pub fn query_local_model(model_path: &str, prompt: &str) -> Result<String, LLMEr
 #[cfg(test)]
 mod prompt_split_tests {
     use super::*;
+
+    #[test]
+    fn a_ministral_file_gets_the_mistral_instruct_format_not_the_generic_one() {
+        let msgs = vec![Message { role: "user".into(), content: "Hello there".into() }];
+        let p = build_prompt_for_model("/m/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf", &msgs, Some("mistral3"));
+        assert!(p.starts_with("<s>[INST]"), "{p}");
+        // A file whose name says nothing is placed by its architecture.
+        let p = build_prompt_for_model("/m/model.gguf", &msgs, Some("mistral3"));
+        assert!(p.starts_with("<s>[INST]"), "{p}");
+    }
     #[test]
     fn the_engine_prompt_is_split_on_either_label() {
         let cloud = "Instructions here.\n\nUSER'S QUESTION: What day is it?\n\nYOUR RESPONSE:";

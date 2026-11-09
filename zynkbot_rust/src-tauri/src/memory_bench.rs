@@ -53,7 +53,7 @@ fn matches(fact: &str, exp: &Expected) -> bool {
     exp.must.iter().all(|m| f.contains(&m.to_lowercase()))
 }
 
-fn load_desktop_env() {
+pub(crate) fn load_desktop_env() {
     let Some(home) = std::env::var_os("HOME") else { return };
     let path = std::path::PathBuf::from(home).join(".local/share/zynkbot/.env");
     let Ok(text) = std::fs::read_to_string(&path) else { return };

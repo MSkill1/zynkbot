@@ -244,6 +244,13 @@ land as JSON and Markdown in the folder named by the `*_OUT` variable (default
 MEMORY_BENCH_BACKENDS=anthropic,/path/to/model.gguf MEMORY_BENCH_SLIM=1 \
   LD_LIBRARY_PATH=lib/vosk cargo test --features cuda --lib memory_bench -- --ignored --nocapture
 
+# Reply bench: does the prompt get a good reply? GGUF files get the on-device prompt (what
+# the app sends every local model); provider names get the cloud prompt. REPLY_BENCH_RUNS
+# (default 3) repeats each case; REPLY_BENCH_VARIANTS=before,after compares the phone's old
+# instruction block with the current one; REPLY_BENCH_PAUSE_MS paces a free-tier provider.
+REPLY_BENCH_MODEL=/path/to/model.gguf,anthropic REPLY_BENCH_VARIANTS=after \
+  LD_LIBRARY_PATH=lib/vosk cargo test --features cuda --lib reply_bench -- --ignored --nocapture
+
 # Recall bench: finding memories, against a COPY of a database (never the live file).
 RECALL_BENCH_DB=/path/copy.db LD_LIBRARY_PATH=lib/vosk \
   cargo test --features cuda --lib recall_bench -- --ignored --nocapture
@@ -256,7 +263,78 @@ RECALL_BENCH_DB=/path/copy.db LD_LIBRARY_PATH=lib/vosk \
 The fine-tune pipeline (export prompts, teacher answers, train, export, bench) is described
 step by step in `labs/finetune/README.md` on the `finetune` branch.
 
-## 5. Limits, stated plainly
+## 5. Candidates for the desktop download list (2026-11-09)
+
+**Question.** The desktop's download list (setup wizard) offered Qwen3 8B, a DeepSeek R1
+distill and an "uncensored" Llama 3.1 fine-tune, all from 2025. Which current open-weight
+models, Apache 2.0 and runnable on an ordinary desktop, should replace them? Four were
+downloaded at Q4_K_M and run through the two benches on this desktop's GPU, next to the two
+local models already installed and the four cloud providers. Every local model got the
+on-device prompt, which is what the app sends any GGUF file on any platform; the providers
+got the cloud prompt. Three runs per case; a case passes only when every run does. A local
+model samples with a fixed seed, so its runs differ only when the clock minute in the prompt
+changes.
+
+**Reply bench** (25 cases: 9 statements, 7 recall questions, 4 details the memories do not
+hold, 3 that need a web search, 2 that must not):
+
+| Model | Size | Pass (of 25) | Statements | Recall | Missing detail | Web | No search | s/reply |
+|---|---|---|---|---|---|---|---|---|
+| Gemma 4 12B | 7.1 GB | **24** | 8/9 | 7/7 | 4/4 | 3/3 | 2/2 | 0.7 |
+| Qwen3 8B (current list) | 5.0 GB | 22 | 9/9 | 7/7 | 2/4 | 3/3 | 1/2 | 0.2 |
+| Gemma 4 E4B | 5.0 GB | 21 | 9/9 | 7/7 | 1/4 | 3/3 | 1/2 | 0.5 |
+| Qwen3.5 9B | 5.7 GB | 21 | 6/9 | 7/7 | 4/4 | 3/3 | 1/2 | 0.4 |
+| Sophro 4B (the Zynkbot model) | 2.4 GB | 21 | 6/9 | 7/7 | 3/4 | 3/3 | 2/2 | 0.1 |
+| Ministral 3 8B | 5.2 GB | 20 | 9/9 | 7/7 | 0/4 | 3/3 | 1/2 | 0.3 |
+| GPT (OpenAI) | cloud | 25 | 9/9 | 7/7 | 4/4 | 3/3 | 2/2 | 2.2 |
+| Mistral (cloud) | cloud | 23 | 9/9 | 7/7 | 2/4 | 3/3 | 2/2 | 3.9 |
+| Claude (Anthropic) | cloud | 22 | 7/9 | 7/7 | 4/4 | 2/3 | 2/2 | 1.3 |
+| Grok (xAI) | cloud | 22 | 7/9 | 7/7 | 3/4 | 3/3 | 2/2 | 3.8 |
+
+How each one misses matters more than the count. Ministral's four "missing detail" failures
+are two invented answers (a price for the snow tires, a colour for the boat) and two
+near-misses in wording; an invented personal fact is the one failure this product cannot
+have. Gemma 4 E4B asks for a web search for a personal detail it does not hold, which the
+app turns into a search prompt rather than a wrong answer. The two Qwen models, Sophro
+included, talk about saving and remembering on three statements ("I'll remember that",
+"I've noted that"), the habit the on-device prompt was rewritten against (KI-106). Gemma 4
+12B's one miss is the same "I've noted that" on one statement. Every local model but Sophro
+asked for a web search when asked the capital of Australia.
+
+**Memory bench** (extraction call 2 and relationship call 3; 49 relationship cases since
+2026-11-04, so the 44-case numbers in section 1 are not comparable):
+
+| Model | Facts found (of 69) | Invented | Junk (of 26) | Relationships (of 49) | Time |
+|---|---|---|---|---|---|
+| Claude (Anthropic) | 69 | 0 | 0 | 49 | 291 s |
+| Gemma 4 12B | 67 | 2 | 0 | 45 | 262 s |
+| Gemma 4 E4B | 65 | 2 | 0 | 41 | 164 s |
+| Sophro 4B | 68 | 1 | 0 | 36 | 83 s |
+| Ministral 3 8B | 65 | 2 | 10 | 36 | 192 s |
+| Qwen3.5 9B | 64 | 3 | 0 | 35 | 186 s |
+
+Sophro still finds the most facts of the local models, with the fewest invented and no junk,
+which is what it was tuned for; its relationship score on the 49-case set is 36 (38 of 44
+before the five cases added since). Gemma 4 12B is the only local model near the cloud on
+relationships. Ministral makes a memory out of ten of the 26 messages that hold none
+(questions, pasted text, television speech).
+
+**Two things to fix before either Gemma 4 model ships in the list.** (1) Gemma 4 12B
+starts every reply with its thinking-channel tokens (`<|channel>thought <channel|>`; the E4B
+file did not); the Gemma prompt builder has to send the template's no-thinking form or
+strip them. (2) The Ministral
+file name does not contain "mistral", so until 2026-11-09 it got the generic prompt format;
+the builder now maps "ministral" and the `mistral3` architecture to the Mistral Instruct
+format (the result above was run with that fix).
+
+**Candour.** Qwen3-based models (Sophro, Qwen3 8B, Qwen3.5 9B) refuse Tiananmen and give
+Beijing's wording on Taiwan and Xinjiang (section 3); Gemma 4 and Ministral do not carry
+those positions. All six are Apache 2.0.
+
+Result files: `~/Documents/Zynk_related/reply_bench/RESULTS_*_20261109-*.md` and
+`~/Documents/Zynk_related/memory_bench/*-20261109-1621.json`, `*-20261109-17*.json`.
+
+## 6. Limits, stated plainly
 
 - The memory and relationship cases are synthetic: written to cover the kinds of thing
   people say, including the junk kinds, not drawn from anyone's private life. 84 and 44

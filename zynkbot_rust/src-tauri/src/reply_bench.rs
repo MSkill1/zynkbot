@@ -12,9 +12,15 @@
 //!   REPLY_BENCH_MODEL=~/.local/share/zynkbot/models/user/Sophro-4B-memory-v1-Q4_0.gguf \
 //!   LD_LIBRARY_PATH=lib/vosk cargo test --features cuda --lib reply_bench -- --ignored --nocapture
 //!
+//! REPLY_BENCH_MODEL takes several backends, comma-separated: GGUF paths and provider names
+//! (anthropic, openai, xai, mistral; keys from the environment or the desktop app's .env).
+//! A GGUF gets the on-device prompt, as in the app on every platform; a provider gets the
+//! full cloud prompt; both are scored alike, so a candidate for the desktop download list is
+//! read next to the cloud models (2026-11-09). REPLY_BENCH_PAUSE_MS waits between provider
+//! calls (free tiers answer 429 after a burst; a 429 is retried with a growing wait anyway).
 //! REPLY_BENCH_SET overrides the case file; REPLY_BENCH_OUT the results folder (default
 //! ~/Documents/Zynk_related/reply_bench); REPLY_BENCH_VARIANTS picks "before", "after" or
-//! both; REPLY_BENCH_RUNS (default 3) runs each case that many times, since the app samples
+//! both (a provider has only "after"); REPLY_BENCH_RUNS (default 3) runs each case that many times, since the app samples
 //! at temperature 0.7 and one lucky answer proves nothing (the pass count moved by three
 //! between two runs of the same prompt on 2026-11-09). A case passes when every run does.
 #![cfg(test)]
@@ -117,75 +123,104 @@ fn memories_of(c: &Case) -> Vec<Memory> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 async fn reply_bench() {
-    let model = std::env::var("REPLY_BENCH_MODEL").expect("REPLY_BENCH_MODEL=/path/model.gguf");
-    let model = model.replace('~', &std::env::var("HOME").unwrap_or_default());
+    // REPLY_BENCH_MODEL: GGUF paths and provider names (anthropic, openai, xai, mistral),
+    // comma-separated. A GGUF gets the on-device prompt, which is what the app sends every
+    // local model, desktop included (chat.rs builds the engine with on_device for any .gguf);
+    // a provider gets the full cloud prompt. Both are scored the same way, so a candidate for
+    // the desktop download list is read next to the cloud models (2026-11-09).
+    crate::memory_bench::load_desktop_env();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let backends: Vec<String> = std::env::var("REPLY_BENCH_MODEL").expect("REPLY_BENCH_MODEL=/path/model.gguf[,anthropic,…]")
+        .split(',').map(|s| s.trim().replace('~', &home)).filter(|s| !s.is_empty()).collect();
     let set = std::env::var("REPLY_BENCH_SET").unwrap_or_else(|_| format!("{}/../../labs/reply_bench/cases.json", env!("CARGO_MANIFEST_DIR")));
     let cases: Cases = serde_json::from_str(&std::fs::read_to_string(&set).expect("case file")).expect("case file parses");
-    let out_dir = std::env::var("REPLY_BENCH_OUT").unwrap_or_else(|_| format!("{}/Documents/Zynk_related/reply_bench", std::env::var("HOME").unwrap_or_default()));
+    let out_dir = std::env::var("REPLY_BENCH_OUT").unwrap_or_else(|_| format!("{home}/Documents/Zynk_related/reply_bench"));
     std::fs::create_dir_all(&out_dir).ok();
     let variants: Vec<String> = std::env::var("REPLY_BENCH_VARIANTS").unwrap_or_else(|_| "before,after".into()).split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     let runs: usize = std::env::var("REPLY_BENCH_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+    let pause_ms: Option<u64> = std::env::var("REPLY_BENCH_PAUSE_MS").ok().and_then(|v| v.parse().ok());
     let date = chrono::Local::now().format("%Y%m%d-%H%M").to_string();
-    let engine = ConversationEngine::new().with_on_device(true);
-    let model_name = std::path::Path::new(&model).file_stem().and_then(|s| s.to_str()).unwrap_or("model").to_string();
-
-    let mut reports: Vec<Report> = Vec::new();
-    for variant in &variants {
-        println!("\n=== {} · {} · {} run(s) per case ===", model_name, variant, runs);
-        let mut results = Vec::new();
-        for c in &cases.cases {
-            let mems = memories_of(c);
-            let after = engine.build_prompt(&c.message, if c.history.is_empty() { None } else { Some(&c.history) }, if mems.is_empty() { None } else { Some(&mems) }, false, Some(&cases.subject));
-            let prompt = if variant == "before" { as_before(&after, &cases.subject) } else { after };
-            let mut run_results = Vec::new();
-            for _ in 0..runs {
-                let t = std::time::Instant::now();
-                let p = prompt.clone(); let m = model.clone();
-                let reply = tokio::task::spawn_blocking(move || {
-                    crate::llm::local_models::generate_with_local_model(&m, vec![crate::llm::Message { role: "user".into(), content: p }], Some(400), None)
-                }).await.unwrap().map(|r| r.content).unwrap_or_else(|e| format!("ERROR: {e}"));
-                let reply = crate::conversation_engine::strip_memory_marker(&reply).to_string();
-                let (pass, reasons) = score(c, &reply);
-                run_results.push(RunResult { words: reply.split_whitespace().count(), seconds: t.elapsed().as_secs_f32(), reply, pass, reasons });
+    for backend in &backends {
+        let is_gguf = backend.ends_with(".gguf");
+        let engine = ConversationEngine::new().with_on_device(is_gguf);
+        // "before" is the phone's old instruction block; a provider has only the current prompt.
+        let variants: Vec<&String> = variants.iter().filter(|v| is_gguf || v.as_str() != "before").collect();
+        let model_name = if is_gguf { std::path::Path::new(backend).file_stem().and_then(|s| s.to_str()).unwrap_or("model").to_string() } else { backend.clone() };
+        let mut reports: Vec<Report> = Vec::new();
+        for variant in variants {
+            println!("\n=== {} · {} · {} run(s) per case ===", model_name, variant, runs);
+            let mut results = Vec::new();
+            for c in &cases.cases {
+                let mems = memories_of(c);
+                let after = engine.build_prompt(&c.message, if c.history.is_empty() { None } else { Some(&c.history) }, if mems.is_empty() { None } else { Some(&mems) }, !is_gguf, Some(&cases.subject));
+                let prompt = if variant == "before" { as_before(&after, &cases.subject) } else { after };
+                let mut run_results = Vec::new();
+                for _ in 0..runs {
+                    let t = std::time::Instant::now();
+                    let reply = if is_gguf {
+                        let p = prompt.clone(); let m = backend.clone();
+                        tokio::task::spawn_blocking(move || {
+                            crate::llm::local_models::generate_with_local_model(&m, vec![crate::llm::Message { role: "user".into(), content: p }], Some(400), None)
+                        }).await.unwrap().map(|r| r.content).unwrap_or_else(|e| format!("ERROR: {e}"))
+                    } else {
+                        // A provider on a free tier answers 429 after a burst; wait and retry,
+                        // and pause between calls when REPLY_BENCH_PAUSE_MS is set.
+                        let mut attempt = 0;
+                        loop {
+                            match crate::call_backend_with_prompt(&prompt, backend).await {
+                                Ok(r) => break r,
+                                Err(e) if e.contains("429") && attempt < 6 => { attempt += 1; tokio::time::sleep(std::time::Duration::from_secs(5 * attempt)).await; }
+                                Err(e) => break format!("ERROR: {e}"),
+                            }
+                        }
+                    };
+                    if let Some(ms) = pause_ms { tokio::time::sleep(std::time::Duration::from_millis(ms)).await; }
+                    let raw = reply.clone();
+                    let reply = crate::conversation_engine::strip_memory_marker(&reply).to_string();
+                    if reply.trim().is_empty() { println!("      (raw reply: {:?})", raw.chars().take(300).collect::<String>()); }
+                    let (pass, reasons) = score(c, &reply);
+                    run_results.push(RunResult { words: reply.split_whitespace().count(), seconds: t.elapsed().as_secs_f32(), reply, pass, reasons });
+                }
+                let pass = run_results.iter().all(|r| r.pass);
+                println!("{} {:<9} {} {}", if pass { "✅" } else { "❌" }, c.kind, c.id, run_results.iter().map(|r| if r.pass { "·".to_string() } else { r.reasons.join("; ") }).collect::<Vec<_>>().join(" | "));
+                for r in &run_results { println!("      ↳ {}", r.reply.replace('\n', " ").chars().take(220).collect::<String>()); }
+                results.push(CaseResult { id: c.id.clone(), kind: c.kind.clone(), message: c.message.clone(), runs: run_results, pass });
             }
-            let pass = run_results.iter().all(|r| r.pass);
-            println!("{} {:<9} {} {}", if pass { "✅" } else { "❌" }, c.kind, c.id, run_results.iter().map(|r| if r.pass { "·".to_string() } else { r.reasons.join("; ") }).collect::<Vec<_>>().join(" | "));
-            for r in &run_results { println!("      ↳ {}", r.reply.replace('\n', " ").chars().take(220).collect::<String>()); }
-            results.push(CaseResult { id: c.id.clone(), kind: c.kind.clone(), message: c.message.clone(), runs: run_results, pass });
-        }
-        let mut by_kind: Vec<(String, usize, usize)> = Vec::new();
-        for r in &results {
-            match by_kind.iter_mut().find(|(k, _, _)| *k == r.kind) {
-                Some(e) => { e.2 += 1; if r.pass { e.1 += 1; } }
-                None => by_kind.push((r.kind.clone(), r.pass as usize, 1)),
+            let mut by_kind: Vec<(String, usize, usize)> = Vec::new();
+            for r in &results {
+                match by_kind.iter_mut().find(|(k, _, _)| *k == r.kind) {
+                    Some(e) => { e.2 += 1; if r.pass { e.1 += 1; } }
+                    None => by_kind.push((r.kind.clone(), r.pass as usize, 1)),
+                }
             }
+            let passed = results.iter().filter(|r| r.pass).count();
+            let secs: f32 = results.iter().flat_map(|r| r.runs.iter().map(|x| x.seconds)).sum::<f32>() / (results.len() * runs).max(1) as f32;
+            println!("--- {} {}: {} of {} cases pass; {}; {:.1} s per reply", model_name, variant, passed, results.len(), by_kind.iter().map(|(k, p, t)| format!("{k} {p}/{t}")).collect::<Vec<_>>().join(", "), secs);
+            reports.push(Report { model: model_name.clone(), variant: variant.clone(), date: date.clone(), passed, total: results.len(), by_kind, cases: results });
         }
-        let passed = results.iter().filter(|r| r.pass).count();
-        println!("--- {} {}: {} of {} cases pass; {}", model_name, variant, passed, results.len(), by_kind.iter().map(|(k, p, t)| format!("{k} {p}/{t}")).collect::<Vec<_>>().join(", "));
-        reports.push(Report { model: model_name.clone(), variant: variant.clone(), date: date.clone(), passed, total: results.len(), by_kind, cases: results });
-    }
 
-    // One JSON per variant, and one readable file with both replies side by side.
-    for r in &reports {
-        std::fs::write(format!("{out_dir}/{}-{}-{date}.json", r.model, r.variant), serde_json::to_string_pretty(r).unwrap()).unwrap();
-    }
-    let mut md = format!("# Reply bench · {} · {}\n\nRuns per case: {}. A case passes when every run passes.\n\n| case | kind | {} |\n|---|---|{}|\n", model_name, date, runs, reports.iter().map(|r| r.variant.as_str()).collect::<Vec<_>>().join(" | "), reports.iter().map(|_| "---").collect::<Vec<_>>().join("|"));
-    for (i, c) in cases.cases.iter().enumerate() {
-        md.push_str(&format!("| {} | {} | {} |\n", c.id, c.kind, reports.iter().map(|r| if r.cases[i].pass { "✅" } else { "❌" }).collect::<Vec<_>>().join(" | ")));
-    }
-    md.push_str(&format!("| **total** | | {} |\n\n", reports.iter().map(|r| format!("**{}/{}**", r.passed, r.total)).collect::<Vec<_>>().join(" | ")));
-    for (i, c) in cases.cases.iter().enumerate() {
-        md.push_str(&format!("## {} ({})\n\n**Message:** {}\n\n", c.id, c.kind, c.message));
-        if !c.memories.is_empty() { md.push_str(&format!("**Memories:** {}\n\n", c.memories.iter().map(|m| format!("“{}” ({} days ago)", m.content, m.days_ago)).collect::<Vec<_>>().join("; "))); }
+        // One JSON per variant, and one readable file with the replies side by side.
         for r in &reports {
-            let cr = &r.cases[i];
-            md.push_str(&format!("**{}** — {}\n\n", r.variant, if cr.pass { "pass" } else { "FAIL" }));
-            for run in &cr.runs { md.push_str(&format!("> {}\n>\n> *{}{:.1} s, {} words*\n\n", run.reply.replace('\n', "\n> "), if run.reasons.is_empty() { String::new() } else { format!("{} · ", run.reasons.join("; ")) }, run.seconds, run.words)); }
+            std::fs::write(format!("{out_dir}/{}-{}-{date}.json", r.model, r.variant), serde_json::to_string_pretty(r).unwrap()).unwrap();
         }
+        let mut md = format!("# Reply bench · {} · {}\n\nRuns per case: {}. A case passes when every run passes. A local model samples with a fixed seed, so its runs differ only when the prompt's clock minute changes.\n\n| case | kind | {} |\n|---|---|{}|\n", model_name, date, runs, reports.iter().map(|r| r.variant.as_str()).collect::<Vec<_>>().join(" | "), reports.iter().map(|_| "---").collect::<Vec<_>>().join("|"));
+        for (i, c) in cases.cases.iter().enumerate() {
+            md.push_str(&format!("| {} | {} | {} |\n", c.id, c.kind, reports.iter().map(|r| if r.cases[i].pass { "✅" } else { "❌" }).collect::<Vec<_>>().join(" | ")));
+        }
+        md.push_str(&format!("| **total** | | {} |\n\n", reports.iter().map(|r| format!("**{}/{}**", r.passed, r.total)).collect::<Vec<_>>().join(" | ")));
+        for (i, c) in cases.cases.iter().enumerate() {
+            md.push_str(&format!("## {} ({})\n\n**Message:** {}\n\n", c.id, c.kind, c.message));
+            if !c.memories.is_empty() { md.push_str(&format!("**Memories:** {}\n\n", c.memories.iter().map(|m| format!("“{}” ({} days ago)", m.content, m.days_ago)).collect::<Vec<_>>().join("; "))); }
+            for r in &reports {
+                let cr = &r.cases[i];
+                md.push_str(&format!("**{}** — {}\n\n", r.variant, if cr.pass { "pass" } else { "FAIL" }));
+                for run in &cr.runs { md.push_str(&format!("> {}\n>\n> *{}{:.1} s, {} words*\n\n", run.reply.replace('\n', "\n> "), if run.reasons.is_empty() { String::new() } else { format!("{} · ", run.reasons.join("; ")) }, run.seconds, run.words)); }
+            }
+        }
+        let md_path = format!("{out_dir}/RESULTS_{model_name}_{date}.md");
+        std::fs::write(&md_path, md).unwrap();
+        println!("\nWritten: {md_path}");
     }
-    let md_path = format!("{out_dir}/RESULTS_{model_name}_{date}.md");
-    std::fs::write(&md_path, md).unwrap();
-    println!("\nWritten: {md_path}");
 }
 
 #[cfg(test)]
