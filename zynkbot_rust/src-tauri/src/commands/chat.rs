@@ -2713,25 +2713,19 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             // LOCAL_DROPPED_LINK_TYPES, memory bench 2026-10-22/23) and are tagged "local_llm".
             let bg_on_device = bg_forced_backend.ends_with(".gguf") || bg_forced_backend.to_lowercase().contains("local");
             let link_created_by = if bg_on_device { "local_llm" } else { "llm" };
+            // The phone stores the fact first and asks for its links after (Matt, 2026-11-09):
+            // on the Pixel the reply, the fact call and the links call took two minutes and
+            // more per message, one after another, and the memory was written only after the
+            // last of them; a question asked a minute after the statement found nothing. Call 2
+            // gave the fact and its title, the duplicate check has passed, so the memory is as
+            // certain as it gets; the links call runs below once the row is on disk.
+            let links_after_store = bg_on_device && fact.title.is_some() && !similar_memories.is_empty();
             let (should_remember, llm_title, llm_relationships, llm_extras) = if similar_memories.is_empty() && fact.title.is_some() {
                 println!("[RUST BACKGROUND] No similar memories; call 3 skipped");
                 (true, fact.title.clone(), Vec::new(), fact.extras.clone())
-            } else if bg_on_device && fact.title.is_some() {
-                // The phone: relationships only (ask_llm_for_links_only); title and date came
-                // from call 2, tags/tone/entities from the name finder below.
-                match crate::ask_llm_for_links_only(&factual_content, &similar_memories, &bg_forced_backend).await {
-                    Ok(rels) => {
-                        let before = rels.len();
-                        let rels = crate::filter_local_links(rels);
-                        if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} link(s) from the local model (floor / dropped types)", before - rels.len()); }
-                        println!("[RUST BACKGROUND] ✅ Links (phone): {} relationships", rels.len());
-                        (true, fact.title.clone(), rels, fact.extras.clone())
-                    }
-                    Err(e) => {
-                        println!("[RUST BACKGROUND] ⚠️ Link call failed: {} — storing without links", e);
-                        (true, fact.title.clone(), Vec::new(), fact.extras.clone())
-                    }
-                }
+            } else if links_after_store {
+                println!("[RUST BACKGROUND] Phone: storing the fact now, links after");
+                (true, fact.title.clone(), Vec::new(), fact.extras.clone())
             } else {
                 match crate::ask_llm_for_relationships(&factual_content, &similar_memories, &bg_forced_backend).await {
                     Ok((title3, rels, extras3)) => {
@@ -2973,6 +2967,33 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                 Ok(_) => {}
                 Err(e) => println!("[RUST BACKGROUND] ⚠️ Could not save entities: {}", e),
             }
+
+            // The phone's links call, now that the memory is on disk (links_after_store above).
+            // Title, tags and entities are already set; only the relationships and the card come
+            // from here. A failed call leaves the memory as it is, without links.
+            let (llm_relationships, ask_after_store) = if links_after_store {
+                let rels = match crate::ask_llm_for_links_only(&factual_content, &similar_memories, &bg_forced_backend).await {
+                    Ok(rels) => {
+                        let before = rels.len();
+                        let rels = crate::filter_local_links(rels);
+                        if rels.len() < before { println!("[RUST BACKGROUND] Dropped {} link(s) from the local model (floor / dropped types)", before - rels.len()); }
+                        println!("[RUST BACKGROUND] ✅ Links (phone, after store): {} relationships for memory #{}", rels.len(), memory_id);
+                        rels
+                    }
+                    Err(e) => {
+                        println!("[RUST BACKGROUND] ⚠️ Link call failed: {} — memory #{} stays without links", e, memory_id);
+                        Vec::new()
+                    }
+                };
+                let contradiction = rels.iter()
+                    .any(|rel| rel.relationship_type == "contradicts" && rel.confidence.unwrap_or(0.0) >= 0.65);
+                if contradiction && !bg_is_explicit_remember {
+                    println!("[RUST BACKGROUND] ⚠️ Contradiction from the on-device model — the memory is stored, asking now");
+                }
+                (rels, contradiction && !bg_is_explicit_remember)
+            } else {
+                (llm_relationships, ask_after_store)
+            };
 
             // Store LLM-classified relationships (if any)
             if !llm_relationships.is_empty() {
