@@ -1671,7 +1671,10 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                       <div className="detail-row">
                         <strong>Event Type:</strong> {selectedMemory.event_type}
                         {selectedMemory.event_date && (() => {
-                          const d = new Date(selectedMemory.event_date);
+                          // The event date is a day, stored as midnight UTC; read as an instant and
+                          // shown in local time it came out a day early west of Greenwich (2026-11-09).
+                          const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(selectedMemory.event_date));
+                          const d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(selectedMemory.event_date);
                           return !isNaN(d.getTime()) ? (
                             <span style={{ marginLeft: '8px', color: '#9aa5c4' }}>
                               ({d.toLocaleDateString()})
