@@ -79,6 +79,21 @@ fn build_prompt_for_model(model_path: &str, messages: &[Message], arch: Option<&
     prompt
 }
 
+/// The conversation engine's prompt is one text: the instructions, then a label, then the
+/// user's words, then "YOUR RESPONSE:". Cloud and custom prompts label the words
+/// "USER'S QUESTION:"; the phone's prompt says "USER'S MESSAGE:" (2026-11-09, KI-106: the
+/// old label named every statement a question). Returns (instructions, the user's words),
+/// both trimmed, or None when neither label is present.
+pub(crate) fn split_engine_prompt(content: &str) -> Option<(&str, &str)> {
+    let (pos, label) = ["USER'S MESSAGE:", "USER'S QUESTION:"].iter()
+        .filter_map(|l| content.find(l).map(|p| (p, *l)))
+        .min_by_key(|(p, _)| *p)?;
+    let system_part = content[..pos].trim();
+    let after = &content[pos + label.len()..];
+    let words = match after.find("\n\nYOUR RESPONSE:") { Some(r) => after[..r].trim(), None => after.trim() };
+    Some((system_part, words))
+}
+
 /// ChatML format — Qwen, DeepSeek (Qwen-based), Dolphin, OpenHermes, TinyLlama
 ///
 /// `no_think`: inject `<think>\n\n</think>` before the first assistant token to short-circuit
@@ -97,17 +112,9 @@ fn build_chatml_prompt(messages: &[Message], no_think: bool) -> String {
     };
 
     // Single-message path: the conversation engine packs everything into one user message.
-    // Split on "USER'S QUESTION:" so instructions land in the system role.
+    // Split on the engine's label so instructions land in the system role.
     if messages.len() == 1 && messages[0].role == "user" {
-        let content = &messages[0].content;
-        if let Some(q_pos) = content.find("USER'S QUESTION:") {
-            let system_part = content[..q_pos].trim();
-            let after_q = &content[q_pos + "USER'S QUESTION:".len()..];
-            let user_question = if let Some(r_pos) = after_q.find("\n\nYOUR RESPONSE:") {
-                after_q[..r_pos].trim()
-            } else {
-                after_q.trim()
-            };
+        if let Some((system_part, user_question)) = split_engine_prompt(&messages[0].content) {
             let mut prompt = String::new();
             if !system_part.is_empty() {
                 prompt.push_str(&format!("<|im_start|>system\n{}<|im_end|>\n", system_part));
@@ -145,10 +152,7 @@ fn build_gemma_prompt(messages: &[Message]) -> String {
     let mut prompt = String::new();
     if messages.len() == 1 && messages[0].role == "user" {
         let content = &messages[0].content;
-        let body = if let Some(q_pos) = content.find("USER'S QUESTION:") {
-            let system_part = content[..q_pos].trim();
-            let after_q = &content[q_pos + "USER'S QUESTION:".len()..];
-            let question = match after_q.find("\n\nYOUR RESPONSE:") { Some(r) => after_q[..r].trim(), None => after_q.trim() };
+        let body = if let Some((system_part, question)) = split_engine_prompt(content) {
             if system_part.is_empty() { question.to_string() } else { format!("{}\n\n{}", system_part, question) }
         } else { content.trim().to_string() };
         prompt.push_str(&format!("<start_of_turn>user\n{}<end_of_turn>\n<start_of_turn>model\n", body));
@@ -888,6 +892,24 @@ pub fn query_local_model(model_path: &str, prompt: &str) -> Result<String, LLMEr
     )?;
 
     Ok(response.content)
+}
+
+#[cfg(test)]
+mod prompt_split_tests {
+    use super::*;
+    #[test]
+    fn the_engine_prompt_is_split_on_either_label() {
+        let cloud = "Instructions here.\n\nUSER'S QUESTION: What day is it?\n\nYOUR RESPONSE:";
+        assert_eq!(split_engine_prompt(cloud), Some(("Instructions here.", "What day is it?")));
+        let phone = "Instructions here.\n\nUSER'S MESSAGE: I live at 12 Oak St.\n\nYOUR RESPONSE:";
+        assert_eq!(split_engine_prompt(phone), Some(("Instructions here.", "I live at 12 Oak St.")));
+        assert_eq!(split_engine_prompt("plain text"), None);
+        // The phone's whole prompt lands in the system role, the message in the user role.
+        let msgs = vec![Message { role: "user".into(), content: phone.into() }];
+        let chatml = build_chatml_prompt(&msgs, true);
+        assert!(chatml.starts_with("<|im_start|>system\nInstructions here.<|im_end|>\n<|im_start|>user\nI live at 12 Oak St.<|im_end|>\n"), "{}", chatml);
+        assert!(build_gemma_prompt(&msgs).contains("Instructions here.\n\nI live at 12 Oak St.<end_of_turn>"));
+    }
 }
 
 #[cfg(test)]

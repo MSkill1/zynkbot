@@ -26,6 +26,8 @@ mod memory_bench; // which model makes the right memories: labs/memory_bench
 #[cfg(test)]
 mod recall_bench; // does recall find the right memory: labs/recall_bench
 #[cfg(test)]
+mod reply_bench; // does the phone's prompt make the model answer well: labs/reply_bench
+#[cfg(test)]
 mod finetune_export; // the app's own prompts as training input: labs/finetune
 #[cfg(test)]
 mod memory_refactor; // one-off: old composite memories into facts (2026-10-25)

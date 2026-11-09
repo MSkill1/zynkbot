@@ -272,7 +272,10 @@ impl ConversationEngine {
             }
         }
         let quote_chars = if self.on_device { ON_DEVICE_MEMORY_CHARS } else { 400 };
-        let mut context = String::from("USER'S STORED MEMORIES:\n");
+        // The phone's heading avoids the word "stored" (2026-11-09, KI-106): with an address
+        // memory in the list, Sophro answered a new address with "I don't have that address
+        // stored" in every run of the reply bench; the heading handed it the phrase.
+        let mut context = String::from(if self.on_device { "WHAT THE USER HAS TOLD YOU BEFORE:\n" } else { "USER'S STORED MEMORIES:\n" });
         let mut idx = 0;
         for (_, members) in &groups {
             idx += 1;
@@ -333,14 +336,9 @@ impl ConversationEngine {
         let today = Local::now().format("%A, %B %-d, %Y at %-I:%M %p %Z").to_string();
         let subject_label = user_name.unwrap_or("User");
 
-        let opening = if self.on_device {
-            // "Background, not the topic" (Matt, 2026-10-25): the phone's model answered
-            // "his most notable achievement" about France because a recalled memory
-            // about France sat in the prompt and it took that for the subject.
-            "Answer the newest message. The recent conversation and the memories below are background; use them only when they bear on the question. If they do not hold the number or date asked for, say you do not have it; never put another figure in its place. A memory dated before today describes something that has already happened; 'about' gives the day it happened. Keep it short: a few sentences, unless they ask for more.\n\n".to_string()
-        } else {
-            format!("Today's date is {today}.\n\n")
-        };
+        // The phone's instruction is the single block below (2026-11-09); until then an
+        // opening paragraph about "the question" stood here and read every message as one.
+        let opening = if self.on_device { String::new() } else { format!("Today's date is {today}.\n\n") };
         let mut system_prompt = if is_api_model {
             format!("Today's date is {today}.\n\nYou are Zynkbot, a personal AI companion.
 
@@ -387,11 +385,15 @@ After you indicate a web search is needed, the user will be shown your suggested
 
 ")
         } else if self.on_device {
-            // On-device (2026-10-24): about 85 words. The companion voice in four sentences,
-            // the memories line and the web-search rule; the explanations around them went,
-            // and the "ask for missing details first" line (2026-10-20, written for GPT) is
-            // left out so a 4B model answers rather than questions back.
-            format!("{opening}You are Zynkbot, a warm, honest, direct companion. Never claim to be human or to replace the people in the user's life. Say so when you are unsure. Do not flatter; no cheering on, no therapy language. When someone shares grief or frustration, acknowledge it before solutions.\n\nStored memories below are the user's own history; treat them as facts about their life. When you list plans or things coming up, say when each was mentioned (the date in front of the memory). What the user tells you is saved for them automatically: never ask whether they want it remembered, and never say you have no record of what they just said. When a memory answers the question, state the fact plainly; do not announce that you remember.\n\nFor news, weather, prices or recent events, output: WEB_SEARCH_NEEDED: [query]. Never for the date or time, or for the user's own history.\n\n")
+            // On-device, rewritten 2026-11-09 (KI-106). The 2026-10-24 text had grown by patches:
+            // an opening rule to "answer the newest message" against the memories, a later line
+            // saying never to say there is no record, and a "USER'S QUESTION:" label. Sophro read
+            // a plain statement as a question and answered "I don't have that stored" (Pixel,
+            // 2026-11-09). Now one paragraph for the memories and one for a statement; the
+            // name line and "keep it short" follow below; the label is USER'S MESSAGE. The
+            // 4B model is still not asked for missing details first (2026-10-24) and gets no
+            // MEMORY marker. labs/reply_bench scores a change to this text against the model.
+            format!("{opening}You are Zynkbot, a warm, honest, direct companion. Never claim to be human or to replace the people in the user's life. Do not flatter; no therapy language. When someone shares grief or frustration, acknowledge it before solutions.\n\nThe memories below are facts from the user's own life, dated when they were said ('about' gives the day it happened; a date before today has already happened). Use them only when they bear on the message; when listing plans, give each one's date. If the user asks for something they do not hold, say you do not have it; never put another figure or date in its place.\n\nWhen the user tells you something, reply to it briefly, as a friend would. Take it as true and current even where a memory says otherwise. It is saved for them on its own: do not check it against the memories, do not ask whether to remember it, do not say whether you have it stored.\n\nFor news, weather, prices or recent events, output: WEB_SEARCH_NEEDED: [query]. Never for the date or time, or for the user's own history.\n\n")
         } else {
             // Slim prompt for local models: task-first framing so fact extraction (PART 1)
             // is understood as a primary output requirement, not an afterthought.
@@ -401,10 +403,17 @@ After you indicate a web search is needed, the user will be shown your suggested
         // If we know the user's name, tell the LLM so it can use it instead of "User"
         // in MEMORY_EXTRACT lines and in conversational replies. Same line in both modes.
         if let Some(name) = user_name {
-            system_prompt.push_str(&format!(
-                "The user's name is {name}. Use their name occasionally and naturally — not at the start of every reply. Do not address them by name as the first word of your response. Use it mid-sentence or when it adds warmth, the same way a friend would.{extract_note}\n\n",
-                extract_note = ""
-            ));
+            if self.on_device {
+                system_prompt.push_str(&format!("The user's name is {name}. Use it occasionally, never as the first word.\n\n"));
+            } else {
+                system_prompt.push_str(&format!(
+                    "The user's name is {name}. Use their name occasionally and naturally — not at the start of every reply. Do not address them by name as the first word of your response. Use it mid-sentence or when it adds warmth, the same way a friend would.{extract_note}\n\n",
+                    extract_note = ""
+                ));
+            }
+        }
+        if self.on_device {
+            system_prompt.push_str("Keep it short: a few sentences, unless asked for more.\n\n");
         }
 
         // Call 1 of the memory pipeline (2026-10-24, Matt's design): the reply says only
@@ -453,8 +462,10 @@ Do not write the fact in your reply; the line is only yes or no.
             // Obama turns. The engine's prompt cache now keeps only the instructions between
             // turns (the memories change with every question); measured on the test phones
             // before this stays.
+            // "USER'S MESSAGE", not "QUESTION" (2026-11-09, KI-106): the label named every
+            // message a question. local_models.rs splits on either label.
             format!(
-                "{}{}{}Today's date is {today}.\n\nUSER'S QUESTION: {}\n\nYOUR RESPONSE:",
+                "{}{}{}Today's date is {today}.\n\nUSER'S MESSAGE: {}\n\nYOUR RESPONSE:",
                 system_prompt, memory_context, history_context, user_input
             )
         };
@@ -702,8 +713,11 @@ mod on_device_prompt_tests {
         // for the "already happened" line (the funeral read as a plan). 210 → 225 on 2026-10-29 for
         // the "give the date in front of each memory" line when listing plans (Matt).
         // 225 → 270 on 2026-11-08 for the two memory lines of KI-106 (saved automatically, never
-        // ask; state a recalled fact plainly).
-        assert!(instructions.split_whitespace().count() < 270, "{} words", instructions.split_whitespace().count());
+        // ask; state a recalled fact plainly). 270 → 200 on 2026-11-09: the rewrite (KI-106) put
+        // the same rules in fewer words; a statement has its own paragraph. 200 → 215 the same day for
+        // "take it as true and current even where a memory says otherwise" (the address statement
+        // with an older address in the memories still came back as a lookup on the reply bench).
+        assert!(instructions.split_whitespace().count() < 215, "{} words", instructions.split_whitespace().count());
         assert!(p.contains("WEB_SEARCH_NEEDED"));
     }
     #[test]
@@ -742,11 +756,19 @@ mod on_device_prompt_tests {
         // plain statement and prefixed later replies with "I remember now"; the prompt had
         // never told it that saving happens on its own.
         let on = ConversationEngine::new().with_on_device(true).build_prompt("I live at 12 Oak St.", None, None, false, Some("Joe"));
-        assert!(on.contains("saved for them automatically"));
-        assert!(on.contains("never ask whether they want it remembered"));
-        assert!(on.contains("do not announce that you remember"));
+        // 2026-11-09: those lines did not take on the Pixel (the opening rule and the
+        // "USER'S QUESTION:" label still read a statement as a question); now a statement has
+        // its own paragraph and the message is labelled as a message.
+        assert!(on.contains("When the user tells you something, reply to it briefly"));
+        assert!(on.contains("saved for them on its own"));
+        assert!(on.contains("do not ask whether to remember it"));
+        assert!(on.contains("do not say whether you have it stored"));
+        assert!(on.contains("USER'S MESSAGE: I live at 12 Oak St.") && !on.contains("USER'S QUESTION"));
+        assert!(!on.contains("Answer the newest message"), "the opening rule about 'the question' is gone");
+        assert!(on.ends_with("YOUR RESPONSE:"));
         let cloud = ConversationEngine::new().build_prompt("I live at 12 Oak St.", None, None, true, Some("Joe"));
-        assert!(!cloud.contains("saved for them automatically"), "the cloud prompt has the MEMORY line instead");
+        assert!(!cloud.contains("saved for them on its own"), "the cloud prompt has the MEMORY line instead");
+        assert!(cloud.contains("USER'S QUESTION: I live at 12 Oak St."), "the cloud label is unchanged");
     }
     #[test]
     fn on_device_recalls_four_memories() {

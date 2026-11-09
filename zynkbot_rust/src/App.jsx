@@ -422,6 +422,17 @@ export default function App() {
     clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setMemoryUpdateNotice(''), 12000);
   };
+  // Choosing the on-device model says once per session that its memories take longer
+  // (Matt, 2026-11-09): the fact is written within a minute, its links a minute or two
+  // after; a tester took the wait for a failure.
+  const localNoticeShown = useRef(false);
+  const chooseModel = (id) => {
+    setModelType(id);
+    if (id.endsWith('.gguf') && id !== modelType && !localNoticeShown.current) {
+      localNoticeShown.current = true;
+      showNotice('On-device model: new memories and their links take a minute or two longer to appear than with a cloud model.');
+    }
+  };
   useEffect(() => {
     let unlisten; let timer;
     listen('memory-superseded', async (e) => {
@@ -2244,8 +2255,8 @@ export default function App() {
                 <div key={m.id} className={`model-row${selected ? ' selected' : ''}`} role="button" tabIndex={0}
                   style={dimmed ? { opacity: 0.5 } : undefined}
                   title={dimmed ? 'Not used while Child mode is on' : undefined}
-                  onClick={() => setModelType(m.id)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setModelType(m.id); }}>
+                  onClick={() => chooseModel(m.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') chooseModel(m.id); }}>
                   <span className="controls-menu-icon">{isLocal ? '📱' : '☁️'}</span>
                   <div className="controls-menu-text">
                     <b>{isLocal ? m.name.replace(/\.gguf$/i, '') : m.name}</b>
