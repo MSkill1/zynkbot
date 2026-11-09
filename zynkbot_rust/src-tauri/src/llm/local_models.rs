@@ -60,6 +60,12 @@ fn build_prompt_for_model(model_path: &str, messages: &[Message], arch: Option<&
         ("Llama 3", build_llama3_prompt(messages, false))
     } else if model_name.contains("dolphin") || model_name.contains("openhermes") || model_name.contains("tinyllama") {
         ("ChatML", build_chatml_prompt(messages, false))
+    } else if arch.starts_with("gemma4") || model_name.contains("gemma-4") || model_name.contains("gemma4") {
+        // Gemma 4 (2026-04) changed the markers: <|turn>role … <turn|>, a system turn of its
+        // own, and a thinking channel that is closed empty when thinking is off; without the
+        // closed channel the 12B file opened one itself at the start of every reply (bench,
+        // 2026-11-09).
+        ("Gemma 4", build_gemma4_prompt(messages))
     } else if model_name.contains("gemma") {
         ("Gemma", build_gemma_prompt(messages))
     } else if model_name.contains("lfm") || model_name.contains("granite") || model_name.contains("smollm") {
@@ -151,6 +157,70 @@ fn build_chatml_prompt(messages: &[Message], no_think: bool) -> String {
 /// go at the top of the first user turn. The engine's conversation prompt arrives as one
 /// user message with "USER'S QUESTION:" marking the question; both halves stay in that
 /// turn. BOS is added by the tokenizer.
+/// Gemma 4: `<|turn>system\n…<turn|>\n<|turn>user\n…<turn|>\n<|turn>model\n` and, with thinking
+/// off, an empty thought channel ahead of the answer, as the file's own chat template does.
+/// The tokenizer adds <bos>.
+fn build_gemma4_prompt(messages: &[Message]) -> String {
+    let mut prompt = String::new();
+    let mut system = String::new();
+    let mut turns: Vec<(&str, String)> = Vec::new();
+    if messages.len() == 1 && messages[0].role == "user" {
+        match split_engine_prompt(&messages[0].content) {
+            Some((system_part, question)) => { system = system_part.to_string(); turns.push(("user", question.to_string())); }
+            None => turns.push(("user", messages[0].content.trim().to_string())),
+        }
+    } else {
+        for msg in messages {
+            match msg.role.as_str() {
+                "system" => system = msg.content.clone(),
+                "user" => turns.push(("user", msg.content.clone())),
+                "assistant" => turns.push(("model", msg.content.clone())),
+                _ => {}
+            }
+        }
+    }
+    if !system.trim().is_empty() { prompt.push_str(&format!("<|turn>system\n{}<turn|>\n", system.trim())); }
+    for (role, content) in &turns { prompt.push_str(&format!("<|turn>{}\n{}<turn|>\n", role, content)); }
+    prompt.push_str("<|turn>model\n<|channel>thought\n<channel|>");
+    prompt
+}
+
+/// Gemma 4 sometimes thinks anyway, with the channel closed in the prompt (E4B, 2026-11-09):
+/// a block `<|channel>thought … <channel|>` before or after the answer, or thought text that
+/// ends in a bare `<channel|>` with the answer after it. Blocks are cut out; a bare closer
+/// ends the thought when an answer follows it, and is just dropped when nothing does.
+pub(crate) fn strip_thought_channel(text: &str) -> String {
+    const OPEN: &str = "<|channel>"; const CLOSE: &str = "<channel|>";
+    let mut t = text.to_string();
+    while let Some(a) = t.find(OPEN) {
+        let b = t[a..].find(CLOSE).map(|i| a + i + CLOSE.len()).unwrap_or(t.len());
+        t.replace_range(a..b, " ");
+    }
+    if let Some(c) = t.rfind(CLOSE) {
+        let after = t[c + CLOSE.len()..].trim();
+        t = if after.is_empty() { t[..c].to_string() } else { after.to_string() };
+    }
+    t.trim().to_string()
+}
+
+/// Streaming for a model that may think first: pieces are held until the thought channel
+/// closes, then the answer after it is sent and the rest streams; after HELD_CHARS without a
+/// closer the held text is sent as it is (a plain answer that is simply long). The caller
+/// sends what is still held when generation ends.
+const HELD_CHARS: usize = 400;
+fn stream_piece(s: &str, holding: &mut bool, held: &mut String, on_token: &mut Option<&mut dyn FnMut(&str)>) {
+    if !*holding { if let Some(cb) = on_token.as_mut() { cb(s); } return; }
+    held.push_str(s);
+    const CLOSE: &str = "<channel|>";
+    let release = if let Some(i) = held.rfind(CLOSE) { Some(held[i + CLOSE.len()..].to_string()) }
+        else if held.len() >= HELD_CHARS && !held.contains("<|channel>") { Some(std::mem::take(held)) }
+        else { None };
+    if let Some(text) = release {
+        *holding = false; held.clear();
+        if !text.is_empty() { if let Some(cb) = on_token.as_mut() { cb(&text); } }
+    }
+}
+
 fn build_gemma_prompt(messages: &[Message]) -> String {
     let mut prompt = String::new();
     if messages.len() == 1 && messages[0].role == "user" {
@@ -784,6 +854,12 @@ impl LocalModelSession {
         let mut output = String::new();
         let mut pending: Vec<u8> = Vec::new();
         let mut generated: Vec<LlamaToken> = Vec::new();
+        // Gemma 4 may think before it answers (see strip_thought_channel); the stream is held
+        // back until the thought closes, so the user never sees it, and let go after
+        // HELD_CHARS so a long plain answer still streams.
+        let gemma4 = arch.as_deref().map_or(false, |a| a.starts_with("gemma4")) || { let f = self.model_path.to_lowercase(); f.contains("gemma-4") || f.contains("gemma4") };
+        let mut holding = gemma4;
+        let mut held = String::new();
         let prompt_len = tokens.len();
         let mut token_count = 0;
 
@@ -802,12 +878,12 @@ impl LocalModelSession {
             generated.push(new_token_id);
             pending.extend_from_slice(&self.model.vocab().token_to_piece(new_token_id, false, None));
             match std::str::from_utf8(&pending) {
-                Ok(s) => { output.push_str(s); if let Some(cb) = on_token.as_mut() { cb(s); } pending.clear(); }
+                Ok(s) => { output.push_str(s); stream_piece(s, &mut holding, &mut held, &mut on_token); pending.clear(); }
                 Err(e) => {
                     let valid = e.valid_up_to();
                     if valid > 0 {
                         let s = std::str::from_utf8(&pending[..valid]).unwrap_or("");
-                        output.push_str(s); if let Some(cb) = on_token.as_mut() { cb(s); }
+                        output.push_str(s); stream_piece(s, &mut holding, &mut held, &mut on_token);
                         pending.drain(..valid);
                     }
                 }
@@ -824,7 +900,8 @@ impl LocalModelSession {
         }
 
         println!("[Rust Local Models] ✅ Generated {} tokens", token_count);
-        if !pending.is_empty() { let s = String::from_utf8_lossy(&pending).into_owned(); if let Some(cb) = on_token.as_mut() { cb(&s); } output.push_str(&s); }
+        if !pending.is_empty() { let s = String::from_utf8_lossy(&pending).into_owned(); stream_piece(&s, &mut holding, &mut held, &mut on_token); output.push_str(&s); }
+        if holding && !held.is_empty() { let s = strip_thought_channel(&held); if let Some(cb) = on_token.as_mut() { cb(&s); } }
         println!("[Rust Local Models] Output length: {} chars", output.len());
         println!(
             "[Rust Local Models] Output preview: {}...",
@@ -833,8 +910,10 @@ impl LocalModelSession {
 
         let mut held = tokens;
         held.extend(generated);
+        let content = strip_thought_channel(output.trim());
+        if content != output.trim() { println!("[Rust Local Models] Thought-channel text removed from the reply; raw: {:?}", output.trim().chars().take(400).collect::<String>()); }
         Ok((LLMResponse {
-            content: output.trim().to_string(),
+            content,
             model: self.model_path.clone(),
             usage: Some(Usage {
                 input_tokens: held.len() as u32,
@@ -900,6 +979,49 @@ pub fn query_local_model(model_path: &str, prompt: &str) -> Result<String, LLMEr
 #[cfg(test)]
 mod prompt_split_tests {
     use super::*;
+
+    #[test]
+    fn the_stream_holds_thought_text_back_and_sends_the_answer_after_the_channel_closes() {
+        let mut seen = String::new();
+        {
+            let mut cb = |s: &str| seen.push_str(s);
+            let mut on: Option<&mut dyn FnMut(&str)> = Some(&mut cb);
+            let (mut holding, mut held) = (true, String::new());
+            for piece in ["The user shares", " news.", "<channel|>", "That's neat", " about Dana."] { stream_piece(piece, &mut holding, &mut held, &mut on); }
+            assert!(!holding);
+        }
+        assert_eq!(seen, "That's neat about Dana.");
+        // A long plain answer is let go once it is clearly not a thought.
+        let mut seen2 = String::new();
+        {
+            let mut cb = |s: &str| seen2.push_str(s);
+            let mut on: Option<&mut dyn FnMut(&str)> = Some(&mut cb);
+            let (mut holding, mut held) = (true, String::new());
+            for _ in 0..50 { stream_piece("ten chars ", &mut holding, &mut held, &mut on); }
+            assert!(!holding);
+        }
+        assert_eq!(seen2.len(), 500);
+    }
+
+    #[test]
+    fn thought_channel_text_is_dropped_and_plain_replies_are_untouched() {
+        assert_eq!(strip_thought_channel("The user asks the price. I need to check.<channel|>The price is not in your memories."), "The price is not in your memories.");
+        assert_eq!(strip_thought_channel("<|channel>thought\n<channel|>Captain is Dana's parrot."), "Captain is Dana's parrot.");
+        assert_eq!(strip_thought_channel("Captain is Dana's parrot."), "Captain is Dana's parrot.");
+        assert_eq!(strip_thought_channel("WEB_SEARCH_NEEDED: weather tomorrow\n<|channel>thought\nThe user wants the weather.<channel|>"), "WEB_SEARCH_NEEDED: weather tomorrow");
+        assert_eq!(strip_thought_channel("WEB_SEARCH_NEEDED: weather tomorrow<channel|>"), "WEB_SEARCH_NEEDED: weather tomorrow");
+        assert_eq!(strip_thought_channel("Some thought<|channel>thought\nmore"), "Some thought");
+    }
+
+    #[test]
+    fn a_gemma_4_file_gets_turn_markers_a_system_turn_and_a_closed_thought_channel() {
+        let msgs = vec![Message { role: "user".into(), content: "You are Zynkbot.\n\nUSER'S MESSAGE: hi\n\nYOUR RESPONSE:".into() }];
+        let p = build_prompt_for_model("/m/gemma-4-12b-it-Q4_K_M.gguf", &msgs, Some("gemma4"));
+        assert!(p.starts_with("<|turn>system\nYou are Zynkbot.<turn|>\n<|turn>user\nhi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>"), "{p}");
+        // Gemma 3 keeps its own markers.
+        let p3 = build_prompt_for_model("/m/gemma-3-4b-it-Q4_K_M.gguf", &msgs, Some("gemma3"));
+        assert!(p3.starts_with("<start_of_turn>user"), "{p3}");
+    }
 
     #[test]
     fn a_ministral_file_gets_the_mistral_instruct_format_not_the_generic_one() {

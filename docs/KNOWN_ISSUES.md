@@ -135,7 +135,7 @@ This file tracks known bugs, edge cases, and rough edges that do not block relea
 
 ### KI-005 — Untested models may require prompt format tuning
 **Status:** Open / by design  
-**Description:** Zynkbot ships with verified optimizations for Qwen3, DeepSeek R1 Distill Llama 8B, and Llama 3.1 Lexi Uncensored V2. Other GGUF models should work but have not been tested. Models using non-standard prompt formats or tokenizer types may produce incomplete or malformed responses.  
+**Description:** Zynkbot's prompt formats are verified for the models it offers (Sophro and Qwen3/Qwen3.5, Gemma 4, Ministral 3 since 2026-11-09; Qwen3 8B, DeepSeek R1 Distill Llama 8B and Llama 3.1 Lexi before that). Other GGUF models should work but have not been tested. Models using non-standard prompt formats or tokenizer types may produce incomplete or malformed responses.  
 **Workaround:** Check `local_models.rs` → `build_prompt_for_model` to add a detection path for your model family.
 
 ---

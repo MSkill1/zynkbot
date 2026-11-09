@@ -37,40 +37,51 @@ Models will appear in the app's model selector after placing them in this direct
 
 The models below are alternatives. The setup wizard offers them on a computer, not on a phone.
 
-### 1. Qwen3 8B ⭐ **Best All-Around alternative**
+### 1. Gemma 4 12B (Google)
+- **Size:** 7.1GB
+- **File:** `gemma-4-12b-it-Q4_K_M.gguf` (Apache-2.0), checksum `0a270ec9fe6b…`
+- **Use Case:** The clear pick for a computer with about 10 GB of memory free: the closest a local model comes to the cloud models
+- **On the benches (2026-11-09, BENCHMARKS.md section 5):** 24 of 25 reply cases; 67 of 69 facts found, 2 invented, no junk, 45 of 49 relationships. Its one miss is an "I've noted that" on a statement.
+- **Download by hand:**
+  ```bash
+  cd ~/zynkbot/zynkbot_rust/src-tauri/models/user
+  wget https://huggingface.co/unsloth/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf -O gemma-4-12b-it-Q4_K_M.gguf
+  ```
+
+### 2. Gemma 4 E4B (Google)
 - **Size:** 5.0GB
-- **Speed:** Fast on modern CPUs; significantly faster with NVIDIA GPU + CUDA
-- **Use Case:** General conversation, memory-augmented chat, code, technical writing
-- **Strengths:** Tops HumanEval in the 7-8B class (2026); excellent instruction-following; multilingual; designed with explicit think/no-think modes that work reliably in Zynkbot's structured prompting format
-- **Download:**
+- **File:** `gemma-4-E4B-it-Q4_K_M.gguf` (Apache-2.0), checksum `85a896a04755…`
+- **Use Case:** Good replies at half the size; the pick for an 8 GB machine
+- **On the benches (2026-11-09, BENCHMARKS.md section 5):** 21 of 25; every statement and recall right; when a personal detail is not in the memories it asks for a web search rather than guessing. 65 of 69 facts, 2 invented, no junk, 41 of 49 relationships.
+- **Download by hand:**
   ```bash
   cd ~/zynkbot/zynkbot_rust/src-tauri/models/user
-  wget https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf -O Qwen3-8B-Q4_K_M.gguf
+  wget https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf -O gemma-4-E4B-it-Q4_K_M.gguf
   ```
 
-### 2. DeepSeek R1 Distill Llama 8B ⭐ **Reasoning Model — Analytical Tasks**
-- **Size:** 4.7GB
-- **Speed:** Moderate on CPU — generates more tokens due to chain-of-thought reasoning
-- **Use Case:** Logic, analysis, multi-step problems, math, anything where accuracy matters more than speed
-- **Strengths:** MIT license; distilled from DeepSeek R1, which matched GPT-4 on reasoning benchmarks; one of the most talked-about open-source models of 2025
-- **Note:** DeepSeek R1 Distill was trained to reason out loud (chain-of-thought). Zynkbot suppresses the thinking output to keep responses concise. This works well for direct questions but may produce less thorough answers than models designed with explicit think/no-think modes like Qwen3. Best for analytical and math-heavy tasks; Qwen3 is the better default for general conversation and memory accuracy.
-- **Download:**
+### 3. Qwen3.5 9B (Alibaba)
+- **Size:** 5.7GB
+- **File:** `Qwen3.5-9B-Q4_K_M.gguf` (Apache-2.0), checksum `03b74727a860…`
+- **Use Case:** The Chinese entry: strong recall, never invents a missing detail
+- **On the benches (2026-11-09, BENCHMARKS.md section 5):** 21 of 25; on three statements it talks about saving ("I'll remember that"), the Qwen habit Sophro shares. 64 of 69 facts, 3 invented, no junk, 35 of 49 relationships. Like every Qwen3 model it refuses Tiananmen and answers Taiwan and Xinjiang in Beijing's terms (section 3).
+- **Download by hand:**
   ```bash
   cd ~/zynkbot/zynkbot_rust/src-tauri/models/user
-  wget https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf -O DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf
+  wget https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf -O Qwen3.5-9B-Q4_K_M.gguf
   ```
 
-### 3. Llama 3.1 8B Lexi Uncensored V2 ⭐ **Creative / Unfiltered**
-- **Size:** 4.9GB
-- **Speed:** Fast on modern CPUs
-- **Use Case:** Creative writing, roleplay, gray-area topics, unfiltered responses
-- **Strengths:** No content filtering; widely regarded as the top uncensored 8B model in 2026
-- **Memory quality note:** Uncensored fine-tunes like Lexi prioritize response freedom over instruction-following precision. In testing, Lexi's memory extraction tended to produce broad summaries of known context rather than isolating the specific new fact from a message. Conversations still work well, but memory entries may be less precise than with Qwen3 or DeepSeek. If accurate long-term memory is a priority, Qwen3 is the better choice. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — KI-007.
-- **Download:**
+### 4. Ministral 3 8B Instruct (Mistral, France)
+- **Size:** 5.2GB
+- **File:** `Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` (Apache-2.0), checksum `33e7a72cf5e6…`
+- **Use Case:** The European entry: warm, natural conversation
+- **On the benches (2026-11-09, BENCHMARKS.md section 5):** 20 of 25; every statement and recall right, but on two of the four missing-detail cases it made up an answer (a price, a colour), and it stored a memory from 10 of the 26 messages that held none. Kept in the list so the difference can be seen; not the one to trust with a fact.
+- **Download by hand:**
   ```bash
   cd ~/zynkbot/zynkbot_rust/src-tauri/models/user
-  wget https://huggingface.co/bartowski/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF/resolve/main/Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf -O Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf
+  wget https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-GGUF/resolve/main/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf -O Ministral-3-8B-Instruct-2512-Q4_K_M.gguf
   ```
+
+The list changed on 2026-11-09. Until then it offered Qwen3 8B, DeepSeek R1 Distill Llama 8B and Llama 3.1 8B Lexi Uncensored V2; they still work if present, and their formats are still detected.
 
 ---
 
@@ -313,9 +324,9 @@ Add API keys via: **⚙️ System Controls → Current Model**
 ## Model Recommendations by Use Case
 
 ### General Chat & Assistance
-- DeepSeek R1 Distill 8B (reasoning, accuracy)
-- Llama 3.1 8B Lexi Uncensored (quality, unfiltered)
-- Qwen3 8B (balanced, instruction-following)
+- Gemma 4 12B ⭐ (closest to the cloud models; needs the RAM)
+- Gemma 4 E4B (the same family at half the size)
+- Qwen3.5 9B (strong recall)
 
 ### Code Generation
 - Qwen3 8B ⭐ (best coding model in 2026)
@@ -323,13 +334,13 @@ Add API keys via: **⚙️ System Controls → Current Model**
 - Llama 3.1 8B (general + code)
 
 ### Creative Writing
-- Llama 3.1 8B Lexi Uncensored ⭐ (unfiltered, vivid)
+- Ministral 3 8B ⭐ (warm, natural voice)
 - Nous Hermes 2 Yi 34B (long stories)
 - Neural Chat 7B (conversational)
 
 ### Reasoning & Analysis
-- DeepSeek R1 Distill 8B ⭐ (chain-of-thought, shows its work)
-- Qwen3 8B (strong logic)
+- Gemma 4 12B ⭐ (best local relationship detection on the memory bench)
+- Qwen3.5 9B (thinking model; Zynkbot turns the thinking off)
 - Qwen 2.5 32B (advanced, needs 16GB+ RAM)
 
 ### Low-Resource Devices
@@ -339,5 +350,5 @@ Add API keys via: **⚙️ System Controls → Current Model**
 
 ---
 
-**Last Updated:** 2026-08-23
+**Last Updated:** 2026-11-09
 **For Issues:** https://github.com/MSkill1/zynkbot/issues

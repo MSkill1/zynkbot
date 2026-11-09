@@ -23,9 +23,11 @@ zynkbot_rust/src-tauri/models/
 │   └── ggml-base.en.bin            # Whisper speech-to-text
 │
 └── user/                            # User-downloadable chat models
-    ├── DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf
-    ├── Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf
-    ├── Qwen3-8B-Q4_K_M.gguf
+    ├── Sophro-4B-memory-v1-Q4_0.gguf          # the Zynkbot model
+    ├── gemma-4-12b-it-Q4_K_M.gguf             # optional alternatives (2026-11-09 list)
+    ├── gemma-4-E4B-it-Q4_K_M.gguf
+    ├── Qwen3.5-9B-Q4_K_M.gguf
+    ├── Ministral-3-8B-Instruct-2512-Q4_K_M.gguf
     └── [user can add more .gguf files here]
 ```
 
@@ -54,16 +56,17 @@ xAI uses the OpenAI-compatible streaming implementation (`openai::send_message_s
 **Threads:** Set to available CPU parallelism at runtime (`std::thread::available_parallelism()`)  
 **GPU:** All layers offloaded via `with_n_gpu_layers(99)`; falls back to CPU automatically
 
-Prompt format is auto-detected from the model filename:
+Prompt format is auto-detected from the model filename, or from the file's `general.architecture` when the name says nothing:
 
 | Filename pattern | Format | Example models |
 |-----------------|--------|----------------|
-| `qwen` | ChatML | Qwen2.5, Qwen3 |
+| `qwen` | ChatML, thinking closed | Qwen2.5, Qwen3, Qwen3.5 |
+| `gemma-4` / `gemma4`, or architecture `gemma4` | Gemma 4 (`<|turn>` markers, thought channel closed) | Gemma 4 E4B, 12B |
 | `deepseek` + `llama` | Llama 3 | DeepSeek R1 Distill Llama 8B |
 | `deepseek` (other) | ChatML | DeepSeek R1 Distill Qwen |
 | `llama-3` / `llama3` | Llama 3 | Llama 3.1/3.2/3.3, Lexi Uncensored |
 | `dolphin`, `openhermes`, `tinyllama` | ChatML | Dolphin, OpenHermes, TinyLlama |
-| `mistral` + `instruct` | Mistral Instruct | Mistral 7B Instruct |
+| `mistral` + `instruct`, `ministral`, or architecture `mistral3` | Mistral Instruct | Mistral 7B Instruct, Ministral 3 8B |
 | `phi-3` / `phi-4` / `phi3` / `phi4` | Phi-3/4 | Phi-3 Mini, Phi-4 |
 | `phi-2` / `phi2` | Phi-2 | Phi-2 |
 | (anything else) | Simple (generic fallback) | Unknown/community models |

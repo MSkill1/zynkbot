@@ -13,9 +13,12 @@ const USER_MODELS = [
   // The Zynkbot model (2026-10-27): the model the app is built around, phone-sized; offered
   // on every platform, the only one offered on a phone.
   { id: ZB_MODEL_ID,      name: 'Sophro 4B, the Zynkbot model',      desc: 'Zynkbot\'s own model, Qwen3 4B tuned for memory. Phone-sized, fast, no key needed', size: '2.4GB' },
-  { id: 'qwen3-8b',       name: 'Qwen3 8B',                        desc: 'Larger all-around model for a computer with the RAM', size: '5.0GB' },
-  { id: 'deepseek-r1-8b', name: 'DeepSeek R1 Distill Llama 8B',    desc: 'Reasoning and analytical tasks',               size: '4.7GB' },
-  { id: 'llama-lexi-8b',  name: 'Llama 3.1 8B Lexi Uncensored',    desc: 'Creative, unfiltered responses',               size: '4.9GB' },
+  // The alternatives, measured on 2026-11-09 (docs/BENCHMARKS.md section 5): a line each on
+  // what the bench showed, so the choice is informed rather than a list of names.
+  { id: 'gemma4-12b',    name: 'Gemma 4 12B (Google)',            desc: 'The clear pick if you have the RAM: closest to the cloud models on replies and on linking memories. Needs about 10 GB free', size: '7.1GB' },
+  { id: 'gemma4-e4b',    name: 'Gemma 4 E4B (Google)',            desc: 'Good replies at half the size; when a detail is not in your memories it offers a web search rather than guessing', size: '5.0GB' },
+  { id: 'qwen35-9b',     name: 'Qwen3.5 9B (Alibaba)',            desc: 'Strong recall, never invents a missing detail; sometimes talks about saving things, and answers questions about China in Beijing\'s terms', size: '5.7GB' },
+  { id: 'ministral3-8b', name: 'Ministral 3 8B (Mistral, France)', desc: 'Warm, natural conversation; in testing it sometimes made up a detail it did not have, and stored facts from text that held none', size: '5.2GB' },
 ];
 
 function formatBytes(bytes) {

@@ -126,8 +126,8 @@ The API Keys page (Settings → API Keys) lists one fold per provider, closed un
 
 **Recommended models:**
 - **Zynkbot model: Sophro-4B-memory-v1, Q4_0** (2.4GB) - Qwen3-4B-Instruct-2507 fine-tuned on memory extraction; phone-sized and fast; the Q4_0 file (a Q4_K_M of the same model from elsewhere scored lower and read prompts 40% slower on a Pixel)
-- **Qwen3 8B** (5.0GB) - Larger all-around model for a desktop with the RAM
-- **DeepSeek R1 Distill Llama 8B** (4.7GB) and **Llama 3.1 8B Lexi Uncensored** (4.9GB) - alternatives offered by the installers
+- **Gemma 4 12B** (7.1GB) - the clear pick for a computer with the RAM; closest to the cloud models on the benches
+- **Gemma 4 E4B** (5.0GB), **Qwen3.5 9B** (5.7GB) and **Ministral 3 8B** (5.2GB) - alternatives offered by the wizard and the installers, each with its measured strengths and weaknesses stated (BENCHMARKS.md section 5)
 
 **Download:**
 - The setup wizard offers the Zynkbot model at first run; `install.sh` and `install.bat` offer it and the three larger models during a source install

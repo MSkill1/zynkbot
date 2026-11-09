@@ -84,9 +84,11 @@ Rust 1.77.2+ (Edition 2021)
 | all-MiniLM-L6-v2 | Embeddings | 80MB | Candle |
 | dslim/bert-base-NER | Entity extraction | 260MB | Candle |
 | toxic-bert | Safety filtering | 260MB | Candle |
-| DeepSeek-R1-Distill-Llama-8B-Q4 | Local chat LLM (optional) | 4.9GB | llama.cpp |
-| Qwen3-8B-Q4                      | Local chat LLM (optional) | 4.7GB | llama.cpp |
-| Llama-3.1-8B-Lexi-Uncensored-Q4  | Local chat LLM (optional) | 4.7GB | llama.cpp |
+| Sophro-4B-memory-v1-Q4_0          | The Zynkbot model (offered at first run) | 2.4GB | llama.cpp |
+| gemma-4-12b-it-Q4_K_M             | Local chat LLM (optional) | 7.1GB | llama.cpp |
+| gemma-4-E4B-it-Q4_K_M             | Local chat LLM (optional) | 5.0GB | llama.cpp |
+| Qwen3.5-9B-Q4_K_M                 | Local chat LLM (optional) | 5.7GB | llama.cpp |
+| Ministral-3-8B-Instruct-2512-Q4_K_M | Local chat LLM (optional) | 5.2GB | llama.cpp |
 
 ---
 
@@ -758,9 +760,11 @@ zynkbot/                       # Repository root
 │   │   │   │   ├── toxic-bert/         # 260MB safety classifier
 │   │   │   │   └── bert-base-NER/      # 260MB entity extraction
 │   │   │   └── user/              # Optional local LLMs (.gguf)
-│   │   │       ├── DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf   # 4.9GB (optional)
-│   │   │       ├── Qwen3-8B-Q4_K_M.gguf                       # 4.7GB (optional)
-│   │   │       └── Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf # 4.7GB (optional)
+│   │   │       ├── Sophro-4B-memory-v1-Q4_0.gguf              # 2.4GB, the Zynkbot model
+│   │   │       ├── gemma-4-12b-it-Q4_K_M.gguf                 # 7.1GB (optional)
+│   │   │       ├── gemma-4-E4B-it-Q4_K_M.gguf                 # 5.0GB (optional)
+│   │   │       ├── Qwen3.5-9B-Q4_K_M.gguf                     # 5.7GB (optional)
+│   │   │       └── Ministral-3-8B-Instruct-2512-Q4_K_M.gguf   # 5.2GB (optional)
 │   │   ├── Cargo.toml
 │   │   ├── tauri.conf.json
 │   │   └── .env

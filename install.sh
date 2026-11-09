@@ -350,14 +350,15 @@ echo "Would you like to download local LLM models for offline inference?"
 echo "These are not required — you can use API models (OpenAI, Anthropic, xAI) instead."
 echo ""
 echo "Available models:"
-echo "  1. Zynkbot model: Qwen3 4B Instruct 2507 (2.4GB) - The model Zynkbot is built around; fast, checksum verified"
-echo "  2. Qwen3 8B (5.0GB)                     - Larger all-around model for a desktop with the RAM"
-echo "  3. DeepSeek R1 Distill Llama 8B (4.7GB) - Reasoning model; analytical tasks"
-echo "  4. Llama 3.1 8B Lexi Uncensored (4.9GB) - Creative, unfiltered responses"
+echo "  1. Zynkbot model: Sophro 4B (2.4GB)        - The model Zynkbot is built around; fast, checksum verified"
+echo "  2. Gemma 4 12B (7.1GB)      - The clear pick if you have the RAM (about 10 GB free); closest to the cloud models"
+echo "  3. Gemma 4 E4B (5.0GB)      - Good replies at half the size; offers a web search rather than guessing a missing detail"
+echo "  4. Qwen3.5 9B (5.7GB)       - Strong recall, never invents a detail; talks about saving at times; Beijing's terms on China"
+echo "  5. Ministral 3 8B (5.2GB)   - Warm conversation; in testing it sometimes made up a detail and stored facts from text that held none"
 echo ""
 echo "The app also offers the Zynkbot model at its first start, so this step can be skipped."
 echo ""
-echo "Enter model numbers to download (space-separated, e.g. '1 2 3'), or press Enter to skip."
+echo "Enter model numbers to download (space-separated, e.g. '1 2'), or press Enter to skip."
 echo ""
 read -p "Model(s) to download: " model_choices
 
@@ -369,13 +370,13 @@ if [ -n "$model_choices" ]; then
             1)
                 echo ""
                 echo "📥 Downloading the Zynkbot model (2.4GB)..."
-                if wget -c https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_0.gguf -O Qwen3-4B-Instruct-2507-Q4_0.gguf; then
+                if wget -c https://huggingface.co/GenerallyTso/Sophro-4B-memory-v1/resolve/main/Sophro-4B-memory-v1-Q4_0.gguf -O Sophro-4B-memory-v1-Q4_0.gguf; then
                     echo "   Checking the file..."
-                    if echo "e0ba675d86ab277c61701c6793659b2ae801d95e3be791464c321e6fbf613be2  Qwen3-4B-Instruct-2507-Q4_0.gguf" | sha256sum -c --quiet; then
-                        echo "✅ Zynkbot model downloaded and verified"
+                    if echo "da0a9b08e9be4f2a9d806b85f70ce90c824e8e0fb8fe53c79958a84e0c5f5b1b  Sophro-4B-memory-v1-Q4_0.gguf" | sha256sum -c --quiet; then
+                        echo "✅ the Zynkbot model downloaded and verified"
                     else
                         echo "❌ The downloaded file did not match its checksum; removing it. Run the script again."
-                        rm -f Qwen3-4B-Instruct-2507-Q4_0.gguf
+                        rm -f Sophro-4B-memory-v1-Q4_0.gguf
                     fi
                 else
                     echo "❌ Failed to download the Zynkbot model (check internet connection)"
@@ -383,29 +384,62 @@ if [ -n "$model_choices" ]; then
                 ;;
             2)
                 echo ""
-                echo "📥 Downloading Qwen3 8B (5.0GB)..."
-                if wget -c https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf -O Qwen3-8B-Q4_K_M.gguf; then
-                    echo "✅ Qwen3 8B downloaded"
+                echo "📥 Downloading Gemma 4 12B (7.1GB)..."
+                if wget -c https://huggingface.co/unsloth/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf -O gemma-4-12b-it-Q4_K_M.gguf; then
+                    echo "   Checking the file..."
+                    if echo "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42  gemma-4-12b-it-Q4_K_M.gguf" | sha256sum -c --quiet; then
+                        echo "✅ Gemma 4 12B downloaded and verified"
+                    else
+                        echo "❌ The downloaded file did not match its checksum; removing it. Run the script again."
+                        rm -f gemma-4-12b-it-Q4_K_M.gguf
+                    fi
                 else
-                    echo "❌ Failed to download Qwen3 8B (check internet connection)"
+                    echo "❌ Failed to download Gemma 4 12B (check internet connection)"
                 fi
                 ;;
             3)
                 echo ""
-                echo "📥 Downloading DeepSeek R1 Distill Llama 8B (4.7GB)..."
-                if wget -c https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf -O DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf; then
-                    echo "✅ DeepSeek R1 Distill Llama 8B downloaded"
+                echo "📥 Downloading Gemma 4 E4B (5.0GB)..."
+                if wget -c https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf -O gemma-4-E4B-it-Q4_K_M.gguf; then
+                    echo "   Checking the file..."
+                    if echo "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87  gemma-4-E4B-it-Q4_K_M.gguf" | sha256sum -c --quiet; then
+                        echo "✅ Gemma 4 E4B downloaded and verified"
+                    else
+                        echo "❌ The downloaded file did not match its checksum; removing it. Run the script again."
+                        rm -f gemma-4-E4B-it-Q4_K_M.gguf
+                    fi
                 else
-                    echo "❌ Failed to download DeepSeek R1 Distill Llama 8B (check internet connection)"
+                    echo "❌ Failed to download Gemma 4 E4B (check internet connection)"
                 fi
                 ;;
             4)
                 echo ""
-                echo "📥 Downloading Llama 3.1 8B Lexi Uncensored (4.9GB)..."
-                if wget -c https://huggingface.co/bartowski/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF/resolve/main/Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf -O Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf; then
-                    echo "✅ Llama 3.1 8B Lexi Uncensored downloaded"
+                echo "📥 Downloading Qwen3.5 9B (5.7GB)..."
+                if wget -c https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf -O Qwen3.5-9B-Q4_K_M.gguf; then
+                    echo "   Checking the file..."
+                    if echo "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8  Qwen3.5-9B-Q4_K_M.gguf" | sha256sum -c --quiet; then
+                        echo "✅ Qwen3.5 9B downloaded and verified"
+                    else
+                        echo "❌ The downloaded file did not match its checksum; removing it. Run the script again."
+                        rm -f Qwen3.5-9B-Q4_K_M.gguf
+                    fi
                 else
-                    echo "❌ Failed to download Llama 3.1 8B Lexi Uncensored (check internet connection)"
+                    echo "❌ Failed to download Qwen3.5 9B (check internet connection)"
+                fi
+                ;;
+            5)
+                echo ""
+                echo "📥 Downloading Ministral 3 8B (5.2GB)..."
+                if wget -c https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-GGUF/resolve/main/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf -O Ministral-3-8B-Instruct-2512-Q4_K_M.gguf; then
+                    echo "   Checking the file..."
+                    if echo "33e7a72cf5e6e2cfc2f2847075acc013d68bba023e35310cef86b5cf8fdca761  Ministral-3-8B-Instruct-2512-Q4_K_M.gguf" | sha256sum -c --quiet; then
+                        echo "✅ Ministral 3 8B downloaded and verified"
+                    else
+                        echo "❌ The downloaded file did not match its checksum; removing it. Run the script again."
+                        rm -f Ministral-3-8B-Instruct-2512-Q4_K_M.gguf
+                    fi
+                else
+                    echo "❌ Failed to download Ministral 3 8B (check internet connection)"
                 fi
                 ;;
             *)

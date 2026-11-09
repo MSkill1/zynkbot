@@ -258,20 +258,27 @@ pub async fn download_user_model(app: AppHandle, model_id: String) -> Result<(),
         // chosen 2026-10-23: a Q4_K_M from elsewhere scored far lower and read prompts 40%
         // slower). 2.4 GB; checksum of the published file.
         "zb-qwen3-4b" => (ZB_MODEL_URL, ZB_MODEL_FILE, Some(ZB_MODEL_SHA256)),
-        "qwen3-8b" => (
-            "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
-            "Qwen3-8B-Q4_K_M.gguf",
-            None,
+        // The desktop's alternatives, chosen on the reply and memory benches on 2026-11-09
+        // (docs/BENCHMARKS.md section 5). Checksums are Hugging Face's for each file.
+        "gemma4-e4b" => (
+            "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
+            "gemma-4-E4B-it-Q4_K_M.gguf",
+            Some("85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87"),
         ),
-        "deepseek-r1-8b" => (
-            "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf",
-            "DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf",
-            None,
+        "gemma4-12b" => (
+            "https://huggingface.co/unsloth/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf",
+            "gemma-4-12b-it-Q4_K_M.gguf",
+            Some("0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42"),
         ),
-        "llama-lexi-8b" => (
-            "https://huggingface.co/bartowski/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF/resolve/main/Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf",
-            "Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf",
-            None,
+        "qwen35-9b" => (
+            "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
+            "Qwen3.5-9B-Q4_K_M.gguf",
+            Some("03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"),
+        ),
+        "ministral3-8b" => (
+            "https://huggingface.co/mistralai/Ministral-3-8B-Instruct-2512-GGUF/resolve/main/Ministral-3-8B-Instruct-2512-Q4_K_M.gguf",
+            "Ministral-3-8B-Instruct-2512-Q4_K_M.gguf",
+            Some("33e7a72cf5e6e2cfc2f2847075acc013d68bba023e35310cef86b5cf8fdca761"),
         ),
         _ => return Err(format!("Unknown model id: {}", model_id)),
     };

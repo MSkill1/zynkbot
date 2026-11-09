@@ -166,17 +166,17 @@ The database schema is applied automatically via SQLx migrations on startup. If 
 Windows:
 ```batch
 cd zynkbot_rust\src-tauri\models\user
-wget https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf
-wget https://huggingface.co/bartowski/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF/resolve/main/Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf
-wget https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
+wget https://huggingface.co/GenerallyTso/Sophro-4B-memory-v1/resolve/main/Sophro-4B-memory-v1-Q4_0.gguf
+wget https://huggingface.co/unsloth/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf
+wget https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf
 ```
 
 Linux:
 ```bash
 cd zynkbot_rust/src-tauri/models/user
-curl -L -O https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf
-curl -L -O https://huggingface.co/bartowski/Llama-3.1-8B-Lexi-Uncensored-V2-GGUF/resolve/main/Llama-3.1-8B-Lexi-Uncensored-V2-Q4_K_M.gguf
-curl -L -O https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf
+curl -L -O https://huggingface.co/GenerallyTso/Sophro-4B-memory-v1/resolve/main/Sophro-4B-memory-v1-Q4_0.gguf
+curl -L -O https://huggingface.co/unsloth/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf
+curl -L -O https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf
 ```
 
 ---

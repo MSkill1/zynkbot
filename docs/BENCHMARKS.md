@@ -280,9 +280,9 @@ hold, 3 that need a web search, 2 that must not):
 
 | Model | Size | Pass (of 25) | Statements | Recall | Missing detail | Web | No search | s/reply |
 |---|---|---|---|---|---|---|---|---|
-| Gemma 4 12B | 7.1 GB | **24** | 8/9 | 7/7 | 4/4 | 3/3 | 2/2 | 0.7 |
-| Qwen3 8B (current list) | 5.0 GB | 22 | 9/9 | 7/7 | 2/4 | 3/3 | 1/2 | 0.2 |
-| Gemma 4 E4B | 5.0 GB | 21 | 9/9 | 7/7 | 1/4 | 3/3 | 1/2 | 0.5 |
+| Gemma 4 12B | 7.1 GB | **23** | 7/9 | 7/7 | 4/4 | 3/3 | 2/2 | 0.3 |
+| Qwen3 8B (the old list) | 5.0 GB | 22 | 9/9 | 7/7 | 2/4 | 3/3 | 1/2 | 0.2 |
+| Gemma 4 E4B | 5.0 GB | 22 | 8/9 | 7/7 | 3/4 | 3/3 | 1/2 | 0.5 |
 | Qwen3.5 9B | 5.7 GB | 21 | 6/9 | 7/7 | 4/4 | 3/3 | 1/2 | 0.4 |
 | Sophro 4B (the Zynkbot model) | 2.4 GB | 21 | 6/9 | 7/7 | 3/4 | 3/3 | 2/2 | 0.1 |
 | Ministral 3 8B | 5.2 GB | 20 | 9/9 | 7/7 | 0/4 | 3/3 | 1/2 | 0.3 |
@@ -297,9 +297,13 @@ near-misses in wording; an invented personal fact is the one failure this produc
 have. Gemma 4 E4B asks for a web search for a personal detail it does not hold, which the
 app turns into a search prompt rather than a wrong answer. The two Qwen models, Sophro
 included, talk about saving and remembering on three statements ("I'll remember that",
-"I've noted that"), the habit the on-device prompt was rewritten against (KI-106). Gemma 4
-12B's one miss is the same "I've noted that" on one statement. Every local model but Sophro
-asked for a web search when asked the capital of Australia.
+"I've noted that"), the habit the on-device prompt was rewritten against (KI-106); the two
+Gemma 4 models say "I've noted that" on one or two statements each. Every local model but
+Sophro asked for a web search when asked the capital of Australia.
+
+The Gemma 4 rows are from the second run, with the engine speaking Gemma 4's own format
+(below). The first run, in Gemma 3's markers, scored 24 and 21; the difference is within
+the two or three cases that move between runs.
 
 **Memory bench** (extraction call 2 and relationship call 3; 49 relationship cases since
 2026-11-04, so the 44-case numbers in section 1 are not comparable):
@@ -319,13 +323,17 @@ before the five cases added since). Gemma 4 12B is the only local model near the
 relationships. Ministral makes a memory out of ten of the 26 messages that hold none
 (questions, pasted text, television speech).
 
-**Two things to fix before either Gemma 4 model ships in the list.** (1) Gemma 4 12B
-starts every reply with its thinking-channel tokens (`<|channel>thought <channel|>`; the E4B
-file did not); the Gemma prompt builder has to send the template's no-thinking form or
-strip them. (2) The Ministral
-file name does not contain "mistral", so until 2026-11-09 it got the generic prompt format;
-the builder now maps "ministral" and the `mistral3` architecture to the Mistral Instruct
-format (the result above was run with that fix).
+**Two engine fixes came out of the run.** (1) Gemma 4 changed its chat markers (`<|turn>`
+in place of `<start_of_turn>`, a system turn of its own, and a thinking channel). In Gemma
+3's markers the 12B file opened the channel itself at the start of every reply and the
+tokens showed. The engine now sends Gemma 4's format with the channel closed, as the file's
+template does with thinking off. The E4B file still thinks in 75 of 75 replies even so,
+closing the channel itself ("…I need to acknowledge this briefly.<channel|>That's neat about
+Dana getting a parrot"), so the engine cuts thought text out of the finished reply and holds
+the token stream back until the channel closes; a Gemma 4 reply therefore appears a little
+later than it is generated. (2) The Ministral file name does not contain "mistral", so it
+got the generic prompt format; the builder now maps "ministral" and the `mistral3`
+architecture to the Mistral Instruct format (its result above was run with that fix).
 
 **Candour.** Qwen3-based models (Sophro, Qwen3 8B, Qwen3.5 9B) refuse Tiananmen and give
 Beijing's wording on Taiwan and Xinjiang (section 3); Gemma 4 and Ministral do not carry

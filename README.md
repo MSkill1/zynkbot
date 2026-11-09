@@ -343,7 +343,7 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 
 - Place `.gguf` files in `zynkbot_rust/src-tauri/models/user/`
 - The Zynkbot model: Sophro-4B-memory-v1, a Q4_0 fine-tune of Qwen3-4B-Instruct-2507 for memory extraction (`Sophro-4B-memory-v1-Q4_0.gguf`, 2.4 GB, from https://huggingface.co/GenerallyTso/Sophro-4B-memory-v1). The setup wizard offers to download it at first run. On a phone it is the only model offered
-- Alternatives: Qwen3 8B, DeepSeek R1 Distill Llama 8B, Llama 3.1 8B Lexi Uncensored V2 — optional download included in installation script
+- Alternatives on a computer: Gemma 4 12B, Gemma 4 E4B, Qwen3.5 9B, Ministral 3 8B — offered by the setup wizard and the installation scripts, each with a line on what it does well and where it fails (measured in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), section 5)
 - No API key needed — runs completely offline
 - CPU works; NVIDIA GPU with CUDA gives 10–100x faster responses (automatically configured by the installer if you have the CUDA toolkit — see [GPU Acceleration](#gpu-acceleration) below)
 

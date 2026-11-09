@@ -138,10 +138,12 @@ The installer will:
 
 6. **Optional: Download local LLM models** (~5–15 min)
    - You'll be prompted to choose:
-     - `1` — Qwen3 8B (5.0GB) — Best all-around; recommended for new users
-     - `2` — DeepSeek R1 Distill Llama 8B (4.7GB) — Reasoning model; analytical tasks
-     - `3` — Llama 3.1 8B Lexi Uncensored (4.9GB) — Creative, unfiltered responses
-   - Enter numbers space-separated: `1 2 3` or just `1`
+     - `1` — Sophro 4B, the Zynkbot model (2.4GB) — the model Zynkbot is built around
+     - `2` — Gemma 4 12B (7.1GB) — the clear pick if you have the RAM
+     - `3` — Gemma 4 E4B (5.0GB) — good replies at half the size
+     - `4` — Qwen3.5 9B (5.7GB) — strong recall; Beijing's terms on China
+     - `5` — Ministral 3 8B (5.2GB) — warm conversation; sometimes makes up a detail
+   - Enter numbers space-separated: `1 2` or just `1`
    - Press Enter to skip
 
 7. **GPU / CUDA detection** (automatic)
