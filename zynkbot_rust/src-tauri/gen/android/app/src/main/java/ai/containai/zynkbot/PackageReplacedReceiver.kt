@@ -37,5 +37,10 @@ class PackageReplacedReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "PackageReplaced"
         private const val NOTIF_ID = 7602
+
+        /** The assistant service is bound again: the notice has nothing left to say. */
+        fun clearNotice(ctx: Context) {
+            try { (ctx.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(NOTIF_ID) } catch (_: Exception) {}
+        }
     }
 }

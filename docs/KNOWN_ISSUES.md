@@ -827,7 +827,7 @@ error: could not compile `app` (bin "import_persona_collection") due to 1 previo
 ---
 
 ### KI-030 — Sync and cloud backup do not carry the new memory fields (sync fixed) (fixed)
-**Status:** Sync fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b12): the sender reads every column at send time, so tags, provenance and new columns travel. The cloud backup still carries its own field list.
+**Status:** Sync fixed on `sync-rebuild` 2026-10-01 (`e1bc0ec`, b12): the sender reads every column at send time, so tags, provenance and new columns travel. The cloud backup still carries its own field list (title, content, source, session, namespace, flags, entities, event type, original text, created_at, embedding); since 2026-11-09 it also carries the relationship links, each end named by the hash of its memory's text, put back on restore between the memories that are there and sent on to the peers. Still not in the backup: tags, sentiment, event_date, the enrich-only entities rows.
 **Affected:** Multi-device users; anyone restoring a backup  
 **Description:** Migration 0011 added `tags`, `sentiment`, `event_date` use, and the `memory_entities` table. ZynkSync's memory payload and the R2 backup export were written before them and do not include tags or entities, so a memory arriving on a second device or restored from backup loses them.  
 **Fix target:** extend `SyncMemory` and the backup export/import to carry the new columns and the entities rows; part of the outbox refactor.

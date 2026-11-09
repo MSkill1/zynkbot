@@ -404,6 +404,38 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
         })
     }).collect();
 
+    // Relationship links (Matt, 2026-11-09). The backup carried memories alone; after the
+    // fresh installs of 2 November every device descended from one backup file, which is
+    // how every link made before then was lost. Each end is named by the hash of its
+    // memory's text, the key the restore matches memories by (ids differ between devices).
+    let link_rows: Vec<(String, String, String, f64, Option<String>, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT s.content, t.content, l.relation_type, l.confidence, l.notes, l.created_by,
+                CAST(l.created_at AS TEXT), l.sync_id
+         FROM memory_links l
+         JOIN memories s ON s.id = l.source_memory_id
+         JOIN memories t ON t.id = l.target_memory_id
+         WHERE s.user_id = ? AND t.user_id = ? AND s.namespace != '_zynkbot' AND t.namespace != '_zynkbot'
+         ORDER BY l.id"
+    )
+    .bind(&user_id)
+    .bind(&user_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| format!("Link query failed: {}", e))?;
+    let link_count = link_rows.len();
+    let links_json: Vec<serde_json::Value> = link_rows.into_iter().map(|r| {
+        serde_json::json!({
+            "source_hash": sha256_hex(r.0.as_bytes()),
+            "target_hash": sha256_hex(r.1.as_bytes()),
+            "relation_type": r.2,
+            "confidence": r.3,
+            "notes": r.4,
+            "created_by": r.5,
+            "created_at": r.6,
+            "sync_id": r.7,
+        })
+    }).collect();
+
     pool.close().await;
 
     // The API keys, model choices and search settings this device holds (Matt,
@@ -423,6 +455,7 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     let bundle = serde_json::json!({
         "version": 2,
         "memories": memories_json,
+        "links": links_json,
         "keys": keys_json,
         "conversations": {
             "sessions": sessions_json,
@@ -435,14 +468,15 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     let encrypted = encrypt_bytes(&key, &payload)?;
 
     r2_put(&cfg, "backup.enc", encrypted).await?;
-    println!("[Backup] Backed up {} memories, {} sessions, {} messages, {} keys for user {}",
-        count, session_count, message_count, key_count, user_id);
+    println!("[Backup] Backed up {} memories, {} links, {} sessions, {} messages, {} keys for user {}",
+        count, link_count, session_count, message_count, key_count, user_id);
     Ok(serde_json::json!({
         "success": true,
         "count": count,
+        "link_count": link_count,
         "session_count": session_count,
         "message_count": message_count,
-        "message": format!("Backed up {} memories, {} conversations ({} messages)", count, session_count, message_count)
+        "message": format!("Backed up {} memories, {} links, {} conversations ({} messages)", count, link_count, session_count, message_count)
     }))
 }
 
@@ -457,13 +491,15 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         .map_err(|e| format!("Failed to parse backup data: {}", e))?;
 
     // v1 payload was a raw array of memories; v2 wraps memories + conversations.
-    let (memories, sessions, messages): (Vec<serde_json::Value>, Vec<serde_json::Value>, Vec<serde_json::Value>) = match &parsed {
-        serde_json::Value::Array(arr) => (arr.clone(), Vec::new(), Vec::new()),
+    // Backups before 2026-11-09 have no "links".
+    let (memories, links, sessions, messages): (Vec<serde_json::Value>, Vec<serde_json::Value>, Vec<serde_json::Value>, Vec<serde_json::Value>) = match &parsed {
+        serde_json::Value::Array(arr) => (arr.clone(), Vec::new(), Vec::new(), Vec::new()),
         serde_json::Value::Object(_) => {
             let memories = parsed.get("memories").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let links = parsed.get("links").and_then(|v| v.as_array()).cloned().unwrap_or_default();
             let sessions = parsed.get("conversations").and_then(|c| c.get("sessions")).and_then(|v| v.as_array()).cloned().unwrap_or_default();
             let messages = parsed.get("conversations").and_then(|c| c.get("messages")).and_then(|v| v.as_array()).cloned().unwrap_or_default();
-            (memories, sessions, messages)
+            (memories, links, sessions, messages)
         }
         _ => return Err("Unexpected backup payload shape".to_string()),
     };
@@ -472,6 +508,7 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         .map_err(|e| format!("DB connect failed: {}", e))?;
 
     let RestoredMemories { inserted, skipped, deleted_since } = restore_memories_into(&pool, &user_id, &memories).await;
+    let links_back = restore_links_into(&pool, &user_id, &links).await;
     let mut sessions_inserted = 0usize;
     let mut sessions_skipped = 0usize;
     let mut messages_inserted = 0usize;
@@ -631,8 +668,8 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
     }
 
     println!(
-        "[Backup] Restored {} memories ({} skipped, {} deleted since the backup), {} sessions ({} skipped), {} messages ({} skipped) for user {}",
-        inserted, skipped, deleted_since, sessions_inserted, sessions_skipped, messages_inserted, messages_skipped, user_id
+        "[Backup] Restored {} memories ({} skipped, {} deleted since the backup), {} links ({} already here, {} to memories not here), {} sessions ({} skipped), {} messages ({} skipped) for user {}",
+        inserted, skipped, deleted_since, links_back.inserted, links_back.skipped, links_back.unmatched, sessions_inserted, sessions_skipped, messages_inserted, messages_skipped, user_id
     );
     let deleted_note = if deleted_since > 0 {
         format!(", {} deleted since the backup stayed deleted", deleted_since)
@@ -642,14 +679,17 @@ pub async fn restore_memories_from_r2(user_id: String) -> Result<serde_json::Val
         "inserted": inserted,
         "skipped": skipped,
         "deleted_since_backup": deleted_since,
+        "links_inserted": links_back.inserted,
         "sessions_inserted": sessions_inserted,
         "sessions_skipped": sessions_skipped,
         "messages_inserted": messages_inserted,
         "messages_skipped": messages_skipped,
         "keys_restored": keys_restored,
         "message": format!(
-            "Restored {} memories ({} already here{}), {} conversations ({} messages){}",
-            inserted, skipped, deleted_note, sessions_inserted, messages_inserted,
+            "Restored {} memories ({} already here{}){}, {} conversations ({} messages){}",
+            inserted, skipped, deleted_note,
+            if links_back.inserted > 0 { format!(", {} links", links_back.inserted) } else { String::new() },
+            sessions_inserted, messages_inserted,
             if keys_restored > 0 { format!(", {} keys", keys_restored) } else { String::new() }
         )
     }))
@@ -765,6 +805,60 @@ pub async fn restore_memories_into(pool: &sqlx::SqlitePool, user_id: &str, memor
     out
 }
 
+/// What restoring the links of a backup did.
+#[derive(Debug, Default, PartialEq)]
+pub struct RestoredLinks {
+    pub inserted: usize,
+    /// Already here (same sync id, or the same pair and type), or unusable.
+    pub skipped: usize,
+    /// One end is not on this device: deleted since the backup, or never restored.
+    pub unmatched: usize,
+}
+
+/// Put a backup's relationship links back between the memories now on this device
+/// (2026-11-09). Each end is matched by the hash of its text, since memory ids differ
+/// between devices; a link whose memory is not here is left out and counted. A link
+/// already present, by sync id or by the same pair and type, is skipped. Inserted links
+/// go to the peers through the outbox like any other link.
+pub async fn restore_links_into(pool: &sqlx::SqlitePool, user_id: &str, links: &[serde_json::Value]) -> RestoredLinks {
+    let mut out = RestoredLinks::default();
+    if links.is_empty() { return out; }
+    let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, content FROM memories WHERE user_id = ?")
+        .bind(user_id).fetch_all(pool).await.unwrap_or_default();
+    let by_hash: std::collections::HashMap<String, i64> = rows.into_iter().map(|(id, c)| (sha256_hex(c.as_bytes()), id)).collect();
+    for link in links {
+        let (Some(sh), Some(th), Some(kind)) = (link["source_hash"].as_str(), link["target_hash"].as_str(), link["relation_type"].as_str()) else { out.skipped += 1; continue; };
+        let (Some(&source), Some(&target)) = (by_hash.get(sh), by_hash.get(th)) else { out.unmatched += 1; continue; };
+        if source == target { out.skipped += 1; continue; }
+        let sync_id = link["sync_id"].as_str().map(str::to_string);
+        if let Some(sid) = &sync_id {
+            let have: Option<i64> = sqlx::query_scalar("SELECT id FROM memory_links WHERE sync_id = ?")
+                .bind(sid).fetch_optional(pool).await.unwrap_or(None);
+            if have.is_some() { out.skipped += 1; continue; }
+        }
+        let same: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM memory_links WHERE source_memory_id = ? AND target_memory_id = ? AND relation_type = ?")
+            .bind(source).bind(target).bind(kind).fetch_optional(pool).await.unwrap_or(None);
+        if same.is_some() { out.skipped += 1; continue; }
+        let created_at = link["created_at"].as_str().map(String::from).unwrap_or_else(|| Utc::now().to_rfc3339());
+        let result = sqlx::query(
+            "INSERT INTO memory_links (source_memory_id, target_memory_id, relation_type, confidence, notes, created_by, created_at, sync_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(source).bind(target).bind(kind)
+            .bind(link["confidence"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0))
+            .bind(link["notes"].as_str())
+            .bind(link["created_by"].as_str().unwrap_or("system"))
+            .bind(&created_at)
+            .bind(&sync_id)
+            .execute(pool).await;
+        match result {
+            Ok(_) => out.inserted += 1,
+            Err(e) => { eprintln!("[Backup] Insert failed for link: {}", e); out.skipped += 1; }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod restore_tests {
     use super::*;
@@ -809,5 +903,40 @@ mod restore_tests {
         remade["created_at"] = serde_json::json!("2099-01-01T00:00:00+00:00");
         let r = restore_memories_into(&pool, "u1", &[remade]).await;
         assert_eq!(r, RestoredMemories { inserted: 1, skipped: 0, deleted_since: 0 });
+    }
+
+    /// Links come back between the memories they joined, matched by text, once each; a
+    /// link to a memory deleted since the backup is left out; the restored link is queued
+    /// for the peers (2026-11-09).
+    #[tokio::test]
+    async fn restore_puts_links_back_between_the_restored_memories() {
+        let pool = pool().await;
+        let a = "The spare key is with the neighbour";
+        let b = "The neighbour is called Dana";
+        let gone = "My favourite colour is orange";
+        sqlx::query("INSERT INTO deleted_memory_hashes (content_hash) VALUES (?)")
+            .bind(sha256_hex(gone.as_bytes())).execute(&pool).await.unwrap();
+        let link = |s: &str, t: &str, kind: &str| serde_json::json!({
+            "source_hash": sha256_hex(s.as_bytes()), "target_hash": sha256_hex(t.as_bytes()), "relation_type": kind,
+            "confidence": 0.8, "created_by": "llm", "created_at": "2026-10-01T12:00:00+00:00",
+            "sync_id": format!("{}{}", &sha256_hex(s.as_bytes())[..16], &sha256_hex(t.as_bytes())[..16]),
+        });
+        let links = vec![link(a, b, "related"), link(a, gone, "contradicts")];
+        restore_memories_into(&pool, "u1", &[backed_up(a), backed_up(b), backed_up(gone)]).await;
+
+        let r = restore_links_into(&pool, "u1", &links).await;
+        assert_eq!(r, RestoredLinks { inserted: 1, skipped: 0, unmatched: 1 });
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT s.content, t.content, l.relation_type FROM memory_links l \
+             JOIN memories s ON s.id = l.source_memory_id JOIN memories t ON t.id = l.target_memory_id")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(rows, vec![(a.to_string(), b.to_string(), "related".to_string())]);
+        let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_outbox WHERE table_name = 'memory_links' AND op = 'insert'")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(queued, 1, "the restored link goes to the peers");
+
+        let again = restore_links_into(&pool, "u1", &links).await;
+        assert_eq!(again, RestoredLinks { inserted: 0, skipped: 1, unmatched: 1 }, "a second restore adds nothing");
+        assert_eq!(restore_links_into(&pool, "u1", &[]).await, RestoredLinks::default());
     }
 }
