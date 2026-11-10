@@ -300,7 +300,10 @@ pub fn engine_for_with(backend: Option<&str>, lookup: impl Fn(&str) -> Option<St
     let setting = |k: &str| lookup(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let forced = setting("WEB_SEARCH_ENGINE").map(|v| v.to_lowercase());
     let backend = backend.unwrap_or("").to_lowercase();
-    if forced.is_none() {
+    // A local model's backend string is its file path; "grok" or "mistral" in the path
+    // must not pick that provider's search.
+    let local = backend.ends_with(".gguf") || backend.contains("local");
+    if forced.is_none() && !local {
         if backend == "anthropic" && setting("ANTHROPIC_API_KEY").is_some() { return Engine::Anthropic; }
         if backend == "openai" && setting("OPENAI_API_KEY").is_some() { return Engine::OpenAI; }
         if (backend.contains("xai") || backend.contains("grok")) && setting("XAI_API_KEY").is_some() { return Engine::XAI; }
@@ -500,6 +503,9 @@ mod engine_tests {
         assert_eq!(engine_for_with(Some("xai"), look4), Engine::XAI);
         assert_eq!(engine_for_with(Some("grok"), look4), Engine::XAI);
         assert_eq!(engine_for_with(Some("mistral"), look4), Engine::Mistral);
+        // A local model file whose path names a provider is still a local model.
+        assert_ne!(engine_for_with(Some("/home/u/models/grok-style-Mistral-7B.gguf"), look4), Engine::XAI);
+        assert_ne!(engine_for_with(Some("/home/u/models/grok-style-Mistral-7B.gguf"), look4), Engine::Mistral);
         assert_eq!(engine_for_with(Some("anthropic"), look4), Engine::Brave, "a cloud backend without its key searches like a local model");
         let nothing = settings(&[("ANTHROPIC_API_KEY", "")]);
         let look3 = |k: &str| nothing.get(k).cloned();

@@ -118,7 +118,7 @@ export default function WhyZynkbotModal({ isOpen, onClose }) {
                 <span className="mode-icon">🏥</span>
                 <span className="mode-name">HIPAA</span>
               </div>
-              <p>Healthcare compliance mode: Blocks PHI (Protected Health Information) at routing layer, prevents diagnostic/dosing advice, enforces ephemeral memory. Check documentation for limitations.</p>
+              <p>Healthcare mode: a message with a patient identifier in it is not sent, identifiers in recalled text are removed before the model call, diagnostic and dosing advice is refused, and nothing is stored. Check the documentation for its limits.</p>
             </div>
 
             <div className="mode-card">

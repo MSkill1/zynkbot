@@ -125,15 +125,16 @@ Now extract facts from the conversation above. Return ONLY the JSON array, no ot
         backend: &str,
     ) -> Result<String, String> {
         // Determine which backend to use
-        if backend.contains("anthropic") {
+        if backend.ends_with(".gguf") {
+            // Local models might not be good at structured output, fall back. Tested
+            // first: the string is a file path, which can contain a provider's name.
+            Err("Local GGUF models not supported for fact extraction - use pattern-based fallback".to_string())
+        } else if backend.contains("anthropic") {
             self.call_anthropic(prompt).await
         } else if backend.contains("openai") {
             self.call_openai(prompt).await
         } else if backend.contains("xai") {
             self.call_xai(prompt).await
-        } else if backend.ends_with(".gguf") {
-            // Local models might not be good at structured output, fall back
-            Err("Local GGUF models not supported for fact extraction - use pattern-based fallback".to_string())
         } else {
             Err(format!("Unsupported backend for fact extraction: {}", backend))
         }

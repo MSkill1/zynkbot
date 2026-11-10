@@ -1,6 +1,6 @@
 # Containment Architecture: Why Local-First Matters
 
-*Checked against the code on 2026-11-10 (`v1`, a7599eb). Updated the same day for three changes: the mode is saved, HIPAA mode removes identifiers instead of refusing the message, and Ensemble runs the check.*
+*Checked against the code on 2026-11-10 (`v1`, a7599eb). Updated the same day for three changes: the mode is saved, HIPAA mode stops a message with an identifier in it and removes identifiers from recalled text, and Ensemble runs the check.*
 
 **Technical overview of Zynkbot's containment system and local-first architecture**
 
@@ -17,7 +17,7 @@ Statements about Zynkbot in this document were checked against the code. Stateme
 - **Output filtering:** the model receives everything, and the reply is filtered afterwards.
 - **Containment:** the typed message is checked first. A blocked message is not sent to any model.
 
-The check covers the typed message. HIPAA mode goes further for identifiers: it removes them from the typed message and from the finished prompt, so recalled memories and Knowledge Base text are covered too. Some paths do not run the check. These are listed under [Known limits](#known-limits). `docs/ROADMAP.md` describes the modes as proofs of concept that are not production-grade for their domains.
+The check covers the typed message. HIPAA mode goes further for identifiers: a message with one in it is not sent, and the finished prompt is cleaned of them, so recalled memories and Knowledge Base text are covered too. Some paths do not run the check. These are listed under [Known limits](#known-limits). `docs/ROADMAP.md` describes the modes as proofs of concept that are not production-grade for their domains.
 
 ---
 
@@ -163,16 +163,16 @@ match safety_check {
 
 ### 3. HIPAA Mode (Healthcare)
 
-**Purpose:** remove identifiers from what the model is sent, refuse certain medical requests, and keep no record of the conversation.
+**Purpose:** stop a message with an identifier in it, remove identifiers from recalled text, refuse certain medical requests, and keep no record of the conversation.
 
-**Identifiers are removed, not refused** (since 2026-11-10; `redact_phi` in `containment.rs`). Until then a message with a matching identifier was refused whole, and only the typed message was looked at. Now the message is always answered, with a short tag such as `[phone number removed]` where each identifier was. The cleaning runs twice in `generate_reply`:
+**A typed identifier stops the message; a recalled one is removed** (since 2026-11-10; `redact_phi` and `phi_refusal` in `containment.rs`). `generate_reply` looks twice:
 
-- on the typed message (and the text of an attached file, which travels in the same field), before the app log line, the memory search and any web search see it;
-- on the finished prompt, just before the model call, for every backend. This is where identifiers in recalled memories, Knowledge Base passages, earlier turns and web pages are removed.
+- at the typed message (and the text of an attached file, which travels in the same field), as soon as it arrives. A match returns the reply "🔒 Not sent. HIPAA mode found 1 phone number in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored." Nothing is printed to the app log, searched or sent. A matching identifier is a sign of other patient detail the patterns cannot see, so removing the one thing found would give false comfort. A call with `skip_containment` set (the write-up of web search results, the second pass of a hands-free search) carries search text, not something the user typed, so its identifiers are removed instead;
+- at the finished prompt, just before the model call, for every backend. Identifiers in recalled memories, Knowledge Base passages, earlier turns and web pages are replaced by a short tag such as `[phone number removed]`, and the reply starts with a line such as "🔒 HIPAA mode removed 1 phone number from the recalled text before the model saw this." A refusal over text the user cannot see would be baffling, and a memory with a phone number in it would otherwise make every question that recalled it fail.
 
-When anything was removed the reply starts with a line such as "🔒 HIPAA mode removed 1 phone number and 1 patient name before the model saw this." The removed text is not returned, logged or stored anywhere.
+The found text is not returned, logged or stored anywhere. Until 2026-11-10 only the typed message was looked at, against seven patterns.
 
-Ten kinds are removed, in this order:
+Ten kinds are looked for, in this order:
 
 | Kind | What matches |
 |------|--------------|
@@ -189,9 +189,9 @@ Ten kinds are removed, in this order:
 
 A bare five, nine or ten digit number is no longer treated as a ZIP code, an SSN or a phone number, so "I walked 10000 steps" is left alone.
 
-**What it refuses** (`enforce_hipaa` in `containment.rs`). These run first in HIPAA mode, before the allowlist and before the classifier:
+**What else it refuses** (`enforce_hipaa` in `containment.rs`). These run after the identifier check, before the allowlist and before the classifier:
 
-1. (Identifiers used to be step 1. They are now removed as described above.)
+1. **Identifiers**, as described above (in `generate_reply`, before `enforce_hipaa` is reached).
 2. **Diagnosis phrases** (`detect_diagnosis_request`): "diagnose me", "what do i have", "do i have", "is it cancer", "is it diabetes".
 3. **Dosing** (`detect_medication_dosing`): one of the phrases "how much should i take", "how much", "should i take", "dosage for", "how many pills", "what dose", "safely", together with one of the keywords mg, dose, pill, tablet, medication, medicine, drug, prescription, ibuprofen, acetaminophen, aspirin, tylenol, advil, take, "can i take".
 4. **Treatment phrases:** "should i get surgery", "should i have the procedure", "should i start treatment".
@@ -202,7 +202,7 @@ Checks 2 to 4 match substrings of the lower-cased message. They also match ordin
 **Other effects in HIPAA mode:**
 - **No conversation history.** The chat paths in `commands/chat.rs` skip history logging. The History button is disabled, with the tooltip "Conversation history is disabled in HIPAA mode".
 - **No new memories.** Memory extraction is skipped, including an explicit "Remember:" request. The desktop "Open Memory Manager" button is disabled.
-- **Audit log.** Each message that reaches `enforce_hipaa` writes one line to `logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json` in the app data folder. The line holds a timestamp, an event type, the message length and a blocked flag. A removal writes a `phi_removed` line: where it happened (`chat` or `ensemble`) and how many of each kind. No line holds the message text, the removed text or a user id.
+- **Audit log.** Each message that reaches `enforce_hipaa` writes one line to `logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json` in the app data folder. The line holds a timestamp, an event type, the message length and a blocked flag. A message refused for an identifier writes a `phi_detection_blocked` line, and a removal from recalled text a `phi_removed` line: where it happened (`chat` or `ensemble`) and how many of each kind. No line holds the message text, the removed text or a user id.
 - **Medical disclaimer.** If the reply contains a health-related word, the app appends "⚕️ AI-generated. Not a substitute for clinical judgment or current clinical guidelines."
 - **Check-in questions are off** (`next_checkin` in `commands/checkin.rs`).
 
@@ -213,8 +213,9 @@ Checks 2 to 4 match substrings of the lower-cased message. They also match ordin
 
 **Example:**
 - User: "Patient John Doe, SSN 219-90-7812, presented with chest pain"
-- The model is sent: "[patient name removed], [SSN removed], presented with chest pain"
-- The reply starts with "🔒 HIPAA mode removed 1 Social Security number and 1 patient name before the model saw this."
+- The user sees: "🔒 Not sent. HIPAA mode found 1 Social Security number and 1 patient name in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored."
+- User: "What did I note about the clinic's fax line?", with a stored memory holding the fax number
+- The memory joins the prompt as "The clinic's fax is [phone number removed]." and the reply starts with "🔒 HIPAA mode removed 1 phone number from the recalled text before the model saw this."
 
 **Accuracy:** nothing in the code measures detection accuracy. Earlier versions of this document gave percentages; they are removed because they are not verified against the code.
 
@@ -257,11 +258,11 @@ This section states current behaviour.
 - **Allowlist phrases skip every check.** A message that contains "my name is", "what is my name", "what's my name", "do you remember my name" or "i am called" is allowed without any further check (`ContainmentLayer::enforce`). In HIPAA mode the medical refusals run before the allowlist and the identifiers are removed whatever the message says, so only the general-safety rule is skipped. Child mode is not affected, because it does not go through `enforce`.
 - **Weather questions are answered before the check.** `generate_reply` answers them from Open-Meteo before containment, in every mode.
 - **A caller can skip the check.** `generate_reply` takes `skip_containment`. The app sets it for the model call that writes up web search results (`App.jsx`) and for the second pass of a hands-free search.
-- **Ensemble runs the check on the question only** (since 2026-11-10). `run_ensemble` in `commands/chat.rs` calls `check_containment` with the mode in force: a Guardian or HIPAA refusal is shown in the Ensemble window and no model is called, and a Sovereign warning is put in front of the combined answer. In HIPAA mode the question and the shared context (memories and Knowledge Base text) are cleaned of identifiers. The Ensemble button is disabled in Child mode. If the check itself fails, the question goes through, as in the chat path.
+- **Ensemble runs the check on the question only** (since 2026-11-10). `run_ensemble` in `commands/chat.rs` calls `check_containment` with the mode in force: a Guardian or HIPAA refusal is shown in the Ensemble window and no model is called, and a Sovereign warning is put in front of the combined answer. In HIPAA mode a question with an identifier in it is refused in the Ensemble window, and the shared context (memories and Knowledge Base text) is cleaned of identifiers. The Ensemble button is disabled in Child mode. If the check itself fails, the question goes through, as in the chat path.
 - **Only the typed question is checked for refusal.** Attached file text and images are not.
 - **Recalled memories and Knowledge Base text are not checked for refusal.** They go into the prompt in every mode. HIPAA mode removes identifiers from them; nothing reads a picture.
 - **Android hands-free answers always use Sovereign.** `NativeVoiceAnswerer.kt` calls `nativeSendMessage` with the mode fixed to "sovereign", whatever mode is selected in the app.
-- **The typed message is written to the app log.** `generate_reply` prints the message (up to 1,500 characters) before the check, and `app_log.rs` writes all such output to `logs/zynkbot.log` in the app data folder. This happens in every mode, for blocked messages too. In HIPAA mode the line shows the cleaned message, with tags in place of the identifiers.
+- **The typed message is written to the app log.** `generate_reply` prints the message (up to 1,500 characters) before the check, and `app_log.rs` writes all such output to `logs/zynkbot.log` in the app data folder. This happens in every mode, for blocked messages too. In HIPAA mode a message refused for an identifier is not printed; every other message is.
 - **An unknown mode name does not block.** If the check returns an error, the message continues to the model.
 - **The `[BLOCK]` prefix is shown.** Block messages that carry it are returned with it.
 
@@ -273,7 +274,7 @@ This section states current behaviour.
 
 **HIPAA mode**
 - Identifiers are found by ten patterns, not by understanding. What they miss: a name with no "patient" or "client" in front of it ("John Smith, a 45-year-old male, presents with..."), a single first name, an address written in lower case, a date not marked as a birth date, an age, and anything inside a picture.
-- The patterns can also remove text that is not an identifier: any four numbers joined by dots (a software version such as 10.2.0.1), sixteen digits that are not a card, two capitalised words after "patient" or "client" that are not a name ("the patient Monday Morning group").
+- The patterns can also match text that is not an identifier: any four numbers joined by dots (a software version such as 10.2.0.1), sixteen digits that are not a card, two capitalised words after "patient" or "client" that are not a name ("the patient Monday Morning group"). A typed message with such text is refused; such text in a memory is removed.
 - A web search the page runs itself (the Web button) sends the typed query to the search engine before `generate_reply` sees it, so that query is not cleaned.
 - The medical refusals match substrings, so they also refuse ordinary sentences: "What options do I have?" contains "do i have".
 - The backend is not restricted, and stored memories and Knowledge Base text go into the prompt, including to a cloud model, after the cleaning above.
@@ -360,7 +361,7 @@ Message → containment check on the device → blocked
 A blocked message is not sent to a model.
 ```
 
-**Example (HIPAA mode):** in a typed message with "SSN 219-90-7812" the number is replaced by `[SSN removed]` before any model call, and a request for a diagnosis is refused before any model call. The cases where this does not hold are in [Known limits](#known-limits).
+**Example (HIPAA mode):** a typed message with "SSN 219-90-7812" in it is not sent, a recalled memory with that number in it joins the prompt as `[SSN removed]`, and a request for a diagnosis is refused, all before any model call. The cases where this does not hold are in [Known limits](#known-limits).
 
 ---
 
@@ -428,7 +429,8 @@ The hosted column is general and was not checked against any provider.
 
 **Flow:**
 ```
-1. Message received. HIPAA mode: identifiers removed from it. It is printed to the app log.
+1. Message received. HIPAA mode: a message with an identifier in it is refused. Stop.
+   (With skip_containment set, the identifiers are removed instead.) It is printed to the app log.
 2. Child mode: the backend is forced to OpenAI.
 3. Weather question: answered from Open-Meteo. Stop.
    (If the lookup fails, the message continues as normal.)

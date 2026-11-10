@@ -81,7 +81,7 @@ Multiple safety modes with category-based filtering.
 | **Child** | Strict | For minors, blocks all unsafe content | All unsafe categories |
 | **Sovereign** | Warnings only (default since beta 3) | Warns but doesn't block | None (warnings only) |
 | **Witness** | No filtering | Full freedom, no restrictions | None |
-| **HIPAA** | Healthcare-oriented | Removes identifiers before the model sees them, refuses medical advice requests | Diagnosis, dosing and treatment requests |
+| **HIPAA** | Healthcare-oriented | Stops a message with an identifier in it, removes identifiers from recalled text, refuses medical advice requests | A message holding an identifier; diagnosis, dosing and treatment requests |
 
 **Safety Implementation:**
 
@@ -95,8 +95,8 @@ Multiple safety modes with category-based filtering.
 - Uses **OpenAI Moderation API** for strict filtering.  Currently available models that run locally can be tricked by a clever child, so an API call to OpenAI is used because child safety is at issue.  If local distributed AI inferences are possible local models may become sufficient.  Currently - requires OpenAI API key.
 
 **HIPAA Mode:**
-- **Ten kinds of identifier removed**: record or member number, card number, SSN, phone, email, labelled birth date, street address, ZIP, IP address, a name introduced as a patient's
-- **Removed before the model call**, from the typed message and from recalled memories and Knowledge Base text; the message is still answered, and the reply says what was removed
+- **Ten kinds of identifier checked**: record or member number, card number, SSN, phone, email, labelled birth date, street address, ZIP, IP address, a name introduced as a patient's
+- **A typed message with one is not sent**: the reply says what was found, and nothing is logged, stored or sent. In recalled memories and Knowledge Base text the identifiers are removed before the model call, and the reply says what was removed
 - **Pattern matching, not understanding**: a name with nothing to mark it is not removed (see the HIPAA guide's Known limits)
 - **Audit logging**: Daily JSON logs in `logs/hipaa_audit/` in the app data folder
 - **Memory extraction disabled**: Personal memory system fully disabled in HIPAA mode — extraction pipeline does not run
@@ -530,10 +530,10 @@ Named Entity Recognition (NER) using BERT for enhanced memory search.
 
 ### Ephemeral Mode
 
-Ephemeral mode allows a session to proceed without writing anything to the memory database — conversations feel normal but nothing is stored. An 8-hour expiration timestamp is applied to any memories that persist, as a defense-in-depth fallback.
+Ephemeral mode is the idea of a session that writes nothing to the memory database: conversations feel normal but nothing is stored.
 
 **Current status:**
-In HIPAA mode, the memory extraction pipeline is now fully disabled — extraction doesn't run at all, making the 8-hour expiration a safety net rather than the primary protection. Ephemeral mode as an active feature is not currently used elsewhere in the application. It remains in the codebase as a foundation for future use cases where session-scoped memory control is needed without a full containment mode change.
+In HIPAA mode the memory extraction pipeline does not run at all, so nothing is stored. There is no 8-hour expiry in the code: the `is_ephemeral` and `expires_at` columns mark passing facts in any mode (an errand, this week's trip), not HIPAA sessions. Ephemeral mode as a separate switch is not used anywhere in the application yet.
 
 **Where this becomes useful:**
 - **Guest / kiosk mode** — a shared device where each user gets full AI capability for their session but nothing should persist to the next user

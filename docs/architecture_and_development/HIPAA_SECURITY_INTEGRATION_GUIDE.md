@@ -1,8 +1,8 @@
 # HIPAA Security Integration Guide
 
-*Checked against the code on 2026-11-10 (`v1`, a7599eb). Updated the same day: HIPAA mode now removes identifiers from the whole prompt instead of refusing the message, the mode is saved, and Ensemble follows it.*
+*Checked against the code on 2026-11-10 (`v1`). Updated the same day: a message with an identifier in it is not sent and the user is told what was found; identifiers in recalled memories, Knowledge Base text and web pages are removed before the model call; the mode is saved; Ensemble follows it.*
 
-**Document Version:** 4.0
+**Document Version:** 4.1
 **Purpose:** What Zynkbot's HIPAA mode does, what it does not do, and what a healthcare deployment still has to provide
 
 ## ⚠️ Important: Read Before Using in a Healthcare Environment
@@ -13,7 +13,7 @@ Zynkbot has features that can support a HIPAA compliance effort. It is not a cer
 
 Statements about Zynkbot's behaviour in this document were checked against the code. Industry background, figures about healthcare, and descriptions of other products were not checked. The description of the HIPAA regulatory framework (BAA requirements, risk assessment obligations, Security Rule structure) is high-level only. Whether a configuration satisfies a HIPAA audit depends on the covered entity's own risk assessment. This document is not a substitute for qualified HIPAA compliance counsel.
 
-**Current state:** in HIPAA mode the app removes ten kinds of identifier from everything the model is sent (the typed message, attached text, recalled memories, Knowledge Base passages), refuses certain medical requests, writes an audit line, keeps no conversation history, and does not extract memories. It does not restrict which model is used. The mode is saved on the device and is still on after a restart. A shared-server deployment (Scenario B below) does not exist. `docs/ROADMAP.md` describes the containment modes as proofs of concept that are not production-grade for their domains.
+**Current state:** in HIPAA mode the app looks for ten kinds of identifier. A typed message or attached file that holds one is not sent, and the user is told what was found. Identifiers in text the user did not type (recalled memories, Knowledge Base passages, pages read from the web) are removed before the model call. The app also refuses certain medical requests, writes an audit line, keeps no conversation history, and does not extract memories. It does not restrict which model is used. The mode is saved on the device and is still on after a restart. A shared-server deployment (Scenario B below) does not exist. `docs/ROADMAP.md` describes the containment modes as proofs of concept that are not production-grade for their domains.
 
 ---
 
@@ -32,7 +32,7 @@ Beyond documentation, clinical and administrative staff use AI for:
 
 **The practical reality:** healthcare workers already use AI informally, through personal ChatGPT and Claude accounts, often against policy. An organisation's choice is not only "allow AI or not". It is also whether staff get a tool with guardrails the organisation can inspect, or keep using personal consumer accounts with no oversight.
 
-**What Zynkbot records about use.** In HIPAA mode each checked message writes one audit line: a timestamp, an event type, the message length and a blocked flag. A removal writes a line with the number of identifiers of each kind. No line has a user id, the message text or the removed text, and conversation history is off in HIPAA mode. The audit log therefore shows how many messages were checked, how many were refused and how many identifiers were removed. It does not show who asked what.
+**What Zynkbot records about use.** In HIPAA mode each checked message writes one audit line: a timestamp, an event type, the message length and a blocked flag. A message refused for an identifier, or a removal from recalled text, writes a line with the number of identifiers of each kind. No line has a user id, the message text or the removed text, and conversation history is off in HIPAA mode. The audit log therefore shows how many messages were checked, how many were refused and how many identifiers were removed. It does not show who asked what.
 
 ---
 
@@ -66,40 +66,43 @@ Staff already use AI informally, whatever the policy says. The choices are: ban 
 
 ### What Zynkbot Does Differently
 
-In HIPAA mode Zynkbot removes identifiers on the device, before any model call. The message is still answered:
+In HIPAA mode Zynkbot checks the message on the device, before any model call. A message with an identifier in it is not sent:
 
 ```
 Zynkbot HIPAA mode:
 
 User types: "My patient John Smith, DOB 01/15/1985, MRN 4829201, presents with..."
                                     ↓
-                    identifiers removed, on the device
+                    checked on the device: three identifiers found
                                     ↓
-The model is sent: "My [patient name removed], [date of birth removed],
-                    [record number removed], presents with..."
-                                    ↓
-The reply starts:  "🔒 HIPAA mode removed 1 record or member number,
-                    1 date of birth and 1 patient name before the model saw this."
+Nothing is sent.   The user sees: "🔒 Not sent. HIPAA mode found 1 record or
+                   member number, 1 date of birth and 1 patient name in your
+                   message. Remove what was found and send it again. Nothing
+                   went to a model and nothing was stored."
 ```
 
-Until 2026-11-10 a message with a matching identifier was refused whole, only the typed message was looked at, and this very example passed untouched: there was no pattern for a name, a date of birth or a record number.
+The message is refused rather than cleaned because a matching identifier is a sign of other patient detail the patterns cannot see: the age, the complaint, a name with nothing to mark it. Removing the one thing found and sending the rest would give false comfort.
+
+Text the user did not type is treated differently. Memories recalled for the question, Knowledge Base passages and pages read from the web join the prompt before the model call, and any identifier in them is removed there, with a short tag in its place. The reply then starts with a line such as "🔒 HIPAA mode removed 1 phone number from the recalled text before the model saw this." Refusing a question over text the user cannot see would be baffling, and a memory with an old phone number in it would otherwise make every question that recalled it fail.
+
+Until 2026-11-10 only the typed message was looked at, against seven patterns, and this very example passed untouched: there was no pattern for a name, a date of birth or a record number.
 
 **With a local model**, the message, the recalled memories and the reply stay on the device.
 
-**With a cloud model** (OpenAI, Anthropic, xAI, Mistral), the prompt goes to the provider after the cleaning. HIPAA mode does not prevent a cloud model from being selected. The prompt includes the message, any stored memories that were recalled for it, and Knowledge Base text when the KB button is on. All of it is cleaned, as one text, just before the call.
+**With a cloud model** (OpenAI, Anthropic, xAI, Mistral), the prompt goes to the provider. HIPAA mode does not prevent a cloud model from being selected. The prompt includes the message, any stored memories that were recalled for it, and Knowledge Base text when the KB button is on. The recalled text is cleaned, as one text, just before the call.
 
-The removal is pattern matching, not understanding. What it misses is listed in [Known limits](#known-limits). An earlier version of this guide said that no configuration can bypass the check. That is not the case.
+The check is pattern matching, not understanding. What it misses is listed in [Known limits](#known-limits). An earlier version of this guide said that no configuration can bypass the check. That is not the case.
 
-**What this means in practice:** the removal is aimed at accidental disclosure of a structured identifier: a typed or pasted SSN, phone number, email address, record number, birth date, or a name introduced as a patient's. Nothing in the code measures how often it succeeds, so this guide gives no accuracy figure.
+**What this means in practice:** the check is aimed at accidental disclosure of a structured identifier: a typed or pasted SSN, phone number, email address, record number, birth date, or a name introduced as a patient's. Nothing in the code measures how often it succeeds, so this guide gives no accuracy figure.
 
-### Where PHI Removal Runs
+### Where the PHI Check Runs
 
 Zynkbot is a desktop and Android application (Tauri and Rust). The code is `redact_phi` in `src-tauri/src/containment.rs`. It runs in the app's own process on the device the user is typing on.
 
-- With a **local model**: the cleaned prompt is answered on the device.
-- With a **cloud model**: the prompt is cleaned on the device first, then sent.
+- With a **local model**: the check runs and the prompt is answered on the device.
+- With a **cloud model**: the check runs on the device first; a message that passes is sent, with its recalled text cleaned.
 
-Each identifier is replaced by a short tag such as `[phone number removed]`, and the rest of the message goes through. The removed text is not returned, logged or stored.
+In a typed message a found identifier stops the message. In recalled text each identifier is replaced by a short tag such as `[phone number removed]`. The found text is not returned, logged or stored.
 
 ### How This Looks in a Healthcare Setting
 
@@ -108,7 +111,7 @@ Each identifier is replaced by a short tag such as `[phone number removed]`, and
 Each workstation runs Zynkbot as a desktop application. Staff use it from their own computer for reference questions, protocol review, administrative drafts and policy questions.
 
 - HIPAA mode is selected once on each workstation. The choice is saved on that device and is not copied to paired devices.
-- A matching identifier (record or member number, card number, SSN, phone number, email address, labelled birth date, street address, ZIP code, IP address, a name introduced as a patient's) is removed before any model call.
+- A message with a matching identifier (record or member number, card number, SSN, phone number, email address, labelled birth date, street address, ZIP code, IP address, a name introduced as a patient's) is not sent. The same kinds are removed from recalled text before any model call.
 - BERT NER runs in the app for memory entity extraction. The HIPAA removal does not use it. A name with no "patient" or "client" in front of it is not removed.
 
 **Knowledge base in Scenario A:** each user keeps an indexed document library on the local machine. Relevant sections are added to the prompt when the KB button is on. With a local model that text stays on the device. With a cloud model it is sent to the provider as part of the prompt.
@@ -127,7 +130,7 @@ The idea: a hospital IT department runs Zynkbot on a local server, and staff rea
 - Storing patient records or EMR data
 - Replacing clinical decision support systems
 
-The intended use is a general-purpose assistant for healthcare staff, for reference, drafting and administrative work, with a step that removes some accidental PHI before the model sees it.
+The intended use is a general-purpose assistant for healthcare staff, for reference, drafting and administrative work, with a step that stops a message holding a structured identifier before the model sees it.
 
 ---
 
@@ -135,15 +138,15 @@ The intended use is a general-purpose assistant for healthcare staff, for refere
 
 All of the following apply only while HIPAA mode is selected.
 
-**1. PHI Removal**
+**1. PHI Check**
 - Ten patterns (`redact_phi`): record or member number, card number, Social Security number, phone number, email address, date of birth, street address, ZIP code, IP address, patient name. What each one matches is in [Containment Architecture](CONTAINMENT_ARCHITECTURE.md), HIPAA Mode.
-- Runs on the typed message as soon as it arrives, and on the whole prompt just before the model call, for every backend. In Ensemble it runs on the question and on the context the models share.
-- The reply starts with a line saying how many of each kind were removed.
-- Source: `src-tauri/src/containment.rs`, `redact_phi`; `generate_reply` and `run_ensemble` in `commands/chat.rs`
+- The typed message, with the text of an attached file, is checked as soon as it arrives, before the app log line, the memory search and any model call. A match stops the message: the reply says what was found, and nothing is logged, stored or sent. In Ensemble the question is checked the same way and the refusal is shown in the Ensemble window.
+- The finished prompt is cleaned just before the model call, for every backend: identifiers in recalled memories, Knowledge Base passages, earlier turns and web pages are replaced by tags, and the reply starts with a line saying how many of each kind were removed. In Ensemble the shared context is cleaned the same way.
+- Source: `src-tauri/src/containment.rs`, `redact_phi` and `phi_refusal`; `generate_reply` and `run_ensemble` in `commands/chat.rs`
 
 **2. Medical Request Blocking**
 
-These run before anything else in HIPAA mode and refuse the whole message. They are aimed at someone asking the AI to diagnose or treat them. They match substrings of the lower-cased message, so they also match some ordinary sentences (see Known limits).
+These run after the identifier check and refuse the whole message. They are aimed at someone asking the AI to diagnose or treat them. They match substrings of the lower-cased message, so they also match some ordinary sentences (see Known limits).
 
 - Diagnosis phrases (`detect_diagnosis_request`): "diagnose me", "what do i have", "do i have", "is it cancer", "is it diabetes"
 - Dosing (`detect_medication_dosing`): one of the phrases "how much should i take", "how much", "should i take", "dosage for", "how many pills", "what dose", "safely", together with one of the keywords mg, dose, pill, tablet, medication, medicine, drug, prescription, ibuprofen, acetaminophen, aspirin, tylenol, advil, take, "can i take"
@@ -157,7 +160,7 @@ These run before anything else in HIPAA mode and refuse the whole message. They 
 
 **4. Audit Logging**
 - One JSON line per checked message, in a daily file `logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json` in the app data folder
-- Events: identifiers removed, diagnosis blocked, dosing blocked, treatment blocked, conversation allowed
+- Events: message refused for an identifier, identifiers removed from recalled text, diagnosis blocked, dosing blocked, treatment blocked, conversation allowed
 - Details and limits are under Security Requirements, Audit Logging
 - Source: `log_hipaa_audit` in `containment.rs`
 
@@ -195,22 +198,22 @@ This section states current behaviour.
 
 **What reaches the model uncleaned**
 - **Pictures.** Nothing reads the text in an image.
-- **A web search started with the Web button.** The page sends the typed query to the search engine before the cleaning step sees it.
+- **A web search started with the Web button.** The page sends the typed query to the search engine before the check sees it.
 - **Whatever the patterns miss** (next list).
 
 **What is not refused**
-- **Messages with an allowlist phrase** ("my name is", "what is my name", "what's my name", "do you remember my name", "i am called") skip the general-safety rule. Since 2026-11-10 they no longer skip the medical refusals or the removal.
+- **Messages with an allowlist phrase** ("my name is", "what is my name", "what's my name", "do you remember my name", "i am called") skip the general-safety rule. Since 2026-11-10 they no longer skip the medical refusals or the identifier check.
 - **Weather questions** are answered from Open-Meteo before the refusal check.
-- **Calls that set `skip_containment`** (the model call that writes up web search results, and the second pass of a hands-free search) skip the refusal check. The prompt is still cleaned.
+- **Calls that set `skip_containment`** (the model call that writes up web search results, and the second pass of a hands-free search) skip the refusals, the identifier check included: the text they carry is search results, not something the user typed. Identifiers in it are removed instead.
 - **Ensemble** checks the question only. Its shared context is cleaned, not checked for refusal.
 
-**What the removal finds and misses**
+**What the check finds and misses**
 - It finds ten kinds by pattern. It misses a name with no "patient" or "client" in front of it: "John Smith, a 45-year-old male, presents with..." goes through unchanged. It misses a single first name, an address written in lower case, a date not marked as a birth date, and an age.
-- It can remove text that is not an identifier: four numbers joined by dots (a software version such as 10.2.0.1), sixteen digits that are not a card, two capitalised words after "patient" or "client" that are not a name.
+- It can match text that is not an identifier: four numbers joined by dots (a software version such as 10.2.0.1), sixteen digits that are not a card, two capitalised words after "patient" or "client" that are not a name. A typed message with such text is refused; such text in a memory is removed.
 - The medical request rules are substring matches. "What options do I have?" is refused as a diagnosis request. "How much time does it take?" is refused as a dosing request.
 
 **What is still written to disk**
-- **The app log.** `generate_reply` prints the message (up to 1,500 characters) before the check, and `app_log.rs` writes all such output to `logs/zynkbot.log` in the app data folder. In HIPAA mode the line holds the cleaned message, with tags in place of the identifiers; the rest of what was typed is there, including for a message that is then refused.
+- **The app log.** `generate_reply` prints the message (up to 1,500 characters) before the check, and `app_log.rs` writes all such output to `logs/zynkbot.log` in the app data folder. In HIPAA mode a message refused for an identifier is not printed. Every other message is, including one that a medical rule then refuses.
 - **Conversation rows from paths that do not check the mode:** onboarding (`store_onboarding_response` in `commands/onboarding.rs`), rows arriving from a paired device over ZynkSync (`sync_outbox.rs`), and a backup restore (`commands/backup.rs`).
 - **Memories from `insert_memory` in `lib.rs`**, which does not check the mode.
 - Memories and history stored before HIPAA mode was selected stay in the database. The recent-memories list on the desktop still shows them.
@@ -247,11 +250,11 @@ The cloud column is general and was not checked against any provider.
 
 | Feature | Cloud AI with a BAA | Zynkbot in HIPAA mode |
 |---------|---------------------|-----------------------|
-| Before the model sees the message | Nothing on the user's device | Ten kinds of identifier removed from the whole prompt, and three medical request rules on the typed message, on the device |
-| Data leaving the device | The full query goes to the provider | Local model: nothing is sent to a provider. Cloud model: the message, recalled memories and Knowledge Base text go to the provider after the identifiers are removed. |
+| Before the model sees the message | Nothing on the user's device | A message with one of ten kinds of identifier is stopped, the same kinds are removed from recalled text, and three medical request rules apply, all on the device |
+| Data leaving the device | The full query goes to the provider | Local model: nothing is sent to a provider. Cloud model: a message that passed the check goes to the provider, with recalled memories and Knowledge Base text cleaned of identifiers. |
 | Memory | Varies by product | No extraction in HIPAA mode. Stored memories are still recalled, and cleaned with the rest of the prompt. |
 | Conversation history | Varies by product | Not written by the chat paths in HIPAA mode |
-| Audit trail | Provider-managed | Local JSON lines: event type, length, blocked flag, counts of what was removed. No user id. |
+| Audit trail | Provider-managed | Local JSON lines: event type, length, blocked flag, counts of what was found or removed. No user id. |
 | Self-hostable | No | Runs on the user's device |
 | Source | Closed | Public (see `LICENSE`) |
 | BAA | Required | With a cloud model the prompt goes to that provider. Whether a BAA is needed is for the covered entity to decide. |
@@ -268,7 +271,8 @@ The cloud column is general and was not checked against any provider.
                    ▼
 ┌──────────────────────────────────────┐
 │         ZYNKBOT, HIPAA MODE          │
-│  • Identifiers removed from message  │
+│  • Identifier check on the message   │
+│    (one found: not sent)             │
 │  • Medical request rules (refuse)    │
 │  • General safety rule               │
 │  • Audit line (local JSON)           │
@@ -281,7 +285,7 @@ The cloud column is general and was not checked against any provider.
 │     PROMPT BUILT FOR THE MODEL       │
 │  message + recalled memories         │
 │  + Knowledge Base text (KB button)   │
-│  then identifiers removed from all   │
+│  then identifiers removed from these │
 └──────────────────┬───────────────────┘
                    │
                    ▼
@@ -297,32 +301,39 @@ The cloud column is general and was not checked against any provider.
 
 **Try it yourself:** open System Controls and set the "Containment Mode" row to **HIPAA**. Then type any of the messages below. The mode stays on until you change it.
 
-All names, numbers, and identifiers below are fictional. The "model is sent" lines are checked by a test (`the_hipaa_guides_examples_read_as_printed` in `containment.rs`).
+All names, numbers, and identifiers below are fictional. The "User sees", "joins the prompt as" and "reply starts with" lines are checked by a test (`the_hipaa_guides_examples_read_as_printed` in `containment.rs`).
 
 ---
 
-**Removed: name and SSN**
+**Not sent: name and SSN**
 > *"My patient is Mary Johnson. Her social is 234-56-7890 and she has been having chest pains."*
 
-**The model is sent:** `My [patient name removed]. Her social is [SSN removed] and she has been having chest pains.`
+**User sees:** `🔒 Not sent. HIPAA mode found 1 Social Security number and 1 patient name in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored.`
 
-**The reply starts with:** `🔒 HIPAA mode removed 1 Social Security number and 1 patient name before the model saw this.`
-
-An audit line with those two counts is written.
+An audit line with those two counts is written. The message is not printed to the app log.
 
 ---
 
-**Removed: phone number**
+**Not sent: phone number**
 > *"I've tried reaching the patient twice at 555-867-5309 with no answer. What should I document in the chart?"*
 
-**The model is sent:** `I've tried reaching the patient twice at [phone number removed] with no answer. What should I document in the chart?`
+**User sees:** `🔒 Not sent. HIPAA mode found 1 phone number in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored.`
 
 ---
 
-**Removed: name, date of birth and record number**
+**Not sent: name, date of birth and record number**
 > *"My patient John Smith, DOB 01/15/1985, MRN 4829201, presents with chest pain."*
 
-**The model is sent:** `My [patient name removed], [date of birth removed], [record number removed], presents with chest pain.`
+**User sees:** `🔒 Not sent. HIPAA mode found 1 record or member number, 1 date of birth and 1 patient name in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored.`
+
+---
+
+**Removed from recalled text**
+> *"What did I note about the clinic's fax line?"*, with a stored memory *"The clinic's fax is 555-867-5309."*
+
+The question holds no identifier, so it goes through. The memory is recalled and **joins the prompt as:** `The clinic's fax is [phone number removed].`
+
+**The reply starts with:** `🔒 HIPAA mode removed 1 phone number from the recalled text before the model saw this.`
 
 ---
 
@@ -354,17 +365,17 @@ No pattern or phrase matches. The model answers. If the reply contains one of th
 
 ---
 
-**Not removed: a name with nothing to mark it**
+**Not stopped: a name with nothing to mark it**
 > *"John Smith, a 45-year-old male, presents with substernal chest pain radiating to the left arm."*
 
 Nothing says "patient" or "client" before the name, and there is no structured identifier. The message goes to the model unchanged.
 
 ---
 
-**Removed even with an allowlist phrase**
+**Not sent even with an allowlist phrase**
 > *"My name is Mary Johnson and my social is 234-56-7890."*
 
-**The model is sent:** `My name is Mary Johnson and my social is [SSN removed].` The speaker's own name stays.
+**User sees:** `🔒 Not sent. HIPAA mode found 1 Social Security number in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored.` The speaker's own name is not one of the ten kinds; the number is.
 
 ---
 
@@ -417,14 +428,16 @@ The requirements below vary by deployment and organisation size. A solo practiti
 
 ```json
 {"timestamp": "2026-11-10T14:32:10.123456789+00:00", "event_type": "diagnosis_request_blocked", "metadata": {"blocked": true, "query_length": 87}}
-{"timestamp": "2026-11-10T14:33:02.519203611+00:00", "event_type": "phi_removed", "metadata": {"where": "chat", "removed": {"phone number": 1, "patient name": 1}}}
+{"timestamp": "2026-11-10T14:33:02.519203611+00:00", "event_type": "phi_detection_blocked", "metadata": {"where": "chat", "blocked": true, "found": {"phone number": 1, "patient name": 1}}}
+{"timestamp": "2026-11-10T14:35:41.002117455+00:00", "event_type": "phi_removed", "metadata": {"where": "chat", "removed": {"phone number": 1}}}
 ```
 
 - `timestamp`: UTC, RFC 3339, with a `+00:00` offset
-- `event_type`: `phi_removed`, `diagnosis_request_blocked`, `dosing_request_blocked`, `treatment_request_blocked` or `hipaa_conversation_allowed` (`phi_detection_blocked` appears only in files written before 2026-11-10)
-- `metadata.query_length`: length of the message in bytes
+- `event_type`: `phi_detection_blocked`, `phi_removed`, `diagnosis_request_blocked`, `dosing_request_blocked`, `treatment_request_blocked` or `hipaa_conversation_allowed`
+- `metadata.query_length`: length of the message in bytes (the medical rules and the allowed event)
 - `metadata.blocked`: true or false
-- For `phi_removed`: `metadata.where` is `chat` or `ensemble`, and `metadata.removed` gives the number of each kind
+- For `phi_detection_blocked` (a typed message or Ensemble question not sent): `metadata.where` is `chat` or `ensemble`, and `metadata.found` gives the number of each kind
+- For `phi_removed` (recalled text cleaned): `metadata.where` is `chat` or `ensemble`, and `metadata.removed` gives the number of each kind
 
 **Not in the log:** the message text, a user id, a device id, the model used, and blocks made by the general-safety rule.
 
@@ -442,14 +455,14 @@ The requirements below vary by deployment and organisation size. A solo practiti
 ### Technical Configuration
 
 - [ ] HIPAA mode selected once on every device (the mode is saved per device and is not synced)
-- [ ] Model choice reviewed: with a cloud model, the cleaned message, recalled memories and Knowledge Base text go to the provider
+- [ ] Model choice reviewed: with a cloud model, a message that passed the check goes to the provider, with recalled memories and Knowledge Base text cleaned of identifiers
 - [ ] Existing memories and Knowledge Base documents reviewed: they are used in HIPAA mode
 - [ ] Encryption at rest: OS disk encryption enabled
 - [ ] Encryption in transit: LAN traffic is TLS; the ZynkSync and ZynkLink/ZChat differences above reviewed
 - [ ] Network listener on port 57963 reviewed against firewall policy
 - [ ] Audit logs: `logs/hipaa_audit` in the app data folder included in backup rotation
-- [ ] App log (`logs/zynkbot.log`) included in the retention policy: it holds typed message text, minus the removed identifiers
-- [ ] PHI removal tested with representative examples (see above), including examples that are expected to go through unchanged
+- [ ] App log (`logs/zynkbot.log`) included in the retention policy: it holds the text of every message that passed the identifier check
+- [ ] PHI check tested with representative examples (see above), including examples that are expected to go through unchanged
 - [ ] Medical disclaimer confirmed on health-related replies
 - [ ] No memory extraction verified: no new memories after a test session (the desktop Memory Manager button is greyed out)
 - [ ] No conversation history verified: the History button is greyed out and no new rows appear in `conversation_sessions` after a test exchange
@@ -471,12 +484,12 @@ The requirements below vary by deployment and organisation size. A solo practiti
 **Language for describing Zynkbot in healthcare contexts**
 
 Matches the code:
-- "Removes ten kinds of structured identifier on the device, from the message and from what is recalled, before any model call"
+- "Stops a message that holds one of ten kinds of structured identifier, and removes the same kinds from what is recalled, on the device, before any model call"
 - "Keeps no conversation history and extracts no memories in HIPAA mode"
 - "Has features that can support a HIPAA compliance effort"
 
 Does not match the code:
-- "Removes all PHI before it reaches any AI model": ten patterns are removed; a name with nothing to mark it, free-text detail and pictures are not
+- "Catches all PHI before it reaches any AI model": ten patterns are checked; a name with nothing to mark it, free-text detail and pictures are not
 - "PHI is never transmitted to an LLM provider": whatever the patterns miss is sent, and hands-free answers on the phone do not use HIPAA mode
 - "HIPAA-compliant": requires certification this software does not have
 - "Guarantees HIPAA compliance": no software can guarantee this

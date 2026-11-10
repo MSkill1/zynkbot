@@ -42,8 +42,8 @@ IN NO EVENT SHALL THE AUTHORS, CONTRIBUTORS, OR COPYRIGHT HOLDERS BE LIABLE FOR 
 ### ⚠️ HIPAA MODE IS NOT HIPAA-COMPLIANT
 
 Zynkbot's HIPAA mode is a production feature designed as a serious architectural foundation for privacy-compliant healthcare use. It includes:
-- PHI detection (Protected Health Information)
-- Ephemeral memory (auto-expiring data)
+- PHI detection (Protected Health Information): a message with a structured identifier in it is not sent, and identifiers in recalled text are removed before the model call
+- No stored conversation: no new memories and no conversation history in HIPAA mode
 - Audit logging infrastructure
 - Content filtering
 

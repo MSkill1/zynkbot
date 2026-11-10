@@ -304,14 +304,17 @@ fn resolve_voice_backend() -> Option<String> {
     // strand hands-free voice — it falls through to the first configured provider.
     if let Ok(pref) = std::env::var("ZYNK_MODEL_BACKEND") {
         let p = pref.to_lowercase();
-        let usable = if p.contains("anthropic") || p.contains("claude") { has("ANTHROPIC_API_KEY") }
+        // The local test comes first: a local model's string is its file path, which can
+        // contain a provider's name.
+        let usable = if p.contains("local") || p.ends_with(".gguf") {
+                crate::llm::local_models::resolve_default_model_path().is_ok()
+            }
+            else if p.contains("anthropic") || p.contains("claude") { has("ANTHROPIC_API_KEY") }
             else if p.contains("openai") || p.contains("gpt") { has("OPENAI_API_KEY") }
             else if p.contains("xai") || p.contains("grok") { has("XAI_API_KEY") }
             else if p.contains("mistral") { has("MISTRAL_API_KEY") }
             else if p == "custom" { has("CUSTOM_API_URL") && has("CUSTOM_MODEL") }
-            else if p.contains("local") || p.ends_with(".gguf") {
-                crate::llm::local_models::resolve_default_model_path().is_ok()
-            } else { false };
+            else { false };
         if usable {
             return Some(pref);
         }

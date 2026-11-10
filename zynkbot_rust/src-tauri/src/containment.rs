@@ -165,6 +165,26 @@ pub fn audit_phi_removed(place: &str, found: &PhiFound) {
     log_hipaa_audit("phi_removed", json!({ "where": place, "removed": counts }));
 }
 
+/// HIPAA mode: the reply when the typed message or an attached file holds an identifier.
+/// The message is not sent: a matching identifier is a sign of other patient detail the
+/// patterns cannot see, and taking out the one thing found would give false comfort.
+pub fn phi_refusal(found: &PhiFound) -> String {
+    format!(
+        "🔒 Not sent. HIPAA mode found {} in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored.",
+        describe_phi(found)
+    )
+}
+
+/// The audit line for a refusal: where it happened and how many of each kind. Counts
+/// only, never the text.
+pub fn audit_phi_refused(place: &str, found: &PhiFound) {
+    if found.is_empty() { return; }
+    let counts: serde_json::Map<String, serde_json::Value> = found.iter()
+        .map(|(one, _, n)| (one.to_string(), json!(n)))
+        .collect();
+    log_hipaa_audit("phi_detection_blocked", json!({ "where": place, "blocked": true, "found": counts }));
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainmentLayer {
     mode: ContainmentMode,
@@ -969,6 +989,15 @@ mod tests {
     /// these changes, the guide changes with it.
     #[test]
     fn the_hipaa_guides_examples_read_as_printed() {
+        // The guide's "User sees" line for its first example, word for word.
+        let (_, found) = redact_phi("My patient is Mary Johnson. Her social is 234-56-7890 and she has been having chest pains.");
+        assert_eq!(phi_refusal(&found), "🔒 Not sent. HIPAA mode found 1 Social Security number and 1 patient name in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored.");
+        // The guide's "joins the prompt as" example: recalled text is cleaned, not refused.
+        let (out, found) = redact_phi("The clinic's fax is 555-867-5309.");
+        assert_eq!(out, "The clinic's fax is [phone number removed].");
+        assert_eq!(format!("🔒 HIPAA mode removed {} from the recalled text before the model saw this.", describe_phi(&found)),
+                   "🔒 HIPAA mode removed 1 phone number from the recalled text before the model saw this.");
+        // What each typed example holds, as the guide's "User sees" lines count it.
         for (text, cleaned, said) in [
             ("My patient is Mary Johnson. Her social is 234-56-7890 and she has been having chest pains.",
              "My [patient name removed]. Her social is [SSN removed] and she has been having chest pains.",
@@ -991,6 +1020,15 @@ mod tests {
             assert_eq!(out, cleaned);
             assert_eq!(describe_phi(&found), said);
         }
+    }
+
+    #[test]
+    fn hipaa_refusal_names_what_was_found() {
+        let (_, found) = redact_phi("My patient John Smith, DOB 01/15/1985, MRN 4829201, presents with chest pain.");
+        assert_eq!(
+            phi_refusal(&found),
+            "🔒 Not sent. HIPAA mode found 1 record or member number, 1 date of birth and 1 patient name in your message. Remove what was found and send it again. Nothing went to a model and nothing was stored."
+        );
     }
 
     #[test]

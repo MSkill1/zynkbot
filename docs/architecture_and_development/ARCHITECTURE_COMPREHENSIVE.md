@@ -177,7 +177,7 @@ What `generate_reply` does, in order:
 1. **Backend choice.** Child mode forces the OpenAI backend. If the selected backend has no key, or a local model cannot be used, `get_best_available_backend` picks another.
 2. **History thread.** The thread is opened in History before the reply (not in HIPAA mode, not for hands-free turns).
 3. **Weather.** A weather question (`weather::detect`) is answered from Open-Meteo by `weather::answer`, with no model call. If that fails, the message goes to the model as usual.
-4. **Safety check.** Child mode calls the OpenAI Moderation API and blocks if the API fails. Other modes go through `commands::safety::check_containment` to `ContainmentLayer::enforce`. In Sovereign mode a flagged message gets a warning in front of the reply. In Guardian and HIPAA mode it is blocked. See [section 9](#9-safety-layer).
+4. **Safety check.** Child mode calls the OpenAI Moderation API and blocks if the API fails. Other modes go through `commands::safety::check_containment` to `ContainmentLayer::enforce`. In Sovereign mode a flagged message gets a warning in front of the reply. In Guardian and HIPAA mode it is blocked. See [section 9](#9-safety-layer). In HIPAA mode the typed message was already checked for identifiers before step 1: a message with one is refused and nothing else runs.
 5. **Entities and embedding.** BERT NER extracts names from the message (common words are filtered out). `llm::local_embeddings::generate_local_embedding` makes the 384-dimension vector.
 6. **Memory search.** `memory::hybrid_search` returns up to 30 memories for a cloud backend and 10 otherwise. A question about Zynkbot itself (`is_query_about_zynkbot`) searches only the built-in `_zynkbot` memories. See [section 3](#3-memory-search).
 7. **Linked memories.** Up to 8 memories linked to the results are added, strongest links first. Superseded and completed memories are skipped.
@@ -186,7 +186,7 @@ What `generate_reply` does, in order:
 10. **Prompt.** `ConversationEngine::build_prompt` builds one of three prompt variants: full (cloud), on-device (local GGUF) or slim (custom endpoint). History is 40, 8 or 8 messages and memories are 30, 4 or 7, in that order. Detail in [PROMPT_CONSTRUCTION_PIPELINE.md](PROMPT_CONSTRUCTION_PIPELINE.md).
 11. **Blocks in front of the prompt.** A conversation mode block (`chat_modes.rs`: tool, debate, premise, editing), the KB block, the guide passages, and the text of up to two web pages whose addresses appear in the message (`web_read.rs`).
 12. **Pictures.** For cloud backends, attached pictures are sent with the prompt, together with the newest three pictures sent earlier in the thread. The custom endpoint and local models get no pictures.
-13. **Model call.** The reply streams token by token to the sink for every backend, local models included. An empty reply is an error.
+13. **Model call.** In HIPAA mode the finished prompt is first cleaned of identifiers (recalled memories, Knowledge Base text, web pages), and the reply says what was removed. The reply streams token by token to the sink for every backend, local models included. An empty reply is an error.
 14. **Web search marker.** If the reply contains `WEB_SEARCH_NEEDED:`, the suggested query is returned to the frontend, which shows it in an editable box (`ChatMessage.jsx`) and searches when the user confirms. A hands-free turn runs the search itself without asking. `web_search.rs` uses the cloud provider's own search when one is available, otherwise Brave, SearXNG or DuckDuckGo depending on what is configured.
 15. **Clean-up.** The `MEMORY:` line and any `<think>` block are removed from the displayed reply. HIPAA mode adds a medical disclaimer when health terms are detected.
 16. **Return.** The reply is returned and the exchange is written to conversation history (not in HIPAA mode).
@@ -276,7 +276,7 @@ pub async fn run_ensemble(
 - **Phase 1.** All models answer in parallel. Each gets the same memory context (top 5 memories scoring 0.50 or more) and, if the KB button is on, the same Knowledge Base passages.
 - **Phase 2.** The coordinator is told to evaluate the answers, not average them, and writes the final answer.
 - The result holds `individual_responses`, `synthesized_response`, `coordinator_model`, `models_used`, `successful_models` and `search_results`.
-- `run_ensemble` runs the containment check of the mode in force on the question (since 2026-11-10) and, in HIPAA mode, removes identifiers from the question and the shared context. It stores no memories. The UI does not offer ensemble in Child mode.
+- `run_ensemble` runs the containment check of the mode in force on the question (since 2026-11-10) and, in HIPAA mode, refuses a question with an identifier in it and removes identifiers from the shared context. It stores no memories. The UI does not offer ensemble in Child mode.
 
 ### 5. ZynkSync (device-to-device sync)
 
@@ -362,7 +362,7 @@ pub fn classify_text(text: &str) -> Result<SafetyResult, String>
 
 - a pattern check for harmful instruction requests, which can block on its own,
 - in Sovereign mode, a warning instead of a block,
-- in HIPAA mode, checks for personal health information, diagnosis requests and medication dosing before the general check,
+- in HIPAA mode, checks for diagnosis requests and medication dosing before the general check (identifiers are checked earlier, in `generate_reply`),
 - in Child mode, the OpenAI Moderation API first and the local classifier second. Child mode needs an OpenAI key and blocks when the API cannot be reached.
 
 If the safety check itself fails outside Child mode, `generate_reply` lets the message through.
@@ -430,7 +430,7 @@ Selected as a containment mode. In `generate_reply`:
 
 - no memory is extracted or stored,
 - no conversation history is written,
-- messages are checked for personal health information, diagnosis requests and medication dosing before the model is called,
+- a message with an identifier in it is refused, identifiers in recalled text are removed, and diagnosis and dosing requests are refused, all before the model is called,
 - a medical disclaimer is added to replies that mention health terms.
 
 HIPAA mode does not give memories an 8-hour expiry: it stores none. Detail in [HIPAA_SECURITY_INTEGRATION_GUIDE.md](HIPAA_SECURITY_INTEGRATION_GUIDE.md).

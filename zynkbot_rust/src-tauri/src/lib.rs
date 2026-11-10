@@ -683,17 +683,9 @@ Return ONLY valid JSON starting with {{:
         extracted_fact, similar_memories_text, extras_instructions = extras_instructions
     );
 
-    let response = if backend.contains("anthropic") {
-        call_anthropic_for_memory_decision(&prompt).await?
-    } else if backend.contains("openai") {
-        call_openai_for_memory_decision(&prompt).await?
-    } else if backend.contains("xai") {
-        call_xai_for_memory_decision(&prompt).await?
-    } else if backend.contains("mistral") {
-        call_mistral_for_memory_decision(&prompt).await?
-    } else if backend == "custom" {
-        call_custom_for_memory_decision(&prompt).await?
-    } else if backend.ends_with(".gguf") {
+    // A local model's backend string is its file path, so it is tested before any
+    // provider word (a path with "claude" in it went to Anthropic, 2026-11-10).
+    let response = if backend.ends_with(".gguf") {
         println!("[Memory Relations] Using cached model session for Call 2");
         let backend_clone = backend.to_string();
         let prompt_clone = prompt.clone();
@@ -713,6 +705,16 @@ Return ONLY valid JSON starting with {{:
         .map_err(|e| format!("Task panicked: {}", e))?
         .map_err(|e| e.to_string())?
         .content
+    } else if backend.contains("anthropic") {
+        call_anthropic_for_memory_decision(&prompt).await?
+    } else if backend.contains("openai") {
+        call_openai_for_memory_decision(&prompt).await?
+    } else if backend.contains("xai") {
+        call_xai_for_memory_decision(&prompt).await?
+    } else if backend.contains("mistral") {
+        call_mistral_for_memory_decision(&prompt).await?
+    } else if backend == "custom" {
+        call_custom_for_memory_decision(&prompt).await?
     } else {
         call_local_for_memory_decision(&prompt, backend, Some(RELATIONSHIP_SCHEMA)).await?
     };
@@ -930,7 +932,9 @@ async fn call_custom_for_memory_decision(prompt: &str) -> Result<String, String>
 /// dispatch as the memory-decision calls above.
 #[allow(dead_code)]
 pub(crate) async fn call_backend_with_prompt(prompt: &str, backend: &str) -> Result<String, String> {
-    if backend.contains("anthropic") { call_anthropic_for_memory_decision(prompt).await }
+    // The local test comes first: a local model's string is its file path.
+    if backend.ends_with(".gguf") || backend == "local" { call_local_for_memory_decision(prompt, backend, None).await }
+    else if backend.contains("anthropic") { call_anthropic_for_memory_decision(prompt).await }
     else if backend.contains("openai") { call_openai_for_memory_decision(prompt).await }
     else if backend.contains("xai") { call_xai_for_memory_decision(prompt).await }
     else if backend.contains("mistral") { call_mistral_for_memory_decision(prompt).await }
@@ -1067,7 +1071,9 @@ Respond with ONLY valid JSON, no markdown, starting with {{:
   "entities": [{{"name": "Vermont", "kind": "place"}}]
 }}"#
     );
-    let response = if backend.contains("anthropic") {
+    let response = if backend.ends_with(".gguf") || backend == "local" {
+        call_local_for_memory_decision(&prompt, backend, Some(EXTRAS_SCHEMA)).await?
+    } else if backend.contains("anthropic") {
         call_anthropic_for_memory_decision(&prompt).await?
     } else if backend.contains("openai") {
         call_openai_for_memory_decision(&prompt).await?
@@ -1075,8 +1081,6 @@ Respond with ONLY valid JSON, no markdown, starting with {{:
         call_xai_for_memory_decision(&prompt).await?
     } else if backend.contains("mistral") {
         call_mistral_for_memory_decision(&prompt).await?
-    } else if backend.ends_with(".gguf") || backend == "local" {
-        call_local_for_memory_decision(&prompt, backend, Some(EXTRAS_SCHEMA)).await?
     } else if backend == "custom" {
         call_custom_for_memory_decision(&prompt).await?
     } else {

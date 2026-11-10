@@ -85,7 +85,7 @@ Child mode calls `ContainmentLayer::check_openai_moderation` directly. An API er
 | witness | No check. |
 | guardian, default | Blocks when the pattern check for harmful instructions matches, or when the classifier's top category is severe_toxic or threat with confidence above 0.9. |
 | sovereign | Does not block. Returns a `[WARN_ALLOW]` warning when the pattern check matches or a harmful category scores above 0.85. The reply is still generated. |
-| hipaa | Runs `enforce_hipaa` first (PHI, diagnosis requests, medication dosing), then the guardian rule. |
+| hipaa | Runs `enforce_hipaa` first (diagnosis requests, medication dosing, treatment decisions), then the guardian rule. A message with an identifier in it was refused earlier, in `generate_reply`. |
 | child | OpenAI Moderation first. A missing key or an API error blocks. Then the local classifier blocks any harmful category above 0.7. |
 
 The local classifier is `system/toxic-bert` with six outputs: toxic, severe_toxic, obscene, threat, insult, identity_hate (`safety_classifier.rs`, `should_block`). If the classifier fails, `fallback_keyword_check` is used. Details are in [CONTAINMENT_ARCHITECTURE.md](CONTAINMENT_ARCHITECTURE.md).

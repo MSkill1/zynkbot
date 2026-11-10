@@ -24,6 +24,14 @@ async fn build_custom_client(base_url: &str) -> reqwest::Client {
     crate::llm::openai::default_client(true)
 }
 
+/// Is this backend string a model on this device? For a local model the string is the
+/// full file path, so it must be tested before any provider word: a path with "claude",
+/// "gpt" or "mistral" in it was answered by that provider while the page said the local
+/// model was in use (found 2026-11-10).
+pub(crate) fn is_local_backend(backend: &str) -> bool {
+    backend.ends_with(".gguf") || backend.to_lowercase().contains("local")
+}
+
 /// Can the "local" backend (or this .gguf path) actually answer on this device?
 /// On Android too since 2026-10-22 (the engine builds for the phone; a model file in
 /// the phone's models folder is all it takes).
@@ -90,7 +98,8 @@ mod backend_fallback_tests {
 }
 
 fn format_api_error(backend: &str, raw: &str) -> String {
-    let provider = if backend.contains("anthropic") || backend.contains("claude") { "Anthropic" }
+    let provider = if is_local_backend(backend) { "the local model" }
+        else if backend.contains("anthropic") || backend.contains("claude") { "Anthropic" }
         else if backend.contains("openai") || backend.contains("gpt") { "OpenAI" }
         else if backend.contains("xai") || backend.contains("grok") { "xAI" }
         else if backend.contains("mistral") { "Mistral" }
@@ -157,7 +166,8 @@ pub async fn send_message_with_memory(
 /// What the screen says while the app waits for the cloud model's first word.
 fn waiting_text(backend: &str) -> String {
     let b = backend.to_lowercase();
-    let who = if b.contains("anthropic") || b.contains("claude") { "Claude" }
+    let who = if is_local_backend(&b) { "the model" }
+        else if b.contains("anthropic") || b.contains("claude") { "Claude" }
         else if b.contains("openai") || b.contains("gpt") { "OpenAI" }
         else if b.contains("xai") || b.contains("grok") { "Grok" }
         else if b.contains("mistral") { "Mistral" }
@@ -194,15 +204,39 @@ pub async fn generate_reply(
     // Normalize brand name misspellings from voice transcription before any processing
     let message = crate::normalize_brand_names(message);
 
-    // HIPAA mode (Matt, 2026-11-10): identifiers are taken out of what was typed or
-    // attached before anything else sees it: the log line below, the memory search, a
-    // web search, the model. The whole prompt is cleaned again before it is sent, once
-    // recalled memories, Knowledge Base passages and page text have joined it. Nothing
-    // is refused for containing an identifier; the user is told what was removed.
+    // HIPAA mode (Matt, 2026-11-10): a typed message, or an attached file, with an
+    // identifier in it is not sent. The user is told what was found, and nothing is
+    // logged, stored or sent: a matching identifier is a sign of other patient detail
+    // the patterns cannot see, so removing the one thing found would give false
+    // comfort. Text the user did not type (recalled memories, Knowledge Base passages,
+    // pages read from the web, the write-up pass of a search) has its identifiers
+    // removed instead, on the finished prompt just before the model call: a refusal
+    // over text the user cannot see would be baffling. A call that skips containment
+    // (the search write-up, the second pass of a hands-free search) carries such text
+    // in the message, so it is cleaned rather than refused.
     let is_hipaa = containment_mode.to_lowercase() == "hipaa";
     let mut phi_removed: crate::containment::PhiFound = Vec::new();
     let (message, user_query) = if is_hipaa {
         let (clean, found) = crate::containment::redact_phi(&message);
+        if !found.is_empty() && !skip_containment.unwrap_or(false) {
+            println!("[HIPAA] 🛑 Message not sent: {}", crate::containment::describe_phi(&found));
+            crate::containment::audit_phi_refused("chat", &found);
+            return Ok(ReplyResponse {
+                reply_text: crate::containment::phi_refusal(&found),
+                picture_note: None,
+                recalled_memories: None,
+                model_backend: Some(backend),
+                containment_mode: Some(containment_mode),
+                schema: None,
+                blocked: Some(true),
+                web_search_needed: None,
+                web_search_query: None,
+                original_query: None,
+                pre_search_reply: None,
+                kb_note: None,
+                web_search_results: None,
+            });
+        }
         crate::containment::merge_phi(&mut phi_removed, found);
         // With a file attached the question is carried separately; it is part of
         // `message` too, so its identifiers are already counted.
@@ -240,6 +274,9 @@ pub async fn generate_reply(
     // If the selected backend has no key, fall back to custom endpoint or local model
     if containment_mode.to_lowercase() != "child" {
         let has_key = match forced_backend.as_str() {
+            // The local arm comes first: a local model's string is its file path, which
+            // can contain a provider's name.
+            b if is_local_backend(b) => local_backend_usable(b),
             b if b.contains("anthropic") || b.contains("claude") => {
                 !std::env::var("ANTHROPIC_API_KEY").unwrap_or_default().is_empty()
             }
@@ -259,7 +296,6 @@ pub async fn generate_reply(
             // (android_jni::resolve_voice_backend). A lone phone with a typed-in OpenAI
             // key answered "Hey Zynk" but showed "Local models not supported on Android"
             // for every typed message (tester, Pixel 7a, 2026-09-22).
-            b if b.contains("local") || b.ends_with(".gguf") => local_backend_usable(b),
             _ => true, // custom — assume present until actually tried
         };
 
@@ -839,7 +875,8 @@ pub async fn generate_reply(
 
     // HIPAA mode: the finished prompt is cleaned as a whole, for every backend. This is
     // where identifiers in recalled memories, Knowledge Base passages, earlier turns and
-    // pages read from the web are removed. A picture cannot be read this way.
+    // pages read from the web are removed. The typed message is already known to hold
+    // none (it would have been refused). A picture cannot be read this way.
     if is_hipaa {
         let (clean, found) = crate::containment::redact_phi(&full_prompt);
         full_prompt = clean;
@@ -857,7 +894,10 @@ pub async fn generate_reply(
     sink.event("chat-status", serde_json::json!(waiting_text(&forced_backend)));
 
 
-    let reply_text = if forced_backend.to_lowercase().contains("anthropic") || forced_backend.to_lowercase().contains("claude") {
+    // A local model's backend string is its file path; it is answered on the device
+    // whatever provider word the path contains.
+    let local_backend = is_local_backend(&forced_backend);
+    let reply_text = if !local_backend && (forced_backend.to_lowercase().contains("anthropic") || forced_backend.to_lowercase().contains("claude")) {
         // Use Anthropic with streaming
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
@@ -898,7 +938,7 @@ pub async fn generate_reply(
             response.content
         }
 
-    } else if forced_backend.to_lowercase().contains("openai") || forced_backend.to_lowercase().contains("gpt") {
+    } else if !local_backend && (forced_backend.to_lowercase().contains("openai") || forced_backend.to_lowercase().contains("gpt")) {
         // Use OpenAI with streaming (including Child mode)
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| "OPENAI_API_KEY not set".to_string())?;
@@ -947,7 +987,7 @@ pub async fn generate_reply(
             response.content
         }
 
-    } else if forced_backend.to_lowercase().contains("xai") || forced_backend.to_lowercase().contains("grok") {
+    } else if !local_backend && (forced_backend.to_lowercase().contains("xai") || forced_backend.to_lowercase().contains("grok")) {
         // Use xAI (Grok) with streaming - OpenAI-compatible format
         let api_key = std::env::var("XAI_API_KEY")
             .map_err(|_| "XAI_API_KEY not set. Get your API key from https://console.x.ai/".to_string())?;
@@ -987,7 +1027,7 @@ pub async fn generate_reply(
             response.content
         }
 
-    } else if forced_backend.to_lowercase().contains("mistral") {
+    } else if !local_backend && forced_backend.to_lowercase().contains("mistral") {
         let api_key = std::env::var("MISTRAL_API_KEY")
             .map_err(|_| "MISTRAL_API_KEY not set".to_string())?;
         let mistral_model_owned = std::env::var("MISTRAL_MODEL")
@@ -1468,7 +1508,7 @@ pub async fn generate_reply(
     let warning_prefix = if phi_removed.is_empty() {
         warning_prefix
     } else {
-        Some(format!("🔒 HIPAA mode removed {} before the model saw this.", crate::containment::describe_phi(&phi_removed)))
+        Some(format!("🔒 HIPAA mode removed {} from the recalled text before the model saw this.", crate::containment::describe_phi(&phi_removed)))
     };
     let mut final_reply_text = match warning_prefix {
         Some(warning) if !reply_text.trim().starts_with("NO_QUERY") => format!("{}\n\n{}", warning, reply_text),
@@ -1668,17 +1708,18 @@ pub async fn run_ensemble(
     // thread a session through. Do not rename to `_session_id` — see tests/command_contract.rs
     let _ = session_id;
 
-    // HIPAA mode: identifiers come out of the question and any attached file text
-    // before the log line below and before any model sees them, as in generate_reply.
+    // HIPAA mode: a question, or attached file text, with an identifier in it is not
+    // sent, as in generate_reply. The refusal is the error the Ensemble window shows.
     let is_hipaa = containment_mode.to_lowercase() == "hipaa";
     let mut phi_removed: crate::containment::PhiFound = Vec::new();
-    let (message, user_query) = if is_hipaa {
-        let (clean, found) = crate::containment::redact_phi(&message);
-        crate::containment::merge_phi(&mut phi_removed, found);
-        (clean, user_query.map(|q| crate::containment::redact_phi(&q).0))
-    } else {
-        (message, user_query)
-    };
+    if is_hipaa {
+        let (_, found) = crate::containment::redact_phi(&message);
+        if !found.is_empty() {
+            println!("[Ensemble] 🛑 HIPAA: question not sent: {}", crate::containment::describe_phi(&found));
+            crate::containment::audit_phi_refused("ensemble", &found);
+            return Err(crate::containment::phi_refusal(&found));
+        }
+    }
 
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  🔀 ENSEMBLE REQUEST                                         ║");
@@ -1734,11 +1775,12 @@ pub async fn run_ensemble(
         .unwrap_or_else(|_| "mistral-large-latest".to_string());
 
     // Determine coordinator model upfront: Anthropic > xAI > OpenAI > Mistral > custom > first local model
+    // A local model (a file path) is never taken for a provider, whatever its path says.
     let coordinator_model = models.iter()
-        .find(|m| m.to_lowercase().contains("anthropic"))
-        .or_else(|| models.iter().find(|m| m.to_lowercase().contains("xai") || m.to_lowercase().contains("grok")))
-        .or_else(|| models.iter().find(|m| m.to_lowercase().contains("openai") || m.to_lowercase().contains("gpt")))
-        .or_else(|| models.iter().find(|m| m.to_lowercase().contains("mistral")))
+        .find(|m| !is_local_backend(m) && m.to_lowercase().contains("anthropic"))
+        .or_else(|| models.iter().find(|m| !is_local_backend(m) && (m.to_lowercase().contains("xai") || m.to_lowercase().contains("grok"))))
+        .or_else(|| models.iter().find(|m| !is_local_backend(m) && (m.to_lowercase().contains("openai") || m.to_lowercase().contains("gpt"))))
+        .or_else(|| models.iter().find(|m| !is_local_backend(m) && m.to_lowercase().contains("mistral")))
         .or_else(|| models.iter().find(|m| m.to_lowercase() == "custom"))
         .unwrap_or(&models[0])
         .clone();
@@ -1858,28 +1900,29 @@ pub async fn run_ensemble(
     let assessment_full_prompt = engine.build_prompt(&assessment_prompt, None, None, true, None);
 
     // Use coordinator to assess
-    let needs_search = if coordinator_model.to_lowercase().contains("anthropic") {
+    let coordinator_local = is_local_backend(&coordinator_model);
+    let needs_search = if !coordinator_local && coordinator_model.to_lowercase().contains("anthropic") {
         let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
         if !api_key.is_empty() {
             let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
             crate::llm::anthropic::send_message(&api_key, &anthropic_model, messages, None, Some(256), None)
                 .await.map(|r| r.content).ok()
         } else { None }
-    } else if coordinator_model.to_lowercase().contains("openai") || coordinator_model.to_lowercase().contains("gpt") {
+    } else if !coordinator_local && (coordinator_model.to_lowercase().contains("openai") || coordinator_model.to_lowercase().contains("gpt")) {
         let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
         if !api_key.is_empty() {
             let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
             crate::llm::openai::send_message(&api_key, &openai_model, messages, Some(256), None)
                 .await.map(|r| r.content).ok()
         } else { None }
-    } else if coordinator_model.to_lowercase().contains("xai") || coordinator_model.to_lowercase().contains("grok") {
+    } else if !coordinator_local && (coordinator_model.to_lowercase().contains("xai") || coordinator_model.to_lowercase().contains("grok")) {
         let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
         if !api_key.is_empty() {
             let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
             crate::llm::xai::send_message(&api_key, &xai_model, messages, Some(256), None)
                 .await.map(|r| r.content).ok()
         } else { None }
-    } else if coordinator_model.to_lowercase().contains("mistral") {
+    } else if !coordinator_local && coordinator_model.to_lowercase().contains("mistral") {
         let api_key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
         if !api_key.is_empty() {
             let messages = vec![crate::llm::Message { role: "user".to_string(), content: assessment_full_prompt.clone() }];
@@ -1992,7 +2035,8 @@ pub async fn run_ensemble(
         async move {
             println!("[Ensemble] Querying model: {}", model_backend);
             let result: Result<String, String> = async {
-                if model_backend.to_lowercase().contains("anthropic") {
+                let member_local = is_local_backend(&model_backend);
+                if !member_local && model_backend.to_lowercase().contains("anthropic") {
                     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
                     if api_key.is_empty() { return Err("ANTHROPIC_API_KEY not set".to_string()); }
                     if let Some(ref imgs) = image_data {
@@ -2004,7 +2048,7 @@ pub async fn run_ensemble(
                         crate::llm::anthropic::send_message(&api_key, &anthropic_model, messages, None, Some(4096), None)
                             .await.map(|r| r.content).map_err(|e| e.to_string())
                     }
-                } else if model_backend.to_lowercase().contains("openai") || model_backend.to_lowercase().contains("gpt") {
+                } else if !member_local && (model_backend.to_lowercase().contains("openai") || model_backend.to_lowercase().contains("gpt")) {
                     let api_key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
                     if api_key.is_empty() { return Err("OPENAI_API_KEY not set".to_string()); }
                     if let Some(ref imgs) = image_data {
@@ -2017,7 +2061,7 @@ pub async fn run_ensemble(
                         crate::llm::openai::send_message(&api_key, &openai_model, messages, Some(4096), None)
                             .await.map(|r| r.content).map_err(|e| e.to_string())
                     }
-                } else if model_backend.to_lowercase().contains("xai") || model_backend.to_lowercase().contains("grok") {
+                } else if !member_local && (model_backend.to_lowercase().contains("xai") || model_backend.to_lowercase().contains("grok")) {
                     let api_key = std::env::var("XAI_API_KEY").unwrap_or_default();
                     if api_key.is_empty() { return Err("XAI_API_KEY not set".to_string()); }
                     if let Some(ref imgs) = image_data {
@@ -2030,7 +2074,7 @@ pub async fn run_ensemble(
                         crate::llm::xai::send_message(&api_key, &xai_model, messages, Some(4096), None)
                             .await.map(|r| r.content).map_err(|e| e.to_string())
                     }
-                } else if model_backend.to_lowercase().contains("mistral") {
+                } else if !member_local && model_backend.to_lowercase().contains("mistral") {
                     let api_key = std::env::var("MISTRAL_API_KEY").unwrap_or_default();
                     if api_key.is_empty() { return Err("MISTRAL_API_KEY not set".to_string()); }
                     if let Some(ref imgs) = image_data {
@@ -2161,27 +2205,27 @@ pub async fn run_ensemble(
     let full_prompt = engine.build_prompt(&synthesis_prompt, None, None, true, None);
 
     // Call LLM directly without all the overhead
-    let reply_text = if coordinator_model.to_lowercase().contains("anthropic") {
+    let reply_text = if !coordinator_local && coordinator_model.to_lowercase().contains("anthropic") {
         let api_key = std::env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY not set".to_string())?;
         let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
         crate::llm::anthropic::send_message_streaming(&api_key, &anthropic_model, messages, None, Some(4096), None, |_| {})
             .await.map_err(|e| e.to_string())?.content
-    } else if coordinator_model.to_lowercase().contains("xai") || coordinator_model.to_lowercase().contains("grok") {
+    } else if !coordinator_local && (coordinator_model.to_lowercase().contains("xai") || coordinator_model.to_lowercase().contains("grok")) {
         let api_key = std::env::var("XAI_API_KEY")
             .map_err(|_| "XAI_API_KEY not set".to_string())?;
         let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
         let response = crate::llm::xai::send_message(&api_key, &xai_model, messages, Some(4096), None)
             .await.map_err(|e| e.to_string())?;
         response.content
-    } else if coordinator_model.to_lowercase().contains("openai") || coordinator_model.to_lowercase().contains("gpt") {
+    } else if !coordinator_local && (coordinator_model.to_lowercase().contains("openai") || coordinator_model.to_lowercase().contains("gpt")) {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| "OPENAI_API_KEY not set".to_string())?;
         let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
         let response = crate::llm::openai::send_message(&api_key, &openai_model, messages, Some(4096), None)
             .await.map_err(|e| e.to_string())?;
         response.content
-    } else if coordinator_model.to_lowercase().contains("mistral") {
+    } else if !coordinator_local && coordinator_model.to_lowercase().contains("mistral") {
         let api_key = std::env::var("MISTRAL_API_KEY")
             .map_err(|_| "MISTRAL_API_KEY not set".to_string())?;
         let messages = vec![crate::llm::Message { role: "user".to_string(), content: full_prompt }];
@@ -2225,7 +2269,7 @@ pub async fn run_ensemble(
     let mut notes: Vec<String> = Vec::new();
     if let Some(w) = ensemble_warning { notes.push(w); }
     if !phi_removed.is_empty() {
-        notes.push(format!("🔒 HIPAA mode removed {} before the models saw this.", crate::containment::describe_phi(&phi_removed)));
+        notes.push(format!("🔒 HIPAA mode removed {} from the shared context before the models saw this.", crate::containment::describe_phi(&phi_removed)));
     }
     let synthesized_response = if notes.is_empty() { reply_text } else { format!("{}\n\n{}", notes.join("\n\n"), reply_text) };
 
