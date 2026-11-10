@@ -1755,7 +1755,7 @@ export default function App() {
         };
 
         setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-        if (speak) voice.speakResponse(assistantMessage.content);
+        if (speak) { setSpeakingMessageId(streamId); voice.speakResponse(assistantMessage.content); }
         return; // Don't continue with normal processing
       }
 
@@ -1782,7 +1782,7 @@ export default function App() {
       console.log('Recalled memories:', assistantMessage.recalled_memories);
 
       setMessages(prev => prev.map(msg => msg.id === streamId ? assistantMessage : msg));
-      if (speak) voice.speakResponse(assistantMessage.content);
+      if (speak) { setSpeakingMessageId(streamId); voice.speakResponse(assistantMessage.content); }
 
       console.log('[App] Metadata set:', {
         model_backend: response.model_backend,
@@ -1831,6 +1831,16 @@ export default function App() {
   // playback starts only AFTER isLoading goes false, which is why a Stop tied to
   // isLoading alone vanished exactly when Zynkbot began speaking.
   const canStop = isLoading || voice.isTtsSpeaking || voice.isNativeSpeaking;
+
+  // Stop lives in the conversation, not in the button grid (Matt, 2026-11-10, on trial):
+  // on the waiting line before the first word, on the reply while it arrives, and on the
+  // reply being read aloud. Wherever canStop is true, exactly one of these is on screen.
+  const waitingShown = isLoading && (modelType?.endsWith('.gguf') || !messages.some(m => m.isStreaming && m.content));
+  const speakingNow = voice.isTtsSpeaking || voice.isNativeSpeaking;
+  const speakingId = !speakingNow ? null
+    : (voice.isTtsSpeaking && messages.some(m => m.id === speakingMessageId)) ? speakingMessageId
+    : ([...messages].reverse().find(m => m.role === 'assistant' && !m.isStreaming)?.id ?? null);
+  const stopSpeaking = () => { voice.stopTts(); setSpeakingMessageId(null); };
 
   // Stop the currently streaming generation and/or spoken playback.
   // Optimistically flip UI out of loading state immediately — the backend's
@@ -1972,7 +1982,7 @@ export default function App() {
             ? { ...msg, content: searchResults.answer, isStreaming: false, web_search_results: searchResults, web_search_query: searchQuery }
             : msg
         ));
-        if (speak) voice.speakResponse(searchResults.answer);
+        if (speak) { setSpeakingMessageId(targetId); voice.speakResponse(searchResults.answer); }
         console.log('[WebSearch] Answer came from the provider\'s own search (' + searchResults.engine + ')');
         // Into the thread, as the synthesis call used to do on its own.
         try {
@@ -2050,7 +2060,7 @@ export default function App() {
           : msg
       ));
 
-      if (speak) voice.speakResponse(llmResponse.reply_text);
+      if (speak) { setSpeakingMessageId(targetId); voice.speakResponse(llmResponse.reply_text); }
 
       console.log('[WebSearch] Search complete and answer synthesized');
 
@@ -2745,8 +2755,9 @@ export default function App() {
                         onEdit={!isLoading && idx === lastUserIdx ? handleEditLastUser : undefined}
                         onRegenerate={!isLoading && idx === lastAssistantIdx ? handleRegenerateLast : undefined}
                         onReport={msg.role === 'assistant' ? openReport : undefined}
-                        onSpeak={msg.role === 'assistant' && !msg.isStreaming ? () => handleSpeakMessage(msg) : undefined}
-                        isSpeaking={voice.isTtsSpeaking && speakingMessageId === msg.id}
+                        onSpeak={msg.role === 'assistant' && !msg.isStreaming ? (speakingId === msg.id ? stopSpeaking : () => handleSpeakMessage(msg)) : undefined}
+                        isSpeaking={speakingId === msg.id}
+                        onStop={msg.isStreaming && isLoading && !waitingShown ? handleStopGeneration : undefined}
                         isEditing={editingMessageId === msg.id}
                         onSaveEdit={(newContent) => handleSaveEdit(msg.id, newContent)}
                         onCancelEdit={handleCancelEdit}
@@ -2754,23 +2765,36 @@ export default function App() {
                     ));
                   })()
                 )}
-                {isLoading && (modelType?.endsWith('.gguf') || !messages.some(m => m.isStreaming && m.content)) && (
+                {/* The waiting line, with its Stop. When something is being read aloud and no reply on
+                    screen carries the Stop (a locked-phone answer, an empty thread), the line says so. */}
+                {(waitingShown || (speakingNow && !isLoading && speakingId === null)) && (
                   <div className="message bot-message">
-                    <div className="message-content">
-                      {modelType && modelType.endsWith('.gguf') ? (() => {
-                        const total = localProgress?.total || 0;
-                        const done = Math.min(localProgress?.done || 0, total);
-                        const reading = total > 0 && done < total;
-                        const pct = total > 0 ? Math.round(done / total * 100) : 0;
-                        return (
-                          <div>
-                            <div>{reading ? `⏳ Reading your conversation and memories… ${pct}%` : (total > 0 ? '✍️ Writing the answer…' : '⏳ Local model is starting…')}</div>
-                            <div style={{ marginTop: '6px', height: '6px', borderRadius: '3px', background: '#44475a', overflow: 'hidden' }}>
-                              <div className={reading ? '' : 'zb-pulse'} style={{ height: '100%', width: reading ? `${pct}%` : '100%', background: '#8be9fd', transition: 'width 0.3s' }} />
-                            </div>
-                          </div>
-                        );
-                      })() : (chatStatus || 'Thinking...')}
+                    <div className="message-content" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {!waitingShown ? '🔊 Reading aloud…' : null}
+                        {waitingShown && (modelType && modelType.endsWith('.gguf') ? (() => {
+                            const total = localProgress?.total || 0;
+                            const done = Math.min(localProgress?.done || 0, total);
+                            const reading = total > 0 && done < total;
+                            const pct = total > 0 ? Math.round(done / total * 100) : 0;
+                            return (
+                              <div>
+                                <div>{reading ? `⏳ Reading your conversation and memories… ${pct}%` : (total > 0 ? '✍️ Writing the answer…' : '⏳ Local model is starting…')}</div>
+                                <div style={{ marginTop: '6px', height: '6px', borderRadius: '3px', background: '#44475a', overflow: 'hidden' }}>
+                                  <div className={reading ? '' : 'zb-pulse'} style={{ height: '100%', width: reading ? `${pct}%` : '100%', background: '#8be9fd', transition: 'width 0.3s' }} />
+                                </div>
+                              </div>
+                            );
+                          })() : (chatStatus || 'Thinking...'))}
+                      </div>
+                      <button
+                        className="message-action-btn message-stop-btn"
+                        onClick={waitingShown ? handleStopGeneration : stopSpeaking}
+                        title={waitingShown ? 'Stop this reply' : 'Stop reading'}
+                        aria-label={waitingShown ? 'Stop this reply' : 'Stop reading'}
+                      >
+                        ■ Stop
+                      </button>
                     </div>
                   </div>
                 )}
@@ -3175,9 +3199,10 @@ export default function App() {
                 )}
               </div>
 
-              {/* Right: 2×2 Button Grid.
-                  Desktop: Voice | Ensemble / Send | Clear
-                  Mobile:  Ensemble | Clear / MemoryManager | Send */}
+              {/* Right: 2×2 Button Grid. Stop is in the conversation now (2026-11-10, on trial), and
+                  Send fills the place it left until Quick question takes it.
+                  Desktop: Voice | Ensemble / Send across both columns
+                  Mobile:  Ensemble | Send over both rows / MemoryManager | (Send) */}
               <div className="chat-button-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: '85px 85px',
@@ -3251,19 +3276,19 @@ export default function App() {
                   Ensemble
                 </button>
 
-                {/* Send. Stopping lives in its own button now, so this no longer
-                    doubles as Stop — a Send that changes meaning mid-request was
-                    unavailable for the case that actually mattered (stopping speech,
-                    which begins after generation finishes). */}
+                {/* Send. It never doubles as Stop: a Send that changes meaning mid-request was
+                    unavailable for the case that actually mattered (stopping speech, which
+                    begins after generation finishes). Stop is on the reply itself. */}
                 <button
+                  className="chat-send-wide"
                   onClick={() => handleSendMessage(input)}
                   disabled={isLoading}
                   title={isLoading ? 'Waiting for the current response' : 'Send message'}
                   style={{
-                    width: '85px',
+                    width: isMobile ? '85px' : '180px',
                     height: '42px',
-                    minWidth: '85px',
-                    maxWidth: '85px',
+                    minWidth: isMobile ? '85px' : '180px',
+                    maxWidth: isMobile ? '85px' : '180px',
                     minHeight: '42px',
                     maxHeight: '42px',
                     padding: '0',
@@ -3281,52 +3306,13 @@ export default function App() {
                     justifyContent: 'center',
                     boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                     flex: 'none',
-                    gridColumn: isMobile ? 2 : 1,
-                    gridRow: 2,
+                    gridColumn: isMobile ? 2 : '1 / span 2',
+                    gridRow: isMobile ? '1 / span 2' : 2,
                   }}
                   onMouseOver={(e) => (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                 >
                   Send
-                </button>
-
-                {/* Stop — mobile: TR (1,2); desktop: BR (2,2).
-                    Replaces the old Clear button, which duplicated the "New"
-                    button in the Conversation header. Live during generation AND
-                    during spoken playback. */}
-                <button
-                  onClick={handleStopGeneration}
-                  disabled={!canStop}
-                  title={canStop ? 'Stop speaking and stop generating' : 'Nothing to stop'}
-                  style={{
-                    width: '85px',
-                    height: '42px',
-                    minWidth: '85px',
-                    maxWidth: '85px',
-                    minHeight: '42px',
-                    maxHeight: '42px',
-                    padding: '0',
-                    background: 'linear-gradient(135deg, #ff5555 0%, #ff6b6b 100%)',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    cursor: canStop ? 'pointer' : 'not-allowed',
-                    fontWeight: 'bold',
-                    fontSize: '0.75rem',
-                    transition: 'all 0.2s',
-                    opacity: canStop ? 1 : 0.5,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                    flex: 'none',
-                    gridColumn: 2,
-                    gridRow: isMobile ? 1 : 2,
-                  }}
-                  onMouseOver={(e) => canStop && (e.target.style.transform = 'translateY(-2px)')}
-                  onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
-                >
-                  ■ Stop
                 </button>
 
                 {/* Mobile-only: Memory Manager — BL (2,1); opens the modal via ref. Never disabled

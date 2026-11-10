@@ -57,7 +57,7 @@ Limits on one listen:
 - If nothing is heard for 6 seconds after the chime, Zynkbot closes with the short tone and does nothing else.
 - One listen is capped at 30 seconds. This is a fixed limit set in the app, not a limit of either dictation engine; anything said after 30 seconds is cut off.
 - A tap on the Z cancels, whether it is listening or speaking. You hear the short tone, and the phone goes back to waiting for "Hey Zynk".
-- The Stop button in the app also cuts off a spoken reply.
+- The red Stop on the reply being read also cuts off a spoken reply.
 - Zynkbot answers one question per wake. It does not keep listening after a reply. Say "Hey Zynk" again for the next one.
 
 Without the assistant role, "Hey Zynk" still works, but there is no Z on screen, nothing to tap to cancel, and dictation always uses the offline engine (section 6).

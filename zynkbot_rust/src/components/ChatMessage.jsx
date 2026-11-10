@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { openUrl } from '@tauri-apps/plugin-opener';
 import "../styles/ChatMessage.css";
 
-export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit, onReport, onSpeak, isSpeaking }) {
+export default function ChatMessage({ message, metadata, onExecuteWebSearch, sessionId, userId, onEdit, onRegenerate, isEditing, onSaveEdit, onCancelEdit, onReport, onSpeak, isSpeaking, onStop }) {
   const [editDraft, setEditDraft] = useState(message.content || "");
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (isEditing) setEditDraft(message.content || ""); }, [isEditing, message.content]);
@@ -366,12 +366,23 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
           )}
           {onSpeak && (
             <button
-              className="message-action-btn"
+              className={isSpeaking ? 'message-action-btn message-stop-btn' : 'message-action-btn'}
               onClick={onSpeak}
               title={isSpeaking ? 'Stop reading' : 'Read this reply aloud'}
               aria-label={isSpeaking ? 'Stop reading' : 'Read this reply aloud'}
             >
               {isSpeaking ? '■ Stop' : '🔊 Read aloud'}
+            </button>
+          )}
+          {/* While this reply is arriving, its Stop is here (2026-11-10). */}
+          {onStop && (
+            <button
+              className="message-action-btn message-stop-btn"
+              onClick={onStop}
+              title="Stop this reply"
+              aria-label="Stop this reply"
+            >
+              ■ Stop
             </button>
           )}
         </div>

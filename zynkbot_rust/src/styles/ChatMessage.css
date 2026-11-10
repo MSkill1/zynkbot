@@ -36,6 +36,23 @@
   background: rgba(139, 233, 253, 0.1);
 }
 
+/* Stop, shown on a reply while it arrives or is read aloud, and on the waiting line.
+   Larger than the other actions: it is the one a person reaches for in a hurry. */
+.message-stop-btn {
+  background: #ff5555;
+  border-color: #ff5555;
+  color: #fff;
+  font-weight: bold;
+  font-size: 0.85rem;
+  padding: 7px 14px;
+  flex: none;
+  white-space: nowrap;
+}
+
+.message-stop-btn:hover {
+  background: #ff6b6b;
+}
+
 /* Inline editor shown when the user message is in edit mode */
 .message-edit-container {
   display: flex;

@@ -453,7 +453,7 @@ body.modal-open .conversation-history {
     gap: 8px !important;
   }
 
-  /* Full-width 2×2 grid on mobile: Ensemble | Clear / Memory Manager | Send */
+  /* Full-width 2×2 grid on mobile: Ensemble | Send (both rows) / Memory Manager | (Send) */
   .chat-button-grid {
     grid-template-columns: 1fr 1fr !important;
     grid-template-rows: 48px 48px !important;
@@ -468,6 +468,12 @@ body.modal-open .conversation-history {
     height: 48px !important;
     min-height: 48px !important;
     max-height: 48px !important;
+  }
+
+  /* Send covers both rows of its column since Stop moved into the conversation. */
+  .chat-button-grid > .chat-send-wide {
+    height: 100% !important;
+    max-height: none !important;
   }
 
   /* === HIDE INLINE MEMORY WIDGET ON MOBILE ===
