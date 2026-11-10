@@ -23,6 +23,10 @@
 //! both (a provider has only "after"); REPLY_BENCH_RUNS (default 3) runs each case that many times, since the app samples
 //! at temperature 0.7 and one lucky answer proves nothing (the pass count moved by three
 //! between two runs of the same prompt on 2026-11-09). A case passes when every run does.
+//! REPLY_BENCH_SWAPS names a JSON file of trial wordings, {"name": ["text in the current
+//! prompt", "text to try in its place"]}; a name listed in REPLY_BENCH_VARIANTS then runs the
+//! current prompt with that one replacement, so several wordings are measured in one run
+//! without a rebuild (2026-11-10, the "I've noted that" wording).
 #![cfg(test)]
 
 use crate::conversation_engine::{ConversationEngine, ConversationTurn, Memory};
@@ -140,6 +144,9 @@ async fn reply_bench() {
     let runs: usize = std::env::var("REPLY_BENCH_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
     let pause_ms: Option<u64> = std::env::var("REPLY_BENCH_PAUSE_MS").ok().and_then(|v| v.parse().ok());
     let date = chrono::Local::now().format("%Y%m%d-%H%M").to_string();
+    let swaps: std::collections::HashMap<String, (String, String)> = std::env::var("REPLY_BENCH_SWAPS").ok()
+        .map(|p| serde_json::from_str(&std::fs::read_to_string(p.replace('~', &home)).expect("swap file")).expect("swap file parses"))
+        .unwrap_or_default();
     for backend in &backends {
         let is_gguf = backend.ends_with(".gguf");
         let engine = ConversationEngine::new().with_on_device(is_gguf);
@@ -153,7 +160,11 @@ async fn reply_bench() {
             for c in &cases.cases {
                 let mems = memories_of(c);
                 let after = engine.build_prompt(&c.message, if c.history.is_empty() { None } else { Some(&c.history) }, if mems.is_empty() { None } else { Some(&mems) }, !is_gguf, Some(&cases.subject));
-                let prompt = if variant == "before" { as_before(&after, &cases.subject) } else { after };
+                let prompt = if variant == "before" { as_before(&after, &cases.subject) }
+                    else if let Some((old, new)) = swaps.get(variant.as_str()) {
+                        assert!(after.contains(old.as_str()), "the text the trial '{variant}' replaces is not in the prompt");
+                        after.replace(old.as_str(), new)
+                    } else { after };
                 let mut run_results = Vec::new();
                 for _ in 0..runs {
                     let t = std::time::Instant::now();

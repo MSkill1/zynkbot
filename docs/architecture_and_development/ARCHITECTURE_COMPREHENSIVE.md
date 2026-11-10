@@ -1,8 +1,10 @@
 # Zynkbot: Comprehensive Architecture Documentation
 
-**Last Updated:** 2026-08-23
-**Status:** Pure Rust/Tauri Production Implementation
-**Version:** 0.9.5-beta1
+*Checked against the code on 2026-11-10 (`v1`, a7599eb).*
+
+App version at this commit: 0.9.6 (`zynkbot_rust/src-tauri/Cargo.toml`, `tauri.conf.json`, `package.json`).
+
+This is the overview. Each part has a short description here and a link to the document that holds the detail.
 
 ---
 
@@ -16,6 +18,7 @@
 6. [Security & Privacy](#security--privacy)
 7. [Deployment](#deployment)
 8. [Development Guide](#development-guide)
+9. [References](#references)
 
 ---
 
@@ -23,72 +26,89 @@
 
 ### What is Zynkbot?
 
-Zynkbot is a **privacy-first conversational AI system** with persistent semantic memory. It combines:
+Zynkbot is a conversational assistant that keeps a memory of what the user tells it. The memory lives in a SQLite file on the user's device.
 
-- **Local-First AI**: All core ML operations run on-device using pure Rust frameworks (Candle)
-- **Semantic Memory**: SQLite with in-process vector similarity search (Candle)
-- **Hybrid Search**: Entity-based (BERT NER) + semantic embeddings for intelligent memory recall
-- **Cross-Platform**: Desktop (Windows, Linux) and Android via Tauri. The same Rust backend — memory system, SQLite, ZynkSync, ML stack — compiles to both targets unchanged. The React frontend runs inside Tauri's WebView on both platforms. Android Phase 1 uses API models only; local GGUF inference is Phase 2.
-- **Device Sync**: ZynkSync, ZynkLink, ZChat for device-to-device capabilities
-- **Hybrid LLM Support**: Local GGUF models (llama.cpp) + API backends (OpenAI, Anthropic, xAI)
+- **One Rust backend, three targets.** The same Rust code builds for Linux, Windows and Android through Tauri 2. The React frontend runs in Tauri's WebView on all three. On Android a second, native path (Kotlin calling Rust over JNI) answers hands-free voice turns without the WebView. See [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md).
+- **Chat backends.** Anthropic, OpenAI, xAI, Mistral, a custom OpenAI-compatible endpoint (for example Ollama), and local GGUF files run by llama.cpp. Local GGUF models run on desktop and on Android (CPU on Android). See [MODEL_ARCHITECTURE.md](MODEL_ARCHITECTURE.md).
+- **On-device helper models.** Embeddings (all-MiniLM-L6-v2), entity extraction (bert-base-NER) and the safety classifier (toxic-bert) run on the device with Candle.
+- **Memory.** Facts are extracted from the conversation by a model, stored one fact per row, and linked to each other. Recall combines name matching with embedding similarity.
+- **Device to device.** ZynkSync (memories, history, links, keys), ZynkLink (files) and ZChat (messages) connect paired devices directly over TLS on port 57963.
+- **Cloud backup (optional).** An encrypted backup to the user's own Cloudflare R2 bucket.
 
 ### Design Principles
 
-1. **Privacy First**: All sensitive operations run locally (embeddings, NER, safety classification)
-2. **Pure Rust Core**: Zero Python dependencies in production - fully Rust-powered
-3. **Desktop-Native**: Tauri 2.x cross-platform desktop app with native OS integration
-4. **Offline-Capable**: Full functionality without internet (except API LLMs)
-5. **Source Available**: Community source plus commercial licensing; see license documentation
+1. **Local first.** Embeddings, entity extraction and safety classification run on the device. The database is a local file.
+2. **Rust backend.** The backend is Rust. It links two native libraries: llama.cpp (through `llama-cpp-2`) and, on desktop, Vosk.
+3. **Works without a network** when a local GGUF model is selected. Cloud backends, web search, weather, page reading and cloud backup need a connection.
+4. **Source available.** Community source licence plus commercial licensing. See [LICENSE](../../LICENSE) and [COMMERCIAL_LICENSE.md](../../COMMERCIAL_LICENSE.md).
+
 ---
 
 ## Technology Stack
 
 ### Frontend
 
-- **Framework**: React 18
-- **Build Tool**: Vite
-- **Desktop Runtime**: Tauri 2.9.2
-- **State Management**: React Hooks
-- **IPC**: Tauri command system
+- **Framework**: React 19 (`react ^19.1.1`)
+- **Build tool**: Create React App (`react-scripts 5.0.1`)
+- **Runtime**: Tauri 2 WebView (`@tauri-apps/api ^2.10.0`, `@tauri-apps/cli ^2.9.4`)
+- **State**: React hooks
+- **IPC**: Tauri commands and events
 
-### Backend (Pure Rust)
+### Backend (Rust)
+
+Versions as written in `zynkbot_rust/src-tauri/Cargo.toml`:
 
 ```
-Rust 1.77.2+ (Edition 2021)
-├── tauri 2.9.2              # Desktop app framework
-├── tokio 1.x                # Async runtime
-├── sqlx 0.8                 # SQLite client (async, compile-time checked queries)
-├── reqwest 0.12             # HTTP client
-├── candle-core/nn/transformers  # Pure Rust ML framework
-│   ├── all-MiniLM-L6-v2     # Embeddings (384-dim)
-│   └── dslim/bert-base-NER  # Named Entity Recognition
-├── tokenizers 0.20          # BERT tokenization
-├── llama-cpp-2 0.1          # Local GGUF model inference
-├── hf-hub 0.4               # Hugging Face model downloads
-├── uuid 1.x                 # UUID generation for message/memory IDs
-├── mdns-sd 0.11             # mDNS device discovery (future)
-└── scraper 0.20             # Web search HTML parsing
+Rust 1.77.2+ (edition 2021)
+├── tauri 2.11.1                  # App framework (desktop and Android)
+├── tokio 1                       # Async runtime
+├── sqlx 0.8 (sqlite)             # SQLite client, queries built at run time
+├── reqwest 0.12                  # HTTP client
+├── axum 0.7                      # HTTPS server for device-to-device routes
+├── tokio-rustls 0.26             # TLS for that server and its clients
+├── candle-core / candle-nn / candle-transformers   # ML framework for the helper models
+├── tokenizers 0.20               # BERT tokenization
+├── hf-hub 0.4                    # Hugging Face downloads
+├── llama-cpp-2 0.1.160           # Local GGUF inference (Android: "dynamic-backends" feature)
+├── tokio-tungstenite 0.30        # OpenAI Realtime transcription (live dictation)
+├── vosk 0.3                      # Offline speech recognition (Linux and Windows desktop)
+├── scraper 0.20                  # HTML parsing for web search and page reading
+└── uuid 1.0                      # Ids for devices, messages and sync rows
 ```
+
+There is no mDNS crate in `Cargo.toml`. Devices are paired by code, not discovered.
 
 ### Database
 
-- **SQLite** (embedded, no server process) via sqlx
-- Vector similarity search computed in-process in Rust (cosine similarity via Candle)
-- JSON stored as TEXT for flexible metadata
-- Standard B-tree indexes; no external vector index extension required
+- **SQLite**, embedded, through sqlx. No server process.
+- 28 migrations in `zynkbot_rust/src-tauri/migrations/`, applied at startup by `db.rs` (`sqlx::migrate!`).
+- Embeddings are stored as BLOBs. There is no vector index. Similarity is a linear scan with cosine similarity written in plain Rust (`memory.rs`, `cosine_similarity`).
+- The Knowledge Base also has an FTS5 keyword index (migration `0004_kb_fts5.sql`).
+- Every table is described in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md).
 
 ### ML Models
 
-| Model | Purpose | Size | Framework |
-|-------|---------|------|-----------|
-| all-MiniLM-L6-v2 | Embeddings | 80MB | Candle |
-| dslim/bert-base-NER | Entity extraction | 260MB | Candle |
-| toxic-bert | Safety filtering | 260MB | Candle |
-| Sophro-4B-memory-v1-Q4_0          | The Zynkbot model (offered at first run) | 2.4GB | llama.cpp |
-| gemma-4-12b-it-Q4_K_M             | Local chat LLM (optional) | 7.1GB | llama.cpp |
-| gemma-4-E4B-it-Q4_K_M             | Local chat LLM (optional) | 5.0GB | llama.cpp |
-| Qwen3.5-9B-Q4_K_M                 | Local chat LLM (optional) | 5.7GB | llama.cpp |
-| Ministral-3-8B-Instruct-2512-Q4_K_M | Local chat LLM (optional) | 5.2GB | llama.cpp |
+| Model | Purpose | Runs on |
+|-------|---------|---------|
+| all-MiniLM-L6-v2 | Embeddings (384 dimensions) | Candle |
+| dslim/bert-base-NER | Entity extraction | Candle |
+| unitary/toxic-bert | Safety classification | Candle |
+| Wake-word models (`hey_zynk.onnx`, `embedding_model.onnx`, `melspectrogram.onnx`, `silero_vad.onnx`) | "Hey Zynk" detection on Android | ONNX Runtime, in Kotlin |
+| Vosk model | Offline speech recognition | Vosk (desktop: `vosk_desktop.rs`; Android: vosk-android) |
+
+The three Candle models are downloaded by the installers, or at first run by `commands/setup_wizard.rs`. Their sizes are not stated in the code, so they are not given here.
+
+Local chat models offered for download (`commands/setup_wizard.rs`, `download_user_model`; each download is checked against a SHA-256):
+
+| File | Role | Size |
+|------|------|------|
+| Sophro-4B-memory-v1-Q4_0.gguf | The Zynkbot model, offered at first run | 2.4 GB |
+| gemma-4-12b-it-Q4_K_M.gguf | Optional | 7.1 GB |
+| gemma-4-E4B-it-Q4_K_M.gguf | Optional | 5.0 GB |
+| Qwen3.5-9B-Q4_K_M.gguf | Optional | 5.7 GB |
+| Ministral-3-8B-Instruct-2512-Q4_K_M.gguf | Optional | 5.2 GB |
+
+Sizes are the ones shown in `src/components/SetupWizard.jsx` and in [BENCHMARKS.md](../BENCHMARKS.md) section 5. Any other GGUF file placed in the user models folder can be selected. Engine settings, prompt formats per model family and context sizes are in [MODEL_ARCHITECTURE.md](MODEL_ARCHITECTURE.md).
 
 ---
 
@@ -97,584 +117,347 @@ Rust 1.77.2+ (Edition 2021)
 ### High-Level System Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    TAURI DESKTOP APP                        │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  FRONTEND (React)                                     │  │
-│  │  • Chat.jsx - Conversation interface                 │  │
-│  │  • MemoryManager.jsx - Memory browser & editor       │  │
-│  │  • Settings.jsx - Model selection, API keys          │  │
-│  │  • KnowledgeBase.jsx - Document upload & search      │  │
-│  │  • Onboarding.jsx - First-time setup                 │  │
-│  │  • EnsembleModal.jsx - Multi-model consensus         │  │
-│  └──────────────────┬───────────────────────────────────┘  │
-│                     │ Tauri IPC Commands                   │
-│                     ↓                                        │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  RUST BACKEND (src-tauri/src/)                       │  │
-│  │                                                        │  │
-│  │  [Command Handlers] (commands/)                       │  │
-│  │  • memory.rs      → Memory CRUD, links, graph        │  │
-│  │  • onboarding.rs  → Onboarding, Einstein demo        │  │
-│  │  • conversation.rs → Session history, prompt builder │  │
-│  │  • nlp.rs         → Entity extraction, facts         │  │
-│  │  • models.rs      → API keys, model discovery        │  │
-│  │  • safety.rs      → Containment modes, classifier    │  │
-│  │  [Core Commands] (lib.rs — thin dispatcher)          │  │
-│  │  • send_message_with_memory()  → Conversation flow   │  │
-│  │  • run_ensemble()              → Multi-model mode    │  │
-│  │                                                        │  │
-│  │  [Core Services]                                      │  │
-│  │  ├── memory.rs - Hybrid search, CRUD operations      │  │
-│  │  ├── knowledge_base.rs - KB indexing & document mgmt  │  │
-│  │  ├── kb_rag.rs - Knowledge base RAG retrieval         │  │
-│  │  ├── safety_classifier.rs - Content filtering        │  │
-│  │  ├── nlp_enhancer.rs - Entity extraction (BERT NER)  │  │
-│  │  ├── zynksync.rs - Device-to-device memory sync      │  │
-│  │  ├── zynklink.rs - Device-to-device file sharing     │  │
-│  │  ├── zchat.rs - Device-to-device messaging           │  │
-│  │  └── llm/                                             │  │
-│  │      ├── local_embeddings.rs (all-MiniLM-L6-v2)      │  │
-│  │      ├── local_models.rs (llama.cpp GGUF)            │  │
-│  │      ├── anthropic.rs (Claude API)                   │  │
-│  │      ├── openai.rs (GPT API)                         │  │
-│  │      └── xai.rs (Grok API)                           │  │
-│  │                                                        │  │
-│  │  [Data Layer]                                         │  │
-│  │  └── SQLite (via sqlx, embedded — no server)         │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ↓
-                ┌───────────────────────────┐
-                │  SQLite Database          │
-                │  (~/.local/share/zynkbot/ │
-                │   zynkbot.db on Linux)    │
-                └───────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  TAURI APP (Linux, Windows, Android)                             │
+│                                                                  │
+│  FRONTEND (React, zynkbot_rust/src/)                             │
+│   App.jsx                  chat screen, sends every message      │
+│   components/ChatMessage.jsx        one message, search prompt   │
+│   components/MemoryManager.jsx      memory browser and editor    │
+│   components/KnowledgeBaseManager.jsx, KnowledgeBasePanel.jsx    │
+│   components/SetupWizard.jsx        first-run model downloads    │
+│   components/OnboardingModal.jsx    first-run questions          │
+│   components/APIKeyModal.jsx        keys and model choice        │
+│   components/ControlsPage.jsx       System Controls page         │
+│   components/EnsembleModal.jsx      ensemble mode                │
+│   components/ConflictResolutionModal.jsx   contradiction cards   │
+│   components/ZynkSyncPanel.jsx, ZynkLinkPanel.jsx, ZChatModal.jsx│
+│                         │ Tauri commands and events              │
+│                         ↓                                        │
+│  RUST BACKEND (zynkbot_rust/src-tauri/src/)                      │
+│   lib.rs          module list, command registration, startup,    │
+│                   and the relationship calls of the memory       │
+│                   pipeline                                       │
+│   commands/       Tauri command handlers (20 modules)            │
+│     chat.rs       send_message_with_memory, generate_reply,      │
+│                   extract_facts, run_memory_background,          │
+│                   run_ensemble                                   │
+│   conversation_engine.rs   prompt building                       │
+│   memory.rs                hybrid search, memory rows, links     │
+│   memory_jobs.rs, memory_prompts.rs, memory_extras.rs            │
+│   conversation_history.rs  threads and messages                  │
+│   containment.rs, safety_classifier.rs                           │
+│   knowledge_base.rs, kb_rag.rs, kb_prompt.rs, word_docs.rs       │
+│   web_search.rs, web_read.rs, weather.rs, chat_modes.rs          │
+│   transport.rs, tls.rs     device identity, mTLS, peer registry  │
+│   zynksync.rs, sync_outbox.rs, zynklink.rs, zchat.rs             │
+│   android_jni.rs           native hands-free path on Android     │
+│   llm/  anthropic.rs, openai.rs, xai.rs, mistral.rs,             │
+│         local_models.rs (llama.cpp), local_embeddings.rs         │
+│                         │ sqlx                                   │
+│                         ↓                                        │
+│   SQLite file: zynkbot.db in the app data folder                 │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+The database path comes from `db.rs`, `get_db_path`: the platform's local data folder plus `zynkbot/zynkbot.db` on desktop (on Linux, `~/.local/share/zynkbot/zynkbot.db`), and the app's own files folder on Android.
+
+`lib.rs` is not a thin dispatcher. Besides registering commands it holds the relationship calls (`ask_llm_for_relationships`, `ask_llm_for_links_only`), `is_query_about_zynkbot` and startup code.
 
 ---
 
 ## Component Deep Dive
 
-### 1. Conversation Engine
+### 1. Reply path
 
-**Location**: `src-tauri/src/commands/chat.rs::send_message_with_memory()`
+**Location**: `src-tauri/src/commands/chat.rs`. `send_message_with_memory` is the Tauri command. It wraps the window in a `TauriSink` and calls `generate_reply`, which does the work and does not depend on Tauri. On Android, `android_jni.rs` calls the same `generate_reply` for hands-free voice turns, with `hands_free` set and a note appended to the transcript (`HANDS_FREE_NOTE`).
 
-**Responsibilities**:
-1. Orchestrate conversation flow
-2. Build prompts with recalled memories
-3. Route requests to appropriate LLM backend
-4. Store user messages and responses as memories
+What `generate_reply` does, in order:
 
-**Conversation Flow: Three-Phase Architecture**
+1. **Backend choice.** Child mode forces the OpenAI backend. If the selected backend has no key, or a local model cannot be used, `get_best_available_backend` picks another.
+2. **History thread.** The thread is opened in History before the reply (not in HIPAA mode, not for hands-free turns).
+3. **Weather.** A weather question (`weather::detect`) is answered from Open-Meteo by `weather::answer`, with no model call. If that fails, the message goes to the model as usual.
+4. **Safety check.** Child mode calls the OpenAI Moderation API and blocks if the API fails. Other modes go through `commands::safety::check_containment` to `ContainmentLayer::enforce`. In Sovereign mode a flagged message gets a warning in front of the reply. In Guardian and HIPAA mode it is blocked. See [section 9](#9-safety-layer).
+5. **Entities and embedding.** BERT NER extracts names from the message (common words are filtered out). `llm::local_embeddings::generate_local_embedding` makes the 384-dimension vector.
+6. **Memory search.** `memory::hybrid_search` returns up to 30 memories for a cloud backend and 10 otherwise. A question about Zynkbot itself (`is_query_about_zynkbot`) searches only the built-in `_zynkbot` memories. See [section 3](#3-memory-search).
+7. **Linked memories.** Up to 8 memories linked to the results are added, strongest links first. Superseded and completed memories are skipped.
+8. **Knowledge Base**, only when the KB button is on. See [section 8](#8-knowledge-base).
+9. **Built-in guides.** For a question about Zynkbot with the KB button off, passages from the built-in user guides are searched and added (`kb_prompt::build_guides`).
+10. **Prompt.** `ConversationEngine::build_prompt` builds one of three prompt variants: full (cloud), on-device (local GGUF) or slim (custom endpoint). History is 40, 8 or 8 messages and memories are 30, 4 or 7, in that order. Detail in [PROMPT_CONSTRUCTION_PIPELINE.md](PROMPT_CONSTRUCTION_PIPELINE.md).
+11. **Blocks in front of the prompt.** A conversation mode block (`chat_modes.rs`: tool, debate, premise, editing), the KB block, the guide passages, and the text of up to two web pages whose addresses appear in the message (`web_read.rs`).
+12. **Pictures.** For cloud backends, attached pictures are sent with the prompt, together with the newest three pictures sent earlier in the thread. The custom endpoint and local models get no pictures.
+13. **Model call.** The reply streams token by token to the sink for every backend, local models included. An empty reply is an error.
+14. **Web search marker.** If the reply contains `WEB_SEARCH_NEEDED:`, the suggested query is returned to the frontend, which shows it in an editable box (`ChatMessage.jsx`) and searches when the user confirms. A hands-free turn runs the search itself without asking. `web_search.rs` uses the cloud provider's own search when one is available, otherwise Brave, SearXNG or DuckDuckGo depending on what is configured.
+15. **Clean-up.** The `MEMORY:` line and any `<think>` block are removed from the displayed reply. HIPAA mode adds a medical disclaimer when health terms are detected.
+16. **Return.** The reply is returned and the exchange is written to conversation history (not in HIPAA mode).
 
-Zynkbot uses a **three-phase conversation architecture** to ensure UI responsiveness while maintaining comprehensive memory processing:
+The memory work in [section 2](#2-memory-pipeline) starts after the reply has been returned.
 
-1. **Phase 1 (Synchronous)**: Pre-prompt construction and context gathering
-2. **Phase 2 (Synchronous)**: LLM inference and immediate response display
-3. **Phase 3 (Asynchronous)**: Background memory storage and relationship detection
+### 2. Memory pipeline
 
-This ensures the user sees the AI response **immediately after LLM inference**, and all memory processing happens in the background without blocking the UI.
+One user message can lead to three model calls:
 
----
+1. **Call 1, the reply.** Cloud and custom prompts ask the model to end with `MEMORY: yes` or `MEMORY: no`. The on-device prompt does not ask for this line.
+2. **Call 2, the facts.** `chat.rs`, `extract_facts`, with the prompt from `memory_prompts.rs`. It returns up to three facts, each with a title.
+3. **Call 3, the relationships.** `lib.rs`, `ask_llm_for_relationships` (or `ask_llm_for_links_only`), run per fact inside `chat.rs`, `run_memory_background`.
 
-### Phase 1: Pre-Prompt Construction (Synchronous)
+Calls 2 and 3 do not run inline. After the reply, `generate_reply` writes a row to the `memory_jobs` table (migration 0023). One worker (`memory_jobs.rs`) takes jobs oldest first, retries a failed job up to four attempts, and picks up unfinished jobs after a restart.
 
-```
-User Input
-   ↓
-[1] Safety Check
-    • Child Mode: OpenAI Moderation API
-    • Other Modes: Local toxic-bert classifier
-    • Sovereign Mode: Warning prefix (continue with LLM)
-    • Guardian/HIPAA: Hard block certain content pre-LLM
-   ↓
-[2] Entity Extraction + Embedding Generation (Parallel)
-    • BERT NER: Extract entities from query
-    • Stop word filtering (removes 100+ common words)
-    • Embedding: Generate 384-dim vector (all-MiniLM-L6-v2)
-   ↓
-[3] Hybrid Memory Search
-    • Entity-based search: in-process entity overlap (JSON, Rust)
-    • Semantic search: in-process cosine similarity (Candle)
-    • Weighted scoring: 60% semantic + 40% entity
-    • Returns top 5 most relevant memories
-    • Smart filtering: System memories only if query about Zynkbot
-   ↓
-[4] Knowledge Base Search (if enabled via UI button)
-    • Generate embedding for query
-    • Search indexed documents (in-process cosine similarity)
-    • Return top 10 relevant chunks (higher limit reflects explicit user intent to query their KB)
-    • Build KB context string
-   ↓
-[5] Build Prompt
-    • System instructions (containment mode/keyword specific)
-    • Recalled memories (formatted as context)
-    • KB context (if enabled)
-    • Conversation history (last N turns)
-    • User message
-```
+Before a job is queued:
 
-**Code Location:** `lib.rs` (Phase 1)
+- Nothing is queued in HIPAA mode, when memory storage is switched off for the turn, or when a Knowledge Base reply was not grounded in the documents.
+- The message must pass `ConversationEngine::is_memory_worthy` (at least three words, not filler) and must not be a rewrite or translate request.
+- A cloud or custom reply must end with `MEMORY: yes`. An on-device reply proceeds unless the model said no.
+- A message that starts with "Remember:" skips these checks.
 
----
+For each fact, `run_memory_background`:
 
-### Phase 2: LLM Inference and Display (Synchronous)
+- makes the embedding of the fact,
+- searches 15 memories and keeps those scoring 0.35 or more,
+- drops the fact as a duplicate when the hybrid score is above 0.98 or the cosine similarity is above 0.93,
+- asks call 3 how the fact relates to the similar memories,
+- stores the fact and its links.
 
-Depending on model (local GGUF 5-60s, API 1-30s)
+There are four link types (migration 0022): `related`, `contradicts`, `updates` and `resolves`. An `updates` link marks the older memory as superseded, and superseded memories are left out of recall. A `contradicts` link with confidence 0.65 or more produces a card for the user (`ConflictResolutionModal.jsx`); the card is saved in `memory_cards` (migration 0024) so it survives a restart. With a cloud backend the card is shown before the fact is stored. With a local model the fact is stored first and the question is asked afterwards. If call 3 fails, the fact is stored without links. There is no rule-based contradiction check in the code.
 
-```
-[6] LLM Inference
-    • Local GGUF: llama.cpp via llama-cpp-2 crate
-    • API: OpenAI, Anthropic, or xAI
-   
-[7] Check if Web Search Needed
-    • LLM can request web search via "WEB_SEARCH_NEEDED:" marker
-    • Extract search query from response
-    • Return web_search_needed flag to frontend
-   ↓
-[8] RETURN RESPONSE TO FRONTEND → ⚡ DISPLAY IMMEDIATELY
-```
+Two more behaviours sit on top of storage:
 
-**Critical Point:** Response is displayed to the user **immediately after step 8**. Steps 9-21 happen in the background and do NOT block the UI.
+- **Passing facts.** A fact that call 2 marks as passing (an errand, this week's trip) gets an `expires_at` date 14 days after its day (`memory_extras.rs`, `PASSING_DAYS`) and leaves recall after that.
+- **Check-ins.** A passing fact that was an intention can be asked about once, shortly before it leaves recall (`commands/checkin.rs`, migration 0026). The feature is marked experimental in the code and has a switch on the System Controls page.
 
-**Code Location:** `lib.rs` (Phase 2)
+Full detail: [MEMORY_PROCESSING_PIPELINE.md](MEMORY_PROCESSING_PIPELINE.md). Links and the graph: [MEMORY_RELATIONSHIP_GRAPH.md](MEMORY_RELATIONSHIP_GRAPH.md) and [RELATIONSHIP_DETECTION_ARCHITECTURE.md](RELATIONSHIP_DETECTION_ARCHITECTURE.md).
 
----
-
-### Phase 3: Background Processing (Asynchronous)
-
-**Runs in background Tokio task — does not block the UI.**
-
-**IMPORTANT:** This entire phase runs asynchronously AFTER the response is displayed. The user never waits for these steps.
-
-```
-[9] Extract Factual Statements
-    • LLM analyzes the full user message + assistant response for personal facts
-    • Questions and instructions ARE processed — personal facts are extracted from context
-    • Extracted facts are written as declarative statements in third-person + first-person form
-   ↓
-[10] Generate Embedding for User Message
-    • 384-dim vector for semantic search
-    • Used for duplicate detection and relationship classification
-   ↓
-[11] Broader Hybrid Search for Relationships
-    • Search 15 memories (vs 5 for conversation)
-    • Filter to >35% similarity threshold
-    • Sort by relevance (most similar first)
-   ↓
-[12] Duplicate Detection (Skip Storage if Duplicate)
-    • Check 1: Hybrid score >98% (entity + semantic)
-    • Check 2: Pure cosine similarity >93%
-    • If duplicate found: abort background task, don't store
-   ↓
-[13] Attribute-Based Contradiction Pre-Check (Rule-Based)
-    • Detect location contradictions ("I live in SF" vs "I live in NYC")
-    • Detect age contradictions ("I'm 25" vs "I'm 30")
-    • Detect employer contradictions
-    • Rule-based (doesn't rely on LLM)
-   ↓
-[14] Ask LLM: Should Remember? + Classify Relationships
-    • LLM judges if message is memory-worthy
-    • Filters conversational filler ("ok", "thanks", "lol")
-    • Generates memory title
-    • Classifies relationships with similar memories:
-      - "contradicts" (conflicting information)
-      - "supports" (reinforcing information)
-      - "elaborates" (adds new details)
-      - "none" (unrelated)
-   ↓
-[15] Contradiction Detection → User Resolution Required
-    • If contradiction detected (rule-based OR LLM):
-      - Emit "contradiction-detected" event to frontend
-      - Show ConflictResolutionModal with both memories
-      - User chooses: keep old, keep new, not a contradiction, accept contradiction, or resolve with explanation (stores explanation memory with `resolves` edges to both)
-      - ABORT background task, wait for user decision via resolve_memory_conflict_v2
-    • If no contradiction: proceed to storage
-   ↓
-[16] NLP Enhancement
-    • Entity extraction: BERT NER (persons, orgs, locations, products)
-    • Event detection: Extract event type and date
-    • Namespace generation: Categorize as personal, work, travel, etc.
-   ↓
-[17] Memory Storage
-    • Store in SQLite memories table:
-      - content (factual statement)
-      - title (LLM-generated)
-      - embedding (384-dim vector, stored as BLOB)
-      - entities_detected (JSON TEXT array)
-      - namespace (auto-generated or default "personal")
-      - event_type, event_date (if detected)
-      - is_ephemeral=true if HIPAA mode (8-hour expiration)
-   ↓
-[18] Relationship Storage
-    • Create memory_links table entries:
-      - from_memory_id (newly created memory)
-      - to_memory_id (existing memory)
-      - relationship_type ("contradicts", "supports", "expands")
-      - reason (LLM explanation)
-      - detection_method ("llm" or "rule-based")
-   ↓
-[19] Update Timestamps for ZynkSync
-    • Update updated_at on all involved memories
-    • The write itself queues the change (sync_outbox triggers); the drain carries it to paired devices within a cycle
-   ↓
-[20] Background Task Complete
-    • Close database connection
-    • Task terminates silently
-```
-
-**Code Location:** `lib.rs` (Phase 3 — Tokio spawn async block)
-
----
-
-**Key Implementation Details**:
-
-- **Non-Blocking**: Phase 3 runs in `tokio::spawn()` - never blocks UI
-- **Duplicate Prevention**: 98% hybrid or 93% cosine similarity threshold prevents near-duplicate storage
-- **Two-Tier Contradiction Detection**: Rule-based (fast, deterministic) + LLM-based (semantic, flexible)
-- **User Control**: Contradictions pause background processing and require user resolution
-- **HIPAA Ephemeral**: 8-hour auto-expiration enabled automatically in HIPAA mode
-- **Stop Word Filtering**: 100+ common words removed from entity list to improve search quality
-- **Relationship Reuse**: Same hybrid search results used for both conversation context AND relationship detection (efficient)
-- **Fallback Logic**: If API LLM fails for memory classification, falls back to local model
-- **Smart Namespace Filtering**: Queries about "Zynkbot" search only system memories, not user memories
-
----
-
-### 2. Memory System
+### 3. Memory search
 
 **Location**: `src-tauri/src/memory.rs`
 
-**Core Operations**:
-
-#### Hybrid Search Algorithm
-
 ```rust
-// Simplified illustration — see memory.rs::hybrid_search() for full implementation
 pub async fn hybrid_search(
     pool: &SqlitePool,
     query_embedding: Vec<f32>,
     query_entities: Vec<String>,
-    user_id: &str,
-    limit: usize,
-) -> Result<Vec<Memory>, String> {
-    // Step 1: Fetch all candidates that have embedding or entity data from SQLite
-    let candidates = sqlx::query!(
-        "SELECT id, embedding, entities_detected FROM memories \
-         WHERE embedding IS NOT NULL OR (entities_detected IS NOT NULL AND entities_detected != '[]')"
-    )
-    .fetch_all(pool)
-    .await?;
-
-    // Step 2: Score each candidate in Rust (no SQL vector ops)
-    let mut scored: Vec<(f64, Uuid)> = candidates.iter()
-        .filter_map(|r| {
-            let semantic = r.embedding.as_ref()
-                .map(|b| cosine_similarity(&query_embedding, &blob_to_f32(b)) as f64)
-                .unwrap_or(0.0);
-            let entity = entity_overlap_score(&r.entities_detected, &query_entities);
-            let score = if !query_entities.is_empty() {
-                entity * 0.4 + semantic * 0.6
-            } else {
-                semantic
-            };
-            (score >= MIN_SIMILARITY).then(|| (score, r.id))
-        })
-        .collect();
-
-    // Step 3: Sort by score, fetch full Memory rows for top N
-    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
-    // ... fetch and return top `limit` memories
-}
+    hints: &QueryHints,
+    user_id: Option<&str>,
+    session_id: Option<&str>,
+    namespace: Option<&str>,
+    limit: i32,
+) -> Result<Vec<Memory>, sqlx::Error>
 ```
 
-**Features**:
-- **Entity-Based**: BERT NER extracts entities, scored in Rust against stored JSON
-- **Semantic**: 384-dim cosine similarity computed in Rust via Candle — no SQL vector ops
-- **Weighted Scoring**: 60% semantic + 40% entity matching
-- **Namespace Filtering**: Personal/work/family/onboarding/system separation
+- The SQL leaves out superseded and completed memories, expired memories, and system memories unless the search is for the `system` user.
+- Every remaining row is scored in Rust. There is no vector index.
+- The score comes from `hybrid_score`. When a name in the question matches a name stored with the memory, the base score is 60% entity match plus 40% embedding similarity. When no name matches, the base score is the embedding similarity alone. A namespace match and shared tags add a small boost.
+- A row is kept when its score is 0.35 or more (`MIN_SIMILARITY`), or when a name matched.
+- Results are sorted by score and cut to `limit`.
 
----
+How search quality is measured: [BENCHMARKS.md](../BENCHMARKS.md) section 2.
 
-### 3. Ensemble Mode (Multi-Model Consensus)
+### 4. Ensemble Mode
 
-**Location**: `src-tauri/src/commands/chat.rs::run_ensemble()`
+**Location**: `src-tauri/src/commands/chat.rs`, `run_ensemble`. User-facing description: [ENSEMBLE_MODE.md](../ENSEMBLE_MODE.md).
 
-**Purpose**: Run multiple AI models simultaneously and synthesize their responses
-
-**3-Phase Process**:
-
-1. **Phase 0: Assessment** - Coordinator determines if question needs web search
-2. **Phase 1: Collection** - Each selected model answers independently with memory context
-3. **Phase 2: Synthesis** - Coordinator evaluates responses, identifies consensus/uncertainty
-
-**Implementation**:
 ```rust
 pub async fn run_ensemble(
+    _app: tauri::AppHandle,
     message: String,
-    models: Vec<String>,  // e.g., ["claude", "gpt4", "local"]
+    models: Vec<String>,
     user_id: String,
     session_id: String,
-    containment_mode: String
-) -> Result<serde_json::Value, String> {
-    // Phase 0: Assess if question needs web search
-    let needs_search = assess_search_need(&message, &models[0]).await?;
-    let search_results = if needs_search {
-        search_duckduckgo(&message, 3).await.ok()
-    } else {
-        None
-    };
-
-    // Phase 1: Collect responses from all models (parallel)
-    let mut individual_responses = Vec::new();
-    for model in &models {
-        let response = query_model(model, &message, &context, &search_results).await?;
-        individual_responses.push(response);
-    }
-
-    // Phase 2: Synthesize best answer
-    let coordinator_model = select_coordinator(&models);
-    let synthesized = synthesize_responses(
-        coordinator_model,
-        &message,
-        &individual_responses,
-        &search_results
-    ).await?;
-
-    Ok(json!({
-        "individual_responses": individual_responses,
-        "synthesized_response": synthesized,
-        "coordinator_model": coordinator_model,
-        "search_results": search_results
-    }))
-}
+    containment_mode: String,
+    kb_enabled: Option<bool>,
+    user_query: Option<String>,
+    image_data: Option<Vec<crate::llm::ImageAttachment>>,
+) -> Result<serde_json::Value, String>
 ```
 
-**Features**:
-- Automatic web search detection (e.g., "latest React version")
-- Memory context provided to all models
-- DuckDuckGo search integration with 5-second timeout
-- Coordinator evaluates (not averages) responses
+- At least two models are required.
+- One model is the coordinator. The order of preference is Anthropic, xAI, OpenAI, Mistral, custom endpoint, then the first model listed.
+- **Phase 0.** The coordinator is asked whether the question needs a web search (yes or no). A local coordinator is not asked, so no search runs. A search fetches three results with a 5-second timeout.
+- **Phase 1.** All models answer in parallel. Each gets the same memory context (top 5 memories scoring 0.50 or more) and, if the KB button is on, the same Knowledge Base passages.
+- **Phase 2.** The coordinator is told to evaluate the answers, not average them, and writes the final answer.
+- The result holds `individual_responses`, `synthesized_response`, `coordinator_model`, `models_used`, `successful_models` and `search_results`.
+- `run_ensemble` runs no containment check and stores no memories. The UI does not offer ensemble in Child mode.
 
----
-
-### 4. ZynkSync (Device-to-Device Memory Sync)
+### 5. ZynkSync (device-to-device sync)
 
 **Location**: `src-tauri/src/sync_outbox.rs` (queue, drain, receiver), `src-tauri/src/zynksync.rs` (service, pairing, routes), `src-tauri/src/transport.rs` (identity, mTLS, device registry, shared with ZynkLink and ZChat)
 
-**Purpose**: Keep memories, conversation history, memory links and keys identical across a user's devices over the local network, including devices that were off.
+**Purpose**: keep memories, conversation history, memory links and keys the same across a user's devices over the local network, including devices that were off.
 
-**Architecture** (outbox, since October 2026):
+**Architecture** (outbox):
 ```
 any write to memories / conversation_sessions / conversation_messages / memory_links / sync_secrets
-   ↓ SQLite trigger (migrations 0013–0016)
+   ↓ SQLite trigger (migrations 0013, 0014, 0016)
 sync_outbox (id, table_name, row_sync_id, op, payload, created_at)
-   ↓ once a minute, per paired peer, from the peer's cursor
-drain: collapse to one entry per row, load each live row with every column, ≤ 300 rows
-   ↓ HTTPS POST /api/zynksync/outbox   (mTLS, pinned certs, x-target-device-id)
+   ↓ every 60 seconds, and within seconds of a local change; per paired peer, from the peer's cursor
+drain: collapse to one entry per row, load each live row with every column, at most 300 rows
+   ↓ HTTPS POST /api/zynksync/outbox   (mTLS, pinned certificates, x-target-device-id)
 receiver: one transaction under sync_suppress
    → upsert by sync_id (newest updated_at wins), delete by sync_id, tombstone for memories
-   → unknown sync_id: match by content (memory) / 0011 key (message) / (source,target,relation) (link), adopt the name
+   → unknown sync_id: match by content (memory) / message key / (source, target, relation) (link), adopt the name
    → records sync_inbox_cursor[sender] = batch.through
    ← OutboxReceipt { through, applied, known_before }
 sender: sync_outbox_cursor[peer] = through  (or start the peer over if known_before < cursor)
 ```
 `sync_bidirectional` is a drain to the peer followed by `/api/zynksync/outbox/pull`, which asks the peer to drain to us.
 
-**First contact and recovery**: a peer with no cursor row, a peer whose cursor points before the oldest queued row, or a peer that reports knowing less than our cursor says, is sent the live tables — sessions, memories, messages, links, in a fixed order, 300 rows per cycle, all keys in the first slice — after which the queue takes over.
+**First contact and recovery**: a peer with no cursor row, a peer whose cursor points before the oldest queued row, or a peer that reports knowing less than our cursor says, is sent the live tables in a fixed order, 300 rows per cycle. After that the queue takes over.
 
-**Identity**: `x-device-id`, `x-device-name`, `x-device-port` headers on every request; `require_verified_device` rejects a request addressed to another device (421); `inject_verified_device` corrects a known device's address and port from the connection. `device-<id>.enc` in the R2 backup holds identity, certificate, key and peers; `restore_device_identity` makes a fresh install that device again.
+**Identity**: every request carries `x-device-id`, `x-device-name` and `x-device-port` headers. `require_verified_device` rejects a request addressed to another device (HTTP 421). `inject_verified_device` corrects a known device's address and port from the connection. Device identity is not part of the cloud backup; a reinstalled device pairs again by code.
 
-**Key Features**:
-- **Port 57963**, mutual TLS, certificate pinned on both sides
-- **6-digit pairing codes** (10-minute expiry); a joining device adopts the host's user id and re-keys its existing rows to it
-- **Keys as rows** (`sync_secrets`): newest `updated_at` per key wins
-- **Retention**: rows every peer acknowledged are pruned; 7 days maximum
-- **One auto-sync loop per service**; offline peers skipped for two minutes after a refused connection
+**Key points**:
+- Port 57963, mutual TLS, certificate pinned on both sides
+- 6-digit pairing codes with a 10-minute expiry; a joining device adopts the host's user id and re-keys its existing rows to it
+- Keys travel as rows (`sync_secrets`); the newest `updated_at` per key wins
+- Outbox rows are kept for at most 7 days (`OUTBOX_RETENTION_DAYS`)
+- An offline peer is skipped for two minutes after a refused connection
 
----
+User-facing description: [NETWORKING_FEATURES.md](../NETWORKING_FEATURES.md).
 
-### 5. ZynkLink (Device-to-Device File Sharing)
+### 6. ZynkLink (device-to-device file sharing)
 
-**Location**: `src-tauri/src/zynklink.rs`
+**Location**: `src-tauri/src/zynklink.rs`, `src-tauri/src/commands/zynklink.rs`
 
-**Purpose**: Share files between paired devices
+- Uses the same server and mutual TLS as ZynkSync. Every request goes to `https://<ip>:57963/api/zynklink/...`.
+- Has its own pairing codes (`generate_zynklink_code`, `link_with_zynklink_code`).
+- A device shares a folder with read and write flags (`share_directory`).
+- A paired device can list and browse shared folders, download a file to a chosen location, or download it straight into the Knowledge Base (`download_to_knowledge_base`). Downloads can be paused and cancelled.
+- The ZynkLink code computes no file checksum. Integrity rests on the TLS connection.
 
-**Features**:
-- Share local directories with read/write permissions
-- Browse files from paired devices
-- Download files from remote devices
-- Download files directly into RAG vector database (knowledge base)
-- SHA256 integrity verification
-- HTTP-based file serving
+### 7. ZChat (device-to-device messaging)
 
----
+**Location**: `src-tauri/src/zchat.rs`, `src-tauri/src/commands/zchat.rs`
 
-### 6. ZChat (Device-to-Device Messaging)
+- Messages are stored in the local database with UUID ids and `delivered_at` and `read_at` times.
+- Sending stores the message and tries to deliver it at once (`deliver_to_peer`). Undelivered messages are retried on the next send and by the ZynkSync loop.
 
-**Location**: `src-tauri/src/zchat.rs`
+### 8. Knowledge Base
 
-**Purpose**: Direct messaging between paired devices
+**Location**: `src-tauri/src/knowledge_base.rs` (files and documents), `src-tauri/src/kb_rag.rs` (chunking, indexing, search), `src-tauri/src/kb_prompt.rs` (prompt block), `src-tauri/src/word_docs.rs` (Word files)
 
-**Features**:
-- UUID-based message IDs
-- Read receipts (delivered_at, read_at)
-- Local SQLite storage
-- Real-time delivery when devices online
+1. Supported file types (`SUPPORTED_EXTENSIONS`): txt, md, json, csv, log, rs, js, jsx, ts, tsx, py, java, cpp, c, h, html, css, xml, yaml, yml, toml, pdf, docx, doc.
+2. A document is split into chunks of about 128 tokens with a 25-token overlap (`chunk_document(&content, 128, 25)`).
+3. Each chunk is embedded with all-MiniLM-L6-v2 and stored in `kb_chunks`. There is no vector index.
+4. A search (`search_kb_chunks`) scores chunks by cosine similarity and merges in FTS5 keyword matches.
+5. In a normal reply the search runs only when the KB button is on: 10 chunks for cloud and custom backends, 4 for a local model, with a 15% similarity threshold.
+6. `kb_prompt::build` writes the block that goes in front of the prompt. It has three outcomes: found, weak matches only, nothing. Only "found" counts as grounded. For the other two the reply carries a note for the UI and no memory is stored from that reply.
 
----
+Tables: `kb_documents`, `kb_chunks` (see [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)).
 
-### 7. Knowledge Base (RAG)
+### 9. Safety Layer
 
-**Location**: `src-tauri/src/knowledge_base.rs` (indexing & document management), `src-tauri/src/kb_rag.rs` (RAG retrieval)
+**Location**: `src-tauri/src/containment.rs` (modes and rules), `src-tauri/src/safety_classifier.rs` (classifier)
 
-**Purpose**: Document-based retrieval-augmented generation
+There are six containment modes: witness, sovereign, guardian, child, elder and hipaa.
 
-**Process**:
-1. User uploads TXT/MD file
-2. Document chunked into 512-token segments
-3. Each chunk embedded with all-MiniLM-L6-v2
-4. Stored in `kb_chunks` table with vector index
-5. Query time: semantic search retrieves relevant chunks
-6. Chunks added to LLM context
+The classifier is toxic-bert run with Candle:
 
-**Tables**:
-- `kb_documents` - Document metadata
-- `kb_chunks` - Text chunks with embeddings
-
----
-
-### 8. Safety Layer
-
-**Location**: `src-tauri/src/safety_classifier.rs`
-
-**Purpose**: Content filtering using toxic-bert model
-
-**Implementation**:
 ```rust
-pub fn classify_toxicity(text: &str) -> Result<SafetyScore, String> {
-    let model = load_toxic_bert_model()?;
-    let tokenizer = load_tokenizer()?;
-
-    // Tokenize input
-    let tokens = tokenizer.encode(text, true)?;
-    let input_ids = tokens.get_ids();
-
-    // Run inference
-    let logits = model.forward(&Tensor::new(input_ids, &Device::Cpu)?)?;
-    let probabilities = softmax(&logits)?;
-
-    // 6 toxicity categories
-    let categories = ["toxic", "severe_toxic", "obscene",
-                      "threat", "insult", "identity_hate"];
-
-    Ok(SafetyScore {
-        categories: categories.into_iter()
-            .zip(probabilities.iter())
-            .collect(),
-        is_safe: probabilities.iter().all(|&p| p < 0.5)
-    })
-}
+pub fn classify_text(text: &str) -> Result<SafetyResult, String>
 ```
+
+`SafetyResult` holds `category`, `confidence` and `all_scores` for six classes, each scored with a sigmoid. `should_block(text, mode)` turns the result into a decision: witness and sovereign never block; guardian and hipaa block severe toxicity or threats above 0.9. A comment in the code calls the classifier demo-grade.
+
+`ContainmentLayer::enforce` adds to this:
+
+- a pattern check for harmful instruction requests, which can block on its own,
+- in Sovereign mode, a warning instead of a block,
+- in HIPAA mode, checks for personal health information, diagnosis requests and medication dosing before the general check,
+- in Child mode, the OpenAI Moderation API first and the local classifier second. Child mode needs an OpenAI key and blocks when the API cannot be reached.
+
+If the safety check itself fails outside Child mode, `generate_reply` lets the message through.
+
+Detail: [CONTAINMENT_ARCHITECTURE.md](CONTAINMENT_ARCHITECTURE.md) and [HIPAA_SECURITY_INTEGRATION_GUIDE.md](HIPAA_SECURITY_INTEGRATION_GUIDE.md).
+
+### 10. Cloud backup
+
+**Location**: `src-tauri/src/commands/backup.rs`, UI in `src/components/CloudBackupSettings.jsx`
+
+- `backup_memories_to_r2` uploads one encrypted object, `backup.enc`, to the user's Cloudflare R2 bucket.
+- Encryption is AES-256-GCM. The key is in a local file, `backup.key`. It is random, or derived from a passphrase with Argon2id.
+- The backup holds memories (not the built-in `_zynkbot` ones), memory links, keys and settings, the wake-word voice profile, and conversation threads with their messages.
+- `restore_memories_from_r2` restores memories (deleted ones stay deleted), links (matched by memory text), threads, messages, and keys the device does not already have.
+- Device identity and pairings are not in the backup.
+
+### 11. Other shipped features
+
+- **Thread seal** (`seal.rs`): the user can export one thread as a file with a SHA-256 digest and an Ed25519 signature made by a key that stays on the device. Nothing is written to the database.
+- **Report a problem** (`commands/report.rs`, `build_problem_report`): builds a text report on the device for the user to paste into a GitHub issue. The code sends nothing.
+- **Memory report** (`commands/memory_report.rs`): a "what do you know about me" report built from the local memory graph.
+- **Voice**: desktop dictation through Vosk (`vosk_desktop.rs`) or OpenAI transcription (`openai_realtime.rs`). The Android wake word, assistant role and hands-free path are in [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md).
+- **Einstein demo** (`einstein_demo.rs`): a sample memory set a new user can load.
 
 ---
 
 ## Data Flow
 
-### Complete User Interaction Example
+**Example**: the user types "What's my favorite color?" with a cloud backend selected.
 
-**Scenario**: User asks "What's my favorite color?"
+1. `App.jsx` calls `invoke("send_message_with_memory", ...)`.
+2. `commands/chat.rs`, `generate_reply`: the History thread is opened, the safety check passes, entities and the embedding are made.
+3. `memory::hybrid_search` returns the memory "User's favorite color is blue" among its results.
+4. `ConversationEngine::build_prompt` builds the full prompt with history and memories.
+5. The model's reply streams to the window. Its last line is `MEMORY: no`, which is removed before display.
+6. The exchange is written to conversation history.
+7. No memory job is queued: the message is a question and the model answered `MEMORY: no`.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ [1] USER INPUT (React frontend)                        │
-│     Chat.jsx → invoke("send_message_with_memory")      │
-└────────────────┬────────────────────────────────────────┘
-                 ↓ Tauri IPC
-┌─────────────────────────────────────────────────────────┐
-│ [2] RUST BACKEND (lib.rs)                              │
-│                                                          │
-│  Safety Check:                                          │
-│    → toxic-bert classifier                             │
-│    → Result: Pass (not toxic)                          │
-│                                                          │
-│  Parallel Processing:                                   │
-│    → Thread 1: BERT NER entity extraction              │
-│    → Thread 2: all-MiniLM-L6-v2 embedding generation   │
-│                                                          │
-│  Hybrid Search:                                         │
-│    → Entity match: ["favorite", "color"]               │
-│    → Semantic search: embedding similarity             │
-│    → Result: "User's favorite color is blue"           │
-│                                                          │
-│  LLM Inference:                                         │
-│    → Build prompt with recalled memories               │
-│    → Query selected model (local or API)               │
-│    → Response: "Your favorite color is blue!"          │
-│                                                          │
-│  Store (if memory-worthy):                             │
-│    → Question not stored (query, not assertion)        │
-│                                                          │
-│  Return Response                                        │
-└────────────────┬────────────────────────────────────────┘
-                 ↓ Tauri IPC response
-┌─────────────────────────────────────────────────────────┐
-│ [3] FRONTEND DISPLAY                                    │
-│     Chat.jsx receives response                          │
-│     → Appends to conversation                           │
-│     → Renders: "Your favorite color is blue!"           │
-└─────────────────────────────────────────────────────────┘
-
-```
+Had the user typed "My favorite color is green now", the reply would end `MEMORY: yes`, a job would be queued, call 2 would extract the fact, and call 3 would most likely link it to the older memory as `updates` or `contradicts`.
 
 ---
 
 ## Security & Privacy
 
-### Privacy-First Architecture
+### What stays on the device
 
-1. **Local-First ML**: Embeddings, NER, and safety classification run on-device
-2. **Optional API**: User must explicitly provide API keys
-3. **No Telemetry**: Zero analytics, crash reports, or usage tracking
-4. **Local Storage**: All data in local SQLite database (single file on disk)
-5. **Device-to-Device**: ZynkSync/ZynkLink/ZChat never touch cloud
+1. Embeddings, entity extraction and safety classification run on the device.
+2. The database, the log (`logs/zynkbot.log`) and the user profile are local files.
+3. With a local GGUF model selected, the reply and the memory calls run on the device.
+4. ZynkSync, ZynkLink and ZChat connect paired devices directly over mutual TLS with pinned certificates. No relay server appears in the code.
 
-### HIPAA Mode
+### What leaves the device
 
-**Activation**: User selects specific containment mode
+- With a cloud backend or a custom endpoint, the prompt (the message, recent history, recalled memories, any KB passages) goes to that provider. So do the calls of the memory pipeline.
+- Child mode sends each message to the OpenAI Moderation API.
+- Web search, weather (Open-Meteo), reading a web page named in a message, and model downloads (Hugging Face) make network requests.
+- Live dictation through OpenAI sends audio to OpenAI when the user chooses it.
+- Cloud backup uploads the encrypted `backup.enc` to the user's R2 bucket when the user sets it up.
 
-**Behaviors**:
-- All memories stored with `expires_at` set to 8 hours from creation (ISO timestamp)
-- Background job purges expired memories
-- Stricter safety threshold
-- No cloud sync (device-local only)
+Keys are entered by the user. A search of the Rust and React sources for analytics or telemetry libraries finds none, and "Report a problem" sends nothing by itself. This is a statement about the source at this commit, not an audit of every dependency.
+
+### HIPAA mode
+
+Selected as a containment mode. In `generate_reply`:
+
+- no memory is extracted or stored,
+- no conversation history is written,
+- messages are checked for personal health information, diagnosis requests and medication dosing before the model is called,
+- a medical disclaimer is added to replies that mention health terms.
+
+HIPAA mode does not give memories an 8-hour expiry: it stores none. Detail in [HIPAA_SECURITY_INTEGRATION_GUIDE.md](HIPAA_SECURITY_INTEGRATION_GUIDE.md).
 
 ---
 
 ## Deployment
 
-### Installation Scripts
+### Installation scripts (build from source)
 
 **Windows:**
-```bash
-install.bat              # Automated installation (Run as Administrator)
-START_ZYNKBOT.bat   # Launch application
+```
+install.bat              (run as Administrator)
+START_ZYNKBOT.bat
 ```
 
 **Linux:**
 ```bash
-./install.sh             # Automated installation
-./START_ZYNKBOT.sh       # Launch application
+./install.sh
+./START_ZYNKBOT.sh
 ```
 
-Both scripts handle:
-- Dependency installation (Rust, Node.js, and build tools)
-- SQLite database creation (embedded — no separate server process)
-- Schema initialization
-- System model downloads (embeddings, safety, NER)
-- Optional user LLM downloads
+Both installers list the same eight steps: install system dependencies, install the Rust toolchain, detect a GPU and configure CUDA, configure the environment, install Node dependencies, create the model folders, download the three system models, and offer the local chat models (Sophro first; each download is checked against a SHA-256).
+
+Neither script creates the database. The app creates the SQLite file and applies its migrations at startup.
+
+Guides: [LINUX_INSTALLATION_GUIDE.md](../LINUX_INSTALLATION_GUIDE.md), [WINDOWS_INSTALLATION_GUIDE.md](../WINDOWS_INSTALLATION_GUIDE.md), [INSTALLATION_TROUBLESHOOTING.md](../INSTALLATION_TROUBLESHOOTING.md), [ANDROID_USER_GUIDE.md](../ANDROID_USER_GUIDE.md).
 
 ---
 
@@ -682,13 +465,13 @@ Both scripts handle:
 
 ### Prerequisites
 
-- **Rust**: 1.77.2+
-- **Node.js**: 18+
-- **SQLite**: Embedded — no separate install required (created automatically by the app)
+- **Rust**: 1.77.2 or newer (`rust-version` in `Cargo.toml`)
+- **Node.js**: 18 or newer (`engines` in `package.json`)
+- **SQLite**: nothing to install; it is embedded
 
-### Build Instructions
+### Build
 
-**Development mode:**
+**Development:**
 ```bash
 cd zynkbot_rust
 npm install
@@ -701,114 +484,83 @@ cd zynkbot_rust
 npm run tauri:build
 ```
 
-**SQLx cache generation:**
-```bash
-cd zynkbot_rust/src-tauri
-DATABASE_URL="sqlite:zynkbot.db" cargo sqlx prepare
-```
+On Windows, build and run in the release profile. Android builds have their own steps. Both are described in `zynkbot_rust/CLAUDE.md` and [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md).
+
+There is no `cargo sqlx prepare` step. The code uses run-time queries (`sqlx::query`), not the compile-time `query!` macros, and there is no `.sqlx` folder.
+
+Tests are described in [TESTING.md](../TESTING.md).
 
 ### Project Structure
 
 ```
-zynkbot/                       # Repository root
-├── zynkbot_rust/              # Main Tauri desktop application
-│   ├── src/                   # React frontend
-│   │   ├── App.jsx
-│   │   ├── components/
-│   │   │   ├── Chat.jsx
-│   │   │   ├── MemoryManager.jsx
-│   │   │   ├── Settings.jsx
-│   │   │   ├── KnowledgeBase.jsx
-│   │   │   ├── Onboarding.jsx
-│   │   │   ├── EnsembleModal.jsx
-│   │   │   ├── ZynkSyncPanel.jsx
-│   │   │   ├── ZynkLinkPanel.jsx
-│   │   │   ├── ZChatModal.jsx
-│   │   │   └── ConflictResolutionModal.jsx
-│   │   └── main.jsx
-│   ├── src-tauri/             # Rust backend (Tauri)
-│   │   ├── src/
-│   │   │   ├── lib.rs         # Tauri entry point: module declarations + invoke_handler
-│   │   │   ├── commands/      # Tauri IPC command handlers (modular)
-│   │   │   │   ├── memory.rs
-│   │   │   │   ├── onboarding.rs
-│   │   │   │   ├── conversation.rs
-│   │   │   │   ├── nlp.rs
-│   │   │   │   ├── models.rs
-│   │   │   │   └── safety.rs
-│   │   │   ├── memory.rs      # Hybrid search, CRUD operations
-│   │   │   ├── knowledge_base.rs  # KB indexing & document management
-│   │   │   ├── kb_rag.rs          # Knowledge Base RAG retrieval
-│   │   │   ├── containment.rs # Safety/containment modes
-│   │   │   ├── safety_classifier.rs  # TinyBERT toxic classification
-│   │   │   ├── nlp_enhancer.rs       # BERT NER, entity extraction
-│   │   │   ├── conversation_engine.rs # Prompt building
-│   │   │   ├── relationship_detector.rs # Memory relationships
-│   │   │   ├── zynksync.rs    # Cross-device memory sync
-│   │   │   ├── zynklink.rs    # Device-to-device file sharing
-│   │   │   ├── zchat.rs       # Device messaging
-│   │   │   ├── web_search.rs  # DuckDuckGo integration
-│   │   │   └── llm/
-│   │   │       ├── local_embeddings.rs  # all-MiniLM-L6-v2
-│   │   │       ├── local_models.rs      # llama.cpp GGUF
-│   │   │       ├── anthropic.rs         # Claude API
-│   │   │       ├── openai.rs            # GPT API
-│   │   │       └── xai.rs               # Grok API
-│   │   ├── models/
-│   │   │   ├── system/            # Auto-downloaded system models
-│   │   │   │   ├── all-MiniLM-L6-v2/   # 80MB embeddings
-│   │   │   │   ├── toxic-bert/         # 260MB safety classifier
-│   │   │   │   └── bert-base-NER/      # 260MB entity extraction
-│   │   │   └── user/              # Optional local LLMs (.gguf)
-│   │   │       ├── Sophro-4B-memory-v1-Q4_0.gguf              # 2.4GB, the Zynkbot model
-│   │   │       ├── gemma-4-12b-it-Q4_K_M.gguf                 # 7.1GB (optional)
-│   │   │       ├── gemma-4-E4B-it-Q4_K_M.gguf                 # 5.0GB (optional)
-│   │   │       ├── Qwen3.5-9B-Q4_K_M.gguf                     # 5.7GB (optional)
-│   │   │       └── Ministral-3-8B-Instruct-2512-Q4_K_M.gguf   # 5.2GB (optional)
-│   │   ├── Cargo.toml
-│   │   ├── tauri.conf.json
-│   │   └── .env
+(repository root)
+├── zynkbot_rust/                  # The app
+│   ├── src/                       # React frontend
+│   │   ├── index.js               # Entry point
+│   │   ├── App.jsx                # Chat screen
+│   │   ├── components/            # 36 components (modals, panels, pages)
+│   │   ├── hooks/
+│   │   ├── styles/
+│   │   └── utils/
+│   ├── public/
 │   ├── package.json
-│   └── vite.config.js
-├── docs/                      # Documentation
-│   ├── FEATURES.md
-│   ├── NETWORKING_FEATURES.md
-│   ├── DIGITAL_RESILIENCE.md
-│   ├── PROJECT_VISION.md
-│   ├── case_studies/
-│   │   ├── conversational_memory.md
-│   │   ├── hipaa_compliance.md
-│   │   ├── emergency_resilience.md
-│   │   └── hvac_field_service.md
+│   └── src-tauri/                 # Rust backend
+│       ├── src/
+│       │   ├── lib.rs             # Modules, command registration, startup, relationship calls
+│       │   ├── main.rs
+│       │   ├── commands/          # backup, chat, checkin, conversation, knowledge_base,
+│       │   │                      # memory, memory_report, models, nlp, onboarding, report,
+│       │   │                      # safety, setup_wizard, sync_codes, user_identity, utils,
+│       │   │                      # web_search, zchat, zynklink, zynksync
+│       │   ├── llm/               # anthropic, openai, xai, mistral, local_models,
+│       │   │                      # local_embeddings
+│       │   ├── conversation_engine.rs   # Prompt building
+│       │   ├── conversation_history.rs  # Threads and messages
+│       │   ├── memory.rs                # Hybrid search, memory rows, links
+│       │   ├── memory_jobs.rs           # Memory job queue and worker
+│       │   ├── memory_prompts.rs        # Prompts of the memory pipeline
+│       │   ├── memory_extras.rs         # Namespaces, tags, passing facts
+│       │   ├── nlp_enhancer.rs          # Titles, tags, events, BERT NER
+│       │   ├── containment.rs           # Containment modes
+│       │   ├── safety_classifier.rs     # toxic-bert classifier
+│       │   ├── knowledge_base.rs, kb_rag.rs, kb_prompt.rs, word_docs.rs
+│       │   ├── web_search.rs, web_read.rs, weather.rs, chat_modes.rs
+│       │   ├── transport.rs, tls.rs     # Identity, mTLS, peers
+│       │   ├── zynksync.rs, sync_outbox.rs, sync_codes.rs
+│       │   ├── zynklink.rs, zchat.rs
+│       │   ├── android_jni.rs, voice_prefs.rs, wake_profile.rs
+│       │   ├── vosk_desktop.rs, openai_realtime.rs
+│       │   ├── seal.rs, app_log.rs, env_file.rs, db.rs, user_identity.rs
+│       │   ├── response_sink.rs         # Where a reply goes (window, JNI, tests)
+│       │   └── memory_bench.rs, recall_bench.rs, reply_bench.rs   # Benches
+│       ├── migrations/            # 28 SQL migrations
+│       ├── models/
+│       │   ├── system/            # all-MiniLM-L6-v2, bert-base-NER, toxic-bert
+│       │   └── user/              # Local chat models (.gguf)
+│       ├── gen/android/           # Android project, committed, partly hand-written
+│       ├── tests/
+│       ├── Cargo.toml
+│       ├── tauri.conf.json
+│       ├── tauri.linux.conf.json
+│       └── tauri.windows.conf.json
+├── docs/                          # Documentation
 │   ├── architecture_and_development/
-│   │   └── ARCHITECTURE_COMPREHENSIVE.md
-│   └── troubleshooting/
-├── scripts/                   # Helper scripts
-│   ├── db/                    # Database setup
-│   │   ├── complete_fresh_install_schema.sql
-│   │   └── database_schema.sql
-│   └── tools/                 # Development tools
-├── knowledge_base/            # Example KB files (for testing)
-├── labs/                      # Experimental features
-├── README.md
-├── LICENSE                    # Zynkbot Community Source License
-├── COMMERCIAL_LICENSE.md
-├── ROADMAP.md
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── install.bat                # Windows installer
-└── install.sh                 # Linux/macOS installer
+│   ├── case_studies/
+│   ├── snap_ins/
+│   ├── troubleshooting/
+│   └── ROADMAP.md, FEATURES.md, BENCHMARKS.md, KNOWN_ISSUES.md, ...
+├── knowledge_base/                # A sample Knowledge Base document
+├── labs/                          # Experiments and benches
+├── wake-word-training/
+├── assets/
+├── install.sh, install.bat        # Installers (Linux, Windows)
+├── uninstall.sh, uninstall.bat
+├── START_ZYNKBOT.sh, START_ZYNKBOT.bat
+├── README.md, CHANGELOG.md, CONTRIBUTING.md, CLA.md, API_COSTS.md, DISCLAIMER.md
+└── LICENSE, COMMERCIAL_LICENSE.md, TRADEMARK
 ```
 
-**Key Directories:**
-
-- **`zynkbot_rust/`** - Main Tauri desktop application (React + Rust)
-- **`docs/`** - Comprehensive documentation (features, architecture, case studies)
-- **`scripts/`** - Database schemas, development tools, diagnostic scripts
-- **`knowledge_base/`** - Example documents for Knowledge Base testing
-- **`labs/`** - Experimental features not yet in production
-
----
+Installed copies keep models in the app data folder; a development build uses `src-tauri/models/` (`db.rs`, `get_models_dir`).
 
 ---
 
@@ -816,13 +568,24 @@ zynkbot/                       # Repository root
 
 ### Related Documentation
 
-- [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) - Database structure
-- [LINUX_INSTALLATION.md](LINUX_INSTALLATION.md) - Linux setup guide
-- [TAURI_INSTALLATION.md](TAURI_INSTALLATION.md) - Cross-platform installation
-- [MODELS.md](MODELS.md) - ML model information
-- [ZynkSync Documentation](ZynkSync_Documentation.md) - Device sync
-- [ZynkLink Documentation](ZynkLink_Filesystem_Documentation.md) - File sharing
-- [ZChat Documentation](ZChat_Documentation.md) - Device messaging
+In this folder:
+
+- [MODEL_ARCHITECTURE.md](MODEL_ARCHITECTURE.md): models, backends, local engine settings
+- [PROMPT_CONSTRUCTION_PIPELINE.md](PROMPT_CONSTRUCTION_PIPELINE.md): how the prompt is built
+- [MEMORY_PROCESSING_PIPELINE.md](MEMORY_PROCESSING_PIPELINE.md): the memory pipeline step by step
+- [MEMORY_RELATIONSHIP_GRAPH.md](MEMORY_RELATIONSHIP_GRAPH.md) and [RELATIONSHIP_DETECTION_ARCHITECTURE.md](RELATIONSHIP_DETECTION_ARCHITECTURE.md): links between memories
+- [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md): every table
+- [CONTAINMENT_ARCHITECTURE.md](CONTAINMENT_ARCHITECTURE.md) and [HIPAA_SECURITY_INTEGRATION_GUIDE.md](HIPAA_SECURITY_INTEGRATION_GUIDE.md): containment modes
+- [ANDROID_ARCHITECTURE.md](ANDROID_ARCHITECTURE.md): the Android app
+
+Elsewhere in `docs/`:
+
+- [MODELS.md](../MODELS.md): model information for users
+- [NETWORKING_FEATURES.md](../NETWORKING_FEATURES.md): ZynkSync, ZynkLink and ZChat for users
+- [ENSEMBLE_MODE.md](../ENSEMBLE_MODE.md)
+- [BENCHMARKS.md](../BENCHMARKS.md)
+- [ROADMAP.md](../ROADMAP.md)
+- [KNOWN_ISSUES.md](../KNOWN_ISSUES.md)
 
 ### External Resources
 
@@ -833,6 +596,5 @@ zynkbot/                       # Repository root
 
 ---
 
-**License**: Zynkbot Community Source License / commercial licensing available — see [COMMERCIAL_LICENSE.md](../../COMMERCIAL_LICENSE.md)
+**License**: Zynkbot Community Source License; commercial licensing available, see [COMMERCIAL_LICENSE.md](../../COMMERCIAL_LICENSE.md)
 **Contact**: [GitHub Issues](https://github.com/MSkill1/zynkbot/issues)
-**Version**: 1.0.0 (Production Release)

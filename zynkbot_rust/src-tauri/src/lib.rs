@@ -1082,12 +1082,40 @@ Respond with ONLY valid JSON, no markdown, starting with {{:
     } else {
         return Err(format!("Unknown backend '{}'", backend));
     };
-    let json_str = match (response.find('{'), response.rfind('}')) {
-        (Some(a), Some(b)) if b > a => &response[a..=b],
-        _ => response.as_str(),
-    };
+    parse_extras_reply(&response)
+}
+
+/// The extras out of a model's reply: the first complete JSON object in it. A model that
+/// wraps its JSON in prose, or follows it with a second object or a remark containing a
+/// brace, used to fail here with "trailing characters" (memory 2528, 2026-10-17), because
+/// everything from the first brace to the last was parsed as one value.
+fn parse_extras_reply(response: &str) -> Result<memory_extras::MemoryExtras, String> {
+    let json_str = first_json_object(response).unwrap_or_else(|| response.trim());
     serde_json::from_str::<memory_extras::MemoryExtras>(json_str)
         .map_err(|e| format!("extras parse failed: {}", e))
+}
+
+#[cfg(test)]
+mod parse_extras_reply_tests {
+    const OBJECT: &str = r#"{"event_date": "2026-10-17", "namespace": "health", "tags": ["weight"], "tone": "neutral", "entities": [{"name": "Vermont", "kind": "place"}]}"#;
+
+    #[test]
+    fn prose_around_the_json_is_ignored() {
+        let reply = format!("Here is the annotation:\n{}\nI used {{braces}} to mark nothing.", OBJECT);
+        let extras = super::parse_extras_reply(&reply).expect("the first object parses");
+        assert_eq!(extras.tags, Some(vec!["weight".to_string()]));
+    }
+
+    #[test]
+    fn a_second_object_after_the_first_is_ignored() {
+        let reply = format!("{}\n{{\"note\": \"done\"}}", OBJECT);
+        assert!(super::parse_extras_reply(&reply).is_ok());
+    }
+
+    #[test]
+    fn a_reply_with_no_json_is_an_error() {
+        assert!(super::parse_extras_reply("I could not annotate that.").unwrap_err().starts_with("extras parse failed"));
+    }
 }
 
 const EXTRAS_SCHEMA: &str = r#"{

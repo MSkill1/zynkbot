@@ -1,241 +1,280 @@
 # Containment Architecture: Why Local-First Matters
 
+*Checked against the code on 2026-11-10 (`v1`, a7599eb).*
+
 **Technical overview of Zynkbot's containment system and local-first architecture**
+
+Statements about Zynkbot in this document were checked against the code. Statements about other products were not.
 
 ---
 
 ## What is Containment?
 
-**Containment** is a pre-processing filter layer that runs **before** user input reaches the LLM. It enforces safety boundaries, content restrictions, and privacy rules based on the active containment mode.
+**Containment** is a check on the message the user typed. It runs on the device, before the message is sent to a model. Depending on the active mode, the message is let through, let through with a warning, or stopped with a block message.
 
-**Key principle:** Block problematic content at the routing layer, not by filtering LLM outputs.
+**Key principle:** stop a message before the model call, instead of filtering the model's output.
 
-**Why this matters:**
-- **Traditional approach:** LLM sees everything, output is filtered → LLM still processed sensitive data
-- **Containment approach:** Filter input before LLM → LLM never sees blocked content
+- **Output filtering:** the model receives everything, and the reply is filtered afterwards.
+- **Containment:** the typed message is checked first. A blocked message is not sent to any model.
 
-This is **architectural safety** vs. **cosmetic filtering**.
+The check covers the typed message only, and some paths do not run it. These are listed under [Known limits](#known-limits). `docs/ROADMAP.md` describes the modes as proofs of concept that are not production-grade for their domains.
 
 ---
 
 ## Why Local-First Architecture
 
-### The Cloud AI Problem
+### The hosted model
 
-Most AI assistants (ChatGPT, Claude, Gemini) work like this:
+A hosted AI assistant works like this:
 
 ```
-User Device                    Cloud Servers
+User Device                    Provider's Servers
     ↓                               ↓
 [Input] ──────────────────→ [LLM Processing]
                                     ↓
-[Response] ←──────────────  [Store conversation]
-                                    ↓
-                            [Train next model version]
+[Response] ←──────────────  [Conversation kept by the provider]
 ```
 
-**Your data:**
-- Uploaded to third-party servers
-- Used for training (unless you pay for enterprise)
-- Subject to terms of service changes
-- Accessible to company employees (with restrictions)
-- Vulnerable to data breaches
-- Requires constant internet connection
+The message is processed on the provider's servers. What the provider keeps, and whether it is used for training, depends on that provider's terms. An internet connection is required.
 
 ### The Local-First Alternative
 
 Zynkbot works like this:
 
 ```
-User Device (Your Computer)
+User Device
     ↓
-[Containment Layer] ← Safety filter runs locally
+[Containment check]  ← runs on the device (Child mode calls OpenAI instead)
     ↓
-[Local LLM or API] ← Choice: local inference or API call
+[Local model or cloud API]  ← the user's choice
     ↓
-[SQLite Database] ← All memories stored locally
+[SQLite database]  ← memories and history stored on the device
     ↓
-[Response displayed]
+[Reply shown]
 ```
 
-**Your data:**
-- Stays on your device (unless you choose API LLM)
-- Never used for training
-- You own the database file
-- Works offline with local models
-- No third-party access
+**What stays on the device:**
+- The database file (memories, conversation history, Knowledge Base index)
+- With a local model: the message, the recalled memories and the reply
+- The containment check, in every mode except Child
+
+**What leaves the device:**
+- With a cloud backend (OpenAI, Anthropic, xAI, Mistral): the prompt built for the model. It includes the message, attached file text and images, recalled memories, and Knowledge Base text when the KB button is on.
+- In Child mode: the typed message goes to the OpenAI Moderation API, and the reply comes from OpenAI.
+- A weather question: the place goes to Open-Meteo (`weather.rs`).
+- A web search: the query goes to the search engine, or to the cloud provider's own search tool.
+- Cloud dictation, if chosen: audio goes to OpenAI. Vosk dictation is offline.
+- The encrypted backup, if the user sets it up: one encrypted file goes to the user's own Cloudflare R2 bucket (`commands/backup.rs`).
+- ZynkSync, ZynkLink and ZChat: data goes to paired devices over the local network.
+
+A search of `src-tauri/src` and `src` finds no telemetry or analytics code.
 
 ---
 
-## Containment Modes (v0.9 Implementation)
+## Containment Modes
 
-Zynkbot provides 5 containment modes, each enforcing different safety boundaries (fork the repo and build a mode for your use case):
+### How the mode is chosen
 
-### 1. Guardian Mode (Default)
+The mode is the "Containment Mode" drop-down on the System Controls list (`src/components/ContainmentModeSelector.jsx`). It offers five modes:
 
-**Purpose:** Balanced safety for general users
+| Mode | Label in the UI |
+|------|-----------------|
+| Witness | No filtering |
+| Sovereign | Warnings only |
+| Guardian | Block dangerous content |
+| Child | ⚠️ Strongest safety - requires OpenAI API + internet (asks for confirmation first) |
+| HIPAA | PHI protection (see documentation) |
+
+**Sovereign is the default.** The mode is held in the page's state (`App.jsx`, `useState("sovereign")`) and is not saved. Each time the app starts, the mode is Sovereign again.
+
+The backend also accepts two names that the UI does not offer (`ContainmentMode::from_str` in `containment.rs`): `elder`, a stub, and `default`, which is treated as Guardian.
+
+The modes below are numbered as in earlier versions of this document.
+
+### 1. Guardian Mode
+
+**Purpose:** block requests for harmful instructions and the most severe classifier results.
 
 **What it blocks:**
-- Toxic content (TinyBERT classifier, local inference)
-- Self-harm and violence
-- Illegal activities
-- Adult content
-- Hate speech
+- A request for instructions on a harmful subject. `detect_harmful_instruction` in `containment.rs` needs both an instruction phrase ("how to", "how do i", "teach me", "steps to", "guide to" and others) and a harmful subject word ("bomb", "weapon", "poison", "hack", "malware", "steal", "meth" and others). Both are matched as whole words.
+- Text that the toxic-bert classifier labels `SevereToxic` or `Threat` with confidence above 0.9 (`should_block` in `safety_classifier.rs`).
 
-**How it works:**
+**What it does not block:**
+- Text labelled `Toxic`, `Obscene`, `Insult` or `IdentityHate`, at any confidence.
+- Text about a harmful subject that is not phrased as a request for instructions, unless the classifier rule above fires.
+- There are no separate rules for adult content, hate speech or illegal activity.
+
+**Block message:** `[BLOCK] I'm sorry, I can't help with that. (Detected: X)`, where X is "Harmful instruction request" or the classifier's category description. The `[BLOCK]` prefix is part of the reply text. No code removes it.
+
+**How it works:** `generate_reply` in `commands/chat.rs` calls `check_containment` (`commands/safety.rs`), which calls `ContainmentLayer::enforce` (`containment.rs`):
+
 ```rust
-// lib.rs
-let safety_check = check_containment(message.clone(), "guardian").await;
+// commands/chat.rs, generate_reply (shortened)
+let safety_check = crate::commands::safety::check_containment(query.clone(), containment_mode.clone()).await;
 match safety_check {
-    Ok(Some(block_message)) => {
-        // Content blocked - return block message to user
-        return Ok(ReplyResponse {
-            reply_text: block_message,
-            blocked: Some(true),
-            // ...
-        });
+    Ok(Some(message)) => {
+        if message.starts_with("[WARN_ALLOW]") {
+            // Sovereign: keep the warning, continue to the model
+            warning_prefix = Some(message.trim_start_matches("[WARN_ALLOW]").trim().to_string());
+        } else {
+            // Hard block (Guardian, HIPAA): return the message as the reply
+            return Ok(ReplyResponse { reply_text: message, blocked: Some(true), /* ... */ });
+        }
     }
-    Ok(None) => {
-        // Content passed - continue to LLM
-    }
-    Err(e) => {
-        // Safety check failed - continue anyway (don't block on errors)
-    }
+    Ok(None) => { /* passed */ }
+    Err(e) => { /* check failed: continue without blocking */ }
 }
 ```
-
-**Implementation:** `containment.rs` + `safety_classifier.rs` (TinyBERT toxic-bert model, 260MB, local)
 
 **Example:**
 - User: "How do I hack into someone's email?"
-- Containment: Blocks at routing layer
-- LLM: Never sees the question
+- "how do i" is an instruction phrase and "hack" is a harmful subject, so the pattern rule fires.
+- The reply is the block message. No model is called.
 
-### 2. Child Mode (Strictest)
+### 2. Child Mode
 
-**Purpose:** Safe environment for minors
+**Purpose:** a mode for children that uses OpenAI for both the check and the reply.
 
-**What it blocks:**
-- All Guardian blocks +
-- Medical advice
-- Legal advice
-- Financial advice
-- Complex ethical questions
-- Any potentially harmful instructions
+**What it does:**
+1. The typed message is sent to the OpenAI Moderation API (`check_openai_moderation` in `containment.rs`). It needs `OPENAI_API_KEY` and an internet connection.
+2. Every reply comes from OpenAI, whichever model is selected. `generate_reply` forces the backend to `openai` (model from `OPENAI_MODEL`, default `gpt-5.5`).
+3. `CHILD_MODE_SYSTEM_PROMPT` (`containment.rs`) is added to the request. It tells the model to give age-appropriate answers for children under 13 and to refuse unsafe requests. It is added on the text path only; a message with an attached image goes through the vision path, which does not add it.
 
-**How it works:**
-```rust
-// lib.rs
-if containment_mode.to_lowercase() == "child" {
-    // Use OpenAI Moderation API for safety check
-    let layer = containment::ContainmentLayer::new("child")?;
-    match layer.check_openai_moderation(&message).await {
-        Ok(Some(block_message)) => {
-            // Blocked by OpenAI Moderation
-            return Ok(ReplyResponse {
-                reply_text: block_message,
-                blocked: Some(true),
-                // ...
-            });
-        }
-        // ...
-    }
-}
-```
+**What it blocks:** a message that the Moderation API flags. The API's categories are sexual, sexual/minors, hate, hate/threatening, harassment, harassment/threatening, self-harm (plus intent and instructions), violence and violence/graphic.
 
-**Implementation:** OpenAI Moderation API (requires internet) + rule-based filters
+**Block message:** `[BLOCK] I can't answer that in Child Mode. This content was flagged as potentially unsafe.`
 
-**Why OpenAI Moderation?** More comprehensive than local TinyBERT for child safety. Trade-off: requires internet, but child safety is worth it.
+**If the check cannot run:** when the key is missing or the API call fails, the message is blocked with "I'm having trouble checking if this is safe for Child Mode. Please try again later." followed by the error.
+
+**What it does not have:** rules for medical, legal or financial advice, or for "complex ethical questions". Such a question passes if the Moderation API does not flag it. The answer then depends on the OpenAI model and the child prompt.
+
+**In the UI:**
+- Choosing Child shows a confirmation dialog. Its text says that without an OpenAI key "Child Safety Mode will still apply basic filtering, but protection will be reduced". The chat path does not do that: without a key it blocks every message, as described above.
+- The Ensemble button is disabled (`App.jsx`).
+- The model page says "Child mode is on: every answer goes to OpenAI" and dims the other models.
+- Check-in questions are off (`next_checkin` in `commands/checkin.rs`).
+
+**Code that exists but is not used by chat:** the Child branch inside `ContainmentLayer::enforce` (Moderation plus a toxic-bert second check above 0.7) and `get_child_mode_response`. The chat path calls only `check_openai_moderation`.
 
 **Example:**
 - User: "Tell me about cryptocurrency investing"
-- Containment: Blocks (financial advice for children)
-- Blocked message: "I can't provide financial advice. Let's talk about age-appropriate topics!"
+- The Moderation API does not flag it, so it is not blocked.
+- OpenAI answers under the child prompt.
 
 ### 3. HIPAA Mode (Healthcare)
 
-**Purpose:** Prevent Protected Health Information (PHI) leakage
+**Purpose:** stop typed messages that contain certain structured identifiers or certain medical requests, and keep no record of the conversation.
 
-**What it blocks:**
-- PHI patterns (SSN, phone, email, medical IDs via regex - 70-85% accuracy)
-- Medical advice that could constitute diagnosis
-- Treatment recommendations
-- Medication dosing
+**What it blocks** (`enforce_hipaa` in `containment.rs`, in this order):
 
-**Additional features:**
-- **Ephemeral memory:** Auto-expires after 8 hours (typical clinical shift)
-- **Audit logging:** Daily JSON logs of PHI detections
-- **No API LLMs:** Forces local model only (no PHI uploaded)
+1. **PHI patterns** (`detect_phi`). Seven regular expressions:
 
-**Implementation:**
-```rust
-// containment.rs: phi_detector module
-// Regex patterns for:
-// - SSN: \b\d{3}-\d{2}-\d{4}\b
-// - Phone: \b\d{3}-\d{3}-\d{4}\b
-// - Medical Record #: MRN\s*:?\s*\d+
-// - Insurance ID, addresses, DOB, etc.
-```
+   | Name | Pattern |
+   |------|---------|
+   | SSN | `\b\d{3}-?\d{2}-?\d{4}\b` |
+   | phone | `\b\d{3}[-.]?\d{3}[-.]?\d{4}\b` |
+   | email | `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z\|a-z]{2,}\b` |
+   | zip | `\b\d{5}(?:-\d{4})?\b` |
+   | credit_card | `\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b` |
+   | ip_address | `\b(?:\d{1,3}\.){3}\d{1,3}\b` |
+   | address | a number, then words, then Street, St, Avenue, Ave, Road, Rd, Lane, Ln, Drive, Dr, Court, Ct, Boulevard or Blvd |
+
+   There is no pattern for names, dates of birth, medical record numbers or insurance IDs.
+
+2. **Diagnosis phrases** (`detect_diagnosis_request`): "diagnose me", "what do i have", "do i have", "is it cancer", "is it diabetes".
+3. **Dosing** (`detect_medication_dosing`): one of the phrases "how much should i take", "how much", "should i take", "dosage for", "how many pills", "what dose", "safely", together with one of the keywords mg, dose, pill, tablet, medication, medicine, drug, prescription, ibuprofen, acetaminophen, aspirin, tylenol, advil, take, "can i take".
+4. **Treatment phrases:** "should i get surgery", "should i have the procedure", "should i start treatment".
+5. **General safety**, same rule as Guardian: `[BLOCK] Cannot process this request in HIPAA mode. (Detected: X)`.
+
+Checks 2 to 4 match substrings of the lower-cased message. They also match ordinary sentences. "What options do I have?" contains "do i have". "How much time does it take?" contains "how much" and "take".
+
+**Other effects in HIPAA mode:**
+- **No conversation history.** The chat paths in `commands/chat.rs` skip history logging. The History button is disabled, with the tooltip "Conversation history is disabled in HIPAA mode".
+- **No new memories.** Memory extraction is skipped, including an explicit "Remember:" request. The desktop "Open Memory Manager" button is disabled.
+- **Audit log.** Each message that reaches `enforce_hipaa` writes one line to `logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json`. The line holds a timestamp, an event type, the message length and a blocked flag. It does not hold the message text or a user id.
+- **Medical disclaimer.** If the reply contains a health-related word, the app appends "⚕️ AI-generated. Not a substitute for clinical judgment or current clinical guidelines."
+- **Check-in questions are off** (`next_checkin` in `commands/checkin.rs`).
+
+**What HIPAA mode does not do:**
+- It does not restrict the backend. A cloud model can be selected, and it receives any message that passes the checks.
+- It does not stop recall. Memories already in the database, and Knowledge Base text when the KB button is on, go into the prompt.
+- It does not set an expiry on memories. There is no 8-hour rule in the code. In `chat.rs` the variable `_is_ephemeral` is set for HIPAA mode and never used.
 
 **Example:**
 - User: "Patient John Doe, SSN 219-90-7812, presented with chest pain"
-- Containment: Detects SSN pattern, blocks
-- Blocked message: "I detected potential PHI (Social Security Number). HIPAA mode prevents processing this information."
+- The SSN pattern matches.
+- Reply: "🔒 Please don't share personal health information like SSN, insurance numbers, or member IDs. This system is designed for general health discussions only." No model is called.
 
-**Limitations:** Currently regex-based (70-85% accurate). Future: AI model for PHI detection (95%+ accuracy). See [hipaa_compliance.md](../case_studies/hipaa_compliance.md).
+**Accuracy:** nothing in the code measures detection accuracy. Earlier versions of this document gave percentages; they are removed because they are not verified against the code.
 
-**HIPAA is one example of domain-specific containment.** The same pattern — custom detection rules, audit logging, ephemeral storage, medical request blocking — can be applied to other regulated industries: legal (attorney-client privilege, client confidentiality), financial services (account numbers, trading strategy), mental health and substance abuse records, and others. HIPAA is the most thoroughly specified compliance framework in US healthcare, making it the natural first implementation. The architecture is designed to be extended.
+HIPAA is one example of domain-specific containment. The same pattern (detection rules, an audit log, no stored conversation, request blocking) could be written for other fields. Only the HIPAA version exists in the code.
 
-For the full implementation detail, deployment scenarios, and compliance context, see the [HIPAA Security Integration Guide](HIPAA_SECURITY_INTEGRATION_GUIDE.md).
+For more detail, see the [HIPAA Security Integration Guide](HIPAA_SECURITY_INTEGRATION_GUIDE.md).
 
-### 4. Sovereign Mode (Permissive)
+### 4. Sovereign Mode (Default)
 
-**Purpose:** Maximum user control, minimal filtering
+**Purpose:** warn, never block.
 
-**What it blocks:**
-- Nothing - all queries allowed
+**What it blocks:** nothing.
 
-**What it does:**
-- Issues warnings for potentially risky content
-- Logs the warning and user's decision to proceed
-- LLM includes warning prefix in response
+**What it does:** shows a warning in front of the reply when either of these is true (`ContainmentLayer::enforce`):
+- the harmful-instruction pattern fires (the same rule as Guardian), or
+- the classifier gives any category other than Safe with confidence above 0.85.
 
-**How it works:**
-```rust
-// lib.rs
-if message.starts_with("[WARN_ALLOW]") {
-    // Sovereign mode: Extract warning, continue with LLM
-    warning_prefix = Some(message.trim_start_matches("[WARN_ALLOW]").trim().to_string());
-    // Continue to LLM...
-}
-```
+The warning text is "⚠️ WARNING: This request may contain unsafe content (X). Proceeding with caution." The app puts it in front of the model's reply (`generate_reply`: `format!("{}\n\n{}", warning, reply_text)`). The model does not write it. The warning is printed to the app log. The user is not asked to confirm, and no decision is recorded.
 
 **Example:**
-- User: "How would someone theoretically pick a lock?"
-- Containment: Warning issued, but allows query
-- LLM response: "⚠️ Warning: This information could be misused. Proceeding because you're in Sovereign Mode. Lock picking theory works by..."
+- User: "How do I hack into someone's email?"
+- The pattern rule fires.
+- The reply starts with the warning, followed by whatever the model answers.
 
-**Use cases:**
-- Security research
-- Educational purposes
-- Users who want full control
+### 5. Witness Mode
 
-### 5. Witness Mode (Development/Testing)
+**Purpose:** no containment.
 
-**Purpose:** No containment, only logging
+**What it blocks:** nothing. `enforce` returns at once and the classifier is not run.
 
-**What it blocks:**
-- Nothing
+**What it does:** nothing specific to the mode. There is no extra logging. Conversation history and memories are kept as in the other non-HIPAA modes.
 
-**What it does:**
-- Logs all queries and responses
-- No safety filtering at all
-- For development testing and ethical simulations
+---
 
-**Use cases:**
-- Testing LLM responses without safety interference
-- Personality simulation research
-- Debugging containment logic
+## Known limits
+
+This section states current behaviour.
+
+**All modes**
+- **The mode is not saved.** The app starts in Sovereign every time. A user who wants Guardian, Child or HIPAA selects it again after each start.
+- **Allowlist phrases skip every check.** A message that contains "my name is", "what is my name", "what's my name", "do you remember my name" or "i am called" is allowed without any further check (`ContainmentLayer::enforce`). This applies to HIPAA mode too: "My name is X and my SSN is 123-45-6789" passes. Child mode is not affected, because it does not go through `enforce`.
+- **Weather questions are answered before the check.** `generate_reply` answers them from Open-Meteo before containment, in every mode.
+- **A caller can skip the check.** `generate_reply` takes `skip_containment`. The app sets it for the model call that writes up web search results (`App.jsx`) and for the second pass of a hands-free search.
+- **Ensemble has no check.** `run_ensemble` in `commands/chat.rs` does not call containment in any mode. It uses recalled memories and Knowledge Base text. The Ensemble button is disabled only in Child mode.
+- **Only the typed question is checked.** Attached file text and images are not.
+- **Recalled memories and Knowledge Base text are not checked.** They go into the prompt in every mode.
+- **Android hands-free answers always use Sovereign.** `NativeVoiceAnswerer.kt` calls `nativeSendMessage` with the mode fixed to "sovereign", whatever mode is selected in the app.
+- **The typed message is written to the app log.** `generate_reply` prints the message (up to 1,500 characters) before the check, and `app_log.rs` writes all such output to `logs/zynkbot.log` in the app data folder. This happens in every mode, for blocked messages too.
+- **An unknown mode name does not block.** If the check returns an error, the message continues to the model.
+- **The `[BLOCK]` prefix is shown.** Block messages that carry it are returned with it.
+
+**The classifier**
+- It reads at most 512 tokens of the message.
+- If it returns an error (for example its files are missing), `enforce` falls back to a keyword list (hack, exploit, illegal, malware, virus, crack, pirate, steal, weapon, bomb, drug, suicide). In HIPAA mode this fallback returns before `enforce_hipaa`, so the PHI and medical checks do not run and no audit line is written.
+- Guardian and HIPAA act on `SevereToxic` and `Threat` only, above 0.9.
+- `docs/ROADMAP.md` ("Real safety classifier") records that it gives false positives on clinical and grief language.
+
+**HIPAA mode**
+- The PHI check is seven regular expressions over the typed text. A name, a date of birth, a medical record number or an insurance ID is not detected. A phone number written as "(555) 123-4567" is not detected.
+- The patterns also match text that is not PHI: any standalone 5-digit number (zip), 9-digit number (SSN) or 10-digit number (phone), and phrases such as "3 patients in the Dr office" (address).
+- The backend is not restricted, and stored memories and Knowledge Base text go into the prompt, including to a cloud model.
+- Conversation rows can still be written by paths that do not check the mode: onboarding (`store_onboarding_response` in `commands/onboarding.rs`), rows arriving from a paired device (`sync_outbox.rs`) and a backup restore (`commands/backup.rs`).
+- Memories can still be written by `insert_memory` in `lib.rs`, which does not check the mode.
+- The mobile Memory Manager button is not disabled in HIPAA mode. The desktop button is.
+- The audit log folder is relative to the working directory of the process, not the app data folder. If it cannot be created, the entry is skipped.
+- `hipaa_conversation_allowed` is written when the four HIPAA checks pass, even if the general-safety check then blocks the message.
+
+**Child mode**
+- It works only with an OpenAI key and an internet connection.
+- The child system prompt is not added when an image is attached.
+- Weather answers and the web search write-up do not go through the Moderation API.
 
 ---
 
@@ -243,298 +282,277 @@ if message.starts_with("[WARN_ALLOW]") {
 
 ### 1. Data Ownership
 
-**SQLite database file lives on your device:**
+**The SQLite database file is on the device:**
 ```
 Windows: %LOCALAPPDATA%\zynkbot\zynkbot.db
 Linux:   ~/.local/share/zynkbot/zynkbot.db
 ```
 
 **What this means:**
-- You can back it up to USB drive
-- Export to CSV/JSON
-- Delete the entire database instantly
-- No company controls your data
-- No terms of service changes can take away access
+- The file can be copied for backup. The database uses write-ahead logging (`db.rs`), so copy the `-wal` file with it or recent rows can be missing.
+- The file can be opened with `sqlite3` or any SQLite browser.
+- Deleting the file removes the data. The bundled SQLite is built with `SQLITE_SECURE_DELETE` (`zynkbot_rust/.cargo/config.toml`), so deleted rows are overwritten in the file.
+- One conversation thread can be exported with a signed seal (`seal.rs`).
+- Memories, links, history and API keys can be backed up, encrypted, to the user's own Cloudflare R2 bucket (`commands/backup.rs`).
+- There is no command that exports everything to CSV or JSON.
 
 ### 2. Offline Functionality
 
-**What works without internet:**
-- ✅ Local LLM inference (Llama 3.2 3B, Qwen 2.5 7B)
-- ✅ Memory search (hybrid entity + semantic)
-- ✅ Knowledge Base RAG (indexed documents)
-- ✅ Entity extraction (BERT NER, local)
-- ✅ Safety classification (TinyBERT, local)
-- ✅ Embeddings generation (all-MiniLM-L6-v2, local)
-- ✅ ZynkSync device sync (local WiFi/LAN)
-- ✅ ZChat messaging (local network)
-- ✅ ZynkLink file sharing (local network)
+**Works without internet:**
+- Local model inference through llama.cpp. The desktop download list (`SetupWizard.jsx`) has Sophro 4B, Gemma 4 12B, Gemma 4 E4B, Qwen3.5 9B and Ministral 3 8B.
+- Memory search (hybrid entity and semantic)
+- Knowledge Base search over indexed documents
+- Entity extraction (bert-base-NER)
+- Safety classification (toxic-bert)
+- Embeddings (all-MiniLM-L6-v2)
+- Dictation with Vosk
+- ZynkSync, ZChat and ZynkLink between devices on the same local network
 
-**What requires internet:**
-- ⚠️ API LLMs (OpenAI, Anthropic, xAI) - optional
-- ⚠️ Voice transcription (Web Speech API) - optional (local transcription on roadmap)
-- ⚠️ Web search (DuckDuckGo) - optional
+**Needs internet:**
+- Cloud models (OpenAI, Anthropic, xAI, Mistral), optional
+- Child mode (the check and every reply go to OpenAI)
+- Cloud dictation through OpenAI, optional
+- Web search, optional. A cloud backend uses its provider's own search tool. A local model uses Brave (with a key), a SearXNG server (with a URL) or DuckDuckGo (`web_search.rs`).
+- Weather answers (Open-Meteo)
+- The R2 backup, optional
 
-**Why this matters:**
-- Works in disaster scenarios (see [emergency_resilience.md](../case_studies/emergency_resilience.md))
-- No subscription required for basic functionality
-- Privacy-preserving (data never uploaded)
+See [emergency_resilience.md](../case_studies/emergency_resilience.md) for the offline use case.
 
 ### 3. Transparent Memory
 
-**Memory Manager UI shows exactly what's stored:**
+**The Memory Manager shows what is stored:**
 - View all memories
-- Edit content directly
-- Delete memories permanently 
-- See which memories influenced each response
-- Filter by namespace (personal, work, etc.)
-
-**Compare to cloud AI:**
-- ChatGPT: No visibility into what's stored about you
-- Claude: "Memory" feature, but opaque - can't see full data
-- Zynkbot: Full transparency - you control every byte
+- Edit a memory
+- Delete a memory
+- Filter by namespace
+- Each reply carries the memories that were recalled for it (`recalled_memories`), and the chat shows them
 
 ### 4. No Training on Your Data
 
-**Cloud AI providers:**
-- May use conversations for training (unless enterprise tier)
-- You don't control when this happens
-- Can't verify they're not using your data
-
-**Zynkbot:**
-- Your conversations NEVER used for training anything
-- Local models are frozen (downloaded once, never updated from your data)
-- You can verify this (source-available and auditable)
+- The app does not train a chat model on conversations. Local chat models are downloaded files, and conversations do not change them.
+- The Android wake-word verifier is trained on the device from the user's recorded wake phrases (`WakeVerifierTrainer.kt`).
+- With a cloud backend, the prompt goes to that provider. What the provider does with it depends on the provider's terms, which this document does not check.
+- The source is public (see `LICENSE`), so these statements can be checked.
 
 ### 5. Containment at the Edge
 
-**Why local containment is stronger:**
-
-**Cloud approach:**
+**Hosted approach:**
 ```
-Your sensitive question → Uploaded to server → LLM processes → Filter output
-Problem: Server already saw your sensitive data
+Message → sent to the provider → model processes it → output filtered
+The provider has received the message.
 ```
 
-**Local-first approach:**
+**Local approach:**
 ```
-Your sensitive question → Local containment filter → Blocked immediately
-Result: Sensitive data never left your device
+Message → containment check on the device → blocked
+A blocked message is not sent to a model.
 ```
 
-**Example (HIPAA Mode):**
-- Cloud AI: "Patient SSN 219-90-7812" uploaded to server, then filtered → PHI breach already occurred
-- Zynkbot: SSN detected locally, blocked before any network transmission → No breach
+**Example (HIPAA mode):** a typed message with "SSN 219-90-7812" matches the SSN pattern and is blocked before any model call. The cases where this does not hold are in [Known limits](#known-limits).
 
 ---
 
-## Comparison: Cloud AI vs. Local-First
+## Comparison: Hosted AI vs. Local-First
 
-| Feature | Cloud AI (ChatGPT, Claude) | Zynkbot (Local-First) |
-|---------|----------------------------|------------------------|
-| **Data Location** | Third-party servers | Your device (local database) |
-| **Training on conversations** | Yes (unless enterprise) | Never |
-| **Offline functionality** | ❌ Requires internet | ✅ Full features with local LLM |
-| **Memory transparency** | ❌ Opaque | ✅ Full visibility/editing |
-| **Containment enforcement** | Output filtering | Pre-LLM input filtering |
-| **Data ownership** | Terms of service controlled | You own the database file |
-| **Privacy audit** | Trust company claims | Public source, verifiable |
-| **Works in emergency** | ❌ No internet = no AI | ✅ Local LLM continues working |
-| **Cost** | $20-200/month subscription | Free local models (optional API) |
-| **Latency (API)** | 1-10s | 1-10s (same if using API) |
+The hosted column is general and was not checked against any provider.
 
-**When cloud AI is better:**
-- Largest models (GPT-4, Claude Opus)
-- No setup required
-- Works on any device immediately
+| Feature | Hosted AI assistant | Zynkbot |
+|---------|---------------------|---------|
+| **Data location** | Provider's servers | Database on the device |
+| **Training on conversations** | Depends on the provider's terms | The app does not train a chat model on conversations |
+| **Offline use** | No | Yes, with a local model |
+| **Memory visibility** | Varies by product | Memory Manager: view, edit, delete |
+| **Containment** | Varies by product | Check on the typed message before the model call (see Known limits) |
+| **Data ownership** | Governed by terms of service | The user holds the database file |
+| **Audit of privacy claims** | Provider's statements | Public source |
+| **Cost** | Subscription or API fees | Free with local models. A cloud API key is billed by its provider. |
+| **Latency with a cloud API** | Network round trip | The same, when a cloud backend is used |
 
-**When local-first is better:**
-- Privacy-critical use cases (medical, legal, personal)
-- Offline/unreliable internet
-- Data sovereignty required
-- Long-term cost savings (no subscription)
-- Full control over data
+**Where a hosted assistant is the better fit:**
+- The largest models
+- No setup
+- Works on any device at once
+
+**Where local-first is the better fit:**
+- Privacy-sensitive use with a local model
+- No or unreliable internet
+- The data must stay on a device the user controls
+- No subscription
 
 ---
 
 ## Use Cases for Containment + Local-First
 
 ### Medical (HIPAA Mode)
-- Clinical note-taking with PHI protection
-- Patient conversation logging (ephemeral, local-only)
-- Medical reference queries without uploading patient context
+- General reference questions, with a check for structured identifiers in the typed text
+- Nothing from the conversation is stored: no history and no new memories
+- Read [Known limits](#known-limits) first. With a cloud backend, stored memories and Knowledge Base text are sent to the provider.
 - See [hipaa_compliance.md](../case_studies/hipaa_compliance.md)
 
 ### Personal Privacy (Guardian/Sovereign)
-- Therapeutic journaling (stays on your device)
+- Journaling that stays on the device, with a local model
 - Sensitive personal questions (financial, relationship, health)
-- Creative writing (no risk of IP leakage)
+- Creative writing
 - See [conversational_memory.md](../case_studies/conversational_memory.md)
 
 ### Field Work (Offline-First)
-- Technician accessing manuals without internet (manuals uploaded to knowledge base)
+- A technician reads manuals without internet (manuals added to the Knowledge Base)
 - Emergency response with disrupted infrastructure
-- Rural areas with unreliable connectivity
+- Areas with unreliable connectivity
 - See [hvac_field_service.md](../case_studies/hvac_field_service.md)
 
 ### Research (Data Sovereignty)
-- Academic research notes (no cloud upload)
-- Proprietary R&D conversations (IP protection)
-- Journalist source protection (local-only)
+- Research notes kept on the device
+- Proprietary R&D conversations, with a local model
+- A journalist's notes, with a local model
 
 ---
 
-## Implementation Details (v0.9)
+## Implementation Details
 
 ### Containment Pipeline
 
-**Code location:** `lib.rs` (`send_message_with_memory` function)
+**Code location:** `generate_reply` in `commands/chat.rs`. The Tauri command `send_message_with_memory` calls it.
 
 **Flow:**
 ```
-1. User input received
-2. Containment mode checked
-3. If Child Mode:
-   - OpenAI Moderation API called
-   - If flagged: return block message, stop
-4. If Other Modes:
-   - Local TinyBERT classifier (toxic-bert)
-   - Rule-based filters (HIPAA PHI patterns, etc.)
-   - If flagged: return block message or warning
-5. If passed: continue to LLM
+1. Message received. It is printed to the app log.
+2. Child mode: the backend is forced to OpenAI.
+3. Weather question: answered from Open-Meteo. Stop.
+   (If the lookup fails, the message continues as normal.)
+4. If skip_containment is set: go to step 7.
+5. Child mode:
+   - OpenAI Moderation API called on the typed message
+   - Flagged, missing key or API error: return a block message. Stop.
+6. Other modes: check_containment → ContainmentLayer::enforce
+   a. Allowlist phrase present: allow
+   b. Witness: allow
+   c. Harmful-instruction pattern (whole-word match)
+   d. toxic-bert classifier (on error: keyword fallback, then return)
+   e. Action by mode:
+      - Guardian: block if (c) fired, or SevereToxic/Threat above 0.9
+      - Sovereign: warn if (c) fired, or any harmful category above 0.85
+      - HIPAA: PHI, diagnosis, dosing and treatment checks, then the Guardian rule
+7. Memory recall and, if the KB button is on, Knowledge Base search
+8. Model call. A Sovereign warning is put in front of the reply.
+9. HIPAA mode: disclaimer appended to health-related replies; no history, no memory extraction
 ```
+
+The commands `set_containment_mode` and `get_containment_mode` in `commands/safety.rs` do not store a mode. The first only checks that the name is valid. The frontend passes the mode with each message.
 
 ### Local ML Models
 
-**Storage:** `zynkbot_rust/src-tauri/models/system/`
+**Storage:** in a development build, `zynkbot_rust/src-tauri/models/system/`. In an installed app, `models/system` under the app data folder (`get_models_dir` in `db.rs`).
 
-**Models loaded at startup:**
-```rust
-// safety_classifier.rs
-toxic-bert: 260MB (toxic content detection)
+| Model | Used by | Purpose | File size |
+|-------|---------|---------|-----------|
+| toxic-bert | `safety_classifier.rs` | Toxicity labels (Toxic, SevereToxic, Obscene, Threat, Insult, IdentityHate) | about 440 MB |
+| bert-base-NER | `nlp_enhancer.rs` | Entity extraction | about 430 MB |
+| all-MiniLM-L6-v2 | `llm/local_embeddings.rs` | Embeddings for semantic search | about 90 MB |
 
-// nlp_enhancer.rs
-bert-base-NER: 260MB (entity extraction)
+The code comments call the classifier "TinyBERT". The model file is toxic-bert, a 12-layer BERT.
 
-// local_embeddings.rs
-all-MiniLM-L6-v2: 80MB (embeddings for semantic search)
-```
+**Loading:** the classifier loads on first use. The NER model is warmed at startup.
 
-**Framework:** Candle (pure Rust ML, no Python dependency)
+**Framework:** Candle (Rust, no Python). Local chat models run through llama.cpp.
 
-**Inference:** CPU-only (no GPU required for these small models)
+**Inference:** CPU for these three models.
 
 ### Database Architecture
 
-**SQLite — embedded, no server process:**
+**SQLite, embedded, no server process.**
 
-**Memories table (simplified):**
+**Memories table (selected columns from `migrations/0001_initial.sql`; later migrations add more):**
 ```sql
 CREATE TABLE memories (
-    id TEXT PRIMARY KEY,           -- UUID
-    user_id TEXT NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     content TEXT NOT NULL,
-    namespace TEXT DEFAULT 'personal',
-    is_ephemeral INTEGER NOT NULL DEFAULT 0,  -- HIPAA mode
-    expires_at TEXT,               -- HIPAA 8-hour expiration (ISO timestamp)
-    embedding BLOB,                -- 384-dim vector (binary)
-    entities_detected TEXT,        -- JSON
-    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    user_id TEXT,
+    namespace TEXT NOT NULL DEFAULT 'personal',
+    embedding BLOB,                              -- vector, stored as binary
+    is_ephemeral INTEGER NOT NULL DEFAULT 0,     -- passing facts, any mode
+    expires_at TEXT,                             -- when a passing fact leaves recall
+    entities_detected TEXT NOT NULL DEFAULT '[]' -- JSON
 );
 ```
 
+`is_ephemeral` and `expires_at` are not tied to HIPAA mode. They mark passing facts (an errand, this week's trip) in any mode. A memory past its `expires_at` date is left out of recall.
+
 See [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) for the full schema.
 
-**Fully editable:**
-- Standard SQL UPDATE and DELETE operations
-- Memory Manager UI provides full CRUD interface
-- No cryptographic hashing — just timestamps (hashing under consideration)
+**Editable:**
+- Standard SQL UPDATE and DELETE
+- The Memory Manager can view, edit and delete memories
+- Rows are not hashed or signed in the database. A single thread can be exported with a signed seal (SHA-256 and Ed25519, `seal.rs`).
 
 **Why SQLite:**
-- Embedded — no separate server process or installation
-- Single file makes backup trivial (copy the file)
-- Standard SQL for querying
-- Transparent (inspect with `sqlite3` or any SQLite browser)
-- Sufficient for single-user memory workloads; tested to 500k+ rows without performance issues
-- Vector search handled in-process by the Rust backend (no extension required)
+- Embedded: no separate server or installation
+- One database file, plus its `-wal` file while the app runs
+- Standard SQL
+- Can be inspected with `sqlite3` or any SQLite browser
+- Vector search runs in the Rust process; no SQLite extension is needed
 
 ---
 
 ## Limitations and Trade-offs
 
-### Current Limitations (v0.9)
+The containment limits are in [Known limits](#known-limits). The points below are about local-first use in general.
 
-**1. HIPAA PHI Detection (70-85% accuracy)**
-- Regex-based pattern matching
-- Misses variations ("my social is 219907812" vs "SSN: 219-90-7812")
-- Future: AI model for contextual PHI detection (95%+ accuracy)
+**1. Local model quality**
+- The local models on the download list are much smaller than cloud models. `docs/BENCHMARKS.md` has the measured results.
+- A cloud backend can be used instead. The prompt then goes to that provider.
 
-**2. Local Model Quality**
-- Llama 3.2 3B < GPT-4 quality
-- Trade-off: Privacy + offline vs. best possible answers
-- Solution: Hybrid approach (local + optional API) *API calls do not build user profiles
+**2. Setup**
+- The three system models are about 1 GB together. A chat model is extra; the smallest on the desktop list, Sophro 4B, is listed at 2.4 GB.
+- A hosted assistant needs no download.
 
-**3. Setup Complexity**
-- Requires model downloads (600MB+)
-- Initial model download can be slow on slower connections
-- Cloud AI is easier to begin using (just sign up)
+**3. Dictation**
+- Vosk works offline. OpenAI transcription is optional and needs internet.
 
-**4. Voice Transcription**
-- Web Speech API requires internet
-- Trade-off: Accuracy vs. privacy
-- Future: Local Whisper model (larger download)
+**4. Platforms**
+- Release builds are made for Linux, Windows and Android (`.github/workflows/release.yml`). There is no iOS target in `src-tauri/gen/`.
 
-### Honest Assessment
+**Zynkbot is not the better choice for:**
+- Users who want no setup
+- Users who need the largest models and do not want to use a cloud API key
+- Users who want sync through a hosted service
 
-**Zynkbot is NOT better than cloud AI for:**
-- Users who want zero setup
-- Users who prioritize convenience over privacy
-- Users who need largest models (distributed compute on roadmap)
-- Users who want seamless multi-device sync via cloud
-
-**Zynkbot IS better than cloud AI for:**
-- Users who need privacy (medical, legal, personal)
-- Users in offline/low-connectivity environments
-- Users who want data ownership
-- Users who want transparent, editable memory
-- Users & organizations who want to avoid subscriptions long-term (pay endless $ to corporations for AI)
+**Zynkbot is the better choice for:**
+- Users who want their data on their own device
+- Users with no or unreliable internet
+- Users who want to see, edit and delete what is remembered
+- Users who do not want a subscription
 
 ---
 
 ## Future Enhancements
 
-See [ROADMAP.md](../ROADMAP.md) for full timeline.
-
-**Planned improvements:**
-- AI-based PHI detection (95%+ accuracy)
-- Local Whisper for offline voice transcription
-- Mobile support (Android/iOS via Tauri Mobile)
-- Enhanced containment rules (domain-specific filters)
-- Opt-in secure backup servers 
-
-**NOT planned:**
-- ❌ Central servers for sync
-- ❌ Telemetry or analytics
-- ❌ Advertising or data sales
+This document does not set a roadmap. [ROADMAP.md](../ROADMAP.md) is the source. At the time of this check it lists, among other items:
+- "Real safety classifier": a replacement for toxic-bert
+- "AI-Based PHI Detection", under HIPAA Mode
+- Elder Mode, for v1.1. `ContainmentMode::Elder` is a stub today.
 
 ---
 
 ## Technical References
 
 **Related Documentation:**
-- [ARCHITECTURE_COMPREHENSIVE.md](ARCHITECTURE_COMPREHENSIVE.md) - Complete system architecture
-- [FEATURES.md](../FEATURES.md) - All v0.9 features with implementation details
-- [HIPAA Compliance Case Study](../case_studies/hipaa_compliance.md) - PHI detection and ephemeral memory
-- [Digital Resilience](../DIGITAL_RESILIENCE.md) - Offline-first architecture benefits
+- [ARCHITECTURE_COMPREHENSIVE.md](ARCHITECTURE_COMPREHENSIVE.md) - System architecture
+- [FEATURES.md](../FEATURES.md) - Feature list
+- [HIPAA Security Integration Guide](HIPAA_SECURITY_INTEGRATION_GUIDE.md) - HIPAA mode in detail
+- [HIPAA Compliance Case Study](../case_studies/hipaa_compliance.md)
+- [Digital Resilience](../DIGITAL_RESILIENCE.md) - Offline use
 
-**Source Code:**
-- `src-tauri/src/commands/chat.rs` - Conversation flow with containment integration
-- `src-tauri/src/commands/safety.rs` - Safety command handlers
-- `src-tauri/src/containment.rs` - Containment mode enforcement
-- `src-tauri/src/safety_classifier.rs` - TinyBERT toxic detection
+**Source Code** (paths under `zynkbot_rust/`):
+- `src-tauri/src/commands/chat.rs` - `generate_reply`: conversation flow and the containment step; `run_ensemble`
+- `src-tauri/src/commands/safety.rs` - `check_containment` and the mode commands
+- `src-tauri/src/containment.rs` - `ContainmentLayer::enforce`, `enforce_hipaa`, `check_openai_moderation`, `CHILD_MODE_SYSTEM_PROMPT`
+- `src-tauri/src/safety_classifier.rs` - toxic-bert classifier, `should_block`
 - `src-tauri/src/memory.rs` - Hybrid search and storage
+- `src/components/ContainmentModeSelector.jsx` - The mode drop-down
+- `src/App.jsx` - Holds the active mode and passes it with each message
 
 ---
 
-*"Containment means blocking at the routing layer. Local-first means your data never leaves your device. Together, they create AI you actually control."*
-
-**ContainAI** – Building the infrastructure for ethical AI
+**ContainAI**

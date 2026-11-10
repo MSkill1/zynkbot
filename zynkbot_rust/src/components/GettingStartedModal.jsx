@@ -27,7 +27,7 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
             <div style={{ flex: '1', minWidth: '200px', background: '#21222c', borderRadius: '8px', padding: '12px', borderLeft: '3px solid #50fa7b' }}>
               <strong style={{ color: '#50fa7b' }}>🖥️ Local model (free)</strong>
-              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Download a GGUF model and run entirely on your device. No API keys, no cost, complete privacy. Slower on most hardware.</p>
+              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Download the Zynkbot model and run entirely on your device. No API keys, no cost, complete privacy. Slower on most hardware.</p>
             </div>
             <div style={{ flex: '1', minWidth: '200px', background: '#21222c', borderRadius: '8px', padding: '12px', borderLeft: '3px solid #8be9fd' }}>
               <strong style={{ color: '#8be9fd' }}>⚡ API key (pay-per-use)</strong>
@@ -48,7 +48,7 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
           </div>
         </div>
 
-        {/* Step 1: Load Einstein Demo */}
+        {/* Step 0: the kitchen */}
         <div className="guide-step">
           <div className="step-number">0</div>
           <div className="step-content">
@@ -72,9 +72,9 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
           </div>
           <p>First, we'll load a pre-built memory set so you can see how Zynkbot works with real data:</p>
           <ol>
-            <li>Click the <strong>⚙️ Settings</strong> button in the bottom left corner</li>
-            <li>Scroll down to the demo section</li>
-            <li>Click <strong>👨‍🔬 Load Einstein Demo</strong></li>
+            <li>Click the <strong>⚙️</strong> button in the bottom left corner to open <strong>System Controls</strong></li>
+            <li>Open <strong>🚀 Getting Started</strong> at the top of the list</li>
+            <li>Click <strong>Load Einstein Demo</strong> and confirm</li>
             <li>Wait a few seconds while the memories and their links load</li>
             <li>The page will reload automatically when complete</li>
           </ol>
@@ -93,9 +93,9 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
           </div>
           <p>Unlike ChatGPT's hidden memory, you can see and control everything Zynkbot knows:</p>
           <ol>
-            <li>Click <strong>📚 Memory Manager</strong> button in the Recent Memories section</li>
+            <li>Click <strong>📚 Memory Manager</strong> in the Recent Memories section (on a phone, <strong>📚 Memories</strong> beside the message box)</li>
             <li>Browse through Einstein's memories and relationships</li>
-            <li>Click <strong>🗺️ View on the map</strong> to see the people, places and things they share</li>
+            <li>Click <strong>🗺️ Map</strong> to see the people, places and things they share</li>
             <li>Try editing or deleting a memory, then ask a related question</li>
             <li>Notice how Zynkbot's response changes based on your edits</li>
           </ol>
@@ -123,16 +123,12 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
               </ul>
             </div>
           </div>
-          <p>Watch for the <strong>recalled memories dropdown</strong> in Zynkbot's response to see:</p>
-          <ul>
-            <li>Which memories were retrieved for each query</li>
-            <li>How Zynkbot used them in the response</li>
-            <li>The similarity scores showing relevance</li>
-          </ul>
+          <p>Open <strong>View recalled memories</strong> under Zynkbot's response to see which memories
+          were retrieved for that question.</p>
           <div className="info-box">
             <strong>Ready to use Zynkbot for yourself?</strong> When you're done exploring, open
-            <strong> 📚 Memory Manager</strong> and click <strong>Clear All Memories</strong> to clear the Einstein demo.
-            Then go to <strong>⚙️ Settings → Getting Started → Onboarding</strong> to set up your
+            <strong> 📚 Memory Manager</strong>, open <strong>Storage</strong> and click <strong>Clear All</strong> to clear the Einstein demo.
+            Then go to <strong>⚙️ System Controls → Getting Started → Start 5-Minute Onboarding</strong> to set up your
             own profile.
           </div>
         </div>
@@ -148,7 +144,7 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
           <div className="feature-list">
             <div className="feature-item">
               <strong>🛡️ Containment Modes</strong>
-              <p>Switch between Guardian, Child, Sovereign, Witness, and HIPAA modes in Settings.
+              <p>Switch between Guardian, Child, Sovereign, Witness, and HIPAA modes in System Controls.
               Each has different safety filtering levels. <em>You</em> control what gets filtered, not a corporation.</p>
             </div>
 
@@ -167,52 +163,52 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
 
             <div className="feature-item">
               <strong>🌐 Web Search</strong>
-              <p>Ask questions requiring current information (e.g., "What's the weather in Tokyo?").
-              Zynkbot will detect the need and offer to search the web via SearXNG. Review and edit the
-              search query before execution.</p>
+              <p>Ask questions requiring current information (e.g., "What is in the news today?").
+              Zynkbot will detect the need and offer to search the web. Review and edit the
+              search query before it runs.</p>
             </div>
 
             <div className="feature-item">
               <strong>📚 Knowledge Base (RAG)</strong>
-              <p>Click <strong>⚙️ Settings → Knowledge Base</strong> to upload documents (txt, md, json, code files).
-              Ask questions about your documents and Zynkbot will search them semantically.</p>
+              <p>Open <strong>⚙️ System Controls → Knowledge Base</strong> to add documents (text, PDF, Word, code files).
+              Turn on <strong>📚 KB</strong> under the message box, ask about your documents, and Zynkbot searches them by meaning.</p>
             </div>
 
             <div className="feature-item">
               <strong>🔄 ZynkSync - Memory Sharing</strong>
-              <p>Click <strong>⚙️ Settings → ZynkSync</strong> to pair devices and sync memories
+              <p>Open <strong>⚙️ System Controls → ZynkSync</strong> to pair devices and sync memories
               across your network. Your work laptop and home desktop can share the same AI context.</p>
             </div>
 
             <div className="feature-item">
               <strong>🔗 ZynkLink - File Sharing</strong>
-              <p>Click <strong>⚙️ Settings → ZynkLink</strong> to share directories across paired devices
+              <p>Open <strong>⚙️ System Controls → ZynkLink</strong> to share directories across paired devices
               without cloud storage. All transfers happen peer-to-peer.</p>
             </div>
 
             <div className="feature-item">
               <strong>💬 ZChat - Device Messaging</strong>
-              <p>Once linked via ZynkLink, open the ZynkLink panel and click a linked contact to open chat.
+              <p>Once linked via ZynkLink, open the ZynkLink panel and click <strong>💬 Chat</strong> beside a linked device. Your own paired devices have the same button in ZynkSync.
               Messages go directly between devices — no external servers involved.</p>
             </div>
 
             <div className="feature-item">
-              <strong>🧩 Snap-Ins (Experimental)</strong>
-              <p>Click <strong>⚙️ Settings → Snap-Ins</strong> to access professional tool modules.
-              Try the Therapist demo: create patient notes with structured data entry and isolated
-              storage. Snap-ins can be customized for your workflow—medical, legal, research, etc.</p>
+              <strong>🧩 Snap-ins (Planned)</strong>
+              <p>Open <strong>⚙️ System Controls → Snap-ins</strong> to see the professional tool modules planned
+              for after version 1.0: therapist, legal and journalist. An early sample of the therapist
+              journal is there to try.</p>
             </div>
 
             <div className="feature-item">
               <strong>🔬 ZynkCluster (Upcoming)</strong>
-              <p>Click <strong>⚙️ Settings → ZynkCluster</strong> to view research on distributed
-              Mixture of Experts inference. See architecture docs and code examples for novel
-              parallel execution approach.</p>
+              <p>Open <strong>⚙️ System Controls → ZynkCluster</strong> to read about research on distributed
+              Mixture of Experts inference. It is in the design phase; a button there opens the
+              architecture notes and code examples on GitHub.</p>
             </div>
 
             <div className="feature-item">
               <strong>👤 User Identity</strong>
-              <p>Click your user ID in the top right to manage your identity and see paired devices.</p>
+              <p>Click <strong>Info</strong> at the top of System Controls to see your user ID and this device's ID.</p>
             </div>
           </div>
         </div>

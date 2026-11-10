@@ -1,827 +1,943 @@
 # Zynkbot Database Schema
 
-**Database:** `zynkbot.db` (SQLite, embedded — no server process)
-**Last Updated:** 2026-10-25 (added `memory_jobs`, migration 0023)
-**Schema:** Applied automatically via SQLx migrations in `zynkbot_rust/src-tauri/migrations/`
+*Checked against the code on 2026-11-10 (`v1`, a7599eb). The column tables below were
+generated from a database built by running all 28 migrations, not written by hand.*
+
+**Database:** `zynkbot.db`, SQLite, embedded in the app. There is no database server.
+**Schema source:** `zynkbot_rust/src-tauri/migrations/` (`0001` to `0028`), applied in
+order by sqlx when the app starts. sqlx records what it has applied in its own table,
+`_sqlx_migrations`.
 
 ---
 
 ## Overview
 
-Zynkbot uses SQLite for all persistent storage. The database contains **21 tables and 1 view** across six functional areas: core memory, knowledge base, ZynkSync, ZynkLink, ZChat, conversation history, and the memory job queue (the count in this sentence was 19 until 2026-10-25; the sections below were numbered 1–20 and `memory_jobs` is 21). Vector similarity search is performed in-process by the Rust backend using Candle ML — no database extension required.
+| | Count |
+|---|---|
+| Tables created by the migrations | 31 |
+| Full-text (FTS5) tables | 2 |
+| Views | 1 |
+| Indexes | 59 |
+| Triggers | 20 |
+
+**Where the file is** (`db::get_app_data_dir()`, `src-tauri/src/db.rs`):
+
+| Platform | Path |
+|----------|------|
+| Linux | `~/.local/share/zynkbot/zynkbot.db` |
+| Windows | `%LOCALAPPDATA%\zynkbot\zynkbot.db` |
+| Android | `/data/data/ai.containai.zynkbot/files/zynkbot/zynkbot.db` |
+
+**Connection settings** (`db.rs`, set on every connection in the pool): write-ahead log
+(`journal_mode=WAL`), `foreign_keys=ON`, `synchronous=NORMAL`, `busy_timeout=15000`.
+SQLite is compiled with `SQLITE_SECURE_DELETE`, so a deleted row's bytes are overwritten
+with zeros in the file. Because of the write-ahead log, recent rows live in
+`zynkbot.db-wal` until a checkpoint; a copy of the database must include that file.
+
+**How values are stored.** SQLite has few types, so:
+
+- **Times** are TEXT. Column defaults write `YYYY-MM-DD HH:MM:SS` in UTC
+  (`datetime('now')`); the app itself writes RFC 3339 (`2026-11-10T14:03:22+00:00`).
+  Migrations 0010 and 0011 converted the older rows to RFC 3339.
+- **True/false** is INTEGER, 0 or 1.
+- **Lists and objects** are JSON in a TEXT column (`tags`, `entities_detected`,
+  `provenance_json`, `sources_json`, `payload_json`).
+- **Embeddings** are a BLOB of 384 little-endian 32-bit floats (all-MiniLM-L6-v2).
+  There is no vector index: a search reads the candidate rows and computes cosine
+  similarity in Rust (`memory.rs`).
+- **`sync_id`** names a row on every device. A trigger fills it when a row is inserted
+  (see [Sync triggers](#sync-triggers)).
+
+In the tables below, "required" means NOT NULL, and "→ `t.c`" is a foreign key.
 
 ---
 
-## Core Tables
+## Memory tables
 
-### 1. memories
+### memories
 
-**Purpose:** Core memory storage with vector embeddings for semantic search
+One row per remembered fact. Since the 2026-10-24 pipeline a memory is a single fact in
+the third person, with the user's own message kept beside it in `original_text`.
 
-**Schema:**
-```sql
-CREATE TABLE memories (
-    id SERIAL PRIMARY KEY,
-    title TEXT,
-    content TEXT NOT NULL,
-    source_type TEXT,
-    session_id TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    parent_scroll_id INTEGER,
-    chunk_index INTEGER,
-    user_id TEXT,
-    namespace TEXT DEFAULT 'personal' NOT NULL,
-    is_syncable BOOLEAN DEFAULT TRUE,
-    is_shareable BOOLEAN DEFAULT FALSE,
-    embedding VECTOR(384),
-    link_count INTEGER DEFAULT 0,
-    is_ephemeral BOOLEAN DEFAULT FALSE,
-    expires_at TIMESTAMPTZ,
-    sentiment_score REAL DEFAULT 0.0,
-    sentiment_label TEXT DEFAULT 'neutral',
-    event_type TEXT,
-    event_date TIMESTAMPTZ,
-    entities_detected JSONB DEFAULT '[]',
-    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    original_text TEXT
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `title` | TEXT |  | Short title; from the model, or the first 60 characters of a `Remember:` text |
+| `content` | TEXT | required | The fact |
+| `source_type` | TEXT |  | `conversation`, `hands_free`, `onboarding`, `demo_persona` |
+| `session_id` | TEXT |  | The conversation it came from |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `parent_scroll_id` | INTEGER |  | Unused; left from the first design |
+| `chunk_index` | INTEGER |  | Unused; left from the first design |
+| `user_id` | TEXT |  |  |
+| `namespace` | TEXT | required; default `'personal'` | One of 15 topics (`memory_extras::CANONICAL_NAMESPACES`), or `_zynkbot` |
+| `is_syncable` | INTEGER | required; default `1` | Not read by the outbox sync; every memory travels |
+| `is_shareable` | INTEGER | required; default `0` | Reserved for sharing between users |
+| `embedding` | BLOB |  | 384 floats. The declared scheme is title plus fact (`EMBEDDING_SCHEME` in `memory.rs`), used by onboarding, edits, restore, the demo and the one-time re-embed; a memory stored by the chat pipeline is embedded from the fact alone (`run_memory_background`), a known mismatch |
+| `link_count` | INTEGER | required; default `0` | Kept by the `trg_memory_links_ai` / `_ad` triggers |
+| `is_ephemeral` | INTEGER | required; default `0` | 1 for a passing fact (a plan, an errand) that should lapse |
+| `expires_at` | TEXT |  | When a passing fact lapses: 14 days after the event, or after it was said. Recall leaves out a memory past this date |
+| `sentiment_score` | REAL | required; default `0.0` | Tone as a number |
+| `sentiment_label` | TEXT | required; default `'neutral'` | Tone: `positive`, `neutral`, `negative`, `frustrated`, `anxious`, `excited` |
+| `event_type` | TEXT |  | From the local language pass |
+| `event_date` | TEXT |  | The day the fact is about, when it has one |
+| `entities_detected` | TEXT | required; default `'[]'` | JSON list of names. A copy that syncs and is backed up; `memory_entities` is the working table |
+| `updated_at` | TEXT | required; default `datetime('now')` |  |
+| `original_text` | TEXT |  | The user's message the fact was taken from |
+| `collection_id` | TEXT |  | Persona collections (0009). Travels with sync; no screen writes it yet |
+| `memory_placement` | TEXT | required; default `'retrieved'` | `retrieved` or `pinned` (0009), same status as `collection_id` |
+| `external_id` | TEXT |  | An outside id within a collection (0009) |
+| `temporal_status` | TEXT |  | NULL for current; `superseded` when a newer memory replaced it; `completed` when a check-in confirmed it happened. Recall leaves both out |
+| `provenance_json` | TEXT |  | Which backend wrote the memory and whether the user asked for it |
+| `tags` | TEXT | required; default `'[]'` | JSON list of 1 to 3 topic words; cloud backends only |
+| `sync_id` | TEXT |  | The row's name on every device |
+| `checkin_asked_at` | TEXT |  | When a check-in question about this memory went out (0027) |
+| `checkin_answer` | TEXT |  | `done`, `later`, `never` or `other` |
 
-**Key Columns:**
-- `id` - Primary key
-- `content` - Memory text content
-- `embedding` - 384-dimensional vector (all-MiniLM-L6-v2)
-- `namespace` - Organization category (personal/work/family/_zynkbot)
-- `is_syncable` - Whether memory syncs across devices
-- `is_shareable` - Whether memory can be shared with other users
-- `entities_detected` - JSONB array of named entities from BERT NER
-- `is_ephemeral` - Auto-delete after expiration (used in HIPAA mode)
-- `expires_at` - When memory should be deleted (NULL = never)
-- `original_text` - Pre-extraction user text (preserved for audit)
+**Checks:** `memory_placement IN ('retrieved', 'pinned')`
 
 **Indexes:**
-- `memories_embedding_idx` - IVFFlat vector index for similarity search
-- `idx_memories_entities` - GIN index on entities_detected
-- `memories_namespace_idx` - B-tree on namespace
-- `memories_user_namespace_idx` - B-tree on (user_id, namespace)
-- `idx_memories_ephemeral` - Partial B-tree on is_ephemeral WHERE is_ephemeral = true
-- `idx_memories_expires_at` - Partial B-tree on expires_at WHERE expires_at IS NOT NULL
-- `idx_memories_event_date` - Partial B-tree on event_date WHERE event_date IS NOT NULL
-- `idx_memories_event_type` - Partial B-tree on event_type WHERE event_type IS NOT NULL
-- `idx_memories_sentiment` - B-tree on sentiment_label
-- `memories_shareable_idx` - Partial B-tree on is_shareable WHERE is_shareable = true
+- `idx_memories_collection`: on (user_id, collection_id)
+- `idx_memories_collection_external`: unique, on (user_id, collection_id, external_id) WHERE collection_id IS NOT NULL AND external_id IS NOT NULL
+- `idx_memories_ephemeral`: on (is_ephemeral) WHERE is_ephemeral = 1
+- `idx_memories_event_date`: on (event_date) WHERE event_date IS NOT NULL
+- `idx_memories_event_type`: on (event_type) WHERE event_type IS NOT NULL
+- `idx_memories_expires_at`: on (expires_at) WHERE expires_at IS NOT NULL
+- `idx_memories_pinned_collection`: on (user_id, collection_id, memory_placement) WHERE memory_placement = 'pinned'
+- `idx_memories_sentiment`: on (sentiment_label)
+- `idx_memories_sync_id`: unique, on (sync_id)
+- `memories_namespace_idx`: on (namespace)
+- `memories_shareable_idx`: on (is_shareable) WHERE is_shareable = 1
+- `memories_user_namespace_idx`: on (user_id, namespace)
 
-**Triggers:**
-- `update_memories_updated_at` - Fires before UPDATE; calls `update_updated_at_column()` to keep updated_at current
+**Triggers:** `trg_memories_outbox_ad`, `trg_memories_outbox_ai`, `trg_memories_outbox_au`. The first three queue changes for sync.
 
 ---
 
-### 2. memory_links
+### memory_links
 
-**Purpose:** Semantic relationships between memories for knowledge graph
+A relationship between two memories. Migration 0022 (2026-10-23) rebuilt the table to
+allow four types only.
 
-**Schema:**
-```sql
-CREATE TABLE memory_links (
-    id SERIAL PRIMARY KEY,
-    source_memory_id INTEGER REFERENCES memories(id) ON DELETE CASCADE,
-    target_memory_id INTEGER REFERENCES memories(id) ON DELETE CASCADE,
-    relation_type VARCHAR(50) NOT NULL,
-    confidence REAL DEFAULT 0.5,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    notes TEXT,
-    created_by VARCHAR(255) DEFAULT 'system',
-    CONSTRAINT memory_links_check CHECK (source_memory_id <> target_memory_id),
-    CONSTRAINT memory_links_confidence_check CHECK (confidence >= 0.0 AND confidence <= 1.0),
-    CONSTRAINT memory_links_relation_type_check CHECK (
-        relation_type IN ('contradicts', 'updates', 'related', 'resolves')  -- since 0022
-    ),
-    UNIQUE (source_memory_id, target_memory_id, relation_type)
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `source_memory_id` | INTEGER | → `memories.id`, deleted with it | The newer memory, the one making the statement |
+| `target_memory_id` | INTEGER | → `memories.id`, deleted with it | The memory it is about |
+| `relation_type` | TEXT | required | `related`, `contradicts`, `updates` or `resolves` |
+| `confidence` | REAL | required; default `0.5` | The model's own figure, 0.75 when it gives none |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `notes` | TEXT |  | The model's reason, or a resolution note |
+| `created_by` | TEXT | required; default `'system'` | `llm` (cloud model), `local_llm` (on-device model), `same_message` (facts from one message, no model call), `user` (a card answer) |
+| `sync_id` | TEXT |  | The row's name on every device (0016) |
 
-**Relation Types** (migration 0022, 2026-10-23 — the table was rebuilt to change this CHECK):
-- `related` - Same specific subject; pulled into recall. Absorbed `supports`, `elaborates`, `caused_by`
-- `contradicts` / `contradicted_by` - Conflicting information; the user is asked
-- `updates` / `updated_by` - The source memory replaces the target; the target gets `memories.temporal_status = 'superseded'`
-- `resolves` / `resolved_by` - The user's explanation of a resolved conflict
-- Dropped: `reminds_of`, `quotes`, `mentions` (rows deleted by 0022)
+**Unique:** `(source_memory_id, target_memory_id, relation_type)`
+
+**Checks:** `source_memory_id <> target_memory_id`; `confidence` between 0.0 and 1.0; `relation_type IN ('contradicts', 'updates', 'related', 'resolves')`
 
 **Indexes:**
-- `idx_memory_links_source` - B-tree on source_memory_id
-- `idx_memory_links_target` - B-tree on target_memory_id
-- `idx_memory_links_type` - B-tree on relation_type
-- `idx_memory_links_confidence` - B-tree on confidence DESC
+- `idx_memory_links_confidence`: on (confidence DESC)
+- `idx_memory_links_source`: on (source_memory_id)
+- `idx_memory_links_sync_id`: unique, on (sync_id)
+- `idx_memory_links_target`: on (target_memory_id)
+- `idx_memory_links_type`: on (relation_type)
 
-**Triggers:**
-- `trigger_update_memory_link_count` - Automatically updates link_count in memories table
+**Triggers:** `trg_memory_links_ad`, `trg_memory_links_ai`, `trg_memory_links_outbox_ad`, `trg_memory_links_outbox_ai`, `trg_memory_links_outbox_au`. The first two keep `memories.link_count`; the `outbox` three queue changes for sync.
+
+**What each type does:**
+- `related`: same specific subject; the linked memory is pulled into recall. Took over `supports`, `elaborates` and `caused_by`.
+- `contradicts`: the two disagree; the user is asked on a card.
+- `updates`: the source replaces the target, which gets `temporal_status = 'superseded'` and is kept as history.
+- `resolves`: the user's explanation of a resolved conflict.
+- `reminds_of`, `quotes` and `mentions` were dropped by 0022 and their rows deleted.
 
 ---
 
-### 3. memory_relationships (View)
+### memory_relationships (view)
 
-**Note: This is a SQL VIEW, not a table.**
+Each link seen from both ends, so a query can start from either memory. The incoming
+side renames the type: `contradicted_by`, `updated_by`, `resolved_by`; `related` stays
+`related`.
 
-**Purpose:** Bidirectional view of memory relationships — presents each link as both an outgoing and incoming relationship so queries can be written from either memory's perspective without self-joins.
-
-**Schema:**
 ```sql
 CREATE VIEW memory_relationships AS
-  -- Outgoing relationships
   SELECT source_memory_id AS memory_id,
          target_memory_id AS related_memory_id,
-         relation_type,
-         confidence,
-         created_at,
-         notes,
-         created_by,
+         relation_type, confidence, created_at, notes, created_by,
          'outgoing' AS direction
   FROM memory_links
   UNION ALL
-  -- Incoming relationships (inverted)
   SELECT target_memory_id AS memory_id,
          source_memory_id AS related_memory_id,
          CASE relation_type
            WHEN 'contradicts' THEN 'contradicted_by'
-           WHEN 'updates' THEN 'updated_by'
-           WHEN 'resolves' THEN 'resolved_by'
+           WHEN 'updates'     THEN 'updated_by'
+           WHEN 'resolves'    THEN 'resolved_by'
            ELSE relation_type
          END AS relation_type,
-         confidence,
-         created_at,
-         notes,
-         created_by,
+         confidence, created_at, notes, created_by,
          'incoming' AS direction
   FROM memory_links;
 ```
 
 ---
 
-## Knowledge Base Tables
+### memory_entities
 
-### 4. kb_documents
+One row per named person, place, organisation or thing in a memory (0011). The Memory
+Map's hubs are built from this table. It does not sync and is not in the cloud backup,
+which is why `memories.entities_detected` keeps a copy of the names.
 
-**Purpose:** Tracks user-uploaded documents for RAG knowledge base
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `memory_id` | INTEGER | required; → `memories.id`, deleted with it |  |
+| `name` | TEXT | required | As written in the memory |
+| `canonical` | TEXT | required | Lower-cased and trimmed; the grouping key |
+| `kind` | TEXT | required; default `'thing'` | `person`, `place`, `org` or `thing` |
+| `created_at` | TEXT | required; default `strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')` |  |
 
-**Schema:**
-```sql
-CREATE TABLE kb_documents (
-    id SERIAL PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    file_name TEXT NOT NULL,
-    file_size BIGINT NOT NULL,
-    last_modified TIMESTAMPTZ NOT NULL,
-    indexed_at TIMESTAMPTZ DEFAULT NOW(),
-    chunk_count INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'indexing',
-    error_message TEXT,
-    CONSTRAINT kb_documents_status_check CHECK (
-        status IN ('indexed', 'indexing', 'needs_reindex', 'error')
-    ),
-    UNIQUE(user_id, file_path)
-);
-```
+**Unique:** `(memory_id, canonical)`
 
 **Indexes:**
-- `idx_kb_documents_user` - B-tree on user_id
-- `idx_kb_documents_status` - B-tree on status
+- `idx_memory_entities_canonical`: on (canonical)
+- `idx_memory_entities_memory`: on (memory_id)
 
 ---
 
-### 5. kb_chunks
+### memory_jobs
 
-**Purpose:** Document chunks with embeddings for semantic search
+The memory pipeline's queue (0023, 2026-10-24). After a reply, the memory work for the
+message is a row here. One worker per process runs the rows in order while the model is
+idle, so the work survives an interruption or a restart. Code: `memory_jobs.rs`.
 
-**Schema:**
-```sql
-CREATE TABLE kb_chunks (
-    id SERIAL PRIMARY KEY,
-    document_id INTEGER REFERENCES kb_documents(id) ON DELETE CASCADE,
-    chunk_index INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    embedding VECTOR(384),
-    token_count INTEGER NOT NULL,
-    UNIQUE(document_id, chunk_index)
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `session_id` | TEXT | required |  |
+| `user_id` | TEXT | required |  |
+| `message` | TEXT | required | The user's message the facts are taken from |
+| `backend` | TEXT | required | The backend chosen for the conversation; the same one does the memory calls |
+| `source_type` | TEXT | required; default `'conversation'` | `conversation` or `hands_free`, carried onto the memories |
+| `containment_mode` | TEXT | required; default `'sovereign'` | The mode when the message was sent |
+| `explicit_remember` | INTEGER | required; default `0` | 1 for a `Remember:` message: the text is stored as given and call 2 is skipped |
+| `remember_text` | TEXT |  | The text to store for a `Remember:` message |
+| `user_name` | TEXT |  |  |
+| `recent_turns` | TEXT |  | The last exchange, given to call 2 so it can resolve pronouns |
+| `query_entities` | TEXT | required; default `'[]'` | JSON list of names found in the message at chat time |
+| `status` | TEXT | required; default `'pending'` | `pending`, `running`, `done` or `failed`. A `running` row untouched for five minutes is taken again |
+| `attempts` | INTEGER | required; default `0` | A row is given up as `failed` after 4 attempts in total |
+| `error` | TEXT |  |  |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `updated_at` | TEXT | required; default `datetime('now')` |  |
 
 **Indexes:**
-- `idx_kb_chunks_document` - B-tree on document_id
-- `kb_chunks_embedding_idx` - IVFFlat vector index for similarity search
+- `memory_jobs_status_idx`: on (status, id)
 
 ---
 
-## ZynkSync Tables (Cross-Device Memory Sync)
+### memory_cards
 
-### 6. zynk_devices
+A question waiting for the user: "Is this an update?" or "These two disagree" (0024,
+2026-10-26). A card is a row so that it is shown on every app open until answered; on a
+phone the pipeline raises it a minute after the reply, when the user may have left.
 
-**Purpose:** Device registry for ZynkSync cross-device pairing
-
-**Schema:**
-```sql
-CREATE TABLE zynk_devices (
-    id SERIAL PRIMARY KEY,
-    device_id TEXT UNIQUE NOT NULL,
-    device_name TEXT NOT NULL,
-    device_ip TEXT,
-    device_platform TEXT,
-    pairing_code TEXT,
-    pairing_code_expires_at TIMESTAMPTZ,
-    is_paired BOOLEAN DEFAULT FALSE,
-    last_seen_at TIMESTAMPTZ DEFAULT NOW(),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    owner_user_id TEXT,
-    port INTEGER DEFAULT 57963 NOT NULL
-);
-```
-
-**Key Features:**
-- Default port 57963 for all ZynkSync/ZynkLink/ZChat HTTP communication
-- `owner_user_id` - Memories sync only between devices with matching owner; file sharing works cross-user
-- `pairing_code` - 6-digit code for secure device pairing (10-minute expiry)
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `user_id` | TEXT | required |  |
+| `session_id` | TEXT |  |  |
+| `stored_memory_id` | INTEGER |  | The new memory, when it was stored before asking (on-device path) |
+| `conflicting_memory_id` | INTEGER |  | The older memory it disagrees with |
+| `payload_json` | TEXT | required | The event payload exactly as the window expects it |
+| `raised_at` | TEXT | required; default `datetime('now')` |  |
+| `answered_at` | TEXT |  | NULL while the card is waiting |
+| `decision` | TEXT |  | The option the user chose |
 
 **Indexes:**
-- `zynk_devices_device_id_idx` - B-tree on device_id
-- `zynk_devices_pairing_code_idx` - Partial B-tree on pairing_code WHERE pairing_code IS NOT NULL
-- `idx_devices_owner_user_id` - B-tree on owner_user_id
-- `idx_zynk_devices_port` - B-tree on port
+- `idx_memory_cards_pending`: on (user_id, answered_at)
 
 ---
 
-### 7. zynk_device_pairings
+### deleted_memory_hashes
 
-**Purpose:** Bi-directional device relationships for ZynkSync authorization
+Tombstones (0006). The SHA-256 of a deleted memory's text is kept here so that sync or a
+cloud restore cannot bring the memory back.
 
-**Schema:**
-```sql
-CREATE TABLE zynk_device_pairings (
-    id SERIAL PRIMARY KEY,
-    device_a_id TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    device_b_id TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    paired_at TIMESTAMPTZ DEFAULT NOW(),
-    last_sync_a_to_b TIMESTAMPTZ,
-    last_sync_b_to_a TIMESTAMPTZ,
-    is_active BOOLEAN DEFAULT TRUE NOT NULL,
-    CONSTRAINT zynk_device_pairings_check CHECK (device_a_id < device_b_id),
-    UNIQUE(device_a_id, device_b_id)
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `content_hash` | TEXT | primary key |  |
+| `deleted_at` | TEXT | required; default `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` |  |
+
+---
+
+## Knowledge Base tables
+
+### kb_documents
+
+One row per indexed file. The built-in guides belong to the user id `_system`.
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `user_id` | TEXT | required |  |
+| `file_path` | TEXT | required |  |
+| `file_name` | TEXT | required |  |
+| `file_size` | INTEGER | required |  |
+| `last_modified` | TEXT | required | The file's own modified time; a change marks it for re-indexing |
+| `indexed_at` | TEXT | required; default `datetime('now')` |  |
+| `chunk_count` | INTEGER | required; default `0` |  |
+| `status` | TEXT | required; default `'indexing'` | `indexed`, `indexing`, `needs_reindex` or `error` |
+| `error_message` | TEXT |  |  |
+
+**Unique:** `(user_id, file_path)`
+
+**Checks:** `status IN ('indexed', 'indexing', 'needs_reindex', 'error')`
 
 **Indexes:**
-- `zynk_device_pairings_device_a_idx` - B-tree on device_a_id
-- `zynk_device_pairings_device_b_idx` - B-tree on device_b_id
+- `idx_kb_documents_status`: on (status)
+- `idx_kb_documents_user`: on (user_id)
 
 ---
 
-### 8. zynk_sync_state
+### kb_chunks
 
-**Purpose:** Track which memories have been synced between devices to avoid redundant transfers
+A document cut into passages, each with an embedding.
 
-**Schema:**
-```sql
-CREATE TABLE zynk_sync_state (
-    id SERIAL PRIMARY KEY,
-    source_device_id TEXT NOT NULL,
-    target_device_id TEXT NOT NULL,
-    memory_id INTEGER NOT NULL,
-    synced_at TIMESTAMPTZ DEFAULT NOW(),
-    memory_updated_at TIMESTAMPTZ,
-    UNIQUE(source_device_id, target_device_id, memory_id)
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `document_id` | INTEGER | → `kb_documents.id`, deleted with it |  |
+| `chunk_index` | INTEGER | required |  |
+| `content` | TEXT | required |  |
+| `embedding` | BLOB |  | 384 floats, as in `memories` |
+| `token_count` | INTEGER | required |  |
+
+**Unique:** `(document_id, chunk_index)`
 
 **Indexes:**
-- `zynk_sync_state_source_idx` - B-tree on source_device_id
-- `zynk_sync_state_target_idx` - B-tree on target_device_id
-- `zynk_sync_state_memory_idx` - B-tree on memory_id
+- `idx_kb_chunks_document`: on (document_id)
+
+**Triggers:** `kb_chunks_ad`, `kb_chunks_ai`, `kb_chunks_au`. These keep `kb_chunks_fts` in step with the table.
 
 ---
 
-### 9. user_sync_codes
+### kb_chunks_fts (FTS5)
 
-**Purpose:** Temporary one-time codes for device pairing
-
-**Schema:**
 ```sql
-CREATE TABLE user_sync_codes (
-    id SERIAL PRIMARY KEY,
-    code VARCHAR(6) UNIQUE NOT NULL,
-    user_id VARCHAR(255) NOT NULL,
-    device_id VARCHAR(255) NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    expires_at TIMESTAMPTZ NOT NULL,
-    used BOOLEAN DEFAULT FALSE,
-    used_at TIMESTAMPTZ
+CREATE VIRTUAL TABLE kb_chunks_fts USING fts5(
+    content,
+    content='kb_chunks',
+    content_rowid='id'
 );
 ```
 
-**Features:**
-- 6-digit codes (100000-999999)
-- 10-minute expiry (default)
-- One-time use only
-- Automatic cleanup via `cleanup_expired_sync_codes()` function
+Word search over the passages, used beside the embedding search in `kb_rag.rs`. SQLite
+creates four internal tables for it (`kb_chunks_fts_config`, `_data`, `_docsize`, `_idx`).
+
+---
+
+## Conversation history tables
+
+Nothing is written to these tables in HIPAA mode.
+
+### conversation_sessions
+
+One row per conversation (thread).
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `session_id` | TEXT | required | A UUID; also the row's `sync_id` |
+| `user_id` | TEXT | required |  |
+| `title` | TEXT |  | The first 60 characters of the first message, until the user renames it (120 characters at most) |
+| `started_at` | TEXT | required; default `datetime('now')` |  |
+| `last_active` | TEXT | required; default `datetime('now')` |  |
+| `message_count` | INTEGER | required; default `0` |  |
+| `model_backend` | TEXT |  | The backend last used |
+| `containment_mode` | TEXT |  | The mode when the thread was last written |
+| `pinned` | INTEGER | required; default `0` | 1 when pinned to the top of the list |
+| `last_extraction` | TEXT |  | What the memory pipeline did with the last message, for example `stored` or `error` |
+| `last_extraction_at` | TEXT |  | When that was |
+| `sync_id` | TEXT |  |  |
+| `pinned_at` | TEXT |  | When the pin last changed; the newest change wins between devices (0025) |
+
+**Unique:** `session_id`
 
 **Indexes:**
-- `idx_user_sync_codes_code` - Partial B-tree on code WHERE NOT used
-- `idx_user_sync_codes_expires_at` - B-tree on expires_at
+- `idx_conv_sessions_sync_id`: unique, on (sync_id)
+- `idx_conv_sessions_user_active`: on (user_id, last_active DESC)
+
+**Triggers:** `trg_conv_sessions_outbox_ad`, `trg_conv_sessions_outbox_ai`, `trg_conv_sessions_outbox_au`. They queue changes for sync.
 
 ---
 
-## ZynkLink Tables (Cross-Device File Sharing)
+### conversation_messages
 
-### 10. zynk_linked_directories
+Every user and assistant message.
 
-**Purpose:** Directories shared by each device for cross-device file access. Records are local configuration — they persist when a device is unlinked and survive re-pairing.
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `session_id` | TEXT | required; → `conversation_sessions.session_id`, deleted with it |  |
+| `user_id` | TEXT | required |  |
+| `role` | TEXT | required | `user` or `assistant` |
+| `content` | TEXT | required |  |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `model_backend` | TEXT |  |  |
+| `containment_mode` | TEXT |  |  |
+| `entry_hash` | TEXT |  | Reserved for a tamper-evidence chain; carried by sync and backup, not filled in |
+| `prev_hash` | TEXT |  | Reserved, as `entry_hash` |
+| `input_mode` | TEXT | required; default `'typed'` | `typed`, `dictated`, `hands_free` or `system` |
+| `sync_id` | TEXT |  | The row's name on every device (0013) |
+| `sources_json` | TEXT |  | The web sources behind a searched answer, in the shape the page renders (0028) |
 
-**Schema:**
-```sql
-CREATE TABLE zynk_linked_directories (
-    id SERIAL PRIMARY KEY,
-    device_id TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    local_path TEXT NOT NULL,
-    share_name TEXT NOT NULL,
-    description TEXT,
-    is_readable BOOLEAN DEFAULT TRUE,
-    is_writable BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(device_id, local_path)
-);
-```
+**Checks:** `role IN ('user', 'assistant')`; `input_mode IN ('typed', 'dictated', 'hands_free', 'system')`
 
 **Indexes:**
-- `idx_shared_dirs_device` - B-tree on device_id
+- `idx_conv_messages_session`: on (session_id, created_at ASC)
+- `idx_conv_messages_sync_id`: unique, on (sync_id)
+- `idx_conv_messages_unique`: unique, on (session_id, role, created_at, content)
+
+**Triggers:** `trg_conv_messages_outbox_ad`, `trg_conv_messages_outbox_ai`, `trg_conv_messages_outbox_au`. They queue changes for sync.
+
+`idx_conv_messages_unique` (0011) stops the same message being stored twice in a thread.
 
 ---
 
-### 11. zynk_file_manifest
+### conversation_messages_fts (FTS5)
 
-**Purpose:** Indexed files available in shared directories. This is the table actively queried by the application code (`zynklink.rs`). Uses `shared_directory_id` as the foreign key column name.
-
-**Schema:**
 ```sql
-CREATE TABLE zynk_file_manifest (
-    id SERIAL PRIMARY KEY,
-    shared_directory_id INTEGER REFERENCES zynk_linked_directories(id) ON DELETE CASCADE,
-    relative_path TEXT NOT NULL,
-    file_size BIGINT NOT NULL,
-    file_hash TEXT,  -- SHA256 for integrity verification
-    mime_type TEXT,
-    last_modified TIMESTAMPTZ,
-    indexed_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(shared_directory_id, relative_path)
+CREATE VIRTUAL TABLE conversation_messages_fts USING fts5(
+    content,
+    session_id UNINDEXED,
+    content='conversation_messages',
+    content_rowid='id'
 );
 ```
+
+Created by 0001 and never filled: no trigger or code writes to it. Conversation search
+(`conversation_history.rs`) uses `LIKE` on the title and the message text.
 
 ---
 
-### 12. zynk_link_manifest
+### message_feedback
 
-**Purpose:** Legacy file manifest table from an earlier naming convention. Structurally identical to `zynk_file_manifest` but uses `linked_directory_id` as the foreign key column name. The named indexes for file manifests reside on this table. Application code currently queries `zynk_file_manifest` (table 11); this table is a candidate for cleanup in a future migration.
+Thumbs up or down on an assistant reply.
 
-**Schema:**
-```sql
-CREATE TABLE zynk_link_manifest (
-    id SERIAL PRIMARY KEY,
-    linked_directory_id INTEGER REFERENCES zynk_linked_directories(id) ON DELETE CASCADE,
-    relative_path TEXT NOT NULL,
-    file_size BIGINT NOT NULL,
-    file_hash TEXT,  -- SHA256 for integrity verification
-    mime_type TEXT,
-    last_modified TIMESTAMPTZ,
-    indexed_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(linked_directory_id, relative_path)
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `message_id` | TEXT | required | The message's id as text; by convention, not a foreign key |
+| `session_id` | TEXT | required; → `conversation_sessions.session_id`, deleted with it |  |
+| `user_id` | TEXT | required |  |
+| `rating` | INTEGER | required | `1` up, `-1` down |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `model_backend` | TEXT |  | Copied from the message so ratings can be counted per backend |
+| `containment_mode` | TEXT |  | Copied from the message |
+
+**Unique:** `(message_id, user_id)`
+
+**Checks:** `rating IN (-1, 1)`
 
 **Indexes:**
-- `idx_file_manifest_share` - B-tree on linked_directory_id
-- `idx_file_manifest_hash` - B-tree on file_hash
+- `idx_message_feedback_rating`: on (rating)
+- `idx_message_feedback_session`: on (session_id)
+- `idx_message_feedback_user`: on (user_id)
 
 ---
 
-### 13. zynklink_codes
+### deleted_sessions
 
-**Purpose:** Authorization codes for establishing file sharing links between users
+Tombstones for deleted threads (0019). A thread deleted on one device used to come back
+when another device saved a reply into it. An incoming thread or message for a
+tombstoned thread is ignored, and saving a reply into one is refused.
 
-**Schema:**
-```sql
-CREATE TABLE zynklink_codes (
-    id SERIAL PRIMARY KEY,
-    code TEXT UNIQUE NOT NULL,
-    creator_user_id TEXT NOT NULL,
-    creator_device_id TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    expires_at TIMESTAMPTZ,
-    accepted_by_user_id TEXT,
-    accepted_by_device_id TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    accepted_at TIMESTAMPTZ,
-    is_active BOOLEAN DEFAULT TRUE,
-    revoked_at TIMESTAMPTZ,
-    revoked_reason TEXT
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `session_id` | TEXT | primary key |  |
+| `deleted_at` | TEXT | required; default `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` |  |
 
-**Features:**
-- Code becomes inactive after acceptance (one-time use)
-- Supports cross-user file sharing
-- Revocation tracked with timestamp and reason
+---
+
+## ZynkSync tables
+
+ZynkSync keeps one user's devices the same. Since the outbox rebuild (0013 to 0021,
+2026-09-29 to 2026-10-14) a feature syncs by writing to the database and nothing else:
+triggers queue every change and `sync_outbox.rs` sends the queue to each paired device.
+
+### zynk_devices
+
+Every device this one knows: itself, its ZynkSync peers and its ZynkLink peers.
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `device_id` | TEXT | required |  |
+| `device_name` | TEXT | required |  |
+| `device_ip` | TEXT |  | Last known address on the local network |
+| `device_platform` | TEXT |  |  |
+| `pairing_code` | TEXT |  | The six-digit code this device is showing, if any |
+| `pairing_code_expires_at` | TEXT |  | Ten minutes after the code was made (`zynksync.rs`) |
+| `is_paired` | INTEGER | required; default `0` | 1 for any pairing, ZynkSync or ZynkLink |
+| `last_seen_at` | TEXT | required; default `datetime('now')` |  |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `owner_user_id` | TEXT |  | Memories sync only between devices of the same owner |
+| `port` | INTEGER | required; default `57963` | The port the device listens on |
+| `tls_cert_der` | BLOB |  | The peer's TLS certificate, pinned at pairing. Later connections must present it |
+| `sync_paired` | INTEGER | required; default `0` | 1 for a ZynkSync pairing only (0005); the ZynkSync device list reads this |
+
+**Unique:** `device_id`
 
 **Indexes:**
-- `idx_zynklink_codes_creator` - B-tree on creator_user_id
-- `idx_zynklink_codes_accepted` - B-tree on accepted_by_user_id
-- `idx_zynklink_codes_active` - Partial B-tree on code WHERE is_active = TRUE
+- `idx_devices_owner_user_id`: on (owner_user_id)
+- `idx_zynk_devices_port`: on (port)
+- `idx_zynk_devices_sync_paired`: on (sync_paired)
+- `zynk_devices_device_id_idx`: on (device_id)
+- `zynk_devices_pairing_code_idx`: on (pairing_code) WHERE pairing_code IS NOT NULL
 
 ---
 
-### 14. zynklink_pairings
+### zynk_device_pairings
 
-**Purpose:** Active file sharing relationships between users (independent from ZynkSync memory pairing)
+One row per pair of ZynkSync devices, with the smaller id always in `device_a_id`.
 
-**Schema:**
-```sql
-CREATE TABLE zynklink_pairings (
-    id SERIAL PRIMARY KEY,
-    user1_id TEXT NOT NULL,
-    user2_id TEXT NOT NULL,
-    device1_id TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    device2_id TEXT REFERENCES zynk_devices(device_id) ON DELETE CASCADE,
-    linked_at TIMESTAMPTZ DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE,
-    UNIQUE(user1_id, user2_id)
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `device_a_id` | TEXT | → `zynk_devices.device_id`, deleted with it |  |
+| `device_b_id` | TEXT | → `zynk_devices.device_id`, deleted with it |  |
+| `paired_at` | TEXT | required; default `datetime('now')` |  |
+| `last_sync_a_to_b` | TEXT |  |  |
+| `last_sync_b_to_a` | TEXT |  |  |
+| `is_active` | INTEGER | required; default `1` |  |
+
+**Unique:** `(device_a_id, device_b_id)`
+
+**Checks:** `device_a_id < device_b_id`
 
 **Indexes:**
-- `idx_zynklink_pairings_user1` - B-tree on user1_id
-- `idx_zynklink_pairings_user2` - B-tree on user2_id
-- `idx_zynklink_pairings_active` - Partial B-tree on (user1_id, user2_id) WHERE is_active = TRUE
+- `zynk_device_pairings_device_a_idx`: on (device_a_id)
+- `zynk_device_pairings_device_b_idx`: on (device_b_id)
 
 ---
 
-## ZChat Tables (Device-to-Device Messaging)
+### user_sync_codes
 
-### 15. zchat_messages
+One-time six-digit codes (100000 to 999999) for joining a user's devices. A code lasts
+five minutes (`sync_codes.rs`) and works once.
 
-**Purpose:** Direct messages between paired devices without cloud storage
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `code` | TEXT | required |  |
+| `user_id` | TEXT | required |  |
+| `device_id` | TEXT | required |  |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `expires_at` | TEXT | required |  |
+| `used` | INTEGER | required; default `0` |  |
+| `used_at` | TEXT |  |  |
 
-**Schema:**
-```sql
-CREATE TABLE zchat_messages (
-    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    from_device_id UUID NOT NULL,
-    to_device_id UUID NOT NULL,
-    message_text TEXT NOT NULL,
-    sent_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    delivered_at TIMESTAMPTZ,
-    read_at TIMESTAMPTZ,
-    user_id UUID NOT NULL,
-    CONSTRAINT message_not_empty CHECK (char_length(message_text) > 0)
-);
-```
-
-**Features:**
-- UUID-based message IDs
-- Delivery and read receipts (delivered_at, read_at)
-- Local storage only — no cloud sync, no server
+**Unique:** `code`
 
 **Indexes:**
-- `idx_zchat_from_device` - B-tree on (from_device_id, sent_at DESC)
-- `idx_zchat_to_device` - B-tree on (to_device_id, sent_at DESC)
-- `idx_zchat_conversation` - B-tree on (LEAST(from_device_id, to_device_id), GREATEST(from_device_id, to_device_id), sent_at DESC)
-- `idx_zchat_user` - B-tree on user_id
+- `idx_user_sync_codes_code`: on (code) WHERE used = 0
+- `idx_user_sync_codes_expires_at`: on (expires_at)
 
 ---
 
-## Conversation History Tables
+### sync_outbox
 
-### 16. conversation_sessions
+The queue of changes to send (0013). One row per insert, update or delete on a synced
+table. The row names what changed; the sender reads the current values from the live
+table when it sends.
 
-**Purpose:** One row per chat session — tracks metadata, model used, and containment mode
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `table_name` | TEXT | required | `memories`, `memory_links`, `conversation_sessions`, `conversation_messages` or `sync_secrets` |
+| `row_sync_id` | TEXT | required | The changed row's `sync_id` |
+| `op` | TEXT | required |  |
+| `payload` | TEXT |  | On a delete of a memory or message: its text, from which the receiver gets the content hash |
+| `created_at` | TEXT | required; default `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` |  |
+| `deleted_at` | TEXT |  | The tombstone's own time when a past deletion is re-sent (0020); NULL otherwise |
 
-**Schema:**
-```sql
-CREATE TABLE conversation_sessions (
-    id               SERIAL PRIMARY KEY,
-    session_id       TEXT NOT NULL UNIQUE,
-    user_id          TEXT NOT NULL,
-    title            TEXT,
-    started_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_active      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    message_count    INTEGER NOT NULL DEFAULT 0,
-    model_backend    TEXT,
-    containment_mode TEXT
-);
-```
-
-**Key Columns:**
-- `session_id` - UUID identifying the conversation, passed with every message
-- `title` - Auto-generated from first 60 characters of the first user message
-- `model_backend` - Which LLM backend was used (anthropic, openai, xai, or local model path)
-- `containment_mode` - Active containment mode when session was last updated
-
-**Notes:**
-- Disabled entirely in HIPAA mode — no records created when HIPAA containment is active
-- Sessions are grouped by date in the UI (Today / Yesterday / This Week / Month)
-- Full-text search and date-range filtering available via `search_conversations` command
+**Checks:** `op IN ('insert', 'update', 'delete')`
 
 **Indexes:**
-- `idx_conv_sessions_user_active` - B-tree on (user_id, last_active DESC)
+- `idx_sync_outbox_created`: on (created_at)
 
 ---
 
-### 17. conversation_messages
+### sync_outbox_cursor
 
-**Purpose:** Every user and assistant message in every session, with hash chain columns reserved for tamper evidence
+How far this device has sent to each peer: the last `sync_outbox.id` the peer accepted.
 
-**Schema:**
-```sql
-CREATE TABLE conversation_messages (
-    id               BIGSERIAL PRIMARY KEY,
-    session_id       TEXT NOT NULL REFERENCES conversation_sessions(session_id) ON DELETE CASCADE,
-    user_id          TEXT NOT NULL,
-    role             TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content          TEXT NOT NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    model_backend    TEXT,
-    containment_mode TEXT,
-    entry_hash       TEXT,
-    prev_hash        TEXT
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `peer_device_id` | TEXT | primary key |  |
+| `last_outbox_id` | INTEGER | required; default `0` |  |
+| `updated_at` | TEXT |  |  |
 
-**Key Columns:**
-- `role` - Either `user` or `assistant`
-- `entry_hash` / `prev_hash` - Reserved for MemoryVault tamper-evidence chain (v2.0); not populated in v1.0
+---
+
+### sync_inbox_cursor
+
+How far this device has heard from each peer (0015). A device restored onto a fresh
+install reports a low number, and the sender then starts it over from the live tables.
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `peer_device_id` | TEXT | primary key |  |
+| `through` | INTEGER | required; default `0` |  |
+| `updated_at` | TEXT |  |  |
+
+---
+
+### sync_suppress
+
+A switch (0013). While it holds a row, the triggers queue nothing. The receiving code
+sets it while applying a peer's changes so they are not sent straight back.
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `flag` | INTEGER | primary key |  |
+
+**Checks:** `flag = 1`, so the table holds at most one row
+
+---
+
+### sync_secrets
+
+The settings that travel to every paired device through the outbox (0014): the API keys,
+the backup key and the wake-word profile, one row each, named by the setting's own name.
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `name` | TEXT | primary key |  |
+| `value` | TEXT | required |  |
+| `updated_at` | TEXT | required; default `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` |  |
+| `sync_id` | TEXT |  | Same as `name` |
+| `revision` | INTEGER | required; default `0` | Goes up by one on every local change; the higher revision wins, so device clocks do not decide (0018) |
+
+**Triggers:** `trg_sync_secrets_outbox_ad`, `trg_sync_secrets_outbox_ai`, `trg_sync_secrets_outbox_au`. They queue changes for sync.
+
+---
+
+### zynk_pending_removals
+
+A device-removal notice that could not be delivered because the peer was offline (0007).
+It is retried on the next heartbeat.
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `target_peer_id` | TEXT | required |  |
+| `target_peer_ip` | TEXT | required |  |
+| `sender_device_id` | TEXT | required |  |
+| `cascade_device_id` | TEXT | required |  |
+| `created_at` | TEXT | required; default `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')` |  |
 
 **Indexes:**
-- `idx_conv_messages_session` - B-tree on (session_id, created_at ASC)
-- `idx_conv_messages_fts` - GIN full-text search index on content (English tsvector). Note: conversation search currently uses `ILIKE` for partial matching; this index is dormant but retained for a potential future FTS upgrade.
+- `idx_pending_removals_target`: on (target_peer_id)
 
 ---
 
-### 18. message_feedback
+### Tables kept from the earlier sync design
 
-**Purpose:** Thumbs up / down ratings on individual assistant responses, linked to conversation messages
+These three are still created by the migrations. Nothing reads them for sync any more.
 
-**Schema:**
-```sql
-CREATE TABLE message_feedback (
-    id               BIGSERIAL PRIMARY KEY,
-    message_id       TEXT NOT NULL,
-    session_id       TEXT NOT NULL REFERENCES conversation_sessions(session_id) ON DELETE CASCADE,
-    user_id          TEXT NOT NULL,
-    rating           SMALLINT NOT NULL CHECK (rating IN (-1, 1)),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    model_backend    TEXT,
-    containment_mode TEXT,
-    UNIQUE (message_id, user_id)
-);
-```
+### zynk_sync_state
 
-**Key Columns:**
-- `rating` - `1` = thumbs up, `-1` = thumbs down
-- `message_id` - TEXT storing the stringified `conversation_messages.id` (BIGSERIAL). This is a soft reference by convention, not a database FK — the join is `conversation_messages cm ON cm.id::TEXT = mf.message_id`
-- `model_backend` - Denormalized from the message for efficient filtering without a join
-- `containment_mode` - Denormalized; allows analysis of rating patterns by mode
+Which memories had been sent to which device, in the whole-table compare the outbox
+replaced. The code now only deletes a removed device's rows from it.
 
-**One rating per message per user** enforced by the unique constraint on (message_id, user_id).
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `source_device_id` | TEXT | required |  |
+| `target_device_id` | TEXT | required |  |
+| `memory_id` | INTEGER | required |  |
+| `synced_at` | TEXT | required; default `datetime('now')` |  |
+| `memory_updated_at` | TEXT |  |  |
+
+**Unique:** `(source_device_id, target_device_id, memory_id)`
 
 **Indexes:**
-- `idx_message_feedback_session` - B-tree on session_id
-- `idx_message_feedback_user` - B-tree on user_id
-- `idx_message_feedback_rating` - B-tree on rating
+- `zynk_sync_state_memory_idx`: on (memory_id)
+- `zynk_sync_state_source_idx`: on (source_device_id)
+- `zynk_sync_state_target_idx`: on (target_device_id)
 
 ---
 
-## Utility Tables
+### zynk_conversation_push_state
 
-### 19. schema_migrations
+A per-peer marker for conversation pushes (0012), replaced by the outbox cursors eleven
+days later. No code refers to it.
 
-**Purpose:** Track which database migrations have been applied
-
-**Schema:**
-```sql
-CREATE TABLE schema_migrations (
-    id SERIAL PRIMARY KEY,
-    migration_name TEXT UNIQUE NOT NULL,
-    applied_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `peer_device_id` | TEXT | primary key |  |
+| `pushed_through` | TEXT | required |  |
 
 ---
 
-### 20. zynk_device_certificates
+### zynk_device_certificates
 
-**Purpose:** Placeholder for TLS certificates for secure device communication. Exists in the schema but is not referenced by any application code in the current version. Reserved for a planned future upgrade to encrypted device-to-device communication (currently plain HTTP over local network).
+An earlier home for peer certificates. The pinned certificate now lives in
+`zynk_devices.tls_cert_der`; the code only deletes a removed device's row from here.
 
-**Schema:**
-```sql
-CREATE TABLE zynk_device_certificates (
-    device_id UUID PRIMARY KEY,
-    certificate_pem TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `device_id` | TEXT | primary key |  |
+| `certificate_pem` | TEXT | required |  |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `updated_at` | TEXT | required; default `datetime('now')` |  |
 
 ---
 
-### 21. memory_jobs
+## ZynkLink tables
 
-**Purpose:** The memory pipeline's background job queue (migration 0023, 2026-10-24). After a reply, the memory work for the message (call 2: the facts; call 3: their links) is a row here; one worker per process runs the rows in order when the model is idle, an interruption by the user's next message leaves the row pending, a real failure retries up to four times, and rows survive an app restart. Before this, a spawned task per message gave up after three interruptions and quick questions lost facts.
+ZynkLink shares folders between devices, including devices of different users.
 
-**Schema:**
-```sql
-CREATE TABLE IF NOT EXISTS memory_jobs (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id        TEXT NOT NULL,
-    user_id           TEXT NOT NULL,
-    message           TEXT NOT NULL,
-    backend           TEXT NOT NULL,
-    source_type       TEXT NOT NULL DEFAULT 'conversation',
-    containment_mode  TEXT NOT NULL DEFAULT 'sovereign',
-    explicit_remember INTEGER NOT NULL DEFAULT 0,
-    remember_text     TEXT,
-    user_name         TEXT,
-    recent_turns      TEXT,
-    query_entities    TEXT NOT NULL DEFAULT '[]',
-    status            TEXT NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
-    attempts          INTEGER NOT NULL DEFAULT 0,
-    error             TEXT,
-    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS memory_jobs_status_idx ON memory_jobs(status, id);
-```
+### zynk_linked_directories
 
-**Key Columns:**
-- `message` - the user's message the facts are taken from (never stored as a memory itself; each fact keeps it as `memories.original_text`)
-- `source_type` - `conversation` or `hands_free`, carried onto the memories
-- `explicit_remember` / `remember_text` - a `Remember:` message: the text is stored verbatim and call 2 is skipped
-- `recent_turns` - the last exchange, given to call 2 only so it can resolve pronouns
-- `status` - a `running` row untouched for five minutes is taken again (the app was killed mid-job)
+The folders this device shares. They are local settings and stay when a device is unlinked.
 
-**Code:** `src-tauri/src/memory_jobs.rs` (`enqueue`, `take_next`, `mark`, `ensure_worker`, `process`).
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `device_id` | TEXT | → `zynk_devices.device_id`, deleted with it |  |
+| `local_path` | TEXT | required |  |
+| `share_name` | TEXT | required |  |
+| `description` | TEXT |  |  |
+| `is_readable` | INTEGER | required; default `1` |  |
+| `is_writable` | INTEGER | required; default `0` |  |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `updated_at` | TEXT | required; default `datetime('now')` |  |
+
+**Unique:** `(device_id, local_path)`
+
+**Indexes:**
+- `idx_shared_dirs_device`: on (device_id)
 
 ---
 
-## Database Functions
+### zynk_file_manifest
 
-### cleanup_expired_sync_codes()
+The files in each shared folder. This is the table `zynklink.rs` writes and reads.
 
-**Purpose:** Deletes expired pairing codes from user_sync_codes
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `shared_directory_id` | INTEGER | → `zynk_linked_directories.id`, deleted with it |  |
+| `relative_path` | TEXT | required |  |
+| `file_size` | INTEGER | required |  |
+| `file_hash` | TEXT |  |  |
+| `mime_type` | TEXT |  |  |
+| `last_modified` | TEXT |  |  |
+| `indexed_at` | TEXT | required; default `datetime('now')` |  |
 
-```sql
-CREATE FUNCTION cleanup_expired_sync_codes() RETURNS void
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    DELETE FROM user_sync_codes
-    WHERE expires_at < NOW();
-END;
-$$;
-```
-
-### update_memory_link_count()
-
-**Purpose:** Trigger function to maintain link_count in memories table
-
-```sql
-CREATE FUNCTION update_memory_link_count() RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  IF TG_OP = 'INSERT' THEN
-    UPDATE memories SET link_count = link_count + 1 WHERE id = NEW.source_memory_id;
-    UPDATE memories SET link_count = link_count + 1 WHERE id = NEW.target_memory_id;
-  ELSIF TG_OP = 'DELETE' THEN
-    UPDATE memories SET link_count = link_count - 1 WHERE id = OLD.source_memory_id;
-    UPDATE memories SET link_count = link_count - 1 WHERE id = OLD.target_memory_id;
-  END IF;
-  RETURN NULL;
-END;
-$$;
-```
-
-### update_updated_at_column()
-
-**Purpose:** Trigger function to automatically update updated_at timestamp on row update
-
-```sql
-CREATE FUNCTION update_updated_at_column() RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$;
-```
+**Unique:** `(shared_directory_id, relative_path)`
 
 ---
 
-## Performance Considerations
+### zynk_link_manifest
 
-### Vector Search
+An older copy of the same idea under a different column name. The two delete commands in
+`commands/zynklink.rs` and the device-removal code still clear rows from it; nothing
+inserts into it. A candidate for removal in a later migration.
 
-Zynkbot uses **IVFFlat indexes** for vector similarity search:
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `linked_directory_id` | INTEGER | → `zynk_linked_directories.id`, deleted with it |  |
+| `relative_path` | TEXT | required |  |
+| `file_size` | INTEGER | required |  |
+| `file_hash` | TEXT |  |  |
+| `mime_type` | TEXT |  |  |
+| `last_modified` | TEXT |  |  |
+| `indexed_at` | TEXT | required; default `datetime('now')` |  |
 
-```sql
--- memories embedding index
-CREATE INDEX memories_embedding_idx
-ON memories
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists='100');
+**Unique:** `(linked_directory_id, relative_path)`
 
--- kb_chunks embedding index
-CREATE INDEX kb_chunks_embedding_idx
-ON kb_chunks
-USING ivfflat (embedding vector_cosine_ops)
-WITH (lists='100');
-```
-
-**IVFFlat Parameters:**
-- `lists='100'` - Partitions the vector space into 100 clusters
-- Trade-off: Faster search vs. recall accuracy
-- Optimal for databases with 10K+ vectors
-
-**Query Performance:**
-- Vector similarity search: O(log N) with IVFFlat
-- Hybrid search (vector + text): Uses both IVFFlat and GIN indexes
-
-### Index Strategy
-
-**Indexed Columns:**
-- All foreign keys (for joins)
-- High-cardinality columns (user_id, device_id, namespace)
-- Frequently queried columns (created_at, status, is_active)
-- JSONB columns (entities_detected) with GIN indexes
-- Vector columns with IVFFlat indexes
-
-**Partial Indexes:**
-- `idx_memories_ephemeral` - Only indexes ephemeral memories
-- `idx_user_sync_codes_code` - Only indexes unused codes
-- `memories_shareable_idx` - Only indexes shareable memories
-- `idx_memories_expires_at` - Only indexes memories with an expiry set
-- `idx_memories_event_date` / `idx_memories_event_type` - Only indexes event-typed memories
-- These reduce index size for sparse data
+**Indexes:**
+- `idx_file_manifest_hash`: on (file_hash)
+- `idx_file_manifest_share`: on (linked_directory_id)
 
 ---
 
-## Backup Recommendations
+### zynklink_codes
 
-**Critical Tables** (backup regularly):
-- `memories` - Core user data
-- `memory_links` - Relationship graph
-- `kb_documents`, `kb_chunks` - Knowledge base
-- `zynk_devices` - Device registry
-- `zynk_device_pairings` - Sync configuration
-- `conversation_sessions`, `conversation_messages` - Conversation history
+Codes for setting up a ZynkLink between two devices. A code stops working once accepted.
 
-**Ephemeral Tables** (can rebuild):
-- `zynk_sync_state` - Rebuilds on next sync
-- `user_sync_codes` - Temporary codes (expire in 10 minutes)
-- `zchat_messages` - Local only; re-delivery not possible after loss
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `code` | TEXT | required |  |
+| `creator_user_id` | TEXT | required |  |
+| `creator_device_id` | TEXT | → `zynk_devices.device_id`, deleted with it |  |
+| `created_at` | TEXT | required; default `datetime('now')` |  |
+| `expires_at` | TEXT |  |  |
+| `accepted_by_user_id` | TEXT |  |  |
+| `accepted_by_device_id` | TEXT | → `zynk_devices.device_id`, deleted with it |  |
+| `accepted_at` | TEXT |  |  |
+| `is_active` | INTEGER | required; default `1` |  |
+| `revoked_at` | TEXT |  |  |
+| `revoked_reason` | TEXT |  |  |
 
-**Backup Command:**
+**Unique:** `code`
+
+**Indexes:**
+- `idx_zynklink_codes_accepted`: on (accepted_by_user_id)
+- `idx_zynklink_codes_active`: on (code) WHERE is_active = 1
+- `idx_zynklink_codes_creator`: on (creator_user_id)
+
+---
+
+### zynklink_pairings
+
+One row per linked pair of devices. Migration 0008 changed the unique key from the user
+pair to the device pair, so one user's phone can link to more than one device.
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | INTEGER | primary key |  |
+| `user1_id` | TEXT | required |  |
+| `user2_id` | TEXT | required |  |
+| `device1_id` | TEXT | required |  |
+| `device2_id` | TEXT | required |  |
+| `linked_at` | TEXT | required; default `datetime('now')` |  |
+| `is_active` | INTEGER | required; default `1` |  |
+| `is_paused` | INTEGER | required; default `0` | 1 while the user has paused the link |
+
+**Unique:** `(device1_id, device2_id)`
+
+**Indexes:**
+- `idx_zynklink_pairings_device1`: on (device1_id)
+- `idx_zynklink_pairings_device2`: on (device2_id)
+- `idx_zynklink_pairings_user1`: on (user1_id)
+- `idx_zynklink_pairings_user2`: on (user2_id)
+
+---
+
+## ZChat table
+
+### zchat_messages
+
+Messages sent directly between paired devices. They are stored on the two devices only.
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `id` | TEXT | primary key | A UUID |
+| `from_device_id` | TEXT | required |  |
+| `to_device_id` | TEXT | required |  |
+| `message_text` | TEXT | required |  |
+| `sent_at` | TEXT | required; default `datetime('now')` |  |
+| `delivered_at` | TEXT |  | Delivery receipt |
+| `read_at` | TEXT |  | Read receipt |
+| `user_id` | TEXT | required |  |
+
+**Checks:** `length(message_text) > 0`
+
+**Indexes:**
+- `idx_zchat_from_device`: on (from_device_id, sent_at DESC)
+- `idx_zchat_to_device`: on (to_device_id, sent_at DESC)
+- `idx_zchat_user`: on (user_id)
+
+---
+
+## Settings table
+
+### app_settings
+
+Small values the app keeps for itself, by key. Keys in use: `memory_embedding_scheme`
+(which text the embeddings were made from, so a change re-embeds once),
+`system_docs_version` (which built-in guides are indexed) and `checkin_enabled`.
+The containment mode is not stored here or anywhere else; see
+[Containment Architecture](CONTAINMENT_ARCHITECTURE.md).
+
+| Column | Type | Constraints | Meaning |
+|--------|------|-------------|---------|
+| `key` | TEXT | primary key |  |
+| `value` | TEXT |  |  |
+| `updated_at` | TEXT | default `datetime('now')` |  |
+
+---
+
+## Sync triggers
+
+Five tables are synced: `memories`, `memory_links`, `conversation_sessions`,
+`conversation_messages` and `sync_secrets`. Each has three triggers, named
+`trg_<table>_outbox_ai`, `_au` and `_ad` (`trg_conv_sessions_…` and `trg_conv_messages_…`
+for the two conversation tables):
+
+| Trigger | When | What it does |
+|---------|------|--------------|
+| `_ai` | after insert | Gives the row a `sync_id` when it has none (16 random bytes as hex; a session uses its `session_id`, a secret its `name`), then queues an `insert` |
+| `_au` | after update | Queues an `update`. The update that only filled in `sync_id` is skipped |
+| `_ad` | after delete | Queues a `delete`. For a memory or a message the row's text goes in `payload` |
+
+None of them queues anything while `sync_suppress` holds a row.
+
+The other five triggers: `trg_memory_links_ai` and `trg_memory_links_ad` keep
+`memories.link_count`; `kb_chunks_ai`, `kb_chunks_au` and `kb_chunks_ad` keep the
+Knowledge Base word index.
+
+There is no trigger on `memories.updated_at`; the code sets it when it changes a row.
+
+---
+
+## Deleting and expiring
+
+- A deleted memory leaves its content hash in `deleted_memory_hashes`, and a deleted
+  thread its id in `deleted_sessions`, so neither returns through sync or restore.
+- Deleting a memory deletes its links and its `memory_entities` rows (foreign keys with
+  cascade). Deleting a thread deletes its messages and their feedback.
+- A passing fact past its `expires_at` stays in the table and is left out of recall
+  (`memory.rs`). The `cleanup_expired_memories` command would delete such rows, but
+  nothing in the app calls it.
+
+---
+
+## Backup
+
+**In the app:** the cloud backup (`commands/backup.rs`) encrypts memories, their links,
+conversations and keys on the device (AES-256-GCM, key derived from the backup phrase
+with Argon2id) and stores the result in the user's Cloudflare R2 bucket. On restore,
+links are matched to memories by content hash.
+
+**By hand:** close Zynkbot first, then copy the database with its write-ahead log files.
+
 ```bash
 # Linux
-cp ~/.local/share/zynkbot/zynkbot.db ~/zynkbot_backup_$(date +%Y%m%d).db
+cp ~/.local/share/zynkbot/zynkbot.db* ~/zynkbot_backup/
 
 # Windows
-copy "%LOCALAPPDATA%\zynkbot\zynkbot.db" "%USERPROFILE%\zynkbot_backup.db"
+copy "%LOCALAPPDATA%\zynkbot\zynkbot.db*" "%USERPROFILE%\zynkbot_backup\"
 ```
 
-**Restore Command:**
-```bash
-# Stop Zynkbot, then replace the database file with the backup copy
-cp ~/zynkbot_backup_20260530.db ~/.local/share/zynkbot/zynkbot.db
-```
+To restore, close Zynkbot and copy the files back. On Android the file is inside the
+app's private storage and cannot be copied without root or a debug build.
+
+A second device is the simplest backup: a newly paired device receives everything.
 
 ---
 
-## Schema Version
+## Known leftovers
 
-**Database:** SQLite (embedded via sqlx — no extensions required)
-
-**Schema management:** SQLx migrations (`zynkbot_rust/src-tauri/migrations/`) — applied automatically on startup.
-
----
-
-## Future Enhancements
-
-**Planned:**
-- Compression for old memories (archiving memories beyond a configurable age threshold, relevant for HIPAA-regulated deployments)
-- Automatic expiration cleanup job for ephemeral memories (currently ephemeral memories are filtered at query time; a background job would purge expired rows to keep the table lean)
-- Cleanup of `zynk_link_manifest` (legacy duplicate of `zynk_file_manifest`; requires a migration to unify on one table)
-- Population of `entry_hash` / `prev_hash` in `conversation_messages` for MemoryVault tamper-evidence chain (v2.0)
-- TLS certificate infrastructure using `zynk_device_certificates` for encrypted device communication
+- `zynk_link_manifest`, `zynk_sync_state`, `zynk_conversation_push_state` and
+  `zynk_device_certificates` are unused or nearly so.
+- `conversation_messages_fts` is never filled.
+- `memories.parent_scroll_id`, `chunk_index`, `is_syncable` and `is_shareable` are not
+  used by any feature.
+- `conversation_messages.entry_hash` / `prev_hash` are reserved and empty.
+- Expired passing facts are hidden, not deleted.
 
 ---
 
-## See Also
+## See also
 
-- [scripts/db/complete_fresh_install_schema.sql](../scripts/db/complete_fresh_install_schema.sql) - Complete schema definition
-- [Networking Features](../NETWORKING_FEATURES.md) - ZynkSync, ZynkLink, and ZChat
+- [Memory Processing Pipeline](MEMORY_PROCESSING_PIPELINE.md): how a memory row is made
+- [Relationship Detection Architecture](RELATIONSHIP_DETECTION_ARCHITECTURE.md): how links are made
+- [Networking Features](../NETWORKING_FEATURES.md): ZynkSync, ZynkLink and ZChat

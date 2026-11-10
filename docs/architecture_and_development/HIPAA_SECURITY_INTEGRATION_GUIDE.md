@@ -1,278 +1,287 @@
 # HIPAA Security Integration Guide
 
-**Document Version:** 4.0
-**Last Updated:** April 2026
-**Purpose:** Zynkbot's built-in HIPAA-supporting features, value proposition for healthcare providers, and what production deployments require
+*Checked against the code on 2026-11-10 (`v1`, a7599eb).*
 
-## ⚠️ Important — Read Before Using in a Healthcare Environment
+**Document Version:** 4.0
+**Purpose:** What Zynkbot's HIPAA mode does, what it does not do, and what a healthcare deployment still has to provide
+
+## ⚠️ Important: Read Before Using in a Healthcare Environment
 
 **THIS SOFTWARE IS NOT HIPAA-CERTIFIED. IT IS A PRIVACY FRAMEWORK, NOT A COMPLIANCE SOLUTION.**
 
-Zynkbot provides architectural privacy features that support HIPAA compliance efforts. It is not a certified medical product, is not a complete HIPAA solution, and does not replace a Business Associate Agreement (BAA). PHI detection is regex-based with known limitations (estimated 70–85% accuracy for structured patterns). Developers assume no liability for compliance failures, data breaches, or regulatory penalties.
+Zynkbot has features that can support a HIPAA compliance effort. It is not a certified medical product, is not a complete HIPAA solution, and does not replace a Business Associate Agreement (BAA). PHI detection is seven regular expressions over the typed message, with the limits listed in [Known limits](#known-limits). Developers assume no liability for compliance failures, data breaches, or regulatory penalties.
 
-The architectural descriptions in this document are verified against the codebase. The general HIPAA regulatory framework described (BAA requirements, risk assessment obligations, Security Rule structure) is accurate at a high level. Whether any specific configuration satisfies a HIPAA audit depends on the covered entity's own risk assessment. This document is not a substitute for qualified HIPAA compliance counsel.
+Statements about Zynkbot's behaviour in this document were checked against the code. Industry background, figures about healthcare, and descriptions of other products were not checked. The description of the HIPAA regulatory framework (BAA requirements, risk assessment obligations, Security Rule structure) is high-level only. Whether a configuration satisfies a HIPAA audit depends on the covered entity's own risk assessment. This document is not a substitute for qualified HIPAA compliance counsel.
 
-**Current version (v0.9):** PHI detection, audit logging, and medical request blocking are implemented and functional. In HIPAA mode, the personal memory extraction pipeline is fully disabled — extraction does not run, and any memories that do persist carry an 8-hour expiration as a fallback safety net. Expanded PHI detection (BERT NER + additional regex patterns) and per-workstation improvements are planned for v1.0. The enterprise server deployment (Scenario B) and LLM semantic pre-check are a future release beyond v1.0.
+**Current state:** in HIPAA mode the app checks each typed message for PHI patterns and certain medical requests, writes an audit line, keeps no conversation history, and does not extract memories. It does not restrict which model is used, and it does not stop stored memories or Knowledge Base text from going into the prompt. The mode is not saved: the app starts in Sovereign mode each time, and HIPAA has to be selected again. A shared-server deployment (Scenario B below) does not exist. `docs/ROADMAP.md` describes the containment modes as proofs of concept that are not production-grade for their domains.
 
 ---
 
 ## AI in Healthcare: Why This Matters Now
 
-Healthcare has one of the highest documentation and administrative burdens of any industry. Physicians in the US spend an estimated 30–50% of their time on EHR documentation and paperwork — time not spent on patients. Burnout driven by administrative load is a documented crisis across nursing, primary care, and specialty medicine alike.
+*Background. Not checked against the code.*
 
-AI is already being deployed to address this. Microsoft's Nuance DAX, Abridge, and Suki are raising hundreds of millions of dollars specifically to help physicians auto-document patient encounters. Epic, the dominant EHR platform, is integrating AI across scheduling, documentation, and clinical decision support. This is not a future trend — it is happening in hospitals now.
+Healthcare has a high documentation and administrative burden. Physicians in the US are often reported to spend a large share of their time on EHR documentation and paperwork, and administrative load is a known driver of burnout in nursing, primary care and specialty medicine.
 
-Beyond documentation, clinical and administrative staff use AI daily for:
-- **Reference and lookup** — drug interactions, dosage information, clinical guidelines, protocol checks, literature summaries
-- **Administrative work** — prior authorization drafts, billing code suggestions, discharge instruction templates, patient communication drafts, compliance policy questions
-- **Training and onboarding** — new staff asking procedure questions, reviewing institutional policies, understanding coding standards
+AI is already being deployed to address this. Products such as Microsoft's Nuance DAX, Abridge and Suki help physicians document patient encounters, and EHR vendors are adding AI to scheduling, documentation and clinical decision support.
 
-**The most important practical reality:** Healthcare workers are already using AI informally — personal ChatGPT and Claude accounts, often against hospital policy, because no sanctioned alternative exists and the tools are genuinely useful. A hospital's choice is not really "allow AI or not." It is whether to give staff a compliant, auditable tool designed for their environment, or continue to let them use personal consumer accounts with no oversight, no audit trail, and no PHI guardrails.
+Beyond documentation, clinical and administrative staff use AI for:
+- **Reference and lookup:** drug interactions, clinical guidelines, protocol checks, literature summaries
+- **Administrative work:** prior authorization drafts, billing code suggestions, discharge instruction templates, patient communication drafts, compliance policy questions
+- **Training and onboarding:** procedure questions, institutional policies, coding standards
 
-That is the problem this document addresses.
+**The practical reality:** healthcare workers already use AI informally, through personal ChatGPT and Claude accounts, often against policy. An organisation's choice is not only "allow AI or not". It is also whether staff get a tool with guardrails the organisation can inspect, or keep using personal consumer accounts with no oversight.
 
-**An underappreciated benefit: internal accountability and fraud deterrence.** Healthcare fraud — billing fraud, prescription fraud, staff accessing patient records for identity theft — costs the US healthcare system an estimated $100 billion annually and is a significant exposure for any facility. Because Zynkbot logs every AI query with attribution to a user account, it creates an audit trail for how staff are using the tool. A billing clerk researching fraudulent coding schemes, a staff member repeatedly querying about controlled substance access, or unusual patterns of PHI-adjacent queries all leave a record. Staff who know their AI usage is logged and attributed to their account are less likely to misuse it. This is the same principle behind EHR audit logging — a standard compliance requirement — extended to the AI layer.
+**What Zynkbot records about use.** In HIPAA mode each checked message writes one audit line: a timestamp, an event type, the message length and a blocked flag. The line has no user id and no message text, and conversation history is off in HIPAA mode. The audit log therefore shows how many messages were checked and how many were blocked. It does not show who asked what.
 
 ---
 
 ## The Problem With Current Healthcare AI
 
-### "HIPAA Compliant" Usually Means Very Little
+*Background. Not checked against the code.*
 
-When OpenAI, Google, or Microsoft offer "HIPAA-compliant AI" services, what they are actually offering is a **Business Associate Agreement** — a legal contract stating they will handle your data responsibly. The underlying architecture is unchanged: your query, including any PHI it contains, travels to their data centers and is processed by their model. The BAA governs what they do with it afterward.
+### "HIPAA Compliant" Often Means a Contract
 
-This creates a structural problem:
+When a cloud provider offers "HIPAA-compliant AI", the offer usually rests on a **Business Associate Agreement**: a contract that says how the provider will handle the data. The architecture is unchanged. The query, including any PHI in it, travels to the provider's data centers and is processed by its model. The BAA governs what happens afterwards.
 
 ```
-Current Cloud AI (ChatGPT, Claude, Gemini with BAA):
+Cloud AI with a BAA:
 
 User types: "My patient John Smith, DOB 01/15/1985, MRN 4829201, presents with..."
                                     ↓
-                    Sent over the internet to cloud provider
+                    Sent over the internet to the cloud provider
                                     ↓
-                    LLM processes the full query including PHI
+                    The model processes the full query, including the PHI
                                     ↓
-                    Response returned, disclaimer added
-                    ⚠️ PHI was transmitted, processed, and logged
+                    Response returned
 ```
 
-Once PHI enters a cloud LLM prompt, it has been transmitted to and processed by infrastructure outside your control. Providers retain request and response logs for operational, debugging, and compliance purposes — that log entry now exists on servers you don't own, subject to the provider's security posture, internal access policies, and legal exposure. A BAA establishes contractual accountability, but it doesn't change the underlying architectural fact: the data left your building.
+Once PHI is in a cloud prompt, it has been sent to and processed by infrastructure outside the organisation's control. A BAA sets contractual accountability. It does not change the fact that the data left the building.
 
-HIPAA's **Minimum Necessary standard** (§164.514) requires covered entities to limit PHI disclosure to what is actually needed for the intended purpose. Routing every staff query through a cloud LLM that processes the full text — including PHI the LLM didn't need to see — is difficult to reconcile with this principle.
+HIPAA's **Minimum Necessary standard** (§164.514) requires covered entities to limit PHI disclosure to what is needed for the purpose. Sending every staff query, in full, to a cloud model is hard to reconcile with that principle.
 
-There is also an ongoing question of whether AI providers use inputs for model training or fine-tuning, even under BAA agreements. The BAA may prohibit this, but the architectural exposure has already occurred.
+### The Other Side: Avoiding AI Does Not Work Either
 
-### The Other Side of the Problem: You Can't Just Avoid AI
+Staff already use AI informally, whatever the policy says. The choices are: ban it and accept that personal accounts will be used anyway, sign BAAs with cloud providers and accept the exposure described above, or run a local system and keep the data on the organisation's own devices.
 
-Staff are already using AI informally — whether the hospital has a policy about it or not. Cloud tools handle general reference questions well enough that people route around restrictions to use them. The choices are: ban it and watch staff use personal accounts anyway, sign BAAs with cloud providers and accept the architectural exposure described above, or deploy a local system where PHI never leaves your infrastructure in the first place.
+### What Zynkbot Does Differently
 
-### Zynkbot's Structural Difference
-
-Zynkbot blocks PHI **before the LLM ever sees the query** — on the device that sent it:
+In HIPAA mode Zynkbot checks the typed message on the device, before any model call. If a pattern matches, the whole message is stopped:
 
 ```
-Zynkbot HIPAA Mode (Desktop App):
+Zynkbot HIPAA mode:
 
-User types: "My patient John Smith, DOB 01/15/1985, MRN 4829201, presents with..."
+User types: "My patient John Smith, SSN 234-56-7890, presents with..."
                                     ↓
-                    PHI detected on LOCAL DEVICE (before network)
+                    SSN pattern matches, on the device
                                     ↓
-                    Query BLOCKED — never sent to LLM
-                    ✅ PHI never transmitted, never processed
+                    Message blocked. No model is called.
 ```
 
-For local models (a doctor's office with its own local AI and patient data storage), nothing leaves the staff's devices or local network at all — a compliance-ready architecture with no external data transmission. For cloud API models (Claude, GPT-4, Grok), the PHI check runs first — if PHI is detected, the API call is never made.
+The example in the cloud diagram above ("DOB 01/15/1985, MRN 4829201") is **not** blocked by Zynkbot. There is no pattern for a name, a date of birth or a medical record number.
 
-This is a structural difference, not a policy difference. The protection is architectural: there is no configuration that can accidentally bypass it, no BAA that needs to be trusted, and no data center that receives the query.
+**With a local model**, the message, the recalled memories and the reply stay on the device.
 
-**What this means in practice:** The most common category of accidental PHI disclosure to AI tools is typed or copy-pasted structured identifiers — staff pasting a patient's phone number, SSN, or MRN into a query without thinking. For that specific category, Zynkbot blocks at 85–95% accuracy before the LLM ever processes the query. Cloud AI with BAA provides zero pre-processing protection.
+**With a cloud model** (OpenAI, Anthropic, xAI, Mistral), the check on the typed message runs first, and a blocked message is not sent. HIPAA mode does not prevent a cloud model from being selected. When a message passes, the prompt goes to the provider. The prompt includes the message, any stored memories that were recalled for it, and Knowledge Base text when the KB button is on. None of that added text is checked for PHI.
+
+Several paths do not run the check at all. They are listed in [Known limits](#known-limits). An earlier version of this guide said that no configuration can bypass the check. That is not the case.
+
+**What this means in practice:** the check is aimed at one kind of accidental disclosure, a typed or pasted structured identifier such as an SSN, a phone number or an email address. Nothing in the code measures how often it succeeds, so this guide gives no accuracy figure.
 
 ### Where PHI Detection Runs
 
-This is worth being explicit about. Zynkbot is a **desktop application** (Tauri + Rust). The PHI detection code in `containment.rs` runs in the local Rust process on the **user's own device** — the same machine they are typing on, or that a patient may be interacting with on a tablet or touch screen. After the user hits send, the check is performed before private patient information leaves that device.
+Zynkbot is a desktop and Android application (Tauri and Rust). The PHI detection code is `detect_phi` in `src-tauri/src/containment.rs`. It runs in the app's own process on the device the user is typing on.
 
-This is the most private possible approach:
-- For **local models**: query stays entirely on the device
-- For **cloud API models**: query is checked locally first, and only forwarded if no PHI is detected
+- With a **local model**: a message that passes is answered on the device.
+- With a **cloud model**: the typed message is checked on the device first and is sent only if no pattern matches.
 
-One important clarification on how blocking works: when PHI is detected, the **entire query is rejected**. The user sees an error message (shown in the examples below). PHI is not stripped out and the query is not forwarded with the sensitive parts removed — the whole message stops there. This is intentional. A partially-redacted query can still carry identifying context, and silent redaction would give false confidence.
-
-In a future **enterprise server deployment** (Zynkbot running as a shared server for multiple staff), the equivalent approach is server-side pre-processing — the server checks for PHI before routing the query to the LLM. PHI would cross the local network to the server but would never reach the LLM until PHI is cleaned. This is the second-best option and still far better than any cloud AI architecture that processes PHI unconditionally and then attempts to train the model not to divulge the PHI it should never have received.
+When a pattern matches, the **entire message is rejected**. The user sees a block message (examples below). PHI is not stripped out, and the message is not forwarded with parts removed.
 
 ### How This Looks in a Healthcare Setting
 
-**Scenario A: Per-workstation (current architecture)**
+**Scenario A: Per-workstation (what exists today)**
 
-Each workstation runs Zynkbot as a desktop application. Staff query the AI from their own computer — looking up drug interactions, reviewing protocols, drafting administrative documents, asking policy questions. This is the current v0.9 deployment model.
+Each workstation runs Zynkbot as a desktop application. Staff use it from their own computer for reference questions, protocol review, administrative drafts and policy questions.
 
-This is most valuable for **non-clinical staff and non-clinical tasks**: administrators drafting communications, educators developing training materials, compliance staff reviewing policies, billing staff handling procedure codes. For clinical staff, general reference questions work fine; queries that include a structured patient identifier — SSN, phone number, MRN — are blocked before reaching any AI model.
+- HIPAA mode has to be selected after every app start. The app starts in Sovereign mode.
+- A message that contains a matching structured identifier (SSN, phone number, email address, 5-digit number, card number, IP address, street address) is blocked before any model call. A medical record number is not detected unless it happens to be 5, 9 or 10 digits long.
+- BERT NER runs in the app for memory entity extraction. The HIPAA check does not use it. A patient name in a sentence is not detected.
 
-**PHI detection in Scenario A (v0.9 → v1.0):** The current 7-pattern regex detects structured identifiers at 85–95% accuracy. The v1.0 upgrade for per-workstation deployments is **BERT NER** — a lightweight model already running in Zynkbot for memory search. Wiring it into HIPAA mode adds person-name-in-clinical-context detection, catching queries like *"Patient John Smith presents with..."* that regex cannot see. BERT NER runs fast on-device with no additional hardware requirements, making it appropriate for individual workstations. It's not a full semantic judgment — it won't catch everything — but it's a meaningful step up at essentially no infrastructure cost.
+**Knowledge base in Scenario A:** each user keeps an indexed document library on the local machine. Relevant sections are added to the prompt when the KB button is on. With a local model that text stays on the device. With a cloud model it is sent to the provider as part of the prompt.
 
-**Knowledge base in Scenario A:** Each user maintains their own indexed document library. A nurse uploads the unit's medication protocols and post-op instruction templates; a billing specialist uploads ICD-10 and CPT reference guides; a compliance officer uploads accreditation standards. Relevant sections surface in responses alongside the AI's general knowledge. Documents stay on the local machine — never sent to a cloud service.
+**Staff communication in Scenario A:** ZChat sends messages device to device between paired Zynkbot instances on the same local network. ZynkLink sends files the same way. The traffic uses TLS (see Encryption in Transit).
 
-**Staff communication in Scenario A:** ZChat allows direct device-to-device messaging between staff on the same local network. ZynkLink handles file transfers on the same local network — a staff member can send a referral document, a discharge summary, or a lab result directly to a colleague's Zynkbot instance without routing through email or shared drives. All traffic stays within the facility's network.
+**Scenario B: Central server with shared access (not built)**
 
-**Scenario B: Central server with shared access — the real enterprise deployment (not yet packaged)**
+A shared Zynkbot server for a department or facility does not exist. Nothing in this subsection is implemented.
 
-A hospital IT department runs Zynkbot on a local server. Staff access it from tablets, workstations, shared terminals, or touchscreens at nursing stations. One instance serves the whole department or facility, centrally managed and audited.
+The idea: a hospital IT department runs Zynkbot on a local server, and staff reach it from tablets, workstations or shared terminals. The query path would be staff device → server → PHI check → model. PHI would cross the local network to the server and would be checked there. Earlier versions of this guide described further detection layers for such a server (person names from BERT NER, and a local model asked whether a message links an identifiable person to health information), a shared Knowledge Base and server-routed ZChat. None of these exist. `docs/ROADMAP.md` is the source for what is planned. ContainAI is interested in building a server deployment with a healthcare partner.
 
-The query path: staff device → hospital Zynkbot server → PHI check → if clean, LLM → response to device. PHI never reaches the LLM. This is architecturally straightforward — Zynkbot's backend is already structured to support it — but has not yet been packaged as a server product. ContainAI is interested in building this out with a healthcare partner.
-
-**PHI detection in Scenario B — adding the LLM semantic pre-check:** A server deployment changes what's possible. Because the server is already running a capable local model for inference, that same model can serve as a **semantic pre-check** before every query reaches the main LLM. The check is a simple prompt: *"Does this message contain information that could identify a specific person in connection with their health?"* A 13B+ model answers this reliably.
-
-This is the significant compliance upgrade. Regex catches structured identifiers. BERT NER catches person names in clinical context. The LLM pre-check catches everything else — clinical descriptions, combinations of demographic details, narrative context that neither pattern matching nor NER can reason about. A query like *"The patient is a 47-year-old male firefighter at the only station in Flagstaff with Type 2 diabetes"* contains no structured identifier and no name, but is clearly identifying. Only a semantic model catches it.
-
-The three-layer stack on the server:
-```
-Query arrives
-  → Regex (instant — structured identifiers: SSN, phone, MRN, email)
-  → BERT NER (fast, on-device — person names in clinical context)
-  → LLM pre-check (slower — semantic judgment on full query)
-  → If all pass → route to main LLM
-```
-
-This architecture takes PHI detection from "good for structured identifiers" to genuinely robust — catching the narrative and contextual cases that represent the most significant compliance gap in current regex-only implementations.
-
-**Knowledge base in Scenario B:** The server hosts a shared organizational knowledge base for all authenticated staff. IT centrally manages the facility's clinical guidelines, formulary, accreditation policies, nursing protocols, and training materials — staff query a single authoritative source rather than managing their own document libraries. A physician asking about a drug interaction gets the same formulary reference as a pharmacist. Updates are made once and apply to everyone.
-
-**Staff communication in Scenario B:** ZChat runs through the central server as a facility-wide secure messaging channel — nurses to physicians, departments to departments, admissions to billing. ZynkLink enables staff-to-staff file transfers within the facility: a radiologist sends an imaging report to an ordering physician, a department shares updated protocols with all staff — all without leaving the facility's infrastructure. Because all traffic routes through a server you control, communication logs are available for audit purposes.
-
-**Branding:** For enterprise deployments, Zynkbot can be built and deployed under a custom name and icon — "Memorial Health AI Assistant" or similar. This involves building a custom binary from source rather than a settings toggle, but is a straightforward customization under the commercial license.
+**Branding:** a build under a different name and icon would be a custom build from source. See `COMMERCIAL_LICENSE.md` for the terms. Not verified against the code.
 
 **What Zynkbot is not designed for:**
-- Storing actual patient records or EMR data
-- Replacing existing clinical decision support systems
+- Storing patient records or EMR data
+- Replacing clinical decision support systems
 
-The intended use is as an **AI assistant for healthcare staff** — a knowledgeable general-purpose tool that helps with reference, documentation, administrative work, and general queries, with guardrails preventing accidental PHI exposure.
+The intended use is a general-purpose assistant for healthcare staff, for reference, drafting and administrative work, with a check that catches some accidental PHI in typed messages.
 
 ---
 
 ## Implemented Features
 
-### ✅ Production-Ready
+All of the following apply only while HIPAA mode is selected.
 
-**1. PHI Detection & Blocking** — Runs on device before any LLM call
-- 7 regex patterns: SSN, phone, email, ZIP code, credit card, IP address, physical address
-- Blocks at routing layer — LLM never sees the query
-- Estimated accuracy: 70–85% for formatted/structured patterns
-- Source: `src-tauri/src/containment.rs`
+**1. PHI Detection and Blocking**
+- Seven regular expressions (`detect_phi`): SSN, phone, email, ZIP code, credit card, IP address, street address
+- Runs on the typed message before any model call. A match blocks the whole message.
+- Source: `src-tauri/src/containment.rs`, `enforce_hipaa` and `detect_phi`
 
 **2. Medical Request Blocking**
 
-These blocks are designed for non-clinical or self-service contexts — they catch queries where someone is asking the AI to diagnose or treat themselves. For clinical staff asking about patient care ("what are the diagnostic criteria for X?", "when is surgery indicated for Y?"), these blocks generally do not trigger — those are legitimate reference questions that pass through normally. The PHI detection layer is the primary protection for clinical staff, not these blocks:
+These blocks are aimed at someone asking the AI to diagnose or treat them. They match substrings of the lower-cased message, so they also match some ordinary sentences (see Known limits).
 
-- Self-diagnosis requests: `"diagnose me"`, `"what do I have"`, `"do I have"`, `"is it cancer"`
-- Medication dosing (self): phrases like `"how much should I take"` + a medication keyword
-- Treatment decisions (self): `"should I get surgery"`, `"should I have the procedure"`, `"should I start treatment"`
-- Source: `src-tauri/src/containment.rs`
+- Diagnosis phrases (`detect_diagnosis_request`): "diagnose me", "what do i have", "do i have", "is it cancer", "is it diabetes"
+- Dosing (`detect_medication_dosing`): one of the phrases "how much should i take", "how much", "should i take", "dosage for", "how many pills", "what dose", "safely", together with one of the keywords mg, dose, pill, tablet, medication, medicine, drug, prescription, ibuprofen, acetaminophen, aspirin, tylenol, advil, take, "can i take"
+- Treatment phrases: "should i get surgery", "should i have the procedure", "should i start treatment"
+- Source: `src-tauri/src/containment.rs`, `enforce_hipaa`
 
-**3. Audit Logging**
-- Daily JSON logs: `logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json`
-- Events logged: PHI detection, diagnosis blocking, dosing blocking, treatment blocking, allowed conversations
-- Source: `src-tauri/src/containment.rs`
+**3. General Safety Block**
+- After the HIPAA checks, the same rule as Guardian mode applies: a request for instructions on a harmful subject, or a toxic-bert result of `SevereToxic` or `Threat` above 0.9, is blocked.
+- Message: `[BLOCK] Cannot process this request in HIPAA mode. (Detected: X)`
+- Source: `ContainmentLayer::enforce` in `containment.rs`, `should_block` in `safety_classifier.rs`
 
-**4. Memory System Disabled in HIPAA Mode**
-- Personal memory extraction pipeline does not run in HIPAA mode — extraction is skipped before any write is attempted
-- Any memories that do persist (e.g. created via another code path) carry an 8-hour expiration as a defense-in-depth fallback
-- Source: `src-tauri/src/commands/chat.rs`
+**4. Audit Logging**
+- One JSON line per checked message, in a daily file `logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json`
+- Events: PHI blocked, diagnosis blocked, dosing blocked, treatment blocked, conversation allowed
+- Details and limits are under Security Requirements, Audit Logging
+- Source: `log_hipaa_audit` in `containment.rs`
 
-**5. Conversation History Disabled in HIPAA Mode**
-- Raw conversation logging is skipped entirely in HIPAA mode — no records are written to `conversation_sessions` or `conversation_messages`
-- The History button is grayed out with tooltip explanation when HIPAA mode is active
-- Raw conversation text is more sensitive than extracted facts; disabling both is the correct default
-- Source: `src-tauri/src/commands/chat.rs`, `src-tauri/src/conversation_history.rs`
+**5. No Memory Extraction**
+- The memory extraction pipeline does not run. No memory job is queued, including for an explicit "Remember:" request.
+- There is no automatic expiry fallback. No 8-hour value exists in the code. In `chat.rs` the variable `_is_ephemeral` is set for HIPAA mode and never used.
+- The desktop "Open Memory Manager" button is disabled, with the tooltip "Memory storage is disabled in HIPAA mode".
+- Source: `generate_reply` in `src-tauri/src/commands/chat.rs`, `src/components/MemoryManager.jsx`
 
-**6. Medical Disclaimer Auto-Addition**
-- Automatically appended to any health-related response
-- Triggered when the response contains: symptom, treatment, medication, diagnosis, disease, condition, health, medical, doctor, patient, therapy
-- Disclaimer text appended: *"⚕️ AI-generated. Not a substitute for clinical judgment or current clinical guidelines."*
-- Source: `src-tauri/src/commands/chat.rs`
+**6. No Conversation History**
+- The chat paths do not write to `conversation_sessions` or `conversation_messages`. Weather answers and web search answers are not logged either (`log_web_search_answer` in `commands/conversation.rs`).
+- The History button is disabled, with the tooltip "Conversation history is disabled in HIPAA mode".
+- Three paths outside chat do not check the mode. They are listed in Known limits.
+- Source: `src-tauri/src/commands/chat.rs`, `src/App.jsx`
 
----
+**7. Medical Disclaimer**
+- Appended when the reply contains one of: symptom, treatment, medication, diagnosis, disease, condition, health, medical, doctor, patient, therapy
+- Text: *"⚕️ AI-generated. Not a substitute for clinical judgment or current clinical guidelines."*
+- Source: `generate_reply` in `src-tauri/src/commands/chat.rs`
 
-### 📌 PHI Detection: Current Implementation and v1.0 Roadmap
-
-The 7-pattern implementation is functional working software. That said, 7 patterns are the floor. The v1.0 roadmap includes significant expansion without any architectural redesign.
-
-**Additions that are direct HIPAA PHI identifiers (Safe Harbor method):**
-- Date of birth formats (`01/15/1985`, `January 15, 1985`, `DOB:`) — one of HIPAA's 18 enumerated identifiers
-- Medical Record Numbers (`MRN: 12345678`) — enumerated HIPAA identifier
-- Health plan beneficiary and account numbers
-
-**BERT NER for contextual name detection (v1.0):**
-The BERT NER model already runs in Zynkbot and extracts `PERSON` entities for memory search. In HIPAA mode, detected person names combined with clinical context can be flagged as PHI — catching narrative patterns like *"Patient John Smith presents with chest pain..."* that regex cannot see.
-
-Important nuance: a name alone is not PHI under HIPAA's Safe Harbor definition. What makes it PHI is a name *linked to health information* about an identifiable individual. "What did Johns Hopkins publish on metformin?" contains a name and should pass. "My patient John Smith has Type 2 diabetes" contains a name + health condition about a specific person and should block. The BERT NER implementation needs to be context-aware, not a simple name-triggers-block rule. This is what makes it a more careful engineering task than just wiring the existing NER output into a block decision.
-
-**Local LLM semantic pre-check (future enterprise release):**
-The ceiling for regex + NER detection is catching known patterns. The ceiling for a capable local language model is semantic understanding — it can reason about whether a query, taken as a whole, would constitute impermissible disclosure of PHI even without structured identifiers.
-
-The architecture:
-```
-Query arrives
-  → Regex check (fast, structured identifiers: SSN, phone, MRN, etc.)
-  → BERT NER check (person names in clinical context)
-  → Local LLM pre-check: "Does this message link an identifiable person to health information?"
-  → If all pass → route to main LLM
-```
-
-The pre-check prompt is simple: ask the model whether the query contains information that could identify a specific real individual in connection with their health. A capable local model (13B+) handles this judgment reliably. This approach catches the narrative PHI cases that neither regex nor NER can see — clinical descriptions, combinations of demographic details, contextual identifiers.
-
-For a hospital or clinic running a dedicated local server, this is the architecture that gets detection from "good for structured identifiers" to genuinely robust. The same local model can serve as both the pre-check filter and the main inference engine.
-
-Questions or feedback: **matt@containai.ai**
+**8. No Check-In Questions**
+- The app's check-in questions are off in HIPAA mode.
+- Source: `next_checkin` in `src-tauri/src/commands/checkin.rs`
 
 ---
 
-### ⚠️ Not Implemented — Integration Points
+## Known limits
 
-The following are intentionally left as integration points so organizations can plug in their existing security infrastructure:
+This section states current behaviour.
 
-- **Encryption at rest** — database and disk (see Security Requirements)
-- **Encryption in transit** — TLS for LAN traffic (on v1.0 roadmap; see Security Requirements)
-- **Authentication & access control** — SSO, RBAC, MFA (enterprise deployments)
-- **Backup and disaster recovery**
+**The mode**
+- **HIPAA mode is not saved.** The app starts in Sovereign mode every time (`App.jsx`). HIPAA has to be selected again after each start.
+- **The backend is not restricted.** Any model can be selected in HIPAA mode, including a cloud model.
+- **Android hands-free answers always use Sovereign.** `NativeVoiceAnswerer.kt` calls `nativeSendMessage` with the mode fixed to "sovereign". A hands-free voice question is handled as Sovereign whatever mode is selected: no HIPAA checks, and history and memory behave as in Sovereign.
+
+**What reaches the model without a PHI check**
+- **Stored memories.** Memory recall (`hybrid_search`) runs in every mode. Memories already in the database go into the prompt, including to a cloud model.
+- **Knowledge Base text**, when the KB button is on.
+- **Attached files and images.** Only the typed question is checked.
+- **Messages with an allowlist phrase.** A message that contains "my name is", "what is my name", "what's my name", "do you remember my name" or "i am called" skips every check (`ContainmentLayer::enforce`). "My name is X and my SSN is 123-45-6789" is allowed.
+- **Weather questions.** They are answered from Open-Meteo before the check.
+- **Calls that set `skip_containment`.** The app sets it for the model call that writes up web search results and for the second pass of a hands-free search.
+- **Ensemble.** `run_ensemble` has no containment check. The Ensemble button is not disabled in HIPAA mode.
+- **Any message, if the classifier fails.** The HIPAA checks run after the toxic-bert classifier. If the classifier returns an error (for example its files are missing), a keyword fallback is used instead, the HIPAA checks do not run, and no audit line is written.
+
+**What the PHI check detects**
+- It detects seven patterns. It does not detect a name, a date of birth, a medical record number or an insurance ID. "John Smith, DOB 01/15/1985, MRN 4829201" passes.
+- A phone number written as "(555) 123-4567" or with spaces is not detected.
+- It also matches text that is not PHI: any standalone 5-digit number (as a ZIP code), 9-digit number (as an SSN) or 10-digit number (as a phone number), and phrases such as "3 patients in the Dr office" (as an address).
+- The medical request rules are substring matches. "What options do I have?" is blocked as a diagnosis request. "How much time does it take?" is blocked as a dosing request.
+
+**What is still written to disk**
+- **The app log.** `generate_reply` prints the typed message (up to 1,500 characters) before the check, and `app_log.rs` writes all such output to `logs/zynkbot.log` in the app data folder. This includes messages that are then blocked.
+- **Conversation rows from paths that do not check the mode:** onboarding (`store_onboarding_response` in `commands/onboarding.rs`), rows arriving from a paired device over ZynkSync (`sync_outbox.rs`), and a backup restore (`commands/backup.rs`).
+- **Memories from `insert_memory` in `lib.rs`**, which does not check the mode.
+- Memories and history stored before HIPAA mode was selected stay in the database. The recent-memories list on the desktop still shows them.
+
+**The audit log**
+- It has no user id and no message text.
+- Its folder, `logs/hipaa_audit`, is relative to the working directory of the process, not the app data folder. Where it ends up depends on how the app was started. If the folder cannot be created, the entry is skipped and an error line is printed.
+- `hipaa_conversation_allowed` is written when the four HIPAA checks pass, even if the general-safety check then blocks the message.
+- Entries are not hashed or signed.
+
+**Backup**
+- The encrypted R2 backup (`backup_memories_to_r2` in `commands/backup.rs`) does not check the mode. It is started by hand from the Memory Manager window. The desktop button that opens that window is disabled in HIPAA mode. The mobile button is not.
+
+---
+
+## Not Implemented
+
+- **Encryption at rest inside the app.** The database is a plain SQLite file. Use disk encryption (see Security Requirements).
+- **Authentication and access control** (SSO, RBAC, MFA, user accounts with roles)
+- **A shared server deployment** (Scenario B)
+- **User attribution in the audit log**
 - **Incident response procedures**
-- **Business Associate Agreements (BAA)** with any third-party vendors
+- **Business Associate Agreements** with third-party vendors
+
+Two items that earlier versions listed here do exist:
+- **Encryption in transit.** LAN traffic for ZynkSync, ZynkLink and ZChat uses TLS (see Security Requirements).
+- **Backup.** An encrypted backup to the user's own Cloudflare R2 bucket exists (`commands/backup.rs`): AES-256-GCM, with an Argon2id passphrase option. It holds memories, links, API keys and conversation history in one object, `backup.enc`. It runs only when the user starts it. Whether it meets an organisation's backup and disaster recovery requirements is for that organisation to decide.
 
 ---
 
 ## Comparison With Cloud AI
 
-| Feature | ChatGPT / Claude / Gemini (with BAA) | **Zynkbot** |
-|---------|--------------------------------------|-------------|
-| PHI detection before processing | ❌ No — LLM processes all input | ✅ Yes — blocked on device first |
-| PHI leaves the facility | ❌ Yes — travels to cloud data center | ✅ No — blocked before any network call |
-| Memory system | Processes all input | ✅ Disabled entirely in HIPAA mode — extraction pipeline does not run |
-| Audit trail | Provider-managed, limited access | ✅ Local JSON logs, your infrastructure |
-| Self-hostable | ❌ No | ✅ Yes |
-| Publicly auditable source | ❌ No | ✅ Yes |
-| BAA required | ✅ Yes — and you must trust it | ✅ Not required if PHI never leaves device |
+The cloud column is general and was not checked against any provider.
+
+| Feature | Cloud AI with a BAA | Zynkbot in HIPAA mode |
+|---------|---------------------|-----------------------|
+| Check before the model sees the message | Not on the user's device | Seven patterns and three medical request rules on the typed message, on the device |
+| Data leaving the device | The full query goes to the provider | Local model: nothing is sent to a provider. Cloud model: a passing message, recalled memories and Knowledge Base text go to the provider. |
+| Memory | Varies by product | No extraction in HIPAA mode. Stored memories are still recalled. |
+| Conversation history | Varies by product | Not written by the chat paths in HIPAA mode |
+| Audit trail | Provider-managed | Local JSON lines: event type, length, blocked flag. No user id. |
+| Self-hostable | No | Runs on the user's device |
+| Source | Closed | Public (see `LICENSE`) |
+| BAA | Required | With a cloud model the prompt goes to that provider. Whether a BAA is needed is for the covered entity to decide. |
 
 ### Processing Flow
 
 ```
 ┌──────────────────────────────────────┐
 │           YOUR SECURITY LAYER        │
-│  (Auth, Encryption, Access Control)  │
+│  (disk encryption, device access,    │
+│   network controls)                  │
 └──────────────────┬───────────────────┘
                    │
                    ▼
 ┌──────────────────────────────────────┐
-│        ZYNKBOT HIPAA AI LAYER        │
-│  • PHI Detection (Regex, device-side)│
-│  • Containment Modes                 │
-│  • Memory System Disabled (HIPAA)    │
-│  • Conversation History Disabled     │
-│  • Audit Logging (local JSON)        │
+│         ZYNKBOT, HIPAA MODE          │
+│  • PHI patterns on the typed message │
+│  • Medical request rules             │
+│  • General safety rule               │
+│  • Audit line (local JSON)           │
+│  • No memory extraction              │
+│  • No conversation history           │
+└──────────────────┬───────────────────┘
+                   │ message passed
+                   ▼
+┌──────────────────────────────────────┐
+│     PROMPT BUILT FOR THE MODEL       │
+│  message + recalled memories         │
+│  + Knowledge Base text (KB button)   │
 └──────────────────┬───────────────────┘
                    │
                    ▼
 ┌──────────────────────────────────────┐
-│          YOUR DATABASE LAYER         │
-│  Patient data clean prior to storage │
-│       (Local SQLite database)        │
+│   LOCAL MODEL  or  CLOUD PROVIDER    │
+│        (the user's selection)        │
 └──────────────────────────────────────┘
 ```
 
@@ -280,135 +289,163 @@ The following are intentionally left as integration points so organizations can 
 
 ## PHI Detection in Action
 
-**Try it yourself:** Download Zynkbot, open Settings, and switch the containment mode to **HIPAA**. Then type any of the queries below — or your own variations — and observe the blocked response. No configuration required beyond enabling the mode.
+**Try it yourself:** open System Controls and set the "Containment Mode" row to **HIPAA**. Then type any of the messages below. The mode returns to Sovereign when the app restarts.
 
-All names, numbers, and identifiers below are entirely fictional.
+All names, numbers, and identifiers below are fictional.
 
 ---
 
-**Blocked — SSN detected:**
+**Blocked: SSN detected**
 > *"My patient is Mary Johnson. Her social is 234-56-7890 and she has been having chest pains."*
 
 **User sees:** `🔒 Please don't share personal health information like SSN, insurance numbers, or member IDs. This system is designed for general health discussions only.`
 
-Query never reaches the LLM. Audit log entry written.
+No model is called. An audit line is written.
 
 ---
 
-**Blocked — Phone number detected:**
+**Blocked: phone number detected**
 > *"I've tried reaching the patient twice at 555-867-5309 with no answer. What should I document in the chart?"*
 
 **User sees:** `🔒 Please don't share personal health information like SSN, insurance numbers, or member IDs. This system is designed for general health discussions only.`
 
-Query blocked at routing layer before network call. To get a useful answer, the staff member should rephrase without the identifier: *"I've tried reaching a patient twice with no answer. What should I document in the chart?"* — which passes detection and gets a normal response.
+The same message without the number passes: *"I've tried reaching a patient twice with no answer. What should I document in the chart?"*
 
 ---
 
-**Blocked — Diagnosis request:**
+**Blocked: diagnosis request**
 > *"Based on the symptoms I just described, what do I have?"*
 
 **User sees:** `🏥 I cannot provide medical diagnoses. Please consult with a licensed healthcare provider for diagnostic evaluations.`
 
 ---
 
-**Blocked — Medication dosing:**
+**Blocked: medication dosing**
 > *"How much acetaminophen should I take after the procedure?"*
 
 **User sees:** `🏥 I cannot provide medication dosing advice. Please consult your doctor or pharmacist for accurate dosing information.`
 
 ---
 
-**Allowed — General clinical question:**
-> *"What are the common side effects of beta blockers?"*
+**Blocked: treatment decision**
+> *"Should I get surgery for this?"*
 
-No PHI, no dosing calculation, no diagnosis request. Response generated normally with disclaimer appended automatically: *"⚕️ AI-generated. Not a substitute for clinical judgment or current clinical guidelines."*
+**User sees:** `🏥 I cannot advise on treatment decisions. Please discuss treatment options with your healthcare provider.`
 
 ---
 
-**Gap — Narrative PHI (not currently detected):**
+**Allowed: general clinical question**
+> *"What are the common side effects of beta blockers?"*
+
+No pattern or phrase matches. The model answers. If the reply contains one of the trigger words, the disclaimer is appended: *"⚕️ AI-generated. Not a substitute for clinical judgment or current clinical guidelines."*
+
+---
+
+**Not detected: narrative PHI**
 > *"John Smith, a 45-year-old male, presents with substernal chest pain radiating to the left arm."*
 
-No structured identifier (no SSN, phone, email). Current regex does not catch this. The name + clinical context combination is exactly what BERT NER person-name detection addresses in the v1.0 upgrade.
+There is no structured identifier. The message passes.
+
+---
+
+**Not detected: date of birth and record number**
+> *"My patient John Smith, DOB 01/15/1985, MRN 4829201, presents with..."*
+
+No pattern matches a date of birth or a 7-digit number. The message passes.
+
+---
+
+**Not checked: allowlist phrase**
+> *"My name is Mary Johnson and my social is 234-56-7890."*
+
+"my name is" is an allowlist phrase. The message skips every check and passes.
 
 ---
 
 ## Security Requirements
 
-The requirements below vary significantly by deployment environment and organization size. A solo practitioner running Zynkbot on a single laptop has different obligations and constraints than a hospital IT department deploying a shared server. The items listed here are the categories that typically need to be addressed — how you address them depends on your existing infrastructure, your compliance officer's guidance, and the results of your own risk assessment.
+The requirements below vary by deployment and organisation size. A solo practitioner with one laptop has different obligations from a hospital IT department. The items here are the categories that usually need to be addressed. How to address them depends on existing infrastructure, the compliance officer's guidance and the organisation's own risk assessment.
 
-**European deployments / GDPR:** Zynkbot's local-first architecture aligns well with GDPR's core principle of data protection by design and by default (Article 25). Local processing eliminates most third-party data processor obligations under Article 28. The Memory Manager's deletion capability supports the right to erasure. A data portability export feature and breach notification workflow are on the roadmap. As with HIPAA, GDPR compliance is ultimately the deploying organization's responsibility — Zynkbot provides structural support, not certification.
+**European deployments / GDPR:** not verified against the code as a legal matter. What the code provides: processing on the device when a local model is used; deletion of memories in the Memory Manager, with SQLite built with `SQLITE_SECURE_DELETE` so deleted rows are overwritten in the file; export of a single thread with a signed seal (`seal.rs`); and the encrypted R2 backup. There is no command that exports all data to CSV or JSON, and no breach notification workflow. GDPR compliance is the deploying organisation's responsibility.
 
-**A note on scope:** ContainAI cannot configure or customize Zynkbot for every security environment, EHR integration, or regulatory scenario a healthcare organization may face. HIPAA requirements interact with state-level privacy laws (which vary significantly), accreditation requirements, payer contracts, and organization-specific risk profiles. Each provider is responsible for determining how Zynkbot fits into their compliance program under the laws and regulations that apply to them.
+**A note on scope:** ContainAI cannot configure Zynkbot for every security environment, EHR integration or regulatory scenario. HIPAA requirements interact with state privacy laws, accreditation requirements, payer contracts and organisation-specific risk. Each provider is responsible for deciding how Zynkbot fits into its compliance program.
 
 ### Encryption at Rest
 
-**Requirement:** All data stored by Zynkbot — the SQLite database file and any local files — must be encrypted at rest.
+**Requirement:** all data stored by Zynkbot must be encrypted at rest.
 
-**How to satisfy it:** Zynkbot stores all data in a single SQLite file (`~/.local/share/zynkbot/zynkbot.db` on Linux, `%LOCALAPPDATA%\zynkbot\zynkbot.db` on Windows). OS-level disk encryption (BitLocker, LUKS, FileVault) covers this file with no changes to Zynkbot itself and is the recommended approach. For column-level encryption of the database file itself, SQLCipher is an alternative, but requires a custom build.
+**What the app does:** it does not encrypt its files. The database is a plain SQLite file (`~/.local/share/zynkbot/zynkbot.db` on Linux, `%LOCALAPPDATA%\zynkbot\zynkbot.db` on Windows), with a `-wal` file beside it while the app runs. The app log (`logs/zynkbot.log` in the same data folder) and the HIPAA audit log are plain text. SQLite is built with `SQLITE_SECURE_DELETE` (`zynkbot_rust/.cargo/config.toml`), so deleted rows are overwritten in the database file.
 
-Your IT or security team will know what your organization already uses and what your compliance documentation requires.
+**How to satisfy it:** OS-level disk encryption (BitLocker, LUKS) covers these files with no change to Zynkbot. SQLCipher would be an alternative for the database file and would need a custom build; that is not verified against the code.
 
 ---
 
 ### Encryption in Transit
 
-**Requirement:** All network communication carrying user data must use TLS 1.2 or higher.
+**Requirement:** all network communication carrying user data must use TLS 1.2 or higher.
 
 **Current status:**
-- Database layer: Not applicable. Zynkbot uses SQLite — a local file accessed directly by the process. There is no network database connection to secure.
-- ZynkSync, ZynkLink, and ZChat LAN traffic uses TLS via `rustls`. ZynkSync protected routes additionally require a pinned client certificate. ZynkLink and ZChat currently rely on their separate pairing records and request-level authorization rather than mTLS client-certificate enforcement; certificate exchange for link-only peers remains roadmap work. Treat this distinction as a deployment-review item rather than claiming uniform mTLS coverage.
+- Database: not applicable. SQLite is a local file. There is no network database connection.
+- ZynkSync, ZynkLink and ZChat LAN traffic uses TLS through `rustls` (`transport.rs`). ZynkSync protected routes also require a pinned client certificate. ZynkLink and ZChat rely on their pairing records and per-request authorization instead of a client certificate. The ZynkLink chat client accepts any server certificate (`zynklink.rs`, trust on first use). Treat this difference as a deployment-review item; coverage is not uniform mTLS.
+- Calls to cloud providers go to their HTTPS endpoints.
 
-**How to satisfy it for enterprise deployments:** Route Zynkbot traffic through whatever TLS termination your organization already operates. Your network team will know the right approach for your infrastructure.
+**For enterprise deployments:** review this against your network policy with your network team.
 
 ---
 
 ### Authentication & Access Control
 
-**Standalone deployment:** The Zynkbot desktop app runs per-user locally. No network-facing API is exposed by default, so no additional authentication is needed for single-user installations.
+**Standalone deployment:** the app has no user login. Access to the app is access to the device account it runs under.
 
-**Enterprise / multi-user server deployment:** Add authentication middleware appropriate to your organization's existing infrastructure (JWT, SAML 2.0, OAuth 2.0 / OIDC). Zynkbot passes `user_id` and `session_id` through all API calls, making it straightforward to inject user identity from an upstream auth layer.
+**Network listener:** the app listens on `0.0.0.0:57963` with TLS from launch (`auto_start_http_server` in `lib.rs`, `serve` in `transport.rs`). The listener serves ZynkSync, ZynkLink and ZChat. ZynkSync protected routes require a pinned client certificate. ZynkLink and ZChat requests are checked against pairing records (`check_zynklink_authorized` in `zynklink.rs`). Apply firewall rules as your policy requires.
+
+**Multi-user server deployment:** not built. The chat commands take a `user_id` and a `session_id`, but there is no server product and no authentication layer.
 
 ---
 
 ### Audit Logging
 
-**Built in — no configuration required:**
+**Where:** `logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json`. The path is relative to the working directory of the process, so the location depends on how the app was started. The date is the UTC date.
 
-Zynkbot writes structured JSON audit logs to `logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json`:
+**Format:** one JSON object per line. Each line has three fields (key order may differ):
 
 ```json
-{
-  "timestamp": "2026-04-12T14:32:10.123456",
-  "event_type": "phi_detection_blocked",
-  "metadata": {
-    "blocked": true,
-    "query_length": 87
-  }
-}
+{"timestamp": "2026-04-12T14:32:10.123456789+00:00", "event_type": "phi_detection_blocked", "metadata": {"blocked": true, "query_length": 87}}
 ```
 
-Event types: `phi_detection_blocked`, `diagnosis_request_blocked`, `dosing_request_blocked`, `treatment_request_blocked`, `hipaa_conversation_allowed`.
+- `timestamp`: UTC, RFC 3339, with a `+00:00` offset
+- `event_type`: `phi_detection_blocked`, `diagnosis_request_blocked`, `dosing_request_blocked`, `treatment_request_blocked` or `hipaa_conversation_allowed`
+- `metadata.query_length`: length of the message in bytes
+- `metadata.blocked`: true or false
 
-**For enterprise compliance, you may want to add:**
-- Hash-chaining log entries for tamper detection
-- Real-time forwarding to your organization's SIEM (Splunk, ELK, etc.)
-- User identity injected at the auth middleware layer
+**Not in the log:** the message text, a user id, a device id, the model used, and blocks made by the general-safety rule.
+
+**For enterprise compliance, an organisation may want to add** (none of these exist in the app):
+- Hash-chaining of log entries for tamper detection
+- Forwarding to a SIEM (Splunk, ELK and similar)
+- User identity
 
 ---
 
 ## Deployment Checklist
 
-This checklist is divided into two categories. **Technical configuration** covers what IT sets up in Zynkbot and the surrounding infrastructure. **Organizational obligations** covers what your compliance officer, legal team, and administration must handle — these are requirements that no software product can satisfy on your behalf.
+**Technical configuration** covers what IT sets up in Zynkbot and around it. **Organizational obligations** covers what the compliance officer, legal team and administration must handle. No software can satisfy those.
 
 ### Technical Configuration
 
-- [ ] Encryption at rest — OS disk encryption enabled (standalone) or cloud provider encryption configured (enterprise)
-- [ ] Encryption in transit — LAN traffic encryption (ZynkSync/ZynkLink/ZChat) on v1.0 roadmap; for now, use network-layer controls (VLANs, private subnets) on hospital networks
-- [ ] Audit logs — storage path accessible, included in backup rotation
-- [ ] PHI detection tested with representative examples (see examples above)
-- [ ] Medical disclaimer confirmed present in health-related responses
-- [ ] Memory system disabled in HIPAA mode verified — confirm no memories are written during a test session (Memory Manager shows empty / grayed out)
-- [ ] Conversation history disabled in HIPAA mode verified — confirm History button is grayed out and no sessions appear in the database after a test exchange
+- [ ] HIPAA mode selected after every app start (the mode is not saved)
+- [ ] Model choice reviewed: with a cloud model, passing messages, recalled memories and Knowledge Base text go to the provider
+- [ ] Existing memories and Knowledge Base documents reviewed: they are used in HIPAA mode
+- [ ] Encryption at rest: OS disk encryption enabled
+- [ ] Encryption in transit: LAN traffic is TLS; the ZynkSync and ZynkLink/ZChat differences above reviewed
+- [ ] Network listener on port 57963 reviewed against firewall policy
+- [ ] Audit logs: folder located (it is relative to the working directory), included in backup rotation
+- [ ] App log (`logs/zynkbot.log`) included in the retention policy: it holds typed message text
+- [ ] PHI detection tested with representative examples (see above), including examples that are expected to pass
+- [ ] Medical disclaimer confirmed on health-related replies
+- [ ] No memory extraction verified: no new memories after a test session (the desktop Memory Manager button is greyed out)
+- [ ] No conversation history verified: the History button is greyed out and no new rows appear in `conversation_sessions` after a test exchange
+- [ ] Android hands-free use reviewed: it always runs in Sovereign mode
 
 ### Organizational Obligations
 
@@ -416,25 +453,31 @@ This checklist is divided into two categories. **Technical configuration** cover
 - [ ] HIPAA Security Rule risk assessment completed and documented (§164.308(a)(1))
 - [ ] Written security policies and workforce training in place
 - [ ] Incident response and breach notification plan documented
-- [ ] Access provisioning/deprovisioning process defined
-- [ ] Audit logs reviewed on a regular schedule (quarterly minimum)
-- [ ] Penetration testing conducted (annually recommended)
+- [ ] Access provisioning and deprovisioning process defined
+- [ ] Audit logs reviewed on a regular schedule
+- [ ] Penetration testing conducted
 - [ ] Cyber liability insurance obtained
 
 ---
 
-**Safe language for describing Zynkbot in healthcare contexts:**
-- ✅ "Blocks PHI on the device before it reaches any AI model"
-- ✅ "Privacy-first architecture that supports HIPAA compliance efforts"
-- ✅ "PHI never transmitted to LLM provider — checked locally first"
-- ❌ "HIPAA-compliant" — requires certification this software does not have
-- ❌ "Guarantees HIPAA compliance" — no software can guarantee this
+**Language for describing Zynkbot in healthcare contexts**
+
+Matches the code:
+- "Checks typed messages on the device for seven structured identifier patterns before any model call"
+- "Keeps no conversation history and extracts no memories in HIPAA mode"
+- "Has features that can support a HIPAA compliance effort"
+
+Does not match the code:
+- "Blocks PHI before it reaches any AI model": only the seven patterns in the typed message are checked, and some paths skip the check
+- "PHI is never transmitted to an LLM provider": stored memories, Knowledge Base text and attachments are not checked
+- "HIPAA-compliant": requires certification this software does not have
+- "Guarantees HIPAA compliance": no software can guarantee this
 
 ---
 
 ## Contact
 
-**Enhanced HIPAA module / provider partnerships:** matt@containai.ai
+**HIPAA module / provider partnerships:** matt@containai.ai
 
 **Technical questions:** Open an issue on GitHub or see the `/docs` directory.
 

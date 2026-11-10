@@ -1,5 +1,14 @@
 import React from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import "../styles/AboutModal.css";
+
+// A plain <a target="_blank"> does nothing inside the app window: the address has to be
+// handed to the system browser (2026-11-10). The phone's own bridge is tried first.
+async function openInBrowser(e, url) {
+  e.preventDefault();
+  try { if (window.AndroidPaths?.openUrl && window.AndroidPaths.openUrl(url)) return; } catch (_) {}
+  try { await openUrl(url); } catch (_) { window.open(url, "_blank"); }
+}
 
 export default function AboutModal({ isOpen, onClose }) {
   if (!isOpen) return null;
@@ -26,7 +35,7 @@ export default function AboutModal({ isOpen, onClose }) {
 
           <div className="feature-item">
             <strong>Transparent Recall:</strong>
-            <p>See exactly which memories the AI retrieved and how it used them in each response.</p>
+            <p>See exactly which memories the AI retrieved for each response.</p>
           </div>
 
           <div className="feature-item">
@@ -51,17 +60,17 @@ export default function AboutModal({ isOpen, onClose }) {
 
           <div className="feature-item">
             <strong>Web Search & Knowledge Base:</strong>
-            <p>Built-in web search via SearXNG for current information. Upload text documents (.txt, .md, .json, etc.) for semantic RAG search. Query your personal knowledge base naturally in conversation.</p>
+            <p>Built-in web search for current information. Add documents (text, PDF, Word, code files) to your Knowledge Base, turn on KB under the message box, and ask about them in conversation.</p>
           </div>
 
           <div className="feature-item">
             <strong>Ensemble Mode:</strong>
-            <p>Query multiple AI models simultaneously (Claude, GPT, local models) and get a synthesized consensus answer. Reduces hallucinations and improves response clarity by cross-validating across different AI systems.</p>
+            <p>Query multiple AI models simultaneously (Claude, GPT, Grok, Mistral, local models) and get a synthesized consensus answer. Reduces hallucinations and improves response clarity by cross-validating across different AI systems.</p>
           </div>
 
           <div className="feature-item">
-            <strong>Snap-Ins (Experimental):</strong>
-            <p>Professional tool modules with isolated data storage and specialized interfaces. Demo available: Therapist notes system with patient session tracking, structured data entry, and HIPAA-mode integration. Designed for extensibility—build custom snap-ins for your professional workflow.</p>
+            <strong>Snap-ins (Planned):</strong>
+            <p>Professional tool modules that come after version 1.0. Therapist, legal and journalist tools are planned; an early sample of the therapist journal is included.</p>
           </div>
         </div>
 
@@ -69,9 +78,8 @@ export default function AboutModal({ isOpen, onClose }) {
           <h3>Technical Architecture</h3>
 
           <p className="tech-description">
-            Zynkbot uses vector embeddings for semantic memory search,
-            supports both local inference and API backends, and provides schema-based
-            routing for personal, utility, and ethical queries.
+            Zynkbot uses vector embeddings for semantic memory search and
+            supports both local inference and API backends.
           </p>
 
           <p className="tech-description">
@@ -91,16 +99,14 @@ export default function AboutModal({ isOpen, onClose }) {
         <div className="about-links">
           <a
             href="https://github.com/MSkill1/zynkbot"
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={(e) => openInBrowser(e, "https://github.com/MSkill1/zynkbot")}
             className="about-link"
           >
             View on GitHub
           </a>
           <a
             href="https://github.com/MSkill1/zynkbot/tree/main/docs"
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={(e) => openInBrowser(e, "https://github.com/MSkill1/zynkbot/tree/main/docs")}
             className="about-link"
           >
             Documentation

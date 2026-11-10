@@ -1,77 +1,90 @@
 # Relationship Detection Architecture
 
-**Last Updated:** 2026-10-25 (call 3 of the rewritten memory pipeline)
-**Status:** Production-ready
+*Checked against the code on 2026-11-10 (`v1`, a7599eb).*
+
+How Zynkbot decides how a new memory relates to the memories already stored. File names are relative to `zynkbot_rust/src-tauri/src/` unless a longer path is given. For the tables (`memories`, `memory_links`, `memory_entities`, `memory_cards`) see [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md).
 
 ---
 
 ## Overview
 
-Zynkbot uses a **two-tier relationship detection system**:
-
-1. **Primary:** LLM-based relationship classifier (API or local model)
-2. **Fallback:** Local LLM if primary API fails
-3. **Safety:** Duplicate detection runs independently before the LLM call
+- **One classifier per backend.** Links are made by call 3 of the memory pipeline, a single LLM call on the backend the user is chatting with. There is no second model as a fallback. When the call fails, the fact is stored without links.
+- **A duplicate check runs before call 3.** It uses embeddings only, no model.
+- **Facts from the same message are linked `related` to each other** without a model call.
+- **Four link types are stored:** `related`, `contradicts`, `updates`, `resolves` (migration `0022_four_relationship_types.sql`).
 
 ---
 
 ## Complete Flow
 
 ```
-User sends message; the reply ends with a hidden MEMORY: yes|no (call 1, cloud)
+User sends a message
     ↓
-Call 2 (job worker): the facts in the message, up to three (memory_prompts.rs)
+Call 1: is there anything to store?
+    Cloud and custom backends: the reply ends with a hidden "MEMORY: yes" or "MEMORY: no" line
+    On-device model: no marker is asked for; call 2 decides
+    "Remember: ..." skips calls 1 and 2; the words are stored as said
     ↓
-For each fact:
-    Generate embedding of the fact
+A row is queued in memory_jobs; one worker runs the rows in order
+(memory_jobs.rs: enqueue(), process())
     ↓
-    Hybrid search for similar memories (>35% similarity)
+Call 2: the facts in the message, at most three
+(commands/chat.rs extract_facts(); prompt and parser in memory_prompts.rs)
     ↓
-    Duplicate Check (pre-LLM)
-      • Pure cosine similarity >93% OR hybrid score >98% → skip this fact
+For each fact (commands/chat.rs run_memory_background()):
+    1. Embed the fact text
+    2. Hybrid search: up to 15 memories; keep those at 35% similarity or more
+    3. Sort by similarity, highest first
+    4. Drop the facts already stored from this same message
+    5. Name correction only: memories that hold the wrong name go to the front
+    6. Keep the top 10 (cloud backend) or top 4 (on-device model, custom endpoint)
+    7. Duplicate check on the candidates that are left:
+       hybrid score above 98% or pure cosine above 93% → skip the fact
+    8. Call 3, by case:
+       a. Call 2 gave a title and no candidates are left → store, no call 3
+       b. On-device model, title, candidates → store first, then the links-only call
+       c. Any other case → the full call 3 runs before the fact is stored
+    9. A "contradicts" link with confidence 0.65 or more raises the conflict card:
+       cloud or custom → the fact is NOT stored; the card asks first
+       on-device       → the fact is already stored or is stored now; the card asks after
+    10. Store the memory (if not held for a card) and its links
+        "updates" → the older memory is marked superseded
     ↓
-    Candidates: minus the message's other facts; top 10 (cloud) / top 4 (local)
-    No candidates and call 2 gave a title → store, no call 3
-    ↓
-┌──────────────────────────────────────────────┐
-│ CALL 3: LLM RELATIONSHIP CLASSIFIER          │
-│ Cloud/custom: ask_llm_for_relationships      │
-│   (title + extras + links)                   │
-│ Local GGUF: ask_llm_for_links_only           │
-│   (links only, LINKS_SCHEMA grammar)         │
-│ Classifies: updates, contradicts,            │
-│            related, none                     │
-│            (four types since 0022, 2026-10-23)│
-│ Local answers pass filter_local_links:       │
-│   "updates" → "contradicts" (the card asks)  │
-└──────────────────────────────────────────────┘
-    ↓
-Contradiction detected?
-    ├─ YES, cloud  → Emit "contradiction-detected" event
-    │                Show ConflictResolutionModal to user
-    │                Wait for resolve_memory_conflict_v2() decision
-    ├─ YES, local  → Store first, raise the card after (resolve_stored_conflict)
-    └─ NO          → Store memory + relationships
-    ↓
-After the last fact: the message's facts linked "related" to each other
-("said in the same message", created_by same_message; no model call)
+After the last fact: the facts stored from this message are linked "related"
+to each other (created_by same_message; no model call)
 ```
 
 ---
 
 ## Components
 
-### 1. LLM Relationship Classifier (Primary)
+### 1. Call 3: the classifier
 
 **File:** `lib.rs`
-**Functions:** `ask_llm_for_relationships()` (cloud and custom backends) and `ask_llm_for_links_only()` (local GGUF models). Both are call 3 of the memory pipeline since 2026-10-24; the earlier single call `ask_llm_about_memory_with_relationships()`, which also decided whether to store, is gone. Whether to store is decided by call 1 (the MEMORY line) and call 2 (the facts); call 3 only classifies.
+**Functions:** `ask_llm_for_relationships()` and `ask_llm_for_links_only()`
+**Called from:** `run_memory_background()` in `commands/chat.rs`
 
-**Input:**
-- One fact from call 2 (or the words after `Remember:`)
-- Similar memories (id, content, title, similarity), the message's other facts excluded, at most 10 on the cloud and 4 on a local model
-- Backend (anthropic/openai/xai/mistral/custom/local)
+Whether to store is decided by call 1 (the MEMORY line) and call 2 (the facts). Call 3 only classifies.
 
-**Output (cloud):**
+**Which function runs**
+
+| Case | What runs |
+|---|---|
+| Call 2 gave a title and no candidate memories are left | No call 3. The fact is stored with call 2's title and fields. |
+| On-device model, call 2 gave a title, candidates exist | The fact is stored first. Then `ask_llm_for_links_only()` runs on the stored memory. |
+| Any other case: a cloud or custom backend with candidates, or any fact without a title (in practice a "Remember:" fact) | `ask_llm_for_relationships()` runs before the fact is stored. |
+
+"On-device" here means the backend name ends in `.gguf` or contains `local`. A custom endpoint is not treated as on-device: it uses the full call and the ask-first card, and its links are tagged `llm`. It does get the smaller candidate list (see section 2).
+
+**`ask_llm_for_relationships()`, the full call**
+
+Input:
+- One fact from call 2, or the words after `Remember:`
+- The candidate memories (id, content, title, similarity)
+- The backend name (anthropic, openai, xai, mistral, custom, or a local model)
+
+The answer carries a title, the relationships, and the extra fields (event date, namespace, tags, tone, entities):
+
 ```json
 {
   "title": "Memory title",
@@ -79,144 +92,217 @@ After the last fact: the message's facts linked "related" to each other
     {
       "memory_id": 123,
       "relationship_type": "contradicts",
-      "reason": "Main claims oppose each other",
+      "reason": "Brief explanation",
       "confidence": 0.95
     }
-  ]
+  ],
+  "event_date": null,
+  "namespace": "personal",
+  "tags": ["tag1"],
+  "tone": "neutral",
+  "entities": [{"name": "Vermont", "kind": "place"}]
 }
 ```
 
-**Relationship Types** (reduced to these by migration 0022, 2026-10-23; each one makes the app do something different):
-- `updates`: The new fact replaces an older state of the same thing ("moved", "now", "no longer"). The old memory is marked `superseded`, leaves recall and stays in Memory Manager as history with a "Undo replacement" button.
-- `contradicts`: Same attribute, different values, with no sign of which came later. The user is asked (conflict card).
-- `related`: Same specific subject, adding to it or confirming it. Pulled into recall through one-hop graph traversal. Replaces the old `supports`, `elaborates` and `caused_by`, which behaved identically.
-- `none`: Different things. The old `reminds_of` (loosely connected) is gone: it was the one type that did harm in the memory bench, and semantic search already finds loosely related memories at recall time.
-- `resolves` is stored too, but only written by the conflict card when the user explains how both memories are true.
+The title and the extra fields are used only where call 2 left them empty (`merge_extras()` in `commands/chat.rs`). When a local model runs this call, its output is held to `RELATIONSHIP_SCHEMA` by a grammar.
 
-**On the cloud** the answer also carries the extras (event date, namespace, tags, tone, entities), used only for fields call 2 left empty. **Local models** answer links only (`LINKS_SCHEMA`: `memory_id`, `relationship_type`, `confidence`), since call 2 already gave the title.
+**`ask_llm_for_links_only()`, the on-device call after storage**
 
-**On-device model:** its `updates` answers are turned into `contradicts` before storage (`filter_local_links`), so the conflict card asks the user instead of the phone's model replacing a memory on its own; the card then reads "Is this an update?" with yes / no / not related / keep both (keep both links as `related`). On the bench Qwen3-4B called four `related` pairs `updates`; the cloud models got all ten real updates right and keep the automatic path. The card's "Keep new memory" has done the `updates` thing since 2026-10-23: the old memory is marked `superseded` and kept as history, never deleted.
+The prompt comes from `links_only_prompt()`. The answer is held to `LINKS_SCHEMA`: `memory_id`, `relationship_type`, and an optional `confidence`. There is no title, no reason and no extra fields, because call 2 already gave them. In the app this function is called only on the store-first path. The memory bench (`memory_bench.rs`) can also call it when `MEMORY_BENCH_SLIM` is set.
 
-**Contradiction Detection Rules:**
-1. Focus on MAIN CLAIM, not descriptive phrases
-2. High similarity ≠ agreement (opposite claims = contradiction)
-3. Ignore negations in descriptive clauses
-4. Check for pattern-based contradictions (location, name, age, etc.)
+**When call 3 fails**
 
----
+- Full call: the fact is stored without links. The title is call 2's, or `generate_title_from_content()` when there is none.
+- Links-only call: the memory is already stored and stays as it is, without links.
 
-### 2. Local LLM Fallback (removed)
+**Relationship types**
 
-The earlier design re-ran the classifier on the local GGUF model when the cloud call returned no relationships. That path went with the single decision call: when call 3 fails on the cloud, the fact is stored without links and with call 2's title (or `generate_title_from_content` when there is none). A local model is never asked to classify a cloud backend's memories.
+The prompt tells the model to pick the first type that fits, in this order:
 
-### 3. Duplicate Detection
+- `updates`: the new fact replaces an older state of the same thing ("moved", "now", "no longer"), or both are short-lived facts of the same kind that cannot both hold now (where the car is parked).
+- `contradicts`: same attribute, different values, with no sign of which came later. Or opposite claims on the same topic.
+- `related`: the same specific person, pet, place, thing or habit, adding to it or confirming it.
+- `none`: different things. Not stored.
 
-**File:** `commands/chat.rs` (`run_memory_background`; the duplicate check against existing memories)
-**Trigger:** Runs before call 3 — the fact is skipped if a duplicate is found
+The prompt gives concrete examples for each type. It adds one warning: high semantic similarity does not mean agreement, and opposite claims are a contradiction. It has no other contradiction rules.
 
-**Also, within one message (2026-10-24):** before any of this, call 2's parser drops a restatement of a fact already taken from the same message and `drop_near_duplicates` drops a rewording whose embedding is within cosine 0.86 of an earlier fact.
+`resolves` is the fourth stored type. The classifier never returns it. It is written only by the conflict card when the user explains how both memories are true.
 
-**Algorithm:**
-1. Generate embedding for the new fact
-2. Hybrid search for similar memories (>35% similarity)
-3. Calculate **pure cosine similarity** (not hybrid score)
-4. If cosine similarity > 93% OR hybrid score > 98% → **DUPLICATE**
-   - Abort — memory is not stored, no LLM call made
-5. If no duplicate → proceed to LLM classification
+Migration 0022 folded the earlier `supports`, `elaborates` and `caused_by` into `related`, and dropped `reminds_of`, `quotes` and `mentions`.
 
-**Why Pure Cosine in Addition to Hybrid?**
-- Hybrid search combines entity (60%) + semantic (40%)
-- Identical memories can score ~0.60 with hybrid alone
-- Pure cosine gives 0.95–1.0 for true duplicates, making detection reliable
+**Lenient parsing**
 
----
+- A markdown code fence around the JSON is removed. Otherwise the first complete JSON object in the answer is taken (`first_json_object()`), so text after it does not break the parse.
+- A `memory_id` given as a string becomes -1 and the entry is dropped (`deserialize_memory_id()`).
+- `reason` is optional.
+- Entries with type `none` or a `memory_id` of 0 or less are dropped.
+- `confidence` is optional. A link without one is stored at 0.75. The conflict card needs a stated confidence of 0.65 or more, so a `contradicts` answer with no confidence is stored as a link but raises no card.
 
-### 4. Contradiction Resolution
+**On-device answers: `filter_local_links()`**
 
-**File:** `lib.rs`
-**Function:** `resolve_memory_conflict_v2()`
+Every on-device answer passes through `filter_local_links()` in `lib.rs` before storage:
 
-When call 3 returns a `contradicts` relationship on a cloud backend, the background task pauses and emits a `contradiction-detected` event to the frontend. On a local model the memory is stored first and the card is raised afterwards about the stored pair (`resolve_stored_conflict`, 2026-10-23), because the phone's background pass can take minutes and a memory held for an unanswered card was lost. The `ConflictResolutionModal` is shown to the user with both memories displayed side by side. The user chooses one of:
+- `updates` is turned into `contradicts`, and the reason gets the prefix "Possibly an update: ". The conflict card then asks "Is this an update?" instead of the on-device model replacing a memory on its own.
+- A confidence floor (`LOCAL_LINK_CONFIDENCE_FLOOR`) and a dropped-types list (`LOCAL_DROPPED_LINK_TYPES`) are applied. Both are inert today: the floor is 0.0 and the list is empty.
 
-- **Keep old** — new memory is discarded
-- **Keep new** — old memory is deleted, new memory is stored
-- **Keep both** — both stored with a `contradicts` link and optional explanation
-- **Keep both (marked contradictory)** — same as above with explicit contradiction flag
-
-`resolve_memory_conflict_v2()` receives the decision and executes accordingly.
+The code comment on `filter_local_links()` gives the reason: on the memory bench Qwen3-4B called four `related` pairs `updates`, and the cloud models got the real updates right. The bench cases are in `labs/memory_bench/cases.json`. The result files are not in the repo, so these figures are not verified against the code.
 
 ---
 
-## Deprecated Components
+### 2. Candidate memories
 
-### Rule-Based Relationship Detector
+**File:** `commands/chat.rs`, `run_memory_background()`
 
-**File:** `src-tauri/src/relationship_detector.rs`
-**Status:** DEPRECATED
+1. `hybrid_search()` in `memory.rs` returns up to 15 of the user's memories, across all sessions and namespaces. It leaves out superseded, completed and expired memories.
+2. Results under 35% similarity are dropped.
+3. The rest are sorted by similarity, highest first.
+4. Facts already stored from the same message are removed, so call 3 does not compare a message with itself.
+5. **Name correction.** When the message corrects a name ("it's Marta, not Maria"; `detect_name_correction()` in `memory_prompts.rs`), up to 10 current memories whose text contains the wrong name are put at the front of the list, with a similarity of 1.0. `process()` in `memory_jobs.rs` also adds a fact of its own for the correction if call 2 did not produce one.
+6. The list is cut to 10 on a cloud backend and 4 otherwise (`ConversationEngine::is_api_model()` in `conversation_engine.rs`). "Otherwise" covers an on-device model and a custom endpoint.
 
-The original rules-based relationship detector was replaced by the LLM classifier. The file is preserved for reference but no longer executes in the main pipeline.
+---
+
+### 3. Duplicate detection
+
+**File:** `commands/chat.rs`, inline in `run_memory_background()`
+**When:** after the candidate list is cut, before call 3
+
+**Algorithm**
+
+For each candidate that is left:
+1. If its hybrid score is above 0.98, the new fact is a duplicate.
+2. Otherwise the new fact's embedding is compared with the candidate's stored embedding. If the cosine similarity is above 0.93, the new fact is a duplicate.
+
+A duplicate is not stored and no call 3 is made.
+
+Only the candidates that reach call 3 are checked (10 or 4), not all 15 search results.
+
+**Why pure cosine as well as the hybrid score?**
+
+`hybrid_search()` scores a memory as 60% name overlap plus 40% semantic similarity when names match, and as semantic similarity alone otherwise. So the hybrid score is not a direct measure of how alike two texts are. The cosine check compares the two embeddings directly.
+
+**Within one message**
+
+Two earlier steps remove repeats among the facts of a single message:
+- `parse_extraction()` in `memory_prompts.rs` drops a fact that restates one already taken (`restates()`).
+- `drop_near_duplicates()` in `commands/chat.rs` drops a rewording whose embedding is within cosine 0.86 of an earlier fact.
+
+**Known issue, from reading the code (not confirmed by running the app)**
+
+A name-correction candidate is given a similarity of 1.0 (section 2, step 5). The duplicate check that follows treats any score above 0.98 as a duplicate. As written, a fact from a name-correction message is skipped as a duplicate whenever a memory holding the wrong name is in the list, and call 3 never sees it.
+
+**Unused command**
+
+`pre_check_memory()` in `commands/memory.rs` is a registered command that runs a similar check. Nothing in the pipeline or the frontend calls it.
+
+---
+
+### 4. Storing links
+
+**Files:** `commands/chat.rs` (`run_memory_background()`), `memory.rs` (`create_memory_link()`), `memory_jobs.rs` (`process()`)
+
+- A link points from the new memory to the older one. `create_memory_link()` rejects any type outside the four stored types.
+- **`updates`:** the older memory is marked `superseded` (`set_temporal_status()`) and the event `memory-superseded` is emitted. This happens automatically when a cloud or custom backend answers `updates`. The older memory leaves recall and stays in Memory Manager as history, with an "Undo replacement" button (`restore_memory()` in `commands/memory.rs`).
+- **Same message:** after the last fact, `process()` links every pair of facts stored from the message as `related`, confidence 1.0, note "said in the same message". A fact held for an ask-first card is not stored yet, so it gets no such link.
+
+**Who made a link (`created_by`)**
+
+| Value | Written by |
+|---|---|
+| `llm` | Call 3 on a cloud or custom backend |
+| `local_llm` | Call 3 on an on-device model |
+| `same_message` | The same-message links |
+| `user` | A choice on the conflict card, a `resolves` explanation, or the `create_memory_link` command |
+| `system` | The column default; also the Einstein demo set (`einstein_demo.rs`) |
+
+**Where links go next**
+
+- At recall, `generate_reply()` in `commands/chat.rs` follows links one hop from each recalled memory, whatever the type, strongest first, up to 8 linked memories. Superseded memories are skipped.
+- ZynkSync sends links to paired devices.
+- The encrypted cloud backup (`commands/backup.rs`) carries links. On restore they are matched to memories by a hash of the memory text (`restore_links_into()`).
+
+---
+
+### 5. The conflict card
+
+**Files:** `commands/chat.rs` (raising the card), `commands/memory.rs` (`resolve_memory_conflict_v2()`, `resolve_stored_conflict()`), `zynkbot_rust/src/components/ConflictResolutionModal.jsx`, `zynkbot_rust/src/App.jsx`
+
+A card is raised when call 3 returns a `contradicts` link with a confidence of 0.65 or more. There are two paths.
+
+**Ask first (cloud and custom backends).** The new fact is not stored. The card's payload carries the pending memory, both texts and the links call 3 returned. The background task ends there. When the user answers, `resolve_memory_conflict_v2()` stores the memory or drops it.
+
+**Store first (on-device model).** The memory is stored like any other, with its `contradicts` link. The card is raised afterwards about the stored pair. When the user answers, `resolve_stored_conflict()` changes the stored rows. On the main on-device path the card follows the links-only call, which itself runs after the memory is stored.
+
+**"Remember:" is never held.** When the user said "Remember: ...", the fact is stored even if call 3 finds a contradiction. The `contradicts` link is stored and no card is raised.
+
+**The card is a row.** Each card is written to `memory_cards` (migration `0024_memory_cards.sql`, `insert_memory_card()` in `memory.rs`) before the `contradiction-detected` event is sent. Unanswered cards are shown again when the app opens (`list_pending_memory_cards()`), and `answer_memory_card()` records the decision.
+
+**The choices**
+
+The card offers five choices.
+
+| Choice | Ask-first card | Store-first card |
+|---|---|---|
+| Keep old | The new fact is not stored. | The new memory is deleted. |
+| Keep new | The new fact is stored. The old memory is marked `superseded` and linked `updates`. | The old memory is marked `superseded`. The link becomes `updates`. |
+| Not a contradiction | The new fact is stored with no link to the old memory. | The link between the two is removed. |
+| Keep both ("Accept the contradiction") | The new fact is stored and linked `contradicts`. | Nothing changes; the `contradicts` link stays. |
+| Resolve with explanation | The new fact is stored and linked `contradicts`. The explanation is stored as a memory and linked `resolves` to both. | The explanation is stored as a memory and linked `resolves` to both. |
+
+"Keep new" never deletes the old memory. It is kept as history and can be brought back with "Undo replacement".
+
+On the ask-first card, the other links call 3 returned for the new fact are created when the fact is stored.
+
+**The "Is this an update?" form.** When the reason starts with "Possibly an update" (an on-device `updates` answer, see section 1), the card is worded as a question about an update: yes, no, not related, keep both, or explain. "Keep both" on this form links the two memories as `related`, not `contradicts`.
+
+---
+
+## Removed
+
+- **Local LLM fallback.** An earlier design re-ran the classifier on a local model when the cloud call returned nothing. That path is gone. A local model is never asked to classify for a cloud backend.
+- **The single decision call.** `ask_llm_about_memory_with_relationships()`, which decided whether to store and classified in one call, no longer exists.
+- **Rule-based detector.** `relationship_detector.rs` no longer exists.
 
 ---
 
 ## Key Design Decisions
 
 ### Why three calls?
-1. **Call 1 (in the reply):** is there anything to store? One hidden yes/no line, no extra request. The on-device model is not asked (it stops answering when asked for a marker) and goes straight to call 2.
-2. **Call 2:** list the facts, with titles and dates. Separate so a message with several facts becomes several focused memories, and so a small model has one job at a time.
-3. **Call 3:** classify the links. Separate because the embedding of each fact must exist before the similar memories can be found, and the candidate list depends on what is already stored. Skipped when nothing similar exists.
+1. **Call 1 (in the reply):** is there anything to store? One hidden yes/no line, no extra request. The on-device model is not asked for the line and goes straight to call 2.
+2. **Call 2:** list the facts, with titles and dates. Separate so a message with several facts becomes several memories, and so a small model has one job at a time.
+3. **Call 3:** classify the links. Separate because the embedding of each fact must exist before similar memories can be found, and the candidate list depends on what is already stored. Skipped when nothing similar exists and call 2 gave a title.
 
-Matt's design, 2026-10-24; the cloud backends were offered a merged 2+3 and the chart kept them apart.
+### Why store first on the device?
+The on-device calls are slow. Storing the fact before the links call means a question asked soon after the statement can find it. Asking after storage also means a memory is not lost when a card goes unanswered. Both reasons are given in the comments in `run_memory_background()`.
 
-### Why Trust LLM for Contradictions?
-- LLM understands semantic nuance
-- Can distinguish main claim from surrounding description
-- Pattern matching alone is insufficient for cases like "I believe in Spinoza's God" vs "I don't believe in Spinoza's God"
+### Why an LLM for contradictions?
+Two statements can be very similar as text and still disagree. Embedding similarity cannot tell agreement from disagreement, so a model reads both.
 
-### Why Keep Duplicate Check Before the LLM?
-- Saves an API call on exact or near-exact duplicates
-- >93% cosine similarity is deterministic — no LLM judgment needed
-- Prevents spam/double-submit scenarios immediately
+### Why keep the duplicate check before the LLM?
+- It saves a model call on exact or near-exact repeats.
+- It needs no model judgment: it is two threshold comparisons.
 
 ---
 
-## Performance
+## Performance and accuracy
 
-| Operation | Speed | Cost | Accuracy |
-|---|---|---|---|
-| LLM Classifier (API) | Slow (network round-trip) | ~$0.001/call | 95%+ |
-| LLM Classifier (Local) | Slow (LLM inference) | Free | 90%+ |
-| Duplicate Check | Fast (in-process cosine) | Free | 99%+ |
-| ~~Rule-Based (deprecated)~~ | Fast | Free | 70% |
+This document used to carry a table of speed, cost and accuracy figures. They could not be verified against the code and have been removed. Measured results are in [BENCHMARKS.md](../BENCHMARKS.md).
 
 ---
 
-## Test Cases
+## Tests
 
-**Contradiction Detection — Spinoza's God**
+The earlier "Spinoza's God" example cases have been removed: no test in the repo matches them. Tests that do exist:
 
-```
-Existing memory: "I believe in 'Spinoza's God' - a pantheistic view..."
-New statement:   "I do not believe in Spinoza's God"
-```
-
-Expected:
-```json
-{
-  "relationship_type": "contradicts",
-  "memory_id": 660,
-  "reason": "Main claims oppose each other (belief vs disbelief)",
-  "confidence": 0.95
-}
-```
-
-**Duplicate Detection**
-
-```
-Existing memory: "I believe in Spinoza's God"
-New statement:   "I believe in Spinoza's God"
-```
-
-Expected: New memory aborted before LLM call (>93% cosine similarity).
+| What | Where |
+|---|---|
+| First JSON object is taken, a second is ignored | `lib.rs`, `first_json_object_tests` |
+| On-device `updates` becomes a question; floor and dropped types | `lib.rs`, `link_floor_tests` |
+| Restatements and name corrections in call 2's parser | `memory_prompts.rs`, `tests` |
+| Two facts from one message are linked `related` | `chat_harness_tests.rs`, `c09_two_facts_from_one_message_are_linked_as_related` |
+| Migration 0022 collapses the old types | `sync_outbox_tests.rs`, `migration_0022_collapses_relationship_types` |
+| Links come back from a cloud backup | `commands/backup.rs`, `restore_puts_links_back_between_the_restored_memories` |
+| Classifier quality per backend (run by hand, not in the normal test run) | `memory_bench.rs` with `labs/memory_bench/cases.json` |
 
 ---
 
@@ -224,12 +310,20 @@ Expected: New memory aborted before LLM call (>93% cosine similarity).
 
 | Component | File | Function |
 |---|---|---|
-| LLM Classifier (cloud) | `lib.rs` | `ask_llm_for_relationships()` |
-| LLM Classifier (local) | `lib.rs` | `ask_llm_for_links_only()`, `LINKS_SCHEMA`, `filter_local_links()` |
+| Per-fact pipeline | `commands/chat.rs` | `run_memory_background()` |
+| Call 3, full | `lib.rs` | `ask_llm_for_relationships()`, `RELATIONSHIP_SCHEMA` |
+| Call 3, links only | `lib.rs` | `ask_llm_for_links_only()`, `links_only_prompt()`, `LINKS_SCHEMA` |
+| On-device filter | `lib.rs` | `filter_local_links()`, `apply_link_floor()` |
+| Lenient parsing | `lib.rs` | `first_json_object()`, `deserialize_memory_id()` |
 | Schema-constrained call | `lib.rs` | `call_backend_with_schema()`, `call_local_for_memory_decision()` |
-| The facts (call 2) | `memory_prompts.rs` | `extraction_prompt_with()`, `parse_extraction()` |
-| Job queue | `memory_jobs.rs` | `enqueue()`, `process()` |
-| Vector Search | `memory.rs` | `vector_search()` |
-| Duplicate Check | `lib.rs` | `pre_check_memory()` |
-| Contradiction Resolution | `lib.rs` | `resolve_memory_conflict_v2()` |
-| Rule-Based (deprecated) | `relationship_detector.rs` | (unused) |
+| The facts (call 2) | `commands/chat.rs`, `memory_prompts.rs` | `extract_facts()`, `extraction_prompt_with()`, `parse_extraction()` |
+| Name correction | `memory_prompts.rs` | `detect_name_correction()` |
+| Job queue, same-message links | `memory_jobs.rs` | `enqueue()`, `process()` |
+| Candidate search | `memory.rs` | `hybrid_search()` |
+| Candidate limit | `conversation_engine.rs` | `ConversationEngine::is_api_model()` |
+| Duplicate check | `commands/chat.rs` | inline in `run_memory_background()`; `drop_near_duplicates()` |
+| Link storage | `memory.rs` | `create_memory_link()`, `set_temporal_status()` |
+| Card storage | `memory.rs`, `commands/memory.rs` | `insert_memory_card()`, `list_pending_memory_cards()`, `answer_memory_card()` |
+| Card answers | `commands/memory.rs` | `resolve_memory_conflict_v2()`, `resolve_stored_conflict()` |
+| Undo a replacement | `commands/memory.rs` | `restore_memory()` |
+| Recall through links | `commands/chat.rs` | `generate_reply()` |

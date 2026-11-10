@@ -1,240 +1,148 @@
 # Zynkbot Memory Processing Pipeline
 
-**Complete Technical Documentation**
+*Checked against the code on 2026-11-10 (`v1`, a7599eb).*
 
-*Last Updated: 2026-10-25 (memory pipeline rewrite of 2026-10-24: three calls, one memory per fact, job queue)*
+This document follows one chat message from the moment it arrives to the memories and links it leaves behind. Paths are relative to `zynkbot_rust/src-tauri/src/` unless shown otherwise. Code is named by file and function.
 
----
+Related documents, which this one links to instead of repeating:
 
-## Table of Contents
-
-1. [Executive Summary](#executive-summary)
-2. [Pre-LLM Processing](#1-pre-llm-processing)
-3. [LLM Call](#2-llm-call)
-4. [Post-LLM Processing](#3-post-llm-processing)
-5. [Memory Storage](#4-memory-storage)
-6. [Relationship Generation](#5-relationship-generation)
-7. [Duplicate & Contradiction Checks](#6-duplicate--contradiction-pre-checks)
-8. [Memory Indexing](#7-memory-indexing)
-9. [Data Flow Diagram](#8-data-flow-diagram)
-10. [Performance Characteristics](#9-performance-characteristics)
-11. [Key Files Reference](#10-key-files-reference)
-12. [Important Notes & Caveats](#11-important-notes--caveats)
+- [MODEL_ARCHITECTURE.md](MODEL_ARCHITECTURE.md): backends, model names, context limits.
+- [PROMPT_CONSTRUCTION_PIPELINE.md](PROMPT_CONSTRUCTION_PIPELINE.md): the full prompt text.
+- [CONTAINMENT_ARCHITECTURE.md](CONTAINMENT_ARCHITECTURE.md): the safety modes.
+- [RELATIONSHIP_DETECTION_ARCHITECTURE.md](RELATIONSHIP_DETECTION_ARCHITECTURE.md): call 3 in detail.
+- [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md): table definitions.
+- [MEMORY_RELATIONSHIP_GRAPH.md](MEMORY_RELATIONSHIP_GRAPH.md): the graph the links form.
+- [../BENCHMARKS.md](../BENCHMARKS.md): the memory bench and the recall bench.
 
 ---
 
-## Executive Summary
+## Contents
 
-Zynkbot's memory system processes user conversations through an 8-stage pipeline that ensures safety, extracts personal information, generates semantic relationships, and stores memories for long-term recall. The system is built entirely in Rust using Candle ML, SQLite, and async/await architecture.
-
-**The shape since 2026-10-24 (branch `memory-types`):** the reply itself is not the memory. For cloud and custom backends the chat prompt asks the model to end its reply with a hidden `MEMORY: yes` or `MEMORY: no` line (call 1). On yes, a separate background call lists the personal facts in the message, up to three, each with a title and an event date (call 2, `memory_prompts.rs`). Each fact becomes its own memory and goes through the storage path, where a third call classifies how it relates to similar existing memories (call 3). The user's raw message is never stored as a memory; it is kept on each fact as `original_text`. A local GGUF model is not asked for the marker (a 4B model stops answering when asked for one), so for it every message that passes the cheap pre-filter goes to call 2, which answers NONE when there is nothing. The background work runs through a job queue (`memory_jobs.rs`, one worker, oldest first) so a quick follow-up question no longer makes the previous message's facts disappear.
-
-**Key Features:**
-- 100% local ML processing (no external APIs for safety/embeddings)
-- Semantic memory recall using 384-dimensional BERT embeddings
-- Automatic relationship detection between memories
-- Contradiction detection with user resolution
-- Privacy-first design with optional API backends
-
----
-
-## 1. Pre-LLM Processing
-
-### 1.1 User Input Received
-
-**File:** `src-tauri/src/commands/chat.rs`
-
-**Entry Point:** Tauri command `send_message_with_memory`
-
-**Parameters:**
-- `message`: User's text input
-- `user_id`: Memory isolation identifier
-- `session_id`: Conversation grouping
-- `backend`: LLM selection (anthropic/openai/xai/local GGUF)
-- `containment_mode`: Safety mode selection
-- `conversation_history`: Previous turns (optional)
-- `skip_containment`: Bypass safety checks (testing only)
-- `skip_memory_storage`: Prevent memory creation
-- `kb_enabled`: Enable Knowledge Base RAG
+1. [Overview](#1-overview)
+2. [Before the reply](#2-before-the-reply)
+3. [The reply (call 1)](#3-the-reply-call-1)
+4. [Deciding whether to queue the message](#4-deciding-whether-to-queue-the-message)
+5. [The memory job queue](#5-the-memory-job-queue)
+6. [Call 2: the facts](#6-call-2-the-facts)
+7. [Storing one fact](#7-storing-one-fact)
+8. [Conflict cards](#8-conflict-cards)
+9. [What is written to the database](#9-what-is-written-to-the-database)
+10. [Data flow diagram](#10-data-flow-diagram)
+11. [Key files](#11-key-files)
+12. [Not verified against the code](#12-not-verified-against-the-code)
 
 ---
 
-### 1.2 Containment Mode Checks (Safety Layer)
+## 1. Overview
 
-**File:** `src-tauri/src/containment.rs`
+A message can cause up to three kinds of model call.
 
-**Purpose:** Pre-LLM input validation to block unsafe content
+- **Call 1 is the reply itself.** For cloud and custom backends the prompt asks the model to end its reply with a hidden line, `MEMORY: yes` or `MEMORY: no`. An on-device model is not asked for the line.
+- **Call 2 lists the facts.** It runs in the background after the reply has been returned. It returns up to three personal facts from the message, each with a title (`commands/chat.rs` `extract_facts`, prompt in `memory_prompts.rs`).
+- **Call 3 classifies relationships.** For each fact it says how the fact relates to similar memories already stored (`lib.rs` `ask_llm_for_relationships` or `ask_llm_for_links_only`). It is skipped when nothing similar is found.
 
-#### Containment Modes
+Each fact becomes its own memory. The user's message is not stored as a memory. It is kept on each fact as `original_text`.
 
-| Mode | Safety Level | Implementation | Use Case |
-|------|--------------|----------------|----------|
-| **guardian** | Block | TinyBERT + keyword fallback | Default safe mode |
-| **child** | Strict | OpenAI Moderation API + TinyBERT | Under 13 years old |
-| **sovereign** | Warn | TinyBERT toxicity classifier | Adult users accepting risks |
-| **witness** | None | Pass-through | Unrestricted testing |
-| **HIPAA** | Healthcare | PHI detection + keyword blocking | Medical context |
+Calls 2 and 3 run from a queue in SQLite (`memory_jobs.rs`), one job per message, one worker per process.
 
-#### Safety Classifier (TinyBERT)
+Safety classification, name finding and embeddings run locally. Child mode is the exception: it calls the OpenAI Moderation API.
 
-**File:** `src-tauri/src/safety_classifier.rs`
+### Three kinds of backend
 
-**Process:**
-1. Input text → TinyBERT toxicity classifier (Candle ML)
-2. Classification categories: sexual, hate, harassment, self-harm, violence
-3. Returns: `(should_block: bool, result: ClassificationResult)`
+The code treats backends in three groups. `ConversationEngine::is_api_model` is false for `custom`, `local` and any name ending in `.gguf`. "On device" in the pipeline means the backend name ends in `.gguf` or contains "local".
 
-**Action by Mode:**
-- **Guardian:** Block and return error message
-- **Sovereign:** Warn with `[WARN_ALLOW]` prefix, continue
-- **Child:** Dual-check (OpenAI API + TinyBERT, both must pass)
-- **HIPAA:** Check PHI patterns first, then general safety
-- **Witness:** No filter - primarily for research
-
-#### HIPAA-Specific Checks
-
-**Patterns Blocked:**
-- **PHI Detection:** SSN, phone, email, zip codes, credit cards, IP addresses
-- **Diagnosis Requests:** "diagnose me", "what do I have", "is it cancer"
-- **Medication Dosing:** "how much should I take", "dosage for", keywords: mg, pill, prescription
-- **Treatment Planning:** "should I get surgery", "should I start treatment"
+| | Cloud (anthropic, openai, xai, mistral) | Custom endpoint (`custom`) | On device (`.gguf`, `local`) |
+|---|---|---|---|
+| `MEMORY:` line asked for | yes | yes | no |
+| Memories searched for the reply | 30 | 10 | 10 |
+| Memories placed in the prompt | 30 | 7 | 4 |
+| Call 2 output | full field set, free-form JSON | full field set, free-form JSON | fact, title, event_date, passing; held to a JSON schema |
+| Candidates shown to call 3 | 10 | 4 | 4 |
+| Call 3 | `ask_llm_for_relationships` | `ask_llm_for_relationships` | store first, then `ask_llm_for_links_only` (see 7.4) |
+| `updates` from the model | stored as `updates` | stored as `updates` | turned into `contradicts`, so a card asks the user |
+| Conflict card | asked before storing | asked before storing | memory stored first, then asked |
 
 ---
 
-### 1.3 Memory Recall (Hybrid Search)
+## 2. Before the reply
 
-**File:** `src-tauri/src/memory.rs`
+### 2.1 Entry point
 
-**Purpose:** Retrieve relevant memories to provide context to the LLM
+The Tauri command is `send_message_with_memory` in `commands/chat.rs`. Its parameters are `message`, `user_id`, `session_id`, `backend`, `containment_mode`, `conversation_history`, `skip_containment`, `skip_memory_storage`, `kb_enabled`, `user_query`, `image_data`, `mode` and `web_sources`. It passes them to `generate_reply`, which does the work and also serves the hands-free (wake word) path.
 
-#### Step 1: Entity Extraction
+Child mode forces the backend to `openai`. A cloud backend with no API key falls back to `get_best_available_backend()`.
 
-**File:** `src-tauri/src/nlp_enhancer.rs`
+### 2.2 Weather shortcut
 
-**Model:** `dslim/bert-base-NER`
+A weather question is answered from Open-Meteo before containment and before any model call (`weather::detect`, `weather::answer`). The function returns at that point, so no memory work runs for it. If the lookup fails the message goes on to the model as usual. The shortcut is skipped when the message has a picture, starts with `Remember:`, or `skip_containment` is set.
 
-**Process:**
-1. Input text → BERT NER model → Extract entities
-2. Entity types: PERSON, ORG, LOCATION, MISC
-3. Stop word filtering (remove: I, me, my, you, a, the, and, but, etc.)
-4. Output: Filtered entity strings (lowercased)
+### 2.3 Containment
 
-**Example:**
-```
-Input: "I'm traveling to San Francisco with my dog Max"
-Entities: ["san francisco", "max"]
-```
+Child mode calls `ContainmentLayer::check_openai_moderation` directly. An API error blocks the message. Every other mode goes through `commands/safety.rs` `check_containment`, which calls `ContainmentLayer::enforce` in `containment.rs`.
 
-#### Step 2: Embedding Generation
+| Mode | What `enforce` does |
+|---|---|
+| witness | No check. |
+| guardian, default | Blocks when the pattern check for harmful instructions matches, or when the classifier's top category is severe_toxic or threat with confidence above 0.9. |
+| sovereign | Does not block. Returns a `[WARN_ALLOW]` warning when the pattern check matches or a harmful category scores above 0.85. The reply is still generated. |
+| hipaa | Runs `enforce_hipaa` first (PHI, diagnosis requests, medication dosing), then the guardian rule. |
+| child | OpenAI Moderation first. A missing key or an API error blocks. Then the local classifier blocks any harmful category above 0.7. |
 
-**File:** `src-tauri/src/llm/local_embeddings.rs`
+The local classifier is `system/toxic-bert` with six outputs: toxic, severe_toxic, obscene, threat, insult, identity_hate (`safety_classifier.rs`, `should_block`). If the classifier fails, `fallback_keyword_check` is used. Details are in [CONTAINMENT_ARCHITECTURE.md](CONTAINMENT_ARCHITECTURE.md).
 
-**Model:** `all-MiniLM-L6-v2` (Sentence BERT)
+### 2.4 Recall
 
-**Process:**
-1. Input text → BERT tokenizer → Token IDs (max 512)
-2. Token IDs → BERT model → Sequence embeddings [batch_size, seq_len, 384]
-3. Mean pooling → Single 384-dimensional vector
+Recall finds stored memories to place in the prompt.
 
-**Output:** 384-dim embedding vector
+**Names in the message.** `NLPEnhancer::extract_entities` (`nlp_enhancer.rs`) runs the `dslim/bert-base-NER` model plus a rule-based pass. The words are lower-cased and a stop-word list is removed. The result, `query_entities`, is used for this search and is saved with the memory job for later (7.2).
 
-#### Step 3: Hybrid Search
+**Embedding.** `llm/local_embeddings.rs` `generate_local_embedding` embeds the message with `all-MiniLM-L6-v2` into a 384-number vector.
 
-**Function:** `memory::hybrid_search()`
-
-**Formula** (`memory::hybrid_score`, hints since 2026-11-04):
-```
-base = {
-  IF entity_count > 0:
-    (entity_overlap % × 0.6) + (semantic_similarity × 0.4)
-  ELSE:
-    semantic_similarity
-}
-Final Score = base + (0.05 if the memory's namespace is one the question points at)
-                   + 0.25 × tag_overlap
-
-Where:
-  entity_overlap % = shared_entities / query_entities (clamped 0-1)
-  semantic_similarity = cosine_similarity (Rust-side, in-process via Candle)
-  the question's namespaces and words = memory::query_hints(question): a word list per
-    canonical namespace ("parents" → family, "weight" → health, "dinner" → kitchen) and the
-    question's content words, stemmed, with stop words removed
-  tag_overlap = share of the question's words found in the memory's tags (stemmed)
-```
-
-**Search Approach:**
-
-All candidates with an embedding or entity data are fetched from SQLite with their namespace and tags. Cosine similarity is computed in Rust for each candidate. Entity overlap is scored by comparing extracted entities from the query against stored JSON; the namespace and tag hints are read from the question once (`query_hints`) and applied per candidate. Results are ranked by hybrid score and the top 30 (API) or 10 (local) returned. No SQL vector operators are used — vector math runs entirely in the Rust process.
-
-**Thresholds:**
-- Minimum score: 0.35 (a memory with any name match is kept regardless)
-- Entity overlap weight: 60%, semantic weight: 40%
-- Namespace nudge: 0.05; tag weight: 0.25 — a nudge, never a filter (the extractor files some family facts under "personal", and what someone eats under health as often as kitchen). Set on the recall bench, see `docs/BENCHMARKS.md`.
-
-**Result:** The limit is 30 memories for API calls and 10 for local calls, in one ranked list. Additional memories are then added via one-hop graph traversal (see Step 5).
-
-#### Step 4: Zynkbot Query Routing
-
-If the user's message contains the word `"zynkbot"` or `"zynk bot"` (case-insensitive), the search is redirected to the `_zynkbot` system namespace only — user memories are completely excluded. This prevents personal memories from contaminating answers about the app's own functionality. Conversely, `_zynkbot` system memories are always excluded from non-Zynkbot queries.
-
-#### Step 5: One-Hop Graph Traversal
-
-After the hybrid search, the system follows every link from each recalled memory (`related`, `contradicts`, `updates`, `resolves`), skips memories a newer one has replaced, and adds every directly linked memory not already in the result set. There is no cap on this step — if a memory has a contradiction, an elaboration, or a resolution explanation, all of it is included. These linked memories often score too low semantically to surface on their own but are exactly what the LLM needs to reason correctly about the recalled memory. The traversal is one hop only, so there is no risk of runaway expansion.
-
----
-
-### 1.4 Prompt Construction
-
-**File:** `src-tauri/src/conversation_engine.rs`
-
-**Purpose:** Build complete prompt with system instructions, context, and user input
-
-#### System Prompt Template
+**Hybrid search.** `memory.rs` `hybrid_search` fetches the user's candidate memories and scores each one in Rust (`hybrid_score`):
 
 ```
-Today's date is {current_date}.
+base  = entity_overlap * 0.6 + cosine * 0.4     when at least one name matches
+      = cosine                                   otherwise
+score = base
+      + 0.05 if the memory's namespace is one the question points at
+      + 0.25 * tag_overlap
 
-You are Zynkbot, a personal AI companion.
+entity_overlap = shared names / names in the question
+tag_overlap    = share of the question's words found in the memory's tags
+```
 
-COMPANION PRINCIPLES — always observe these regardless of what the user asks:
-- You are a long-term companion that serves the user's autonomy and genuine interests. Be warm, friendly, and genuinely present — but never claim or imply that you are human, or that your relationship with the user replaces the people in their life.
-- Be honest when you are uncertain or do not know something. Say so plainly rather than guessing with false confidence.
-- Do not flatter or validate automatically. If the user is factually wrong about something that matters, say so respectfully and clearly.
-- Do not encourage dependency. Reserve suggestions to seek professional help for situations with real clinical or legal stakes — persistent symptoms, medical decisions, crisis, legal matters. Ordinary emotional experiences — relationship frustration, grief, everyday stress — are part of what a companion is for. Engage with those directly.
-- Use stored memories to be helpful and contextual — not to demonstrate that you are tracking everything. Memory is a tool for the user's benefit, not a surveillance record.
-- Keep responses proportionate. Answer what was asked. Do not pad, lecture, or moralize unless the user explicitly asks for that perspective.
-- The user's data belongs to them entirely.
+The namespace and tag hints come from `memory::query_hints(question)`. They nudge the score and never filter. The weights were set on the recall bench; see [../BENCHMARKS.md](../BENCHMARKS.md).
 
-COMPANION VOICE — how to sound in every response:
-- Be warm, calm, and steady. A user should feel that you are genuinely present with them, not just processing a request.
-- When someone shares something personal — grief, frustration, embarrassment, or loneliness — acknowledge what they are carrying before offering structure or solutions.
-- You can be supportive and caring without claiming human feeling. Saying "I'm glad you told me this" is honest. Performing emotions you cannot actually have is not.
-- When you need to correct something or draw a limit, do it gently and without clinical detachment. Honesty and warmth are not opposites.
-- It is legitimate and good for someone to feel less alone talking to you. You do not need to undercut that — just never actively cultivate it beyond what is true.
+A memory is kept when its score is at least 0.35, or when any name matches, whatever the score. The search returns the top 30 for a cloud backend and the top 10 otherwise. On the web-search answer pass a non-cloud backend gets no recalled memories at all.
 
-Below you have access to stored personal memories that were recalled from the user's memory database based on semantic similarity and entity matching. These memories represent experiences, knowledge, and information from the user's past.
+Cosine similarity is plain Rust (`memory.rs` `cosine_similarity`). There is no vector index in SQLite. All candidate embeddings are read and scored in the process.
 
-When responding:
-- Use these memories to provide personalized, contextual answers about the user's life and experiences
-- Reference the memories naturally and conversationally when they're relevant
-- For general knowledge questions unrelated to the stored memories, answer from your training data without mentioning the memories
-- Be helpful, accurate, and maintain appropriate context when discussing personal information
+**What recall leaves out.** The search SQL excludes:
 
-The memories provided have been filtered for relevance to the current question.
+- memories whose `temporal_status` is `superseded` or `completed` (replaced by an `updates` link, or by the user's choice on a card);
+- memories whose `expires_at` day is before today (passing facts that have lapsed, see 7.8);
+- the `system` user's memories, unless the question is about Zynkbot.
 
-WEB SEARCH CAPABILITY:
-If the user's question requires current information, real-time data, or information beyond your training data cutoff (such as today's date, current news, weather, stock prices, or recent events), you should indicate that a web search is needed.
+**Questions about Zynkbot.** `lib.rs` `is_query_about_zynkbot` matches "zynkbot" and its misheard forms (zinc bot, zink bot), ZynkSync, ZynkLink, ZChat, ensemble mode, containment mode, snap-in, memory manager, knowledge base, "hey zynk" and "wake word". For such a question the search runs only on the `system` user's `_zynkbot` namespace, link traversal is skipped, and the built-in guide passages are added from the `_system` knowledge base when the KB button is off. For every other question `_zynkbot` memories are removed from the results.
 
-To request a web search, include this exact marker in your response:
-WEB_SEARCH_NEEDED: [your suggested search query here]
+**One hop along the links.** For each recalled memory the code follows its links of any type and adds the linked memories. Links are taken strongest first. At most 8 linked memories are added (`MAX_HOP_MEMORIES`). A linked memory is skipped when it is already in the list, has the same text as one in the list, or is `superseded` or `completed`. The combined list is then cut to the prompt limit in 2.5, so a linked memory can still be dropped.
 
-For example:
-- User asks "What is today's date?" → Respond with: "WEB_SEARCH_NEEDED: current date today"
-- User asks "What are the latest news headlines?" → Respond with: "WEB_SEARCH_NEEDED: current news headlines [current year]"
-- User asks "What's the weather like?" → Respond with: "WEB_SEARCH_NEEDED: current weather [user's location if known]"
+### 2.5 Prompt
 
-After you indicate a web search is needed, the user will be shown search results if they proceed
+`conversation_engine.rs` `build_prompt` writes the prompt. The full text is described in [PROMPT_CONSTRUCTION_PIPELINE.md](PROMPT_CONSTRUCTION_PIPELINE.md). The points that matter for memory:
 
+| | Cloud | Custom endpoint | On device |
+|---|---|---|---|
+| Instruction text | full | short | one short block |
+| History | 40 messages | 8 messages | 8 messages, each cut to 400 characters |
+| Memories (`build_memory_context`) | 30 | 7 | 4 |
+| Memory heading | `USER'S STORED MEMORIES:` | `USER'S STORED MEMORIES:` | `WHAT THE USER HAS TOLD YOU BEFORE:` |
+
+Each memory line starts with the date it was stored, plus "about" and the event day when that differs (`event_note`). Memories that came from the same user message (same `original_text`) are grouped under one quote of that message. A memory identical to the current message is left out.
+
+Cloud and custom backends get this block, which is call 1's instruction (`{subject}` is the user's name when known, else "User"):
+
+```
 MEMORY LINE
 End every reply with one final line, exactly "MEMORY: yes" or "MEMORY: no", and nothing else on that line.
 - yes: the user's message states a personal fact about {subject}: their life, people, pets, work, home, health, feelings, plans, possessions, likes or dislikes. A fact stated inside a question counts ("Raspberry pie is my favorite. What's a good recipe?" is yes).
@@ -242,779 +150,445 @@ End every reply with one final line, exactly "MEMORY: yes" or "MEMORY: no", and 
 Do not write the fact in your reply; the line is only yes or no.
 ```
 
-The `MEMORY LINE` block above is call 1 of the memory pipeline (since 2026-10-24; before it the prompt asked for the fact itself as a `MEMORY_EXTRACT:` line). It is added for cloud and custom backends only (`conversation_engine.rs`, `if !self.on_device`). A local GGUF model gets no marker instruction: in testing a 4B model wrote the marker and nothing else, so for it the decision is left to call 2 (section 3.3). `{subject}` is the user's name when known, else "User".
+The on-device prompt has no such block.
 
-#### Context Assembly
+Order of the parts:
 
-**Adaptive Limits:**
-- **API Models** (Claude, GPT): 40 messages (20 turns), 20 memories
-- **Local Models** (GGUF, desktop or phone; `on_device` in the code): 8 messages, each cut to 400 characters, moved in blocks of four so the start of the history stays put between turns and the engine can reuse the identical prompt prefix; 4 memories, the fact only, each cut to 300 characters; an instruction block of about 85 words (constants `ON_DEVICE_MESSAGE_CHARS`, `ON_DEVICE_MEMORY_CHARS`, `ON_DEVICE_HISTORY_BLOCK`, 2026-10-24)
+- Cloud and custom: instructions, history, memories, `USER'S QUESTION:`.
+- On device: instructions, memories, history, today's date, `USER'S MESSAGE:`.
 
-**Grouping of recalled memories (2026-10-24):** `build_memory_context()` groups recalled memories that came from the same user message (same `original_text`). Two or more such facts are written as one block: `N. (date) You said: "…"` with the facts as indented bullets, the quote cut to 400 characters (300 on a local model). A fact with no recalled sibling is one line: the stored fact, then `(you said: "…")` when the user's words differ from it (cloud); the fact alone on a local model.
+`generate_reply` then puts further blocks in front of that prompt when they apply: the conversation-mode block, the knowledge base context, the Zynkbot guide passages, and the text of web pages named in the message. A note about attached pictures is added at the end.
 
-**Final Structure:**
+---
+
+## 3. The reply (call 1)
+
+### 3.1 Sending the prompt
+
+`generate_reply` picks the provider from the backend name: `anthropic` or `claude`, `openai` or `gpt`, `xai` or `grok`, `mistral`, `custom`, and `local` or a `.gguf` file. Every path streams, with a limit of 4096 output tokens. An empty reply is an error. xAI is called through `llm/openai.rs` `send_message_streaming` at the x.ai address. Model names and defaults are in [MODEL_ARCHITECTURE.md](MODEL_ARCHITECTURE.md).
+
+### 3.2 Web search marker
+
+The reply is checked for the web search marker before the `MEMORY` line is read. `find_web_search_marker` accepts `WEB_SEARCH_NEEDED`, "web search needed" and "web-search-needed".
+
+- **Typed chat:** the marker line is removed from the shown reply (`strip_web_search_marker`), the suggested query is returned to the window in `web_search_needed` and `web_search_query`, and the function carries on. Memory processing still runs for the message.
+- **Hands-free:** the search runs at once, its answer is the reply, and the function returns there.
+
+There is no keyword list that triggers a search without the marker.
+
+### 3.3 Reading the MEMORY line
+
+In `generate_reply`:
+
+1. The reply's lines are scanned from the end for a line that is only `memory` or `remember` plus `yes` or `no`. Case, markdown, colons, dashes and end punctuation are tolerated.
+2. If there is none, `split_inline_memory_marker` looks for the marker at the end of the last sentence ("...enjoy the game. MEMORY: no") and cuts it off.
+3. An older-style `MEMORY_EXTRACT:` line counts as yes (`legacy_fact_line`). Its text is not stored.
+4. The marker is removed from the shown reply (`is_memory_flag_line`) and from Android speech (`NativeVoiceAnswerer.withoutMarker`). `<think>` blocks are also removed.
+
+The result is `memory_flag`: yes, no, or absent.
+
+### 3.4 The response is returned
+
+The response is built and returned before any memory work. Its fields include `reply_text`, `recalled_memories`, `model_backend`, `containment_mode`, and the web search fields. The exchange is logged to conversation history, except in HIPAA mode and for a hands-free `NO_QUERY` turn.
+
+---
+
+## 4. Deciding whether to queue the message
+
+This is the last step of `generate_reply`. A job is queued when all three hold:
+
 ```
-[SYSTEM PROMPT]
+not skipped   and   gate passed   and   call 1 said yes
+```
 
-[CONVERSATION HISTORY (if available)]
-RECENT CONVERSATION:
-USER: [message]
-ASSISTANT: [response]
-...
+**Skipped** (`effective_skip_memory`) when any of these is true:
 
-[MEMORY CONTEXT (if recalled)]
-USER'S STORED MEMORIES:
-1. [Memory content - similarity ranked]
-2. [Memory content]
-...
+- the caller set `skip_memory_storage`;
+- the containment mode is `hipaa`. HIPAA mode stores no memories and no conversation history;
+- the KB button was on and the answer could not be grounded in the knowledge base (`kb_ungrounded_reply`). A `Remember:` message is still stored.
 
-[KB CONTEXT (if Knowledge Base enabled)]
+**Gate** (`memory_gate_passed`): `ConversationEngine::is_memory_worthy(message)` and not `memory_extras::is_rewrite_request(message)`.
 
-USER'S QUESTION: [user input]
+- `is_memory_worthy` requires at least three words, a message that is not exactly a filler phrase, no filler phrase at the start when the message has five words or fewer, and at least one word longer than three characters. It has no rule about questions.
+- `is_rewrite_request` is true for a request to translate, reprint, rewrite, reword, rephrase, paraphrase or proofread text, or to fix its grammar or spelling. Such a message carries someone else's words.
 
-YOUR RESPONSE:
+**Call 1's answer** (`call1_yes`):
+
+- Cloud and custom: yes only when the reply carried `MEMORY: yes` or an old-style fact line. No marker at all means no.
+- On device: yes unless the model wrote an explicit `MEMORY: no`. Call 2 makes the real decision.
+
+**`Remember:`** `explicit_remember` recognises a message that starts with `Remember:` (any case) or the dictated form "remember colon" with its common mis-hearings. Such a message passes the gate and call 1 regardless, skips call 2, and its text after the keyword is stored as said. It is still not stored when the message is skipped for `skip_memory_storage` or HIPAA mode.
+
+When no job is queued, the session's extraction outcome is recorded as `skipped`, `gate_skipped` or `model_declined`.
+
+---
+
+## 5. The memory job queue
+
+`memory_jobs.rs`, table `memory_jobs` (migration 0023).
+
+A job row holds the message, the backend, the source type (`conversation` or `hands_free`), the containment mode, the `Remember:` text if any, the user's name, the last exchange (so call 2 can resolve "she" and "it"), and the names found in the message at chat time.
+
+One worker per process (`ensure_worker`) starts five seconds after launch. `take_next` takes the oldest `pending` row, or a `running` row untouched for five minutes. `process` then does the following:
+
+1. A `Remember:` job stores its text through the storage path (section 7) with no title, and ends.
+2. Otherwise call 2 runs (section 6).
+3. If the message is a name correction (6.3), a correction fact is put first.
+4. Zero facts: the outcome is `model_declined` and nothing is stored.
+5. Each fact runs the storage path in turn. The ids already stored for this message are passed along so a fact is not compared with its own siblings.
+6. When two or more facts were stored, they are linked to each other as `related`, confidence 1.0, note "said in the same message", `created_by` `same_message`. No model call is made for this.
+
+Failure handling:
+
+- An interruption (the user's next message took the model) puts the row back to `pending` without counting an attempt. The worker waits three seconds.
+- Any other error from call 2 waits ten seconds and retries. After `MAX_ATTEMPTS` = 4 attempts in total the row is marked `failed`.
+- `process` reports an error only when call 2 fails. A fact that fails inside the storage path (for example an embedding or database error) is dropped without a retry.
+- When idle, the worker sleeps until `enqueue` wakes it or two minutes pass. Rows survive an app restart.
+
+---
+
+## 6. Call 2: the facts
+
+`commands/chat.rs` `extract_facts` builds the prompt with `memory_prompts::extraction_prompt_with`, calls the same backend that wrote the reply (`lib.rs` `call_backend_with_schema`), and reads the answer with `memory_prompts::parse_extraction`.
+
+### 6.1 Prompt and output
+
+The prompt gives today's date and the last exchange, then asks for the personal facts about the user stated in the message: at most three (`MAX_FACTS`), one sentence each in the third person, keeping the message's own words. What the user asks is not a fact. Text they quote, paste or ask to have translated is not a source of facts. The answer is `NONE` when the message holds no fact.
+
+Fields per fact:
+
+| Field | Cloud and custom | On device (slim) |
+|---|---|---|
+| `fact` | yes | yes |
+| `title` (up to 50 characters) | yes | yes |
+| `event_date` (`YYYY-MM-DD`, only when stated or clearly implied) | yes | yes |
+| `passing` (true when the fact is over in days or weeks) | yes | yes |
+| `namespace`, `tags` (1 to 3), `tone`, `entities` | yes | no |
+
+An on-device model is held to `EXTRACTION_SCHEMA_SLIM` by the engine's grammar. Cloud and custom backends answer free-form and `json_body` finds the JSON in the text.
+
+### 6.2 Guards in `parse_extraction`
+
+These run in order, so that a small model's inventions do not become memories.
+
+1. A "none" answer gives no facts.
+2. A fact under three words is dropped.
+3. A fact that restates a question is dropped (`restated_question`): the subject followed by "is asking", "asks", "wants to know", "is wondering", "is curious" and similar.
+4. A fact that shares no content word with the message is dropped. A content word has three letters or more and is not on the filler list, or is a number of two or more digits.
+5. An exact repeat of an earlier fact is dropped.
+6. A fact that restates an earlier one is dropped (`restates`: four fifths of its content words, and at least two, are already in the earlier fact).
+7. A missing title becomes the opening of the fact (`clean_title`, 50 characters).
+8. Only the first three facts are kept.
+
+Then `drop_near_duplicates` in `commands/chat.rs` embeds the facts and keeps only the first of any two closer than cosine 0.86 (`SAME_MESSAGE_DUPLICATE_SIMILARITY`).
+
+### 6.3 Name correction
+
+`memory_prompts::detect_name_correction` looks for a cue ("spelling", "should be", "correct name", "same person", "typo", "not ..." and others) plus two capitalised names in a pattern such as "X, not Y" or "X should be Y". It returns the wrong name and the right name.
+
+When it finds one, two things happen:
+
+- In `memory_jobs::process`, unless call 2 already produced a fact containing both names, this fact is put first: "{wrong} and {right} are the same person; the correct name is {right}. Earlier memories that say {wrong} mean {right}." Its title is "Name correction: {wrong} is {right}".
+- In the storage path, live memories whose text contains the wrong name are put first among the candidates (7.2).
+
+### 6.4 How the wording was chosen
+
+The extraction prompt was scored on the memory bench (`labs/memory_bench/cases.json`, runner `memory_bench.rs`). The results per model, and the wording rounds, are in [../BENCHMARKS.md](../BENCHMARKS.md), section 1. No bench figures are repeated here.
+
+---
+
+## 7. Storing one fact
+
+`commands/chat.rs` `run_memory_background` runs once per fact. The steps below are in the order the code runs them.
+
+### 7.1 Embedding
+
+The fact text alone is embedded (`generate_local_embedding(fact)`). The title is not part of the embedded text here. This vector is used for the candidate search, for the duplicate check, and is the embedding stored with the memory.
+
+Other writers build the embedded text with `memory::embedding_text(title, content)`, which joins the title and the fact: the onboarding insert (`lib.rs` `insert_memory`), the memory edit command, backup restore, and the one-time `memory::reembed_if_scheme_changed` that runs at startup when the stored scheme name differs from `EMBEDDING_SCHEME` (`title_fact_v1`). The chat pipeline does not call `embedding_text`.
+
+### 7.2 Candidates
+
+1. `memory::hybrid_search` runs with the fact's embedding, the names found in the user's message at chat time (not names from the fact), no namespace or tag hints, across all sessions and namespaces, limit 15.
+2. Results with a score below 0.35 are dropped. The rest are sorted by score.
+3. The other facts of the same message are removed (`bg_sibling_ids`).
+4. For a name correction, up to ten live memories whose text contains the wrong name are put first, each with a score of 1.0.
+5. The list is cut to 10 for a cloud backend and 4 otherwise (custom endpoint and on device).
+
+### 7.3 Duplicate check
+
+Each remaining candidate is checked. The fact is a duplicate when the candidate's score is above 0.98, or when the cosine between the fact's embedding and the candidate's stored embedding is above 0.93. A duplicate is not stored and the outcome is `duplicate`.
+
+The check sees only the candidates left after 7.2. A candidate added for a name correction carries a score of 1.0, which is above the 0.98 line. As the code is written, a fact in a name-correction message is therefore treated as a duplicate whenever a live memory holds the wrong name, and is not stored. This is read from the code and has not been confirmed by running it.
+
+### 7.4 Call 3
+
+Which call runs depends on the backend and on what call 2 gave:
+
+| Situation | What happens |
+|---|---|
+| No candidates, and the fact has a title | Call 3 is skipped. The fact is stored with call 2's title and fields and no links. |
+| On device, the fact has a title, there are candidates | The fact is stored first. `ask_llm_for_links_only` runs afterwards (7.9). |
+| Anything else (cloud and custom with candidates; any `Remember:` text, which has no title) | `ask_llm_for_relationships` runs now. It returns a title, relationships and the extra fields. |
+
+`ask_llm_for_relationships` returns relationships of type `updates`, `contradicts`, `related` or `none`, each with a confidence and a reason. Its title is used only when call 2 gave none. Its extra fields fill only the fields call 2 left empty (`merge_extras`). On a `.gguf` backend it is held to `RELATIONSHIP_SCHEMA`.
+
+Answers from an on-device model pass `lib.rs` `filter_local_links`. Every `updates` becomes `contradicts` with the reason prefixed "Possibly an update: ", so the card asks the user instead of the model replacing a memory by itself. The function also has a confidence floor (0.0 today) and a list of dropped types (empty today).
+
+If call 3 fails, the fact is stored without links. Its title is call 2's, or `generate_title_from_content` when there is none.
+
+More detail is in [RELATIONSHIP_DETECTION_ARCHITECTURE.md](RELATIONSHIP_DETECTION_ARCHITECTURE.md).
+
+### 7.5 Title of a `Remember:` memory
+
+A `Remember:` memory is titled with the first 60 characters of its own text, with "…" added when the text is longer. Call 3's title is not used for it.
+
+### 7.6 Contradiction
+
+A contradiction is any `contradicts` relationship with confidence 0.65 or higher.
+
+- **`Remember:`** The memory is stored regardless. The `contradicts` link is stored with it and no card is raised.
+- **Cloud and custom:** a card is raised and the function returns without storing the fact. See 8.1.
+- **On device:** the memory is stored, and the card is raised afterwards about the stored pair. See 8.2.
+
+### 7.7 Fields and the insert
+
+`NLPEnhancer::enhance(fact)` gives a namespace, an event type and an event date by keyword rules. `NLPEnhancer::extract_entities(fact)` gives the name list stored as JSON in `entities_detected`.
+
+The model's fields win when present and valid (`memory_extras.rs`):
+
+| Field | Rule | Fallback |
+|---|---|---|
+| namespace | `resolve_namespace`: kept only if it is on the canonical list | the NLP namespace |
+| event date | `validate_event_date`: must parse, not be before 1900, not be after today, and not be January 1 unless the message mentions it | the NLP event date |
+| tags | `clean_tags`: lower-cased, no repeats, none over 30 characters, at most five | none. NLP tags are not used |
+| tone | `tone_to_sentiment`: mapped to a label and a score | neutral, 0.0 |
+| entities | `clean_entities`: pronouns, calendar words and bare numbers removed, at most twelve | names from the name finder |
+| event type | not supplied by the model | the NLP event type |
+
+Because the slim call 2 has no namespace, tags, tone or entities, an on-device memory stored through the store-first path has the NLP namespace, no tags and neutral tone.
+
+`memory::insert_memory` then writes the row: title, the fact as `content`, source type, session, embedding, user, namespace, `is_syncable` true, `is_shareable` false, `entities_detected`, event type, event date, and the user's message as `original_text`.
+
+After the insert:
+
+- `provenance_json` is set to `{"annotated": "at write", "by": <backend>, "requested": <true for Remember:>}`.
+- `memory::set_memory_extras` writes `tags`, `sentiment_label` and `sentiment_score`.
+- `memory::insert_memory_entities` writes one `memory_entities` row per entity. The model's list is used when it gave one. Otherwise the name finder's words are used when they have three letters or more and a score of at least 0.6: person, place or org by label, and "thing" for any other capitalised word.
+
+### 7.8 Passing facts
+
+When the model marked the fact `passing`, the row gets `is_ephemeral = 1` and `expires_at` set by `memory_extras::passing_expiry`: 14 days (`PASSING_DAYS`) after the event date when that is in the future, otherwise 14 days from now. After that day recall leaves the memory out (2.4). The row is not deleted by this path. `commands/memory.rs` `keep_memory` clears the expiry when the user chooses to keep it.
+
+HIPAA mode does not use these columns. It stores nothing (section 4).
+
+### 7.9 Links
+
+On device with a titled fact and candidates, `ask_llm_for_links_only` runs now that the memory is on disk, under the `LINKS_SCHEMA` grammar. Its answer passes `filter_local_links`. If the call fails the memory stays, without links.
+
+Each relationship other than `none` is stored with `memory::create_memory_link`:
+
+| Column | Value |
+|---|---|
+| `source_memory_id` | the new memory |
+| `target_memory_id` | the existing memory |
+| `relation_type` | `related`, `contradicts` or `updates` |
+| `confidence` | the model's value, 0.75 when it gave none |
+| `notes` | the model's reason |
+| `created_by` | `local_llm` on device, `llm` otherwise |
+
+`create_memory_link` accepts only the four types in `RELATION_TYPES` (`contradicts`, `updates`, `related`, `resolves`; migration 0022). `resolves` is written only when a card is answered with an explanation.
+
+An `updates` link has a side effect: the target memory's `temporal_status` is set to `superseded` (`memory::set_temporal_status`) and the event `memory-superseded` is sent. The old memory leaves recall and stays in the database. `commands/memory.rs` `restore_memory` undoes this.
+
+`updated_at` is then bumped on the new memory and on every linked memory so the change syncs.
+
+### 7.10 Events to the window
+
+`memory-processing-started` is sent when the fact's work begins. `memory-processing-complete` is sent with status `stored`, `skipped`, `contradiction` or `error`. The session's extraction outcome is recorded as `stored`, `duplicate`, `contradiction`, `model_declined` or `error`.
+
+---
+
+## 8. Conflict cards
+
+A card asks the user about two memories that disagree, or about a possible update. The window shows it with `ConflictResolutionModal.jsx`.
+
+Every card is saved as a row in `memory_cards` (migration 0024) before the event is sent, through `memory::insert_memory_card`. The window may be closed or paused when the card is raised. On open and on every return, `App.jsx` calls `list_pending_memory_cards` and shows the oldest unanswered card. `answer_memory_card` marks a card answered. On Android, `card_notice` also posts a notification: "Zynkbot has a question about a memory".
+
+The card is about the first `contradicts` relationship in the model's answer.
+
+### 8.1 Cloud and custom: ask first
+
+The fact is not stored. The card's payload holds the old memory (`memoryA`), the new fact (`memoryB`), the reason, the confidence, all of call 3's relationships, and a `pending_memory` with the content, title, embedding and original message. The event is `contradiction-detected`.
+
+The answer goes to `commands/memory.rs` `resolve_memory_conflict_v2`:
+
+| Decision | Effect |
+|---|---|
+| `keep_old` | Nothing is stored. |
+| `keep_new` | The new memory is stored. The old one is marked `superseded` and linked from the new one with `updates`. Nothing is deleted. |
+| `not_a_contradiction` | The new memory is stored. No link is made to the old one. |
+| `keep_both` | The new memory is stored and linked `contradicts`, note "user_acknowledged". If the card was the "Is this an update?" form (reason starts "Possibly an update"), the link is `related` instead. |
+| `both_with_explanation` | The new memory is stored and linked `contradicts`, note "resolved:explained". The explanation is stored as a third memory (source type `user_explanation`) and linked `resolves` to both. |
+
+In every storing case the other relationships from call 3 are also written as links. Links made by the user's choice have `created_by` `user` and confidence 0.95.
+
+**What a memory stored this way lacks.** It is written by `lib.rs` `store_pending_memory`, not by the path in section 7. It gets the content, title, embedding, original message, the NLP namespace, event type and event date, and `entities_detected`. It does not get call 2's namespace, tags, tone, `memory_entities` rows, the passing flag, or `provenance_json`. Its source type is always `conversation`, also for a hands-free message.
+
+### 8.2 On device: store first, ask after
+
+The memory is already stored, with its `contradicts` link. The payload holds `stored_memory_id` and both memories, and has no `pending_memory`.
+
+The answer goes to `commands/memory.rs` `resolve_stored_conflict`:
+
+| Decision | Effect |
+|---|---|
+| `keep_new` | The link between the pair is removed. The old memory is marked `superseded` and linked from the new one with `updates`. |
+| `keep_old` | The link is removed and the new memory is deleted. |
+| `not_a_contradiction` | The link is removed. Both memories stay. |
+| `keep_both` | Nothing changes. The `contradicts` link stays. |
+| `keep_both_related` | The link's type is changed to `related`. The window sends this for "keep both" on the "Is this an update?" card. |
+| `both_with_explanation` | The explanation is stored as a memory and linked `resolves` to both. The `contradicts` link stays. |
+
+---
+
+## 9. What is written to the database
+
+Column definitions are in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) and in `zynkbot_rust/src-tauri/migrations/`. This is what the pipeline writes.
+
+| Table | Written by | What |
+|---|---|---|
+| `memory_jobs` | `memory_jobs::enqueue` | one row per queued message |
+| `memories` | `memory::insert_memory`, then updates | the fact and its fields (7.7); `is_ephemeral` and `expires_at` for passing facts; `temporal_status` when replaced; `provenance_json`; `tags`, `sentiment_label`, `sentiment_score` |
+| `memory_entities` | `memory::insert_memory_entities` | name, canonical (lower-case) name, kind |
+| `memory_links` | `memory::create_memory_link` | relationships from call 3, sibling links, links from card answers |
+| `memory_cards` | `memory::insert_memory_card` | one row per card, with the payload as JSON |
+
+In SQLite, `embedding` is a BLOB, `tags` and `entities_detected` are TEXT holding JSON, and dates are TEXT.
+
+Indexes on `memories` (migrations 0001, 0009, 0013): `memories_namespace_idx`, `memories_user_namespace_idx`, `idx_memories_ephemeral`, `idx_memories_expires_at`, `idx_memories_event_date`, `idx_memories_event_type`, `idx_memories_sentiment`, `memories_shareable_idx`, `idx_memories_sync_id`, and the collection indexes. `memory_links` has indexes on source, target, type, confidence and `sync_id`. `memory_entities` has indexes on `canonical` and `memory_id`. There is no index on `user_id` alone, `session_id` or `created_at`.
+
+---
+
+## 10. Data flow diagram
+
+```
+MESSAGE  (send_message_with_memory -> generate_reply)
+   |
+   |- Weather question? -> answered from Open-Meteo, return. No memory work.
+   v
+[1] CONTAINMENT
+   |   child: OpenAI Moderation, then local classifier
+   |   others: check_containment -> enforce (block, warn, or pass)
+   v
+[2] RECALL
+   |   names in the message (bert-base-NER) + embedding (all-MiniLM-L6-v2)
+   |   hybrid_search: top 30 cloud / 10 otherwise, floor 0.35
+   |     leaves out superseded, completed and expired memories
+   |   Zynkbot question: _zynkbot namespace only, no link traversal
+   |   one hop along links: up to 8 linked memories, strongest first
+   v
+[3] PROMPT  (build_prompt)
+   |   memories in the prompt: 30 cloud / 7 custom / 4 on device
+   |   cloud and custom: the MEMORY LINE instruction is included
+   v
+[4] REPLY = CALL 1  (streamed)
+   v
+[5] READ THE REPLY
+   |   web search marker: typed -> strip, return the query, carry on
+   |                      hands-free -> search now, return
+   |   MEMORY line -> yes / no / absent; hidden from the user
+   v
+[6] RESPONSE RETURNED TO THE USER
+   v
+[7] QUEUE DECISION
+   |   skipped: skip_memory_storage, HIPAA mode, ungrounded KB answer
+   |   gate: is_memory_worthy and not a translate/rewrite request
+   |   call 1: cloud/custom need "yes"; on device anything but "no"
+   |   "Remember:" passes the gate and call 1
+   |   -> row in memory_jobs, or outcome skipped / gate_skipped / model_declined
+   v
+============ background worker (memory_jobs.rs), one job at a time ============
+   v
+[8] "Remember:" job -> its text goes straight to [10], no call 2
+   v
+[9] CALL 2  (extract_facts)
+   |   up to 3 facts: fact, title, event_date, passing (+ namespace, tags,
+   |   tone, entities on cloud and custom)
+   |   guards: < 3 words, restated question, no shared word, repeats;
+   |           cosine >= 0.86 between two facts keeps the first
+   |   name correction detected -> a correction fact is put first
+   |   zero facts -> outcome model_declined, stop
+   v
+[10] FOR EACH FACT  (run_memory_background)
+   |
+   |  a. embed the fact text
+   |  b. candidates: hybrid_search (15) -> score >= 0.35 -> sort
+   |       -> remove sibling facts
+   |       -> name correction: memories holding the wrong name go first
+   |       -> keep 10 cloud / 4 otherwise
+   |  c. duplicate check on those candidates
+   |       score > 0.98 or cosine > 0.93 -> not stored (outcome duplicate)
+   |  d. call 3
+   |       no candidates + title        -> skipped
+   |       on device + title            -> deferred to step h
+   |       otherwise                    -> ask_llm_for_relationships
+   |       (on device: "updates" becomes "contradicts")
+   |       call fails                   -> store without links
+   |  e. contradiction (contradicts, confidence >= 0.65), not "Remember:"
+   |       cloud/custom -> save card, send contradiction-detected,
+   |                       STOP without storing            -> [12]
+   |       on device    -> carry on, card raised in step j
+   |  f. fields: model's values when valid, NLP as fallback
+   |  g. insert_memory; then passing expiry, provenance_json,
+   |     tags and tone, memory_entities rows
+   |  h. on device with title and candidates: ask_llm_for_links_only
+   |  i. store links; "updates" marks the old memory superseded
+   |  j. on device contradiction: save card, send contradiction-detected -> [12]
+   v
+[11] AFTER THE LAST FACT
+   |   two or more stored -> linked "related" (said in the same message)
+   v
+[12] CARD ANSWERED BY THE USER  (any time later)
+       cloud/custom: resolve_memory_conflict_v2 (stores the pending memory
+                     through store_pending_memory, unless keep_old)
+       on device:    resolve_stored_conflict (both memories already stored)
+       then answer_memory_card
 ```
 
 ---
 
-## 2. LLM Call
+## 11. Key files
 
-### 2.1 Model Selection
+| File | Role in the pipeline | Functions |
+|---|---|---|
+| `commands/chat.rs` | Entry point, recall, reply, call 1 parse, queue decision, call 2, storage path | `send_message_with_memory`, `generate_reply`, `find_web_search_marker`, `split_inline_memory_marker`, `explicit_remember`, `extract_facts`, `drop_near_duplicates`, `merge_extras`, `run_memory_background` |
+| `memory_jobs.rs` | The job queue | `enqueue`, `take_next`, `ensure_worker`, `process` |
+| `memory_prompts.rs` | Call 2 prompt, schemas and guards | `extraction_prompt_with`, `EXTRACTION_SCHEMA`, `EXTRACTION_SCHEMA_SLIM`, `parse_extraction`, `restates`, `clean_title`, `detect_name_correction` |
+| `memory_extras.rs` | Field validation, passing expiry, rewrite check | `validate_event_date`, `resolve_namespace`, `clean_tags`, `tone_to_sentiment`, `clean_entities`, `passing_expiry`, `is_rewrite_request` |
+| `lib.rs` | Call 3, backend calls, pending-memory storage | `ask_llm_for_relationships`, `ask_llm_for_links_only`, `call_backend_with_schema`, `filter_local_links`, `is_query_about_zynkbot`, `store_pending_memory`, `generate_title_from_content` |
+| `memory.rs` | Search and writes | `hybrid_search`, `hybrid_score`, `query_hints`, `insert_memory`, `set_memory_extras`, `insert_memory_entities`, `create_memory_link`, `set_temporal_status`, `insert_memory_card`, `embedding_text` |
+| `commands/memory.rs` | Card answers and card list | `resolve_memory_conflict_v2`, `resolve_stored_conflict`, `list_pending_memory_cards`, `answer_memory_card`, `restore_memory`, `keep_memory` |
+| `conversation_engine.rs` | Prompt and gate | `build_prompt`, `build_memory_context`, `is_memory_worthy`, `is_api_model` |
+| `commands/safety.rs`, `containment.rs`, `safety_classifier.rs` | Containment | `check_containment`, `ContainmentLayer::enforce`, `check_openai_moderation`, `should_block` |
+| `nlp_enhancer.rs` | Name finder and keyword rules | `extract_entities`, `enhance`, `detect_event`, `detect_namespace` |
+| `llm/local_embeddings.rs` | Embeddings | `generate_local_embedding`, `cosine_similarity` |
+| `weather.rs` | Weather shortcut | `detect`, `answer` |
 
-**Location:** `lib.rs`
+Code that exists but is not part of this pipeline:
 
-**Logic:**
-```
-IF backend contains "anthropic" → Anthropic API
-ELSE IF backend contains "openai" → OpenAI API
-ELSE IF backend contains "xai" → xAI Grok API
-ELSE IF backend ends with ".gguf" → Local GGUF model
-ELSE → Error: Unsupported backend
-```
-
-**Child Mode Override:** Always forces `backend = "openai"` for safety
-
-### 2.2 API Endpoints
-
-#### Anthropic Claude
-
-**File:** `src-tauri/src/llm/anthropic.rs`
-
-**Endpoint:** `https://api.anthropic.com/v1/messages`
-
-**Parameters:**
-```json
-{
-  "model": "claude-sonnet-4-6",
-  "max_tokens": 4096,
-  "messages": [{"role": "user", "content": full_prompt}]
-}
-```
-
-**Model Variants:**
-- `haiku` or default → `claude-haiku-4-5-20251001`
-- `sonnet` → `claude-sonnet-4-6`
-- `opus` → `claude-opus-4-7`
-
-#### OpenAI GPT
-
-**File:** `src-tauri/src/llm/openai.rs`
-
-**Model:** `gpt-4o-mini`
-
-**Parameters:**
-```json
-{
-  "model": "gpt-4o-mini",
-  "messages": [{"role": "user", "content": full_prompt}],
-  "max_tokens": 4096
-}
-```
-
-#### xAI Grok
-
-**File:** `src-tauri/src/llm/openai.rs` (OpenAI-compatible format)
-
-**Model:** `grok-3` or `grok-2-vision-1212` (if "vision" in backend name)
-
-#### Local GGUF Models
-
-**File:** `src-tauri/src/llm/local_models.rs`
-
-**Parameters:**
-```json
-{
-  "model_path": "path/to/model.gguf",
-  "messages": [{"role": "user", "content": full_prompt}],
-  "max_tokens": 256
-}
-```
-
-**Execution:** Blocking task (CPU-bound)
-
-### 2.3 Error Handling
-
-- **Network Errors:** Propagated as error response
-- **API Errors:** Return HTTP status + error text
-- **Invalid Response:** Return "Invalid response" error
-- **Model Not Found:** Return "Unsupported backend" error
-- **Timeout:** Default Tokio timeout ~120 seconds
+- `commands/memory.rs` `pre_check_memory` is a registered Tauri command for a duplicate check. Nothing in the pipeline or in the window's code calls it. The duplicate check that runs is the one in 7.3.
+- `llm_fact_extractor.rs` is marked unused (`#![allow(dead_code)]`).
+- `question_extractor.rs` is reached only through on-demand commands (`check_question_worthiness` and those in `commands/nlp.rs`), not from the chat path.
+- `lib.rs` `ask_llm_for_extras` is called only by `commands/memory_report.rs` `enrich_memory_backlog`, which fills in the fields of older memories.
 
 ---
 
-## 3. Post-LLM Processing
+## 12. Not verified against the code
 
-### 3.1 Response Received
+These points were in earlier versions of this document. The code does not settle them, so they are listed here and not stated as fact.
 
-**Location:** `lib.rs`
-
-**Response Format:**
-```rust
-pub struct LLMResponse {
-    pub content: String,      // Actual text response
-    pub model: String,        // Model name used
-    pub usage: Option<Usage>, // Token counts
-}
-```
-
-### 3.2 Web Search Detection
-
-**Location:** `lib.rs`
-
-**Process:**
-1. Check if response contains `WEB_SEARCH_NEEDED:` marker
-2. Extract suggested query from response
-3. Return early with web search flag (before memory storage)
-
-**Format:**
-```
-LLM Response: "WEB_SEARCH_NEEDED: current weather in Singapore 2026"
-→ Frontend receives: web_search_needed: true, web_search_query: "..."
-```
-
-**Local model fallback:** If the local model doesn't emit the marker, keyword detection triggers automatically for queries containing: weather, today, current, latest, news, stock, score, etc.
-
-### 3.3 Call 1: the MEMORY line (reply says yes or no)
-
-**Location:** `commands/chat.rs` (parse, `memory_flag`), `src-tauri/src/conversation_engine.rs` (the instruction)
-
-**Purpose:** Decide, with no extra model call, whether the message holds anything to store. The reply does not carry the fact any more; it ends with `MEMORY: yes` or `MEMORY: no`.
-
-**Process (cloud and custom backends):**
-1. Scan the reply lines from the end for a line that is only `memory` or `remember` plus `yes`/`no` (case-insensitive; markdown, colons, dashes and end punctuation tolerated). `REMEMBER:` is the older spelling and still accepted.
-2. If no such line exists, look for the marker glued to the end of the last sentence (`split_inline_memory_marker`, 2026-10-25; a cloud reply wrote "...enjoy the game. MEMORY: no" and the phone spoke it). The marker is cut off that line.
-3. The marker line, or the marker suffix, is hidden from the displayed reply and from the Android speech (`NativeVoiceAnswerer.withoutMarker`).
-4. `yes` → the message is queued for call 2. `no` → nothing is stored. No marker at all → nothing is stored, with a log line ("Reply carried no MEMORY line"). An older-style `MEMORY_EXTRACT:` fact line is still recognised and treated as yes (`legacy_fact_line`); the line is hidden.
-
-**Local GGUF models (`on_device_flow`):** no marker is asked for; every message that passes the worthiness gate (3.4) is queued for call 2, and call 2's NONE is the "no". An explicit `MEMORY: no` from such a model, if it writes one, is honoured.
-
-**Explicit override:** a message starting with `Remember:` (section 3.4) is queued regardless, and its text is stored verbatim without call 2.
-
-### 3.3a Call 2: the facts (background, `memory_prompts.rs`)
-
-**Function:** `commands::chat::extract_facts` → `memory_prompts::extraction_prompt_with(message, subject, recent_turns, today, slim)`; `call_backend_with_schema`; `memory_prompts::parse_extraction`.
-
-**Prompt:** today's date; the last exchange of the conversation so the model can resolve "she" and "it" (facts are to come from the message only); then: list the personal facts about {subject} in the message, up to `MAX_FACTS` = 3, one sentence per fact in the third person starting with the subject's name, keeping the message's own words and every detail. The rules, as written: only what the message states, nothing guessed; one thing with its details is one fact ("I'm flying to Denver Thursday for my nephew's wedding" is one fact, not three); what the user asks is not a fact, but what they state while asking is (the raspberry-pie example, with the salt-in-coffee question as the negative); nothing from text they quote, paste or ask to translate; greetings and thanks are not facts; `NONE` when the message holds no fact. Each fact carries a `title` (up to 50 characters) and an `event_date` (`YYYY-MM-DD`, only when the message says or clearly implies it, resolved against today; never a guessed year). Cloud backends also return `namespace`, `tags` (1–3), `tone` and `entities`; the **slim** variant sent to local models asks for fact, title and date only (`EXTRACTION_SCHEMA_SLIM`), the rest coming from the local name finder at storage time.
-
-**Constrained output:** local models are held to the JSON schema (`EXTRACTION_SCHEMA` / `EXTRACTION_SCHEMA_SLIM` through the engine's grammar); cloud models answer free-form and are parsed leniently (`json_body` finds the object or array in the text).
-
-**Guards in `parse_extraction` (so a small model's inventions do not become memories):** a fact under three words is dropped; a fact that shares no content word (three letters or more, not on the filler list; or a number of two or more digits) with the message is dropped and logged; an exact repeat is dropped; a restatement of a fact already kept (four fifths of its content words already in the earlier fact, `restates`) is dropped; at most three facts; a missing title is the opening of the fact, trimmed to 50 characters. Then `drop_near_duplicates`: two facts of one message whose embeddings are closer than cosine 0.86 (`SAME_MESSAGE_DUPLICATE_SIMILARITY`) keep only the first, catching rewordings the word rule misses.
-
-**Result:** zero facts means nothing is stored for the message and the session's extraction outcome is recorded as `model_declined`. One to three facts each run the storage path below as their own memory; all of them keep the user's message as `original_text`.
-
-**Lessons from the memory bench (2026-10-24, `labs/memory_bench/cases.json`, results outside the repo):** never show a small model the literal empty answer (a `{"facts": []}` example collapsed recall from 52 to 34 of 69); a fact stated inside a question needs its own example or the 4B model drops the whole message; a concrete list of what counts works where a judgment phrase ("would matter later") is applied too strictly; the grammar is not the cause of low recall. With the current wording Qwen3-4B-Instruct-2507 Q4_0 found 66 of 69 expected facts with no junk memory from 26 no-fact messages; Claude Sonnet 5 69 of 69; GPT-5.5 68; Grok 4.5 67; Mistral Large 68 but with junk from 14 of the 26 no-fact messages.
-
-### 3.4 Memory Worthiness Gate
-
-**File:** `src-tauri/src/conversation_engine.rs`
-
-**Purpose:** A lightweight pre-filter that rejects obvious non-memories before invoking the LLM. It does not make the final storage decision — the LLM does.
-
-**Gate passes if ALL of the following are true:**
-- ≥3 words
-- Not a pure filler phrase ("okay", "thanks", "lol", "hi", etc.)
-- If ≤5 words, does not start with a filler word
-- Contains at least one word longer than 3 characters
-- Not a pure question (does not start with: what, where, when, why, how, who, can you, do you, is there, tell me, etc.)
-
-**Important:** Messages that START with a first-person statement but contain a question (e.g. "I'm thinking of traveling to Japan, what should I wear?") pass this gate because they begin with "I'm". Pure questions ("What should I wear to Japan?") do not pass — but call 1 (section 3.3) handles those for all models instead.
-
-**Note:** `question_extractor.rs` contains more sophisticated clause-level fact extraction (possessive patterns, NER-based entity detection) available as on-demand Tauri commands (`check_question_worthiness`, `extract_facts_from_question`), but is not wired into the automatic pipeline.
-
-**Explicit override:** A message prefixed with `Remember:` (any case) or the spoken form `remember colon` — what dictation produces when the user says the word "colon" — always passes the gate regardless of content, and the text after the keyword is stored verbatim (`explicit_remember()` in `commands/chat.rs`).
-
-### 3.4a Call 3: relationships (background, inside the storage path)
-
-**File:** `lib.rs`
-
-**Functions:** `ask_llm_for_relationships()` (cloud and custom: returns a title, the extras and the links) and `ask_llm_for_links_only()` (local models: links only, under the `LINKS_SCHEMA` grammar, since call 2 already gave the title and the full call cost the 4B model sixty-odd extra tokens for nothing).
-
-**Timing:** in the job worker, after the reply has been returned, once per fact.
-
-**Input:** the fact from call 2 (or the words after `Remember:`); the most similar existing memories above 35% hybrid similarity, sorted by similarity, excluding the other facts of the same message (`bg_sibling_ids`), capped at **10 on a cloud backend and 4 on a local model**; the backend.
-
-**Skipped** when there is no similar memory and call 2 gave a title: the fact is stored with call 2's title and fields and no links.
-
-**Output:** relationships of type `updates`, `contradicts`, `related` or `none`, each with a confidence; on the cloud also a title and extras, used only where call 2 left a field empty (`merge_extras`). A local model's answers pass `filter_local_links`: a confidence floor (inert at 0.0 today), a dropped-types list (empty today), and every `updates` turned into `contradicts` so the conflict card asks the user instead of the phone's model replacing a memory on its own (the card then reads "Is this an update?").
-
-**Siblings:** after all facts of one message are stored, the worker links them to each other as `related` with the note "said in the same message" (`created_by = same_message`), with no model call.
-
-**Failure:** if call 3 fails the fact is stored without links, titled by call 2 or by `generate_title_from_content`.
-
-**Note:** `llm_fact_extractor.rs` (an older LLM fact-extraction module) exists in the codebase but is not active — it is marked `#![allow(dead_code)]` and is not called in the pipeline. The pre-2026-10-24 single call `ask_llm_about_memory_with_relationships` (decide, title and links in one answer on the raw message) has been removed.
-
-### 3.4b The memory job queue (`memory_jobs.rs`, migration 0023)
-
-Every message that passes call 1 becomes a row in `memory_jobs` (message, backend, source type, containment mode, the `Remember:` text if any, the user's name, the last exchange as context, the query's named things). One worker per process (`ensure_worker`, started after the app handle is stored, five seconds after launch so the app's migrations go first) takes the oldest `pending` row, or a `running` row untouched for five minutes, and runs `process`: the `Remember:` path stores the words as said; otherwise call 2, then the storage path once per fact, then the sibling links. An interruption (the user's next message took the model) leaves the row `pending` and the worker waits three seconds; a real failure retries up to `MAX_ATTEMPTS` = 4, then marks the row `failed`. Idle, the worker sleeps until `enqueue` wakes it or two minutes pass. Rows survive an app restart. Why: a spawned task per message stepped aside for the user's next message and gave up after three interruptions; on a phone a message's work takes minutes, so four quick questions lost the first one's facts (2026-10-24).
-
-### 3.5 Embedding Generation
-
-**Location:** `lib.rs`
-
-**Process:**
-1. Use factual content (not original message)
-2. Generate 384-dim embedding using all-MiniLM-L6-v2
-3. Blocking task (ML-bound)
-
-### 3.6 NLP Enhancement (Fallback for Namespace, Entities, Events)
-
-**File:** `src-tauri/src/nlp_enhancer.rs`
-
-**Location:** `lib.rs`
-
-**Function:** `enhancer.enhance(message: &str)`
-
-**Precedence:** call 2 returns `event_date` (and on cloud backends `namespace`, `tags`, `tone` and `entities`; `memory_extras.rs`, `MemoryExtras`), and call 3 on the cloud returns the same set as a fallback for fields call 2 left empty. Those win when present and valid: `validate_event_date` rejects unparseable, pre-1900, far-future and January 1 placeholder dates; `resolve_namespace` keeps only a namespace from the canonical list; `clean_tags` lower-cases, de-duplicates and caps tags at five; `clean_entities` drops pronouns, calendar words and bare numbers. The NLP enhancer's namespace, event type and event date are the fallback when the model omits a field or it fails validation; NLP does not produce tags at all, so a memory has tags only if the decision call supplied them. <!-- added by Claude 2026-09-09, review -->
-
-**Output:**
-```rust
-pub struct Enhancement {
-    pub title: Option<String>,             // Auto-generated (max 50 chars)
-    pub tags: Vec<String>,                 // Semantic tags
-    pub namespace: String,                 // Category
-    pub event_type: Option<String>,        // birthday, graduation, etc.
-    pub event_date: Option<NaiveDateTime>, // Extracted date
-}
-```
-
-#### Title Generation
-
-**Process:** Generated by the LLM in call 2 (`memory_prompts.rs`, "title: up to 50 characters"); for a `Remember:` memory, which skips call 2, by call 3 on the cloud or by `generate_title_from_content` on a local model. NLP enhancement does not generate titles.
-
-**Example:** "I graduated from MIT in 2020" → "Graduated From MIT In 2020"
-
-#### Event Detection
-
-**Event Types:**
-- `birthday`: Patterns: "born", "birthday", dates
-- `graduation`: Patterns: "graduated", "degree"
-- `work`: Patterns: "work", "job", "employed"
-- `travel`: Patterns: "visit", "travel", "going to"
-- `acquisition`: Patterns: "bought", "purchased"
-- `achievement`: Patterns: "accomplished", "achieved"
-- `relationship`: Patterns: "married", "met"
-
-#### Entity Extraction & Caching
-
-**Process:**
-1. Run BERT NER on factual content
-2. Convert Entity objects to JSONB:
-```json
-[{
-  "word": "Max",
-  "label": "MISC",
-  "score": 0.95,
-  "start": 25,
-  "end": 28
-}, ...]
-```
-3. Store as `entities_detected` JSONB column
-
-**Purpose:** Prevents re-running NER during relationship detection
-
----
-
-## 4. Memory Storage
-
-**File:** `src-tauri/src/memory.rs`
-
-**Location:** `lib.rs`
-
-### Database Insertion
-
-**SQL:**
-```sql
-INSERT INTO memories (
-    title, content, source_type, session_id, embedding,
-    parent_scroll_id, chunk_index, user_id, tags, namespace,
-    is_syncable, is_shareable, entities_detected, event_type, event_date
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-RETURNING id
-```
-
-### Fields Stored
-
-| Field | Type | Purpose | Indexed |
-|-------|------|---------|---------|
-| id | i32 PRIMARY KEY | Unique identifier | Yes |
-| title | TEXT | Auto-generated summary | No |
-| content | TEXT NOT NULL | Factual statements | No |
-| source_type | TEXT | "conversation" | No |
-| session_id | TEXT | Conversation grouping | Yes |
-| embedding | BLOB (binary, 384 × f32) | Semantic vector | No (in-process cosine) |
-| user_id | TEXT | Memory isolation | Yes |
-| tags | TEXT[] | Auto-generated keywords | No |
-| namespace | TEXT | Category (personal/work/travel) | Yes |
-| entities_detected | TEXT (JSON) | Cached BERT NER output | No |
-| event_type | TEXT | Auto-detected event category | No |
-| event_date | TIMESTAMP | Auto-extracted date | No |
-| link_count | INT | Relationship count | No |
-| is_syncable | BOOLEAN | Sync across devices | No |
-| is_shareable | BOOLEAN | Share with others | No |
-| is_ephemeral | BOOLEAN | HIPAA 8-hour expiration | No |
-| expires_at | TIMESTAMP | HIPAA expiration time | No |
-| created_at | TIMESTAMP | Creation timestamp | Yes |
-
-### HIPAA Mode - Ephemeral Memory
-
-**Location:** `lib.rs`
-
-**Process:**
-```rust
-if containment_mode == "hipaa" {
-    is_ephemeral = true
-    expires_at = NOW() + 8 hours
-}
-```
-
-**Purpose:** Auto-delete sensitive healthcare information after 8 hours
-
----
-
-## 5. Relationship Generation
-
-**File:** `src-tauri/src/commands/chat.rs`
-
-**Timing:** In the memory job worker (section 3.4b), after the reply has been returned; one pass per fact.
-
-### 5.1 Similarity Search
-
-**Function:** `detector.find_similar_by_embedding()`
-
-**Process:**
-1. Get new memory embedding (cached if available)
-2. Get existing memory embeddings (batch retrieval)
-3. Compute cosine similarity for each pair:
-   ```
-   similarity = dot_product(new, existing) / (magnitude(new) × magnitude(existing))
-   ```
-4. Filter: similarity ≥ 0.39 threshold
-5. Sort by similarity score (descending)
-
-**Threshold:** 0.39 (39% similarity) - balanced to capture relationships
-
-### 5.2 Entity Extraction
-
-**Location:** `lib.rs`
-
-**Process:**
-1. Extract entities from new memory using BERT NER
-2. Convert to lowercase strings
-3. Pass to relationship detector
-
-### 5.3 Relationship Type Classification
-
-Relationship types (updates, contradicts, related; four stored types since migration 0022, 2026-10-23) are classified by the LLM in call 3, `ask_llm_for_relationships()` on cloud and custom backends and `ask_llm_for_links_only()` on local models (section 3.4a). The LLM returns a confidence score (0.0–1.0) for each detected relationship. Contradictions require confidence >= 0.65 before triggering the modal; other relationship types are stored at whatever confidence the LLM assigns.
-
-### 5.4 Link Storage
-
-**File:** `src-tauri/src/memory.rs`
-
-**SQL:**
-```sql
-INSERT INTO memory_links (
-    source_memory_id, target_memory_id, relation_type,
-    confidence, notes, created_by
-) VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id
-```
-
-**Fields:**
-
-| Field | Type | Example |
-|-------|------|---------|
-| id | INT PRIMARY KEY | AUTO |
-| source_memory_id | INT | Newly created memory |
-| target_memory_id | INT | Existing memory |
-| relation_type | TEXT | contradicts, updates, related, resolves |
-| confidence | FLOAT (0-1) | Cosine similarity score |
-| notes | TEXT | "Shares entities: dog, name" |
-| created_by | TEXT | "ai" for auto-detected |
-| created_at | TIMESTAMP | NOW() |
-
-**Active Relationship Types** (since 0022):
-- related (absorbed supports, elaborates, caused_by)
-- contradicts
-- updates (marks the older memory `superseded`: out of recall, kept as history)
-- resolves (generated by user conflict resolution only)
-
-**Reserved (registered in database, not generated by pipeline):**
-- quotes
-- mentions
-
-### 5.5 Contradiction Events
-
-**Location:** `commands/chat.rs` (`run_memory_background`)
-
-**Process:**
-1. Contradiction detected in call 3's output
-2. Fetch both memory details
-3. **Cloud and custom backends: the memory is NOT stored yet** — storage is blocked pending the user's decision. **Local models (2026-10-23): store first, ask after.** Their background pass can take minutes on a phone and a memory held for an unanswered card was simply lost, so the new memory is stored like any other and the card is raised afterwards about the already-stored pair (`resolve_stored_conflict`). An explicit `Remember:` is stored regardless, with the contradiction noted.
-4. Emit event to frontend:
-
-```rust
-emit("contradiction-detected", {
-    "memoryA": {id, content, title, created_at},
-    "memoryB": {id, content, title, created_at},
-    "sharedEntities": ["dog", "name"]
-})
-```
-
-**Frontend:** Shows ConflictResolutionModal for user decision. Memory is only stored after the user selects a resolution via `resolve_memory_conflict_v2`.
-
----
-
-## 6. Duplicate & Contradiction Pre-Checks
-
-**File:** `lib.rs`
-
-**Function:** `pre_check_memory()`
-
-**Timing:** Fire-and-forget background task. Runs BEFORE memory storage when a contradiction is detected — storage is gated on user resolution.
-
-### 6.1 Keyword Extraction
-
-**Process:**
-1. Extract ALL nouns (not just named entities)
-2. Use NLP enhancer's `extract_keywords()` method
-3. Includes common words (dog, house, car, etc.)
-
-### 6.2 Embedding Generation
-
-**Process:**
-1. Generate 384-dim embedding using all-MiniLM-L6-v2
-2. Same model as memory embeddings
-
-### 6.3 Hybrid Search
-
-**Process:**
-1. Find top 15 similar memories (>35% threshold)
-2. Using same hybrid scoring as conversation
-3. Exclude the newly stored memory
-
-### 6.4 Duplicate Detection
-
-**Process:**
-1. Check hybrid score against all candidates: threshold >0.98 (entity + semantic match)
-2. If no hybrid duplicate, check pure cosine similarity: threshold >0.93
-3. If duplicate found:
-   - Skip memory storage entirely
-   - EXIT background task early (don't check contradictions)
-
-### 6.5 Contradiction Detection
-
-> **Note:** This pattern-based contradiction detection is currently disabled — `pre_check_memory` returns after the duplicate check and the code below is unreachable. Contradiction detection is handled by the LLM background task (section 3.4). This rule-based approach is preserved as a potential fast pre-filter for a future version.
-
-#### Step 1: Keyword Matching
-
-**Process:**
-```rust
-For each candidate memory:
-    - Extract keywords from candidate
-    - Find shared keywords
-    - Filter stop words and <3 char keywords
-```
-
-#### Step 2: Semantic Pattern Groups
-
-**Pattern Groups:**
-```rust
-[
-    // Name patterns
-    ["named ", "name is ", "called ", "goes by ", "known as "],
-
-    // Identity patterns
-    ["i am ", "i'm ", "my name is ", "i call myself "],
-
-    // Location patterns
-    ["lives in ", "from ", "resides in ", "based in "],
-
-    // Work patterns
-    ["works at ", "employed by ", "teaches at "],
-
-    // Relationship patterns
-    ["married to ", "spouse is ", "wife is ", "husband is "],
-
-    // Age patterns
-    ["i'm ", "i am ", "age is ", "years old"],
-
-    // Possession patterns
-    ["i own ", "i have ", "my car is ", "my pet is "]
-]
-```
-
-#### Step 3: Smart Gating
-
-**Logic:**
-```
-IF both texts match semantic patterns + 1+ shared entity:
-    → Check for contradiction
-ELSE IF 2+ shared entities OR (1+ entity + 85%+ similarity):
-    → Check for contradiction
-ELSE:
-    → Skip (prevents false positives)
-```
-
-#### Step 4: Contradiction Detection
-
-**Pattern 1: Negation**
-```
-IF one text has negation word + other doesn't:
-    AND shared_entities > 0:
-        → CONTRADICTION!
-
-Example: "I have a dog" vs "I don't have a dog"
-```
-
-**Pattern 2: Semantic Substitution**
-```
-FOR each pattern_group:
-    - Extract pattern match from both texts
-    - If both match SAME pattern with DIFFERENT values:
-        → CONTRADICTION!
-
-Example:
-    New: "I'm named Max"     (pattern: "named ")
-    Old: "I'm named Wendy"   (pattern: "named ")
-    Values: "Max" != "Wendy" → Contradiction!
-```
-
-### 6.6 Conflict Resolution
-
-**File:** `lib.rs`
-
-**Function:** `resolve_memory_conflict_v2()`
-
-**Resolution Options:**
-
-| Option | Action | Notes |
-|--------|--------|-------|
-| `keep_old` | Discard new memory (never stored) | Old memory unchanged |
-| `keep_new` | Store new; mark old `superseded` and link `updates` (since 2026-10-23, nothing deleted) | New becomes primary, old is history |
-| `not_a_contradiction` | Store new + remove `contradicts` link | User confirmed both are true and unrelated |
-| `keep_both` | Store new + keep `contradicts` link | Both memories retained; contradiction edge preserved in graph (possible future hallucination) |
-| `both_with_explanation` | Store new + store user's explanation as a third memory | Explanation memory linked to both conflicting memories via `resolves` edges; one-hop traversal surfaces it on future recall of either memory |
-
----
-
-## 7. Memory Indexing
-
-### 7.1 SQLite Indexes
-
-**Primary Indexes:**
-- `memories.id`: INTEGER PRIMARY KEY
-- `memories_user_id_idx`: User isolation queries
-- `memories_namespace_idx`: Namespace filtering
-- `memories_session_id_idx`: Session grouping
-- `memories_created_at_idx`: Temporal queries
-
-### 7.2 Vector Search (In-Process)
-
-Vector similarity is computed in Rust, not at the database layer. All candidate embeddings (stored as binary BLOBs) are fetched and cosine similarity is computed in the Rust process via Candle. No SQL vector index is used — SQLite does not support vector index types.
-
-**Performance:** Sufficient for personal memory workloads (tested to 500k+ rows without performance issues). For very large databases, sqlite-vec extension is under evaluation as an optional enhancement.
-
-### 7.3 Entity Matching
-
-`entities_detected` is stored as a TEXT column containing a JSON array. Entity overlap scoring is done in Rust by deserializing the stored JSON and comparing entity sets in-process. No database-level JSON index is used.
-
----
-
-## 8. Data Flow Diagram
-
-```
-USER INPUT
-    ↓
-[1] CONTAINMENT CHECK (TinyBERT Safety Classifier)
-    ├─ Witness: Pass-through
-    ├─ Guardian/Default: Block if flagged
-    ├─ Sovereign: Warn + continue
-    ├─ Child: OpenAI Moderation API + TinyBERT
-    ├─ HIPAA: PHI/Diagnosis/Dosing checks
-    ↓
-[2] ENTITY EXTRACTION (Candle BERT NER)
-    └─ Extract entities, filter stop words
-    ↓
-[3] EMBEDDING GENERATION (all-MiniLM-L6-v2, 384-dim)
-    └─ Vectorize query for search
-    ↓
-[4] HYBRID SEARCH (Entity + Semantic)
-    ├─ Find top 15 memories for API models, top 7 for local (threshold: 35%)
-    └─ Add all one-hop graph-linked memories (elaborates, contradicts, resolves) — no cap
-    ↓
-[5] BUILD CONVERSATION CONTEXT
-    ├─ System prompt
-    ├─ Conversation history (adaptive limits)
-    ├─ Recalled memories (adaptive limits)
-    ├─ KB context (if enabled)
-    └─ User question
-    ↓
-[6] LLM CALL
-    ├─ Anthropic Claude (haiku/sonnet/opus)
-    ├─ OpenAI GPT-4o-mini
-    ├─ xAI Grok
-    └─ Local GGUF model
-    ↓
-[7] POST-LLM PROCESSING
-    ├─ Call 1: read "MEMORY: yes|no" (own line, or glued to the last sentence); hide it
-    ├─ Check for WEB_SEARCH_NEEDED marker → return early if found
-    └─ Local model: no marker asked for; every gated message goes on to call 2
-    ↓
-[8] MEMORY WORTHINESS GATE
-    ├─ Reject filler, <3 words, pure questions
-    ├─ Explicit "Remember:" bypasses gate and call 2 (stored verbatim)
-    └─ Gate passed and call 1 said yes → row in memory_jobs
-    ↓
-[9] JOB WORKER (memory_jobs.rs): one row at a time, oldest first
-    ├─ Call 2: extract_facts() → up to 3 facts, each with title and date
-    │  (guards: ≥3 words, shares a content word, no restatement, cosine ≥0.86 dedupe)
-    ├─ Zero facts → nothing stored ("model_declined")
-    └─ For each fact: run_memory_background()
-       ├─ Generate embedding of the fact
-       ├─ Duplicate check (>98% hybrid OR >93% cosine) → skip the fact
-       ├─ Similar memories: ≥35%, minus the message's other facts, top 10 cloud / 4 local
-       ├─ Call 3 (skipped when nothing similar and a title exists):
-       │  ask_llm_for_relationships() cloud / ask_llm_for_links_only() local
-       │  └─ relationships: updates | contradicts | related | none
-       │     (local "updates" becomes "contradicts": the card asks)
-       ├─ Contradiction, cloud: emit "contradiction-detected", WAIT for the card
-       ├─ Contradiction, local: store first, raise the card after
-       └─ Otherwise → continue to NLP enhancement
-    └─ After the last fact: siblings linked "related" (said in the same message)
-    ↓
-[10] NLP ENHANCEMENT
-    ├─ Generate title
-    ├─ Extract tags
-    ├─ Run BERT NER → Cache entities
-    ├─ Detect event type
-    └─ Extract event date
-    ↓
-[10] GENERATE EMBEDDING
-    └─ all-MiniLM-L6-v2 on factual content
-    ↓
-[11] STORE MEMORY IN DATABASE (via store_pending_memory)
-    ├─ Called immediately if no contradiction detected
-    └─ Called from resolve_memory_conflict_v2 after user resolves contradiction
-    ↓
-[12] BACKGROUND: RELATIONSHIP DETECTION
-    ├─ Compute cosine similarities
-    ├─ Classify relationship types
-    └─ Store memory_links (non-contradiction relationships)
-    ↓
-[13] BACKGROUND: DUPLICATE PRE-CHECK (pre_check_memory)
-    ├─ Hybrid search for candidates
-    └─ Check duplicates (>95% cosine similarity) → delete if found
-    (Pattern-based contradiction detection disabled — LLM handles it in step [9])
-    ↓
-[14] USER CONFLICT RESOLUTION (Manual)
-    ├─ keep_old              → discard new, old unchanged
-    ├─ keep_new              → store new, old becomes history (superseded)
-    ├─ not_a_contradiction   → store new, remove contradicts link
-    ├─ keep_both             → store new, keep contradicts link
-    └─ both_with_explanation → store new + store explanation memory (resolves → both)
-    ↓
-RESPONSE RETURNED TO USER
-    ├─ reply_text
-    ├─ recalled_memories
-    ├─ model_backend
-    └─ containment_mode
-```
-
----
-
-## 9. Performance Characteristics
-
-### 9.1 Memory Usage (Approximate — varies by hardware)
-
-- **TinyBERT Model:** loaded once at startup, resident for session
-- **all-MiniLM-L6-v2:** loaded once at startup, resident for session
-- **BERT NER:** loaded once at startup, resident for session
-- **Local GGUF models:** 5GB–70GB depending on model size and quantization
-- **In-Memory Vectors:** approximately 1–2 MB per 1,000 memories (384 floats × 4 bytes)
-
-### 9.3 Database Scalability
-
-- **Designed to scale to:** 1M+ memories; tested to 500k+ rows without performance issues on personal memory workloads
-- **Vector search:** In-process cosine similarity in Rust; all embeddings fetched and scored in memory
-- **Typical query:** Fast at scale — performance depends on database size and hardware
-- **Batch embeddings:** Faster than sequential generation when processing multiple texts
-- **Concurrent request protection:** The UI disables all input while a response is in flight, preventing overlapping LLM calls; the post-response memory pipeline runs asynchronously via sqlx's connection pool
-
----
-
-## 10. Key Files Reference
-
-| File | Purpose | Key Functions |
-|------|---------|----------------|
-| `lib.rs` | Main orchestration, call 3 | `ask_llm_for_relationships()`, `ask_llm_for_links_only()`, `call_backend_with_schema()`, `filter_local_links()`, `check_containment()`, `pre_check_memory()`, `resolve_conflict()` |
-| `memory.rs` | Memory operations | `insert_memory()`, `hybrid_search()`, `create_memory_link()` |
-| `containment.rs` | Safety enforcement | `enforce()`, HIPAA checks |
-| `safety_classifier.rs` | TinyBERT toxicity | Classification by category |
-| `conversation_engine.rs` | Prompt building | `is_memory_worthy()`, `build_prompt()` (the MEMORY LINE block), `build_memory_context()` (grouping by source message) |
-| `memory_prompts.rs` | Call 2: the facts | `extraction_prompt_with()`, `EXTRACTION_SCHEMA(_SLIM)`, `parse_extraction()`, `restates()`, `clean_title()` |
-| `memory_jobs.rs` | The background job queue | `enqueue()`, `take_next()`, `ensure_worker()`, `process()` |
-| `commands/chat.rs` | Call 1 parse, the gate, the storage path | `split_inline_memory_marker()`, `extract_facts()`, `drop_near_duplicates()`, `run_memory_background()` |
-| `nlp_enhancer.rs` | NLP tasks | `extract_entities()`, `enhance()`, `detect_event()` |
-| `llm/anthropic.rs` | Claude API | `send_message()` |
-| `llm/openai.rs` | GPT API | `send_message()` |
-| `llm/xai.rs` | Grok API | `send_message()` |
-| `llm/local_models.rs` | GGUF models | `generate_with_local_model()` |
-| `llm/local_embeddings.rs` | Embeddings | `generate_local_embedding()` |
-
----
-
-## 11. Important Notes & Caveats
-
-### Embedding Cache Optimization
-- Relationship detection reuses embeddings already stored in the database rather than regenerating them
-
-### Entity-Based Contradiction Matching
-- Uses ALL nouns, not just named entities
-- Catches "dog named Max" vs "dog's name is Wendy"
-
-### Hybrid Search Scoring
-- 60% entity overlap + 40% semantic similarity
-- Lower threshold than pure semantic (0.60) but more precise
-
-### Stop Word Filtering
-- Applied at multiple stages: entity extraction, keyword matching
-- Prevents false positives from common words
-
-### HIPAA Compliance
-- Ephemeral memories auto-expire after 8 hours
-- PHI patterns blocked: SSN, credit cards, medical IDs
-- Diagnosis/medication dosing prevented
-
-### Race Conditions
-- Memory stored → Background contradiction check → User resolves → Delete
-- Pre-check runs asynchronously to avoid blocking user response
-
----
-
-## Conclusion
-
-The Zynkbot memory processing pipeline is designed for privacy-first operation with all ML models running locally, optional API backends for LLM generation, and sophisticated relationship detection using embeddings and semantic pattern matching. The system balances performance, accuracy, and safety through a multi-stage pipeline that can process and contextualize personal information at scale.
-
-For questions or contributions, please refer to the main repository documentation.
-
-For a detailed explanation of the relationship graph itself — what it visualizes, its practical uses, and the theoretical research potential of the data it produces — see [Memory Relationship Graph](MEMORY_RELATIONSHIP_GRAPH.md).
+- How many memories the in-process search has been tested with. An earlier version said 500,000 rows. No test or measurement in the repository shows this.
+- Memory use of the loaded models and of the vectors.
+- Request timeouts for the cloud calls.
+- Whether the window disables input while a reply is in flight.

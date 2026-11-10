@@ -2436,7 +2436,7 @@ export default function App() {
             💡 <strong>Tip:</strong> To ask about Zynkbot's features, include "Zynkbot" in your question — e.g., <em>"Zynkbot, how does Ensemble Mode work?"</em>
           </p>
           <p style={{fontSize: '0.85rem', color: '#ffb86c', lineHeight: '1.6', padding: '10px', background: '#1e1f29', borderRadius: '4px', border: '1px solid #44475a', marginTop: '8px'}}>
-            ⚠️ <strong>Before you start:</strong> If you've been exploring with the Albert Einstein demo user, open the Memory Manager and click "Clear All Memories" first — otherwise his memories will conflict with yours during onboarding.
+            ⚠️ <strong>Before you start:</strong> If you've been exploring with the Albert Einstein demo user, open the Memory Manager, open Storage and click "Clear All" first — otherwise his memories will conflict with yours during onboarding.
           </p>
           </div>
         </ControlsPage>

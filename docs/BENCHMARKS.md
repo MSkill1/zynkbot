@@ -248,6 +248,8 @@ MEMORY_BENCH_BACKENDS=anthropic,/path/to/model.gguf MEMORY_BENCH_SLIM=1 \
 # the app sends every local model); provider names get the cloud prompt. REPLY_BENCH_RUNS
 # (default 3) repeats each case; REPLY_BENCH_VARIANTS=before,after compares the phone's old
 # instruction block with the current one; REPLY_BENCH_PAUSE_MS paces a free-tier provider.
+# REPLY_BENCH_SET picks the case file (cases.json by default, cases_2.json the second set);
+# REPLY_BENCH_SWAPS names a JSON file of trial wordings to run as extra variants.
 REPLY_BENCH_MODEL=/path/to/model.gguf,anthropic REPLY_BENCH_VARIANTS=after \
   LD_LIBRARY_PATH=lib/vosk cargo test --features cuda --lib reply_bench -- --ignored --nocapture
 
@@ -301,6 +303,29 @@ included, talk about saving and remembering on three statements ("I'll remember 
 Gemma 4 models say "I've noted that" on one or two statements each. Every local model but
 Sophro asked for a web search when asked the capital of Australia.
 
+**One sentence changed on 2026-11-10, against "I've noted that".** On a second look the
+habit was mostly Gemma 4 12B's: with the prompt above it wrote "I've noted" in 18 of 57
+statement replies over two case sets (the 25 above and 29 new ones, `cases_2.json`, written
+that day so the choice was not judged only on the messages it was tuned on). The end of the
+statement paragraph, "do not say whether you have it stored", became "and say nothing about
+noting, saving or storing it". Three wordings were tried beside the old one; this was the
+only one that was no worse on either set for any of the three models.
+
+| Model | Set 1 before | Set 1 after | Set 2 before | Set 2 after | "I've noted" before | after |
+|---|---|---|---|---|---|---|
+| Sophro 4B | 22 of 25 | 21 | 26 of 29 | 27 | 0 of 57 | 0 |
+| Gemma 4 12B | 24 | 25 | 27 | 28 | 18 of 57 | 0 |
+| Gemma 4 E4B | 23 | 24 | 25 | 26 | 5 of 57 | 0 |
+
+A difference of one case is inside what moves between two runs of the same prompt (the set 1
+numbers "before" are a point higher than the table above for that reason), so the honest
+reading is: the phrase is gone from both Gemma 4 models, and nothing else moved. Sophro is
+unchanged. Its failures are its own and remain: "I don't have that info" to the pottery
+class in two runs of three, the date note echoed as the whole answer to one recall question,
+and an invented colour for the boat. A shorter trial wording ("Do not check it against the
+memories or talk about remembering it") passed all 29 of Sophro's set 2 cases but left Gemma
+4 12B saying "I've noted" as before, so it was not taken.
+
 The Gemma 4 rows are from the second run, with the engine speaking Gemma 4's own format
 (below). The first run, in Gemma 3's markers, scored 24 and 21; the difference is within
 the two or three cases that move between runs.
@@ -339,7 +364,8 @@ architecture to the Mistral Instruct format (its result above was run with that 
 Beijing's wording on Taiwan and Xinjiang (section 3); Gemma 4 and Ministral do not carry
 those positions. All six are Apache 2.0.
 
-Result files: `~/Documents/Zynk_related/reply_bench/RESULTS_*_20261109-*.md` and
+Result files: `~/Documents/Zynk_related/reply_bench/RESULTS_*_20261109-*.md`, the
+`20261110_trial_set*` and `20261110_shipped_set*` folders beside them, and
 `~/Documents/Zynk_related/memory_bench/*-20261109-1621.json`, `*-20261109-17*.json`.
 
 ## 6. Limits, stated plainly
