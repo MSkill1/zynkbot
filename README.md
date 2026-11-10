@@ -311,13 +311,13 @@ Every installation runs in exactly one containment mode at a time. The default i
 | **Child**     | Strict                | For minors, aggressive filtering  |
 | **Sovereign** | Warnings only (default) | Warns but doesn't block         |
 | **Witness**   | No filtering          | Full freedom, no restrictions     |
-| **HIPAA**     | Healthcare-oriented   | PHI detection, no memory storage  |
+| **HIPAA**     | Healthcare-oriented   | PHI removal, no memory storage    |
 
 **How filtering works:**
 
 - **Guardian / Sovereign / Witness**: Local TinyBERT (toxic-bert) model — runs entirely on your device, no data leaves
 - **Child Mode**: OpenAI Moderation API — requires an OpenAI API key for the strictest protection
-- **HIPAA Mode**: Pre-LLM PHI detection (SSN, phone, email, etc.) + audit logging + enforced ephemeral mode (nothing stored)
+- **HIPAA Mode**: identifiers (SSN, phone, email, record number, a patient's name and more) removed before the model call + audit logging + enforced ephemeral mode (nothing stored)
 
 **[→ Mode Features Guide](docs/FEATURES.md#-containment-modes)**
 

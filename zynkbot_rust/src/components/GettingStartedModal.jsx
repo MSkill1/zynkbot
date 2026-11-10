@@ -27,11 +27,11 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
             <div style={{ flex: '1', minWidth: '200px', background: '#21222c', borderRadius: '8px', padding: '12px', borderLeft: '3px solid #50fa7b' }}>
               <strong style={{ color: '#50fa7b' }}>🖥️ Local model (free)</strong>
-              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Download the Zynkbot model and run entirely on your device. No API keys, no cost, complete privacy. Slower on most hardware.</p>
+              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Download the Zynkbot model and run it entirely on your device. No API key, no cost, and nothing leaves the device. Slower on most hardware.</p>
             </div>
             <div style={{ flex: '1', minWidth: '200px', background: '#21222c', borderRadius: '8px', padding: '12px', borderLeft: '3px solid #8be9fd' }}>
               <strong style={{ color: '#8be9fd' }}>⚡ API key (pay-per-use)</strong>
-              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Connect Claude, GPT, Grok, or Mistral via API key for fast, capable responses. Most users spend $2–15/month.</p>
+              <p style={{ margin: '6px 0 0', fontSize: '0.88rem', color: '#ececec' }}>Connect Claude, GPT, Grok, or Mistral via API key for fast, capable responses. Your data is still protected: your memories and conversations are stored only on this device, and the providers keep API requests for a limited time, for security reasons only. Most users spend $2–15/month.</p>
             </div>
           </div>
           <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -45,23 +45,6 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
               onClick={() => setShowCostGuide(true)}
               style={{ padding: '8px 18px', background: 'none', color: '#50fa7b', border: '1px solid #50fa7b', borderRadius: '8px', cursor: 'pointer', fontSize: '0.9rem' }}
             >💰 What will this cost? →</button>
-          </div>
-        </div>
-
-        {/* Step 0: the kitchen */}
-        <div className="guide-step">
-          <div className="step-number">0</div>
-          <div className="step-content">
-            <h3>Try it in the kitchen</h3>
-            <p>
-              The quickest way to see what the memory system is for: tell Zynkbot what you cooked
-              tonight and how it went. Tomorrow ask "what can I make tonight?" It remembers what you
-              liked, what you refused, and how you are trying to eat, and it plans around that.
-            </p>
-            <p className="guide-note">
-              <strong>Fell off the diet?</strong> Tell it to forget those weeks and start again. The
-              memory is yours to edit. Everything stays on this device.
-            </p>
           </div>
         </div>
 

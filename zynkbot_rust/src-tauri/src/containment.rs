@@ -28,13 +28,15 @@
 ///
 /// - **hipaa**: Healthcare compliance with PHI protection
 ///   Use case: Medical contexts where patient data must be protected
+///   Implementation: identifiers are removed from everything a model is sent
+///   (`redact_phi`, called from the chat and Ensemble paths); requests for a diagnosis,
+///   a dose or a treatment decision are refused (`enforce_hipaa`)
 ///
 /// Users can extend this framework to create custom modes for their specific needs
 /// (e.g., educational mode, professional mode, etc.)
 use serde::{Deserialize, Serialize};
 use crate::safety_classifier;
 use serde_json::json;
-use std::path::Path;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use chrono::Utc;
@@ -50,6 +52,118 @@ Your responses must be:\n\
 If a request is inappropriate, explain why it's not safe in child-friendly language and \
 suggest a safer alternative. Never provide information that could help a child access \
 inappropriate content or unsafe situations.";
+
+/// One kind of identifier removed in HIPAA mode: what is left in its place, how it is
+/// named when the user is told, and the pattern that finds it.
+struct PhiKind {
+    tag: &'static str,
+    one: &'static str,
+    many: &'static str,
+    re: regex::Regex,
+}
+
+/// The identifiers HIPAA mode removes, in the order they are applied. Order matters: a
+/// labelled record number and a card number are taken before the shorter number shapes
+/// that would otherwise match inside them.
+///
+/// Every pattern needs a shape or a label, never a bare run of digits: until 2026-11-10
+/// any 5-, 9- or 10-digit number counted as a ZIP code, an SSN or a phone number, and
+/// "10000 steps" blocked the message. What this cannot find is listed in
+/// docs/architecture_and_development/HIPAA_SECURITY_INTEGRATION_GUIDE.md, "Known limits":
+/// a name with no "patient" in front of it, an address written in lower case, a date
+/// that is not marked as a date of birth, and anything inside a picture.
+static PHI_KINDS: once_cell::sync::Lazy<Vec<PhiKind>> = once_cell::sync::Lazy::new(|| {
+    const MONTH: &str = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?";
+    const STATES: &str = "AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY";
+    let kind = |tag, one, many, pattern: &str| PhiKind {
+        tag, one, many,
+        re: regex::Regex::new(pattern).expect("PHI pattern compiles"),
+    };
+    vec![
+        // "MRN 4829201", "member ID: ABC-12345", "policy number is 99812".
+        kind("[record number removed]", "record or member number", "record or member numbers",
+            r"(?i)\b(?:MRN|medical record(?: number| no\.?)?|patient id|member id|subscriber id|insurance id|policy (?:number|no\.?)|account (?:number|no\.?)|health plan (?:number|id))\s*(?:is|:|#|=)?\s*#?\s*[A-Z0-9][A-Z0-9-]*\d[A-Z0-9-]*"),
+        kind("[card number removed]", "card number", "card numbers",
+            r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"),
+        // With its dashes, or nine digits after the words.
+        kind("[SSN removed]", "Social Security number", "Social Security numbers",
+            r"(?i)\b(?:SSN|social security(?: number| no\.?)?)\s*(?:is|:|#)?\s*\d{3}[-\s]?\d{2}[-\s]?\d{4}\b|\b\d{3}-\d{2}-\d{4}\b"),
+        // "(555) 123-4567", "555-123-4567", "555.123.4567", "+1 555 123 4567", or ten
+        // digits after the word.
+        kind("[phone number removed]", "phone number", "phone numbers",
+            r"(?i)(?:\+?1[-.\s]?)?(?:\(\d{3}\)\s?|\b\d{3}[-.\s])\d{3}[-.\s]\d{4}\b|\b(?:phone|tel|telephone|cell|mobile|fax)(?: number| no\.?)?\s*(?:is|:|#)?\s*\d{10}\b"),
+        kind("[email address removed]", "email address", "email addresses",
+            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+        // Only a date marked as a birth date. Other dates stay: the memory system's own
+        // date notes and today's date are in every prompt.
+        kind("[date of birth removed]", "date of birth", "dates of birth",
+            &format!(r"(?i)\b(?:DOB|D\.O\.B\.?|date of birth|birth ?date|born(?: on)?)\s*(?:is|:|=)?\s*(?:\d{{1,2}}[/.-]\d{{1,2}}[/.-]\d{{2,4}}|\d{{4}}-\d{{2}}-\d{{2}}|{m}\s+\d{{1,2}}(?:st|nd|rd|th)?,?\s+\d{{4}}|\d{{1,2}}(?:st|nd|rd|th)?\s+{m},?\s+\d{{4}})", m = MONTH)),
+        // "123 Main St", "45 North Elm Street": a number, one to four capitalised words,
+        // a capitalised street word. Case matters here, so "5 miles down the road" stays.
+        kind("[street address removed]", "street address", "street addresses",
+            r"\b\d{1,6}\s+(?:[A-Z][A-Za-z'.]*\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Boulevard|Blvd|Way|Place|Terrace|Circle|Highway|Hwy)\b\.?"),
+        // After a state's two letters, after the word, or in the nine-digit form.
+        kind("[ZIP code removed]", "ZIP code", "ZIP codes",
+            &format!(r"\b(?:{s})[ ,]+\d{{5}}(?:-\d{{4}})?\b|(?i:\bzip(?: code)?\s*(?:is|:)?\s*)\d{{5}}(?:-\d{{4}})?\b|\b\d{{5}}-\d{{4}}\b", s = STATES)),
+        kind("[IP address removed]", "IP address", "IP addresses",
+            r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+        // "patient John Smith", "patient: Mrs. Ana Lopez", "the client's name is ...".
+        // Two capitalised words at least: one alone is too often not a name.
+        kind("[patient name removed]", "patient name", "patient names",
+            r"\b(?i:patient|client)(?:'s)?(?:\s+(?i:named|name\s+is|name:|name|is|was)|\s*:)?\s+(?:(?:Mr|Mrs|Ms|Miss|Dr)\.?\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z'-]+){1,2}\b"),
+    ]
+});
+
+/// What `redact_phi` took out: how each kind is named, and how many of it.
+pub type PhiFound = Vec<(&'static str, &'static str, usize)>;
+
+/// HIPAA mode: take the identifiers out of `text`, leaving a short tag where each was.
+/// Returns the cleaned text and what was removed. The text removed is returned to no
+/// one and logged nowhere.
+pub fn redact_phi(text: &str) -> (String, PhiFound) {
+    let mut out = text.to_string();
+    let mut found: PhiFound = Vec::new();
+    for k in PHI_KINDS.iter() {
+        let n = k.re.find_iter(&out).count();
+        if n > 0 {
+            out = k.re.replace_all(&out, k.tag).into_owned();
+            found.push((k.one, k.many, n));
+        }
+    }
+    (out, found)
+}
+
+/// Add one result of `redact_phi` to a running total.
+pub fn merge_phi(total: &mut PhiFound, more: PhiFound) {
+    for (one, many, n) in more {
+        match total.iter_mut().find(|(o, _, _)| *o == one) {
+            Some(entry) => entry.2 += n,
+            None => total.push((one, many, n)),
+        }
+    }
+}
+
+/// "1 phone number and 2 email addresses", for the line the user is shown.
+pub fn describe_phi(found: &PhiFound) -> String {
+    let parts: Vec<String> = found.iter()
+        .map(|(one, many, n)| format!("{} {}", n, if *n == 1 { one } else { many }))
+        .collect();
+    match parts.len() {
+        0 => String::new(),
+        1 => parts[0].clone(),
+        n => format!("{} and {}", parts[..n - 1].join(", "), parts[n - 1]),
+    }
+}
+
+/// The audit line for a removal: where it happened and how many of each kind. Counts
+/// only, never the text.
+pub fn audit_phi_removed(place: &str, found: &PhiFound) {
+    if found.is_empty() { return; }
+    let counts: serde_json::Map<String, serde_json::Value> = found.iter()
+        .map(|(one, _, n)| (one.to_string(), json!(n)))
+        .collect();
+    log_hipaa_audit("phi_removed", json!({ "where": place, "removed": counts }));
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContainmentLayer {
@@ -180,6 +294,16 @@ impl ContainmentLayer {
     /// - Some(message) if content should be blocked/warned
     pub async fn enforce(&self, text: &str) -> Option<String> {
         let lowered = text.to_lowercase().trim().to_string();
+
+        // HIPAA mode: the requests it refuses (a diagnosis, a dose, a treatment decision)
+        // are checked first, by themselves. They used to sit behind the allowlist below
+        // and behind the classifier, so "my name is ..." in the message, or a classifier
+        // that failed to load, skipped them and their audit line (found 2026-11-10).
+        if self.mode == ContainmentMode::Hipaa {
+            if let Some(hipaa_message) = self.enforce_hipaa(text) {
+                return Some(hipaa_message);
+            }
+        }
 
         // Allowlist for memory-safe self-referential phrases
         let allowlist_phrases = [
@@ -323,12 +447,7 @@ impl ContainmentLayer {
                 }
             }
             ContainmentMode::Hipaa => {
-                // HIPAA mode: Check PHI, diagnoses, medication dosing FIRST
-                if let Some(hipaa_message) = self.enforce_hipaa(text) {
-                    return Some(hipaa_message);
-                }
-
-                // Then check general safety (same as Guardian)
+                // The HIPAA refusals ran at the top; this is general safety, as in Guardian.
                 if should_block {
                     Some(format!(
                         "[BLOCK] Cannot process this request in HIPAA mode. (Detected: {})",
@@ -363,33 +482,6 @@ impl ContainmentLayer {
             }
             ContainmentMode::Witness => None, // Already handled above
         }
-    }
-
-    /// HIPAA-specific PHI detection (matches Python implementation)
-    fn detect_phi(&self, text: &str) -> bool {
-        use regex::Regex;
-
-        // PHI patterns (from Python implementation lines 156-165)
-        let patterns = vec![
-            (r"\b\d{3}-?\d{2}-?\d{4}\b", "SSN"),              // 123-45-6789
-            (r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b", "phone"),       // (555) 123-4567
-            (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "email"),
-            (r"\b\d{5}(?:-\d{4})?\b", "zip"),                  // 12345 or 12345-6789
-            (r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b", "credit_card"),
-            (r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "ip_address"),
-            (r"\b\d+\s+[A-Za-z\s]+(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Boulevard|Blvd)\b", "address"),
-        ];
-
-        for (pattern, name) in patterns {
-            if let Ok(re) = Regex::new(pattern) {
-                if re.is_match(text) {
-                    println!("[Containment HIPAA] Detected PHI: {}", name);
-                    return true;
-                }
-            }
-        }
-
-        false
     }
 
     /// HIPAA-specific medication dosing detection (matches Python lines 388-399)
@@ -433,60 +525,14 @@ impl ContainmentLayer {
         diagnostic_phrases.iter().any(|phrase| lowered.contains(phrase))
     }
 
-    /// Log HIPAA compliance events to daily audit log
-    fn log_hipaa_audit(&self, event_type: &str, metadata: serde_json::Value) {
-        let log_dir = Path::new("logs/hipaa_audit");
-
-        // Create directory if it doesn't exist
-        if let Err(e) = fs::create_dir_all(log_dir) {
-            eprintln!("[HIPAA Audit] Failed to create audit directory: {}", e);
-            return;
-        }
-
-        // Create daily log file
-        let today = Utc::now().format("%Y-%m-%d").to_string();
-        let log_file = log_dir.join(format!("hipaa_audit_{}.json", today));
-
-        // Create log entry
-        let log_entry = json!({
-            "timestamp": Utc::now().to_rfc3339(),
-            "event_type": event_type,
-            "metadata": metadata
-        });
-
-        // Append to log file
-        match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_file)
-        {
-            Ok(mut file) => {
-                if let Err(e) = writeln!(file, "{}", log_entry) {
-                    eprintln!("[HIPAA Audit] Failed to write log entry: {}", e);
-                }
-            }
-            Err(e) => {
-                eprintln!("[HIPAA Audit] Failed to open log file: {}", e);
-            }
-        }
-    }
-
-    /// Enforce HIPAA-specific rules (matches Python lines 357-419)
+    /// The requests HIPAA mode refuses: a diagnosis, a dose, a treatment decision.
     fn enforce_hipaa(&self, text: &str) -> Option<String> {
-        // Step 1: Check for PHI in input
-        if self.detect_phi(text) {
-            // Log PHI detection attempt
-            self.log_hipaa_audit("phi_detection_blocked", json!({
-                "query_length": text.len(),
-                "blocked": true
-            }));
-
-            return Some("🔒 Please don't share personal health information like SSN, insurance numbers, or member IDs. This system is designed for general health discussions only.".to_string());
-        }
+        // Identifiers are no longer a reason to refuse: `redact_phi` takes them out of what
+        // the model is sent, and the user is told (Matt, 2026-11-10).
 
         // Step 2: Check for diagnosis requests
         if self.detect_diagnosis_request(text) {
-            self.log_hipaa_audit("diagnosis_request_blocked", json!({
+            log_hipaa_audit("diagnosis_request_blocked", json!({
                 "query_length": text.len(),
                 "blocked": true
             }));
@@ -496,7 +542,7 @@ impl ContainmentLayer {
 
         // Step 3: Check for medication dosing questions
         if self.detect_medication_dosing(text) {
-            self.log_hipaa_audit("dosing_request_blocked", json!({
+            log_hipaa_audit("dosing_request_blocked", json!({
                 "query_length": text.len(),
                 "blocked": true
             }));
@@ -512,7 +558,7 @@ impl ContainmentLayer {
             "should i start treatment",
         ];
         if treatment_phrases.iter().any(|phrase| lowered.contains(phrase)) {
-            self.log_hipaa_audit("treatment_request_blocked", json!({
+            log_hipaa_audit("treatment_request_blocked", json!({
                 "query_length": text.len(),
                 "blocked": true
             }));
@@ -521,7 +567,7 @@ impl ContainmentLayer {
         }
 
         // Log allowed health conversation
-        self.log_hipaa_audit("hipaa_conversation_allowed", json!({
+        log_hipaa_audit("hipaa_conversation_allowed", json!({
             "query_length": text.len(),
             "blocked": false
         }));
@@ -807,6 +853,51 @@ impl ContainmentLayer {
 
 }
 
+/// Log HIPAA compliance events to the daily audit file,
+/// `<app data dir>/logs/hipaa_audit/hipaa_audit_YYYY-MM-DD.json`. Until 2026-11-10 the
+/// folder was relative to wherever the process happened to be started from.
+fn log_hipaa_audit(event_type: &str, metadata: serde_json::Value) {
+    // Test binaries share the real data folder with a running app.
+    if cfg!(test) {
+        return;
+    }
+    let log_dir = crate::db::get_app_data_dir().join("logs").join("hipaa_audit");
+    let log_dir = log_dir.as_path();
+
+    // Create directory if it doesn't exist
+    if let Err(e) = fs::create_dir_all(log_dir) {
+        eprintln!("[HIPAA Audit] Failed to create audit directory: {}", e);
+        return;
+    }
+
+    // Create daily log file
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+    let log_file = log_dir.join(format!("hipaa_audit_{}.json", today));
+
+    // Create log entry
+    let log_entry = json!({
+        "timestamp": Utc::now().to_rfc3339(),
+        "event_type": event_type,
+        "metadata": metadata
+    });
+
+    // Append to log file
+    match OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+    {
+        Ok(mut file) => {
+            if let Err(e) = writeln!(file, "{}", log_entry) {
+                eprintln!("[HIPAA Audit] Failed to write log entry: {}", e);
+            }
+        }
+        Err(e) => {
+            eprintln!("[HIPAA Audit] Failed to open log file: {}", e);
+        }
+    }
+}
+
 /// `needle` occurs in `haystack` bounded by non-letters on both sides, so a word list
 /// cannot match inside another word: "meth" no longer matches "something" (a message
 /// about posting a plush toy was flagged as a harmful instruction request on
@@ -861,6 +952,122 @@ mod tests {
         let guard = ContainmentLayer::new("child").unwrap();
         let result = guard.enforce("tell me about violence").await;
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn hipaa_removes_the_guides_own_example() {
+        let (out, found) = redact_phi("My patient John Smith, DOB 01/15/1985, MRN 4829201, needs a follow-up.");
+        assert!(!out.contains("John Smith"), "{out}");
+        assert!(!out.contains("01/15/1985"), "{out}");
+        assert!(!out.contains("4829201"), "{out}");
+        assert!(out.contains("needs a follow-up"), "{out}");
+        assert_eq!(found.len(), 3, "{found:?}");
+        assert_eq!(describe_phi(&found), "1 record or member number, 1 date of birth and 1 patient name");
+    }
+
+    /// The examples printed in the HIPAA guide ("PHI Detection in Action"). If one of
+    /// these changes, the guide changes with it.
+    #[test]
+    fn the_hipaa_guides_examples_read_as_printed() {
+        for (text, cleaned, said) in [
+            ("My patient is Mary Johnson. Her social is 234-56-7890 and she has been having chest pains.",
+             "My [patient name removed]. Her social is [SSN removed] and she has been having chest pains.",
+             "1 Social Security number and 1 patient name"),
+            ("I've tried reaching the patient twice at 555-867-5309 with no answer. What should I document in the chart?",
+             "I've tried reaching the patient twice at [phone number removed] with no answer. What should I document in the chart?",
+             "1 phone number"),
+            // No word "patient" in front of the name: it stays. The guide says so.
+            ("John Smith, a 45-year-old male, presents with substernal chest pain radiating to the left arm.",
+             "John Smith, a 45-year-old male, presents with substernal chest pain radiating to the left arm.",
+             ""),
+            ("My patient John Smith, DOB 01/15/1985, MRN 4829201, presents with chest pain.",
+             "My [patient name removed], [date of birth removed], [record number removed], presents with chest pain.",
+             "1 record or member number, 1 date of birth and 1 patient name"),
+            ("My name is Mary Johnson and my social is 234-56-7890.",
+             "My name is Mary Johnson and my social is [SSN removed].",
+             "1 Social Security number"),
+        ] {
+            let (out, found) = redact_phi(text);
+            assert_eq!(out, cleaned);
+            assert_eq!(describe_phi(&found), said);
+        }
+    }
+
+    #[test]
+    fn hipaa_removes_each_kind_of_identifier() {
+        for (text, gone) in [
+            ("call me on (555) 123-4567 tomorrow", "123-4567"),
+            ("call me on 555-123-4567 tomorrow", "555-123"),
+            ("my cell is 5551234567", "5551234567"),
+            ("reach me at +1 555.123.4567", "123.4567"),
+            ("SSN 123-45-6789 on file", "123-45-6789"),
+            ("her social security number is 123456789", "123456789"),
+            ("write to ana.lopez@example.org please", "ana.lopez@example.org"),
+            ("she lives at 123 Main St. now", "123 Main"),
+            ("moved to 45 North Elm Street last year", "North Elm"),
+            ("Portland, OR 97201 is home", "97201"),
+            ("zip code 90210", "90210"),
+            ("card 4111 1111 1111 1111 expired", "1111 1111"),
+            ("the server is 192.168.1.20", "192.168.1.20"),
+            ("member ID: ABC-12345 on the card", "ABC-12345"),
+            ("date of birth: March 4, 1961", "March 4"),
+            ("born on 4 March 1961 in Ohio", "4 March"),
+            ("the client's name is Mrs. Ana Lopez", "Ana Lopez"),
+        ] {
+            let (out, found) = redact_phi(text);
+            assert!(!out.contains(gone), "{text:?} gave {out:?}");
+            assert!(!found.is_empty(), "{text:?}");
+            assert!(out.contains("removed]"), "{out}");
+        }
+    }
+
+    /// The old check called any 5-, 9- or 10-digit number an identifier. Text is changed
+    /// here, not refused, so a wrong match damages a memory or a question.
+    #[test]
+    fn hipaa_leaves_ordinary_text_alone() {
+        for text in [
+            "I walked 10000 steps today and 12345 yesterday",
+            "What options do I have?",
+            "It is 5 miles down the road, 2 blocks past the church",
+            "(about November 7, 2026)",
+            "Today is Tuesday, November 10, 2026.",
+            "She was born in 1985 and moved in 2010",
+            "The patient is recovering well",
+            "Our budget is 1250000000 this year",
+            "Version 2.4 of the app, build 100200300",
+            "Dinner with Ana Lopez at 7",
+        ] {
+            let (out, found) = redact_phi(text);
+            assert_eq!(out, text);
+            assert!(found.is_empty(), "{text:?}: {found:?}");
+        }
+    }
+
+    #[test]
+    fn phi_totals_add_up_and_read_plainly() {
+        let mut total: PhiFound = Vec::new();
+        merge_phi(&mut total, redact_phi("call 555-123-4567").1);
+        merge_phi(&mut total, redact_phi("or 555-987-6543, or mail a@b.org").1);
+        assert_eq!(describe_phi(&total), "2 phone numbers and 1 email address");
+        assert_eq!(describe_phi(&Vec::new()), "");
+    }
+
+    /// A tag left by one pass must not be matched by a later one: the typed message is
+    /// cleaned first and the whole prompt again.
+    #[test]
+    fn cleaning_twice_changes_nothing_more() {
+        let (once, _) = redact_phi("patient John Smith, 555-123-4567, 123 Main St, OR 97201, MRN 4829201");
+        let (twice, found) = redact_phi(&once);
+        assert_eq!(once, twice);
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// "my name is" is on the allowlist; it used to skip the HIPAA refusals with it.
+    #[tokio::test]
+    async fn hipaa_refusals_run_before_the_allowlist() {
+        let guard = ContainmentLayer::new("hipaa").unwrap();
+        let said = guard.enforce("my name is Ann, how many pills of ibuprofen should I take").await;
+        assert!(said.is_some_and(|m| m.contains("dosing")));
     }
 
     #[tokio::test]

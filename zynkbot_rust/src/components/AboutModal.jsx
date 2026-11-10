@@ -83,16 +83,17 @@ export default function AboutModal({ isOpen, onClose }) {
           </p>
 
           <p className="tech-description">
-            <strong>Conversational Memory vs. RAG:</strong> Most AI assistants use RAG
-            (Retrieval-Augmented Generation) for document retrieval in enterprise knowledge bases.
-            Zynkbot uses conversational memory designed for personal AI—learning from your
-            interactions, preferences, and life context rather than searching static documents.
-            Different architecture for a fundamentally different purpose.
+            <strong>Conversational Memory and RAG:</strong> Most AI assistants use RAG
+            (Retrieval-Augmented Generation) to look things up in a fixed set of documents.
+            Zynkbot is built around conversational memory for a personal AI: it learns from your
+            interactions, preferences, and life context, and you can read, edit and delete
+            everything it keeps. It has document retrieval too: add files to the Knowledge Base,
+            turn on KB, and Zynkbot answers from them alongside your memories.
           </p>
 
           <div className="performance-note">
             <strong>Note on Local Model Performance:</strong>
-            <p>The local inference option is intentionally unoptimized in this prototype to demonstrate functionality on basic hardware. With GPU acceleration and model optimization, local inference can run efficiently on mobile devices - as proven by apps like LM Studio and Ollama running on smartphones today.</p>
+            <p>Local models work today on desktop computers and on Android phones. On a desktop the model runs on the processor (CPU) by default, which works on any computer. When Zynkbot is built with CUDA enabled on a computer with an NVIDIA graphics card, the model runs on the card instead, which is much faster. On Android the model runs on the phone itself. A local model is slower than a cloud model, and how much slower depends on your hardware.</p>
           </div>
         </div>
 

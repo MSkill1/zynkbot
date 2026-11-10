@@ -81,7 +81,7 @@ Multiple safety modes with category-based filtering.
 | **Child** | Strict | For minors, blocks all unsafe content | All unsafe categories |
 | **Sovereign** | Warnings only (default since beta 3) | Warns but doesn't block | None (warnings only) |
 | **Witness** | No filtering | Full freedom, no restrictions | None |
-| **HIPAA** | Healthcare compliance | PHI protection, blocks medical advice | Custom PHI + medical content rules |
+| **HIPAA** | Healthcare-oriented | Removes identifiers before the model sees them, refuses medical advice requests | Diagnosis, dosing and treatment requests |
 
 **Safety Implementation:**
 
@@ -95,9 +95,10 @@ Multiple safety modes with category-based filtering.
 - Uses **OpenAI Moderation API** for strict filtering.  Currently available models that run locally can be tricked by a clever child, so an API call to OpenAI is used because child safety is at issue.  If local distributed AI inferences are possible local models may become sufficient.  Currently - requires OpenAI API key.
 
 **HIPAA Mode:**
-- **7 PHI detection patterns**: SSN, phone, email, ZIP, credit card, IP, address
-- **Pre-LLM blocking**: PHI blocked BEFORE AI sees it
-- **Audit logging**: Daily JSON logs in `logs/hipaa_audit/`
+- **Ten kinds of identifier removed**: record or member number, card number, SSN, phone, email, labelled birth date, street address, ZIP, IP address, a name introduced as a patient's
+- **Removed before the model call**, from the typed message and from recalled memories and Knowledge Base text; the message is still answered, and the reply says what was removed
+- **Pattern matching, not understanding**: a name with nothing to mark it is not removed (see the HIPAA guide's Known limits)
+- **Audit logging**: Daily JSON logs in `logs/hipaa_audit/` in the app data folder
 - **Memory extraction disabled**: Personal memory system fully disabled in HIPAA mode — extraction pipeline does not run
 - **Medical disclaimers**: Auto-appended to health-related responses
 

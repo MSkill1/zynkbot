@@ -45,6 +45,7 @@ Individual model responses are shown alongside the synthesis so you can evaluate
 - ✅ **File attachment**: Attach a document directly in the ensemble window
 - ✅ **Disagreement detection**: Coordinator explicitly flags where models conflict
 - ✅ **Child mode protection**: UI blocks ensemble when Child containment is active
+- ✅ **Follows the containment mode**: the question gets the same check as a typed message (a Guardian or HIPAA refusal, a Sovereign warning), and HIPAA mode removes identifiers before any model is called
 
 ---
 

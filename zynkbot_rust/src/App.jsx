@@ -466,8 +466,22 @@ export default function App() {
   // occasional hard block from a demo-grade classifier, which is a bad first
   // impression for a safety layer that exists to be shown off, not to actually
   // gate a real conversation. Sovereign warns instead of blocking (Matt, 2026-09-20).
-  const [containmentMode, setContainmentMode] = useState("sovereign");
-  useEffect(() => { containmentModeRef.current = containmentMode; }, [containmentMode]);
+  // The containment mode is remembered between starts (Matt, 2026-11-10; until then every
+  // start went back to Sovereign). The backend keeps the choice (set_containment_mode);
+  // the copy in this browser store only fills the moment before the backend answers, so
+  // the first message of a session can never go out under the wrong mode.
+  const [containmentMode, setContainmentMode] = useState(() => {
+    try { return localStorage.getItem('zynkbot_containment_mode') || 'sovereign'; } catch (_) { return 'sovereign'; }
+  });
+  useEffect(() => {
+    containmentModeRef.current = containmentMode;
+    try { localStorage.setItem('zynkbot_containment_mode', containmentMode); } catch (_) {}
+  }, [containmentMode]);
+  useEffect(() => {
+    invoke('get_containment_mode')
+      .then((mode) => { if (mode) setContainmentMode(mode); })
+      .catch((e) => console.error('Could not load the containment mode:', e));
+  }, []);
   // "Report a problem" — opened from the sidebar or a reply's ⚑ button.
   const [showReport, setShowReport] = useState(false);
   const [reportContext, setReportContext] = useState('');
@@ -503,7 +517,7 @@ export default function App() {
     <ControlsMenuButton
       icon="🚀"
       title="Getting Started"
-      subtitle="Kitchen tip, Einstein demo, guided setup"
+      subtitle="Einstein demo, guided setup"
       onClick={() => setControlsPage('start')}
     />
   );
@@ -2298,7 +2312,7 @@ export default function App() {
       )}
 
       {controlsPage === 'start' && (
-        <ControlsPage icon="🚀" title="Getting Started" subtitle="Kitchen tip, Einstein demo, guided setup" onClose={() => setControlsPage(null)}>
+        <ControlsPage icon="🚀" title="Getting Started" subtitle="Einstein demo, guided setup" onClose={() => setControlsPage(null)}>
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem', color: '#9aa5c4', marginBottom: '14px', cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -2308,13 +2322,8 @@ export default function App() {
             />
             Keep Getting Started at the top of System Controls
           </label>
-          <p style={{fontSize: '0.9rem', color: '#8be9fd', lineHeight: '1.6', marginBottom: '10px'}}>
-            <strong>Try it in the kitchen.</strong> Tell Zynkbot what you cooked tonight and how it went.
-            Tomorrow ask "what can I make tonight?" It remembers what you liked, what you refused, and how
-            you are trying to eat. Fell off the diet? Tell it to forget those weeks and start again. The memory is yours to edit.
-          </p>
           <p style={{fontSize: '0.9rem', color: '#8be9fd', lineHeight: '1.6', marginBottom: '15px'}}>
-            Or load the Einstein demo below to see how memory and relationships work.
+            Load the Einstein demo below to see how memory and relationships work.
             After loading, open the <strong>Memory Manager</strong> to explore the memories and their connections.
           </p>
 

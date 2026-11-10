@@ -194,6 +194,23 @@ pub async fn generate_reply(
     // Normalize brand name misspellings from voice transcription before any processing
     let message = crate::normalize_brand_names(message);
 
+    // HIPAA mode (Matt, 2026-11-10): identifiers are taken out of what was typed or
+    // attached before anything else sees it: the log line below, the memory search, a
+    // web search, the model. The whole prompt is cleaned again before it is sent, once
+    // recalled memories, Knowledge Base passages and page text have joined it. Nothing
+    // is refused for containing an identifier; the user is told what was removed.
+    let is_hipaa = containment_mode.to_lowercase() == "hipaa";
+    let mut phi_removed: crate::containment::PhiFound = Vec::new();
+    let (message, user_query) = if is_hipaa {
+        let (clean, found) = crate::containment::redact_phi(&message);
+        crate::containment::merge_phi(&mut phi_removed, found);
+        // With a file attached the question is carried separately; it is part of
+        // `message` too, so its identifiers are already counted.
+        (clean, user_query.map(|q| crate::containment::redact_phi(&q).0))
+    } else {
+        (message, user_query)
+    };
+
     let request_start = std::time::Instant::now();
     println!("[⏱️ PERF] Request start");
     // Time to the first word is logged, and the screen is told what the wait is for.
@@ -820,6 +837,19 @@ pub async fn generate_reply(
         full_prompt.push_str(&block);
     }
 
+    // HIPAA mode: the finished prompt is cleaned as a whole, for every backend. This is
+    // where identifiers in recalled memories, Knowledge Base passages, earlier turns and
+    // pages read from the web are removed. A picture cannot be read this way.
+    if is_hipaa {
+        let (clean, found) = crate::containment::redact_phi(&full_prompt);
+        full_prompt = clean;
+        crate::containment::merge_phi(&mut phi_removed, found);
+        if !phi_removed.is_empty() {
+            println!("[HIPAA] 🔒 Removed before the model call: {}", crate::containment::describe_phi(&phi_removed));
+            crate::containment::audit_phi_removed("chat", &phi_removed);
+        }
+    }
+
     // STEP 6: Call LLM based on backend (use forced_backend for Child mode)
     // All API backends use SSE streaming so the frontend can display tokens as they arrive.
     // Local GGUF models are blocking and cannot stream, so they continue to return all at once.
@@ -1434,6 +1464,12 @@ pub async fn generate_reply(
     // no warning: there is nothing to warn about, and the prefix would hide the
     // verdict from every `starts_with("NO_QUERY")` check — the Pixel read the warning
     // aloud over a flagged TV line on 2026-10-20 16:18.
+    // HIPAA mode: say what was removed, in the same place a Sovereign warning goes.
+    let warning_prefix = if phi_removed.is_empty() {
+        warning_prefix
+    } else {
+        Some(format!("🔒 HIPAA mode removed {} before the model saw this.", crate::containment::describe_phi(&phi_removed)))
+    };
     let mut final_reply_text = match warning_prefix {
         Some(warning) if !reply_text.trim().starts_with("NO_QUERY") => format!("{}\n\n{}", warning, reply_text),
         _ => reply_text,
@@ -1632,6 +1668,18 @@ pub async fn run_ensemble(
     // thread a session through. Do not rename to `_session_id` — see tests/command_contract.rs
     let _ = session_id;
 
+    // HIPAA mode: identifiers come out of the question and any attached file text
+    // before the log line below and before any model sees them, as in generate_reply.
+    let is_hipaa = containment_mode.to_lowercase() == "hipaa";
+    let mut phi_removed: crate::containment::PhiFound = Vec::new();
+    let (message, user_query) = if is_hipaa {
+        let (clean, found) = crate::containment::redact_phi(&message);
+        crate::containment::merge_phi(&mut phi_removed, found);
+        (clean, user_query.map(|q| crate::containment::redact_phi(&q).0))
+    } else {
+        (message, user_query)
+    };
+
     println!("\n╔══════════════════════════════════════════════════════════════╗");
     println!("║  🔀 ENSEMBLE REQUEST                                         ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
@@ -1650,9 +1698,30 @@ pub async fn run_ensemble(
         return Err("Need at least 2 models for ensemble".to_string());
     }
 
+    // Ensemble follows the containment mode in force, the same check a typed message
+    // gets (Matt, 2026-11-10). Until then it checked nothing in any mode; only its
+    // button was disabled, and only in Child mode. A refusal comes back as the error
+    // the Ensemble window shows, so nothing is added to the conversation.
+    let mut ensemble_warning: Option<String> = None;
+    {
+        let asked = user_query.as_deref().unwrap_or(&message).to_string();
+        match crate::commands::safety::check_containment(asked, containment_mode.clone()).await {
+            Ok(Some(m)) if m.starts_with("[WARN_ALLOW]") => {
+                ensemble_warning = Some(m.trim_start_matches("[WARN_ALLOW]").trim().to_string());
+            }
+            Ok(Some(m)) => {
+                println!("[Ensemble] 🛑 Refused by containment ({})", containment_mode);
+                return Err(m.trim_start_matches("[BLOCK]").trim_start_matches("[GENTLE]").trim().to_string());
+            }
+            Ok(None) => {}
+            // As in generate_reply: a check that could not run does not stop the question.
+            Err(e) => println!("[Ensemble] ⚠️ Safety check failed: {}", e),
+        }
+    }
+
     // ENSEMBLE MODE: Lightweight research tool
-    // - Includes: memory context, KB context, web search
-    // - Excludes: containment checks (UI blocks child mode), memory storage, relationship detection
+    // - Includes: containment check, memory context, KB context, web search
+    // - Excludes: memory storage, relationship detection
 
     // Model names read from user preferences (set in API Settings)
     let anthropic_model = std::env::var("ANTHROPIC_MODEL")
@@ -1683,7 +1752,7 @@ pub async fn run_ensemble(
     // Use clean user_query for memory/KB search when a file is attached (message may contain file dump)
     let search_query = user_query.as_deref().unwrap_or(&message).to_string();
 
-    // Lightweight context gathering (no containment, no storage, no relationships)
+    // Lightweight context gathering (no storage, no relationships)
 
     // Extract entities from question for memory search (use spawn_blocking for CPU-intensive work)
     let message_for_nlp = search_query.clone();
@@ -1748,6 +1817,17 @@ pub async fn run_ensemble(
                 context.push_str(&built.context);
             }
             Err(e) => println!("[Ensemble] KB search failed (non-fatal): {}", e),
+        }
+    }
+
+    // HIPAA mode: recalled memories and Knowledge Base passages are cleaned too.
+    if is_hipaa {
+        let (clean, found) = crate::containment::redact_phi(&context);
+        context = clean;
+        crate::containment::merge_phi(&mut phi_removed, found);
+        if !phi_removed.is_empty() {
+            println!("[HIPAA] 🔒 Removed before the Ensemble model calls: {}", crate::containment::describe_phi(&phi_removed));
+            crate::containment::audit_phi_removed("ensemble", &phi_removed);
         }
     }
 
@@ -2141,7 +2221,13 @@ pub async fn run_ensemble(
         response.content
     };
 
-    let synthesized_response = reply_text;
+    // A Sovereign warning, and what HIPAA mode removed, go in front of the answer.
+    let mut notes: Vec<String> = Vec::new();
+    if let Some(w) = ensemble_warning { notes.push(w); }
+    if !phi_removed.is_empty() {
+        notes.push(format!("🔒 HIPAA mode removed {} before the models saw this.", crate::containment::describe_phi(&phi_removed)));
+    }
+    let synthesized_response = if notes.is_empty() { reply_text } else { format!("{}\n\n{}", notes.join("\n\n"), reply_text) };
 
     // Clean up database connection
     db_pool.close().await;

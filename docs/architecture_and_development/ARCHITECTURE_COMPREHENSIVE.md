@@ -276,7 +276,7 @@ pub async fn run_ensemble(
 - **Phase 1.** All models answer in parallel. Each gets the same memory context (top 5 memories scoring 0.50 or more) and, if the KB button is on, the same Knowledge Base passages.
 - **Phase 2.** The coordinator is told to evaluate the answers, not average them, and writes the final answer.
 - The result holds `individual_responses`, `synthesized_response`, `coordinator_model`, `models_used`, `successful_models` and `search_results`.
-- `run_ensemble` runs no containment check and stores no memories. The UI does not offer ensemble in Child mode.
+- `run_ensemble` runs the containment check of the mode in force on the question (since 2026-11-10) and, in HIPAA mode, removes identifiers from the question and the shared context. It stores no memories. The UI does not offer ensemble in Child mode.
 
 ### 5. ZynkSync (device-to-device sync)
 
