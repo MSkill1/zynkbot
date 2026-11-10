@@ -470,12 +470,6 @@ body.modal-open .conversation-history {
     max-height: 48px !important;
   }
 
-  /* Send covers both rows of its column since Stop moved into the conversation. */
-  .chat-button-grid > .chat-send-wide {
-    height: 100% !important;
-    max-height: none !important;
-  }
-
   /* === HIDE INLINE MEMORY WIDGET ON MOBILE ===
      The Memory Manager modal is still opened via the mobile button grid. */
   .memory-manager {

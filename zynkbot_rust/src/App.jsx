@@ -2809,7 +2809,9 @@ export default function App() {
                   style={{
                     position: 'absolute',
                     bottom: '12px',
-                    right: '16px',
+                    // On the left: on the right it sat over the red Stop of a reply
+                    // arriving on a phone (Matt, 2026-11-10).
+                    left: '16px',
                     width: '44px',
                     height: '44px',
                     borderRadius: '50%',
@@ -3199,10 +3201,12 @@ export default function App() {
                 )}
               </div>
 
-              {/* Right: 2×2 Button Grid. Stop is in the conversation now (2026-11-10, on trial), and
-                  Send fills the place it left until Quick question takes it.
+              {/* Right: 2×2 Button Grid. Stop is in the conversation now (2026-11-10, on trial).
+                  On the desktop Send fills the place it left; on a phone a Send over both rows
+                  was "huge" (Matt, 2026-11-10), so it keeps its size and the top-right cell is
+                  empty until Quick question takes it.
                   Desktop: Voice | Ensemble / Send across both columns
-                  Mobile:  Ensemble | Send over both rows / MemoryManager | (Send) */}
+                  Mobile:  Ensemble | (empty) / MemoryManager | Send */}
               <div className="chat-button-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: '85px 85px',
@@ -3307,7 +3311,7 @@ export default function App() {
                     boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                     flex: 'none',
                     gridColumn: isMobile ? 2 : '1 / span 2',
-                    gridRow: isMobile ? '1 / span 2' : 2,
+                    gridRow: 2,
                   }}
                   onMouseOver={(e) => (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
