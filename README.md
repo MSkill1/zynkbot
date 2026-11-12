@@ -56,7 +56,7 @@ And because the entire stack is offline-first — no cloud dependency, no subscr
 - **Pure Rust ML** - Embeddings, NER, and safety classification run on the Candle framework — no Python runtime
 - **Multi-Model Ensemble** - Query multiple AI models simultaneously with consensus detection
 - **Contradiction Detection** - Automatically surfaces conflicting memories and asks you to resolve them
-- **Memory Graph** - Visual relationship map of all stored memories; explore contradictions, connections, and context
+- **Memory Relationships** - Every memory keeps its links to the others: what it updates, what it contradicts, what came from the same message. Shown in words on each memory, and as a picture in the Memory Manager
 - **Cross-Device Sync** - ZynkSync syncs memories, conversations, settings and your voice profile across your own devices
 - **Cloud Backup** - Encrypted backup of memories, conversations, keys and voice profile to your own storage bucket; a fresh install restores itself from it
 - **Hey Zynk** - Hands-free on Android: a wake word that answers only the voice it has been taught, with timers, alarms and a stopwatch by voice
@@ -280,20 +280,20 @@ As of two years ago, I had no experience with Rust and only an interest. When it
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="assets/graph_contradicts.png" alt="Memory contradiction detail">
-      <br><em>Zoomed in — red edges show contradictions between memories, blue elaborates, yellow reminds_of. Click any node to inspect content and related memories.</em>
+      <img src="assets/map_zoomed.png" alt="Memory map, zoomed in on one memory">
+      <br><em>The memory map, zoomed in: a red line is a contradiction, pink the explanation that resolves it, green an update, purple a related memory. The rings are the people and places the memories share. Tap anything to read it.</em>
     </td>
     <td align="center" width="50%">
-      <img src="assets/graph_global.png" alt="Memory graph overview">
-      <br><em>The full memory graph — every stored memory and its relationships. Zoom out to see the complete picture as it grows over time.</em>
+      <img src="assets/map_whole.png" alt="Memory map of the Einstein demo">
+      <br><em>The whole map of the Einstein demo: memories coloured by category, gathered around the people, places and things they mention.</em>
     </td>
   </tr>
 </table>
 
 <p align="center">
-  <img src="assets/conradiction_modal.png" alt="Contradiction resolution modal" width="800">
+  <img src="assets/conflict_card.png" alt="The conflict card: a new statement against a stored memory" width="800">
 </p>
-<p align="center"><em>When a contradiction is detected between two memories, Zynkbot surfaces both and asks you to resolve it — never silently overwrites your data.</em></p>
+<p align="center"><em>When a new statement contradicts a stored memory, Zynkbot shows both and asks you how to resolve it — it never silently overwrites your data.</em></p>
 
 **[→ Memory System Details](docs/FEATURES.md#-persistent-semantic-memory)**
 
@@ -311,13 +311,13 @@ Every installation runs in exactly one containment mode at a time. The default i
 | **Child**     | Strict                | For minors, aggressive filtering  |
 | **Sovereign** | Warnings only (default) | Warns but doesn't block         |
 | **Witness**   | No filtering          | Full freedom, no restrictions     |
-| **HIPAA**     | Healthcare-oriented   | PHI detection, no memory storage  |
+| **HIPAA**     | Healthcare-oriented   | PHI check, no memory storage      |
 
 **How filtering works:**
 
 - **Guardian / Sovereign / Witness**: Local TinyBERT (toxic-bert) model — runs entirely on your device, no data leaves
 - **Child Mode**: OpenAI Moderation API — requires an OpenAI API key for the strictest protection
-- **HIPAA Mode**: Pre-LLM PHI detection (SSN, phone, email, etc.) + audit logging + enforced ephemeral mode (nothing stored)
+- **HIPAA Mode**: a message with an identifier (SSN, phone, email, record number, a patient's name and more) is not sent; identifiers in recalled text are removed before the model call; audit logging; no conversation history and no new memories
 
 **[→ Mode Features Guide](docs/FEATURES.md#-containment-modes)**
 
@@ -343,7 +343,7 @@ All features work over your local network (WiFi/LAN/mobile hotspot) with no clou
 
 - Place `.gguf` files in `zynkbot_rust/src-tauri/models/user/`
 - The Zynkbot model: Sophro-4B-memory-v1, a Q4_0 fine-tune of Qwen3-4B-Instruct-2507 for memory extraction (`Sophro-4B-memory-v1-Q4_0.gguf`, 2.4 GB, from https://huggingface.co/GenerallyTso/Sophro-4B-memory-v1). The setup wizard offers to download it at first run. On a phone it is the only model offered
-- Alternatives: Qwen3 8B, DeepSeek R1 Distill Llama 8B, Llama 3.1 8B Lexi Uncensored V2 — optional download included in installation script
+- Alternatives on a computer: Gemma 4 12B, Gemma 4 E4B, Qwen3.5 9B, Ministral 3 8B — offered by the setup wizard and the installation scripts, each with a line on what it does well and where it fails (measured in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), section 5)
 - No API key needed — runs completely offline
 - CPU works; NVIDIA GPU with CUDA gives 10–100x faster responses (automatically configured by the installer if you have the CUDA toolkit — see [GPU Acceleration](#gpu-acceleration) below)
 
@@ -579,7 +579,7 @@ Copyright (c) 2024-2026 Matthew Skillman / ContainAI
 - **[Installation Guides](docs/)** - Platform-specific setup instructions
 - **[Model Architecture](docs/architecture_and_development/MODEL_ARCHITECTURE.md)** - System design and ML pipeline
 - **[Memory Processing Pipeline](docs/architecture_and_development/MEMORY_PROCESSING_PIPELINE.md)** - How memory search and storage works
-- **[Memory Relationship Graph](docs/architecture_and_development/MEMORY_RELATIONSHIP_GRAPH.md)** - The graph visualization: what it shows, practical uses, and research potential
+- **[Memory Relationships](docs/architecture_and_development/MEMORY_RELATIONSHIP_GRAPH.md)** - The links between memories: what they are, what they are for today, and their research potential
 - **[Prompt Construction Pipeline](docs/architecture_and_development/PROMPT_CONSTRUCTION_PIPELINE.md)** - How prompts are assembled
 - **[Database Schema](docs/architecture_and_development/DATABASE_SCHEMA.md)** - Database structure
 - **[Models](docs/MODELS.md)** - Model information and management
