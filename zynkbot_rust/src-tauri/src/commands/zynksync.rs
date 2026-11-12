@@ -189,16 +189,6 @@ pub async fn verify_pairing_code(peer_id: String, code: String) -> Result<(), St
     }
 }
 
-/// Unpair from a device
-#[tauri::command]
-pub async fn unpair_device(peer_id: String) -> Result<(), String> {
-    let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.unpair_device(&peer_id).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
 /// Add a device manually by IP address and pairing code
 #[tauri::command]
 pub async fn add_zynksync_device(host_ip: String, pairing_code: String) -> Result<PeerDevice, String> {
@@ -229,16 +219,6 @@ pub async fn expel_zynksync_device(device_id: String) -> Result<serde_json::Valu
     }
 }
 
-/// Remove a manually added device
-#[tauri::command]
-pub async fn remove_zynksync_device(device_id: String) -> Result<(), String> {
-    let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
-    match global_service.as_ref() {
-        Some(service) => service.remove_device(&device_id).await,
-        None => Err("ZynkSync not started".to_string()),
-    }
-}
-
 /// Leave the sync network and stamp local memories with a fresh user_id.
 /// Returns the new user_id so the frontend can update its state.
 #[tauri::command]
@@ -249,7 +229,7 @@ pub async fn unsync_and_reset_identity() -> Result<String, String> {
     {
         let global_service = crate::ZYNKSYNC_SERVICE.lock().await;
         if let Some(service) = global_service.as_ref() {
-            service.remove_device("").await?;
+            service.leave_sync_network().await?;
         }
     }
 

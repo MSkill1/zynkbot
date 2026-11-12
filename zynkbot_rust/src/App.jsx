@@ -499,8 +499,12 @@ export default function App() {
   const [showUserIdentity, setShowUserIdentity] = useState(false);
   const [showEnsemble, setShowEnsemble] = useState(false);
   const [showQuickQuestion, setShowQuickQuestion] = useState(false);
+  const [memoryManagerOpen, setMemoryManagerOpen] = useState(false);
   // The thread offered on the "Continue" line of an empty conversation (2026-11-12).
   const [continueThread, setContinueThread] = useState(null);
+  // The backup reminder (Matt, 2026-11-12): one line over the conversation, once a week,
+  // when backup storage is set up and memories have changed since the last backup.
+  const [backupReminder, setBackupReminder] = useState(null);
   const [showConflictResolution, setShowConflictResolution] = useState(false);
   const [showZynkCluster, setShowZynkCluster] = useState(false);
   const [showConversationHistory, setShowConversationHistory] = useState(false);
@@ -1133,6 +1137,22 @@ export default function App() {
   // was appended to the thread the user thought they had left; History then showed
   // one thread holding several conversations and no "previous" one to go back to
   // (tester report, 2026-09-14). The old thread stays in History untouched.
+  // Back up now: a backup from here when the key has been saved; otherwise the Memory
+  // Manager, whose banner leads to saving the key first. Later: nothing for a week.
+  const backUpNow = async () => {
+    try {
+      const key = await invoke('get_backup_key_status');
+      if (!key?.acknowledged) { setBackupReminder(null); memoryManagerRef.current?.open(); return; }
+      setBackupReminder(r => ({ ...r, busy: true, error: null }));
+      const res = await invoke('backup_memories_to_r2', { userId });
+      setBackupReminder({ done: res?.message || 'Backed up.' });
+      setTimeout(() => setBackupReminder(null), 8000);
+    } catch (e) {
+      setBackupReminder(r => ({ ...r, busy: false, error: String(e) }));
+    }
+  };
+  const backUpLater = () => { setBackupReminder(null); invoke('snooze_backup_reminder').catch(() => {}); };
+
   const handleNewConversation = async () => {
     if (messages.length > 0 && !(await confirmDialog('Start a new conversation? The current one stays in Conversation History.'))) return;
     const fresh = uuidv4();
@@ -1287,10 +1307,16 @@ export default function App() {
       });
     })();
     const startup = setTimeout(() => adoptLatestThread('app started'), 2500);
+    const reminder = setTimeout(async () => {
+      try {
+        const r = await invoke('get_backup_reminder', { userId: liveRef.current.userId });
+        if (r?.due) setBackupReminder(r);
+      } catch (_) {}
+    }, 8000);
     return () => {
       window.removeEventListener('keydown', touch); window.removeEventListener('pointerdown', touch);
       document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onFocus);
-      clearTimeout(startup); if (quietTimer) clearTimeout(quietTimer); if (unlisten) unlisten();
+      clearTimeout(startup); clearTimeout(reminder); if (quietTimer) clearTimeout(quietTimer); if (unlisten) unlisten();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
@@ -2175,7 +2201,7 @@ export default function App() {
         // close button exists at that corner. Otherwise the two overlap and the first
         // tap toggles the sidebar instead of closing the modal (reported on API Keys,
         // then on the User Identity modal opened from the sidebar's info button).
-        hideToggle={showConversationHistory || showEnsemble || showQuickQuestion || voice.showVoiceModal
+        hideToggle={showConversationHistory || showEnsemble || showQuickQuestion || memoryManagerOpen || voice.showVoiceModal
           || showUserIdentity || showAbout || showDemoGuide || showWhyZynkbot || showConflictResolution || showZynkCluster || showReport
           || controlsPage !== null}
         onOpen={() => {
@@ -2748,6 +2774,28 @@ export default function App() {
                   {MODE_HELP[chatMode]} <span style={{ color: '#9aa5c4' }}>Set the mode back to Normal to switch it off.</span>
                 </div>
               )}
+              {backupReminder && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', padding: '8px 12px', marginBottom: '8px', background: '#2b2d3a', border: '1px solid #44475a', borderRadius: '8px', fontSize: '0.9rem', color: '#f8f8f2' }}>
+                  <span style={{ flex: 1, minWidth: '160px' }}>
+                    {backupReminder.done ? backupReminder.done
+                      : backupReminder.error ? `Backup failed: ${backupReminder.error}`
+                      : backupReminder.last_backup_at ? `Your memories were last backed up ${backupReminder.days_since} days ago.`
+                      : 'Your memories have never been backed up.'}
+                  </span>
+                  {!backupReminder.done && (
+                    <>
+                      <button onClick={backUpNow} disabled={backupReminder.busy}
+                        style={{ background: '#50fa7b', border: 'none', color: '#282a36', fontWeight: 'bold', padding: '8px 12px', borderRadius: '6px', cursor: backupReminder.busy ? 'wait' : 'pointer', minHeight: '40px' }}>
+                        {backupReminder.busy ? 'Backing up…' : 'Back up now'}
+                      </button>
+                      <button onClick={backUpLater} disabled={backupReminder.busy}
+                        style={{ background: 'transparent', border: '1px solid #6272a4', color: '#f8f8f2', padding: '8px 12px', borderRadius: '6px', cursor: 'pointer', minHeight: '40px' }}>
+                        Later
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
                   <>
@@ -3234,7 +3282,8 @@ export default function App() {
                   was "huge" (Matt, 2026-11-10), so it keeps its size and Quick question has the
                   top-right cell (2026-11-12).
                   Desktop: Voice | Ensemble / Send across both columns / Quick across both columns
-                  Mobile:  Ensemble | Quick / MemoryManager | Send */}
+                  Mobile:  MemoryManager | Send / Ensemble | Quick (the two most used on top,
+                  Send top right under where the text appears; Matt, 2026-11-12) */}
               <div className="chat-button-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: '85px 85px',
@@ -3300,7 +3349,7 @@ export default function App() {
                     boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                     flex: 'none',
                     gridColumn: isMobile ? 1 : 2,
-                    gridRow: 1,
+                    gridRow: isMobile ? 2 : 1,
                   }}
                   onMouseOver={(e) => !(isLoading || containmentMode === 'child' || (window.AndroidPaths && modelType && modelType.endsWith('.gguf'))) && (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
@@ -3338,7 +3387,7 @@ export default function App() {
                     boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                     flex: 'none',
                     gridColumn: isMobile ? 2 : '1 / span 2',
-                    gridRow: isMobile ? 1 : 3,
+                    gridRow: isMobile ? 2 : 3,
                   }}
                   onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
@@ -3377,7 +3426,7 @@ export default function App() {
                     boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                     flex: 'none',
                     gridColumn: isMobile ? 2 : '1 / span 2',
-                    gridRow: 2,
+                    gridRow: isMobile ? 1 : 2,
                   }}
                   onMouseOver={(e) => (e.target.style.transform = 'translateY(-2px)')}
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
@@ -3415,7 +3464,7 @@ export default function App() {
                       boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                       flex: 'none',
                       gridColumn: 1,
-                      gridRow: 2,
+                      gridRow: 1,
                     }}
                   >
                     📚 Memories
@@ -3436,6 +3485,7 @@ export default function App() {
               apiBaseUrl={API_BASE_URL}
               containmentMode={containmentMode}
               onOpenConversation={handleOpenMemoryConversation}
+              onOpenChange={setMemoryManagerOpen}
             />
           </div>
         </div>

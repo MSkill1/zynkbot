@@ -720,7 +720,7 @@ impl ZynkSyncService {
     }
 
     /// Clear ZynkSync pairing data for a device. No peer notification — called directly
-    /// by `handle_notify_unsynced` to avoid a round-trip loop, and by `remove_device()`.
+    /// by `handle_notify_unsynced` to avoid a round-trip loop, and by `leave_sync_network()`.
     /// Preserves ZynkLink data (zynk_linked_directories, zynk_file_manifest, etc.).
     /// If `is_paired = 0` (no ZynkLink either) the device row is deleted entirely.
     /// If `is_paired = 1` (ZynkLink still active) the row is kept with sync_paired = 0.
@@ -907,7 +907,11 @@ impl ZynkSyncService {
         Ok(())
     }
 
-    pub async fn remove_device(&self, _device_id: &str) -> Result<(), String> {
+    /// Leave the sync network: tell every sync-paired peer and clear their pairings here.
+    /// Until 2026-11-12 this was `remove_device(id)`, which ignored its argument; the two
+    /// commands that passed one (`unpair_device`, `remove_zynksync_device`) had no caller
+    /// in the app and are gone. One device is expelled with `expel_device`.
+    pub async fn leave_sync_network(&self) -> Result<(), String> {
         // Collect ALL sync-paired peers before clearing anything
         let all_peers: Vec<(String, String, String, i64)> = sqlx::query_as::<_, (String, String, String, i64)>(
             "SELECT device_id, device_name, device_ip, port FROM zynk_devices WHERE sync_paired = 1"
@@ -1534,13 +1538,6 @@ impl ZynkSyncService {
         } else {
             Err(format!("Peer {} not found", peer_id))
         }
-    }
-
-    /// Unpair from a device
-    pub async fn unpair_device(&self, peer_id: &str) -> Result<(), String> {
-        // Fully remove the device record — keeping a stale "unpaired" entry in the DB
-        // causes ghost devices to reappear after app restart via load_devices().
-        self.remove_device(peer_id).await
     }
 
     /// Start HTTP server to receive sync requests from peers

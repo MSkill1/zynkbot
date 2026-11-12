@@ -4,9 +4,12 @@ import { listen } from '@tauri-apps/api/event';
 import MemoryManagerModal from "./MemoryManagerModal";
 import "../styles/MemoryManager.css";
 
-const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode, onOpenConversation }, ref) => {
+const MemoryManager = forwardRef(({ user_id, apiBaseUrl, containmentMode, onOpenConversation, onOpenChange }, ref) => {
   const isHipaaMode = containmentMode === 'hipaa';
   const [showModal, setShowModal] = useState(false);
+  // The page hides its floating ⚙️ while the window is open (2026-11-12: the ⚙️ and
+  // the ✕ sat over the Storage panel's last row on the phone).
+  useEffect(() => { onOpenChange?.(showModal); }, [showModal, onOpenChange]);
   const [memories, setMemories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isExpanded, setIsExpanded] = useState(false);

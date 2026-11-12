@@ -257,6 +257,25 @@ async fn r2_put(cfg: &R2Config, object_key: &str, data: Vec<u8>) -> Result<(), S
     Ok(())
 }
 
+/// When the object in the bucket was last written (its Last-Modified header); None when the
+/// bucket has no such object. For the backup reminder.
+async fn r2_last_modified(cfg: &R2Config, object_key: &str) -> Result<Option<chrono::DateTime<Utc>>, String> {
+    let endpoint = cfg.endpoint.trim_end_matches('/');
+    let host = endpoint.trim_start_matches("https://").trim_start_matches("http://");
+    let path = format!("/{}/{}", cfg.bucket, object_key);
+    let url = format!("{}{}", endpoint, path);
+    let headers = sig_v4_headers("HEAD", host, &path, &[], &cfg.access_key, &cfg.secret_key);
+    let mut req = reqwest::Client::new().head(&url).timeout(std::time::Duration::from_secs(15));
+    for (k, v) in &headers { req = req.header(k, v); }
+    let resp = req.send().await.map_err(|e| format!("R2 HEAD request failed: {}", e))?;
+    if resp.status() == 404 { return Ok(None); }
+    if !resp.status().is_success() { return Err(format!("R2 HEAD error {}", resp.status())); }
+    let when = resp.headers().get("last-modified").and_then(|v| v.to_str().ok())
+        .and_then(|s| chrono::DateTime::parse_from_rfc2822(s).ok())
+        .map(|t| t.with_timezone(&Utc));
+    Ok(when)
+}
+
 async fn r2_get(cfg: &R2Config, object_key: &str) -> Result<Vec<u8>, String> {
     let endpoint = cfg.endpoint.trim_end_matches('/');
     let host = endpoint
@@ -470,6 +489,11 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     r2_put(&cfg, "backup.enc", encrypted).await?;
     println!("[Backup] Backed up {} memories, {} links, {} sessions, {} messages, {} keys for user {}",
         count, link_count, session_count, message_count, key_count, user_id);
+    // This device's own record of the backup, for the reminder when the bucket cannot be asked.
+    let _ = sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES ('last_backup_at', ?, datetime('now')) \
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .bind(Utc::now().to_rfc3339()).execute(&pool).await;
+    let _ = sqlx::query("DELETE FROM app_settings WHERE key = 'backup_reminder_snoozed_until'").execute(&pool).await;
     Ok(serde_json::json!({
         "success": true,
         "count": count,
@@ -478,6 +502,69 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
         "message_count": message_count,
         "message": format!("Backed up {} memories, {} links, {} conversations ({} messages)", count, link_count, session_count, message_count)
     }))
+}
+
+/// The backup reminder (Matt, 2026-11-12). Due when backup storage is set up, memories have
+/// changed since the last backup, and that backup is more than a week old or there has never
+/// been one. The backup's date is read from the bucket, so a backup made on any device
+/// counts; when the bucket cannot be reached, this device's own record is used, and with
+/// neither the reminder is not due (a backup could not run either). "Later" quiets it for a
+/// week. No setting.
+#[tauri::command]
+pub async fn get_backup_reminder(user_id: String) -> Result<serde_json::Value, String> {
+    let not_due = |why: &str| serde_json::json!({ "due": false, "why": why });
+    let cfg = match load_r2_config() { Ok(c) => c, Err(_) => return Ok(not_due("not set up")) };
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await
+        .map_err(|e| format!("DB connect failed: {}", e))?;
+    let now = Utc::now();
+    let snoozed: Option<String> = sqlx::query_scalar("SELECT value FROM app_settings WHERE key = 'backup_reminder_snoozed_until'")
+        .fetch_optional(&pool).await.unwrap_or(None);
+    if let Some(until) = snoozed.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok()) {
+        if until.with_timezone(&Utc) > now { pool.close().await; return Ok(not_due("later")); }
+    }
+    let last: Option<chrono::DateTime<Utc>> = match r2_last_modified(&cfg, "backup.enc").await {
+        Ok(t) => t,
+        Err(e) => {
+            println!("[Backup] reminder: the bucket could not be asked ({}); using this device's record", e);
+            let own: Option<String> = sqlx::query_scalar("SELECT value FROM app_settings WHERE key = 'last_backup_at'")
+                .fetch_optional(&pool).await.unwrap_or(None);
+            match own.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok()) {
+                Some(t) => Some(t.with_timezone(&Utc)),
+                None => { pool.close().await; return Ok(not_due("unreachable")); }
+            }
+        }
+    };
+    // Memory rows carry RFC 3339 times; compared on their first 19 characters, in UTC.
+    let changed: i64 = match last {
+        Some(t) => sqlx::query_scalar(
+            "SELECT COUNT(*) FROM memories WHERE user_id = ? AND namespace != '_zynkbot' AND replace(substr(updated_at, 1, 19), 'T', ' ') > ?")
+            .bind(&user_id).bind(t.format("%Y-%m-%d %H:%M:%S").to_string()).fetch_one(&pool).await.unwrap_or(0),
+        None => sqlx::query_scalar("SELECT COUNT(*) FROM memories WHERE user_id = ? AND namespace != '_zynkbot'")
+            .bind(&user_id).fetch_one(&pool).await.unwrap_or(0),
+    };
+    pool.close().await;
+    let days_since = last.map(|t| (now - t).num_days());
+    let due = changed > 0 && days_since.map(|d| d >= 7).unwrap_or(true);
+    Ok(serde_json::json!({
+        "due": due,
+        "configured": true,
+        "changed": changed,
+        "last_backup_at": last.map(|t| t.to_rfc3339()),
+        "days_since": days_since,
+    }))
+}
+
+/// "Later" on the backup reminder: nothing for a week.
+#[tauri::command]
+pub async fn snooze_backup_reminder() -> Result<(), String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await
+        .map_err(|e| format!("DB connect failed: {}", e))?;
+    let until = (Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES ('backup_reminder_snoozed_until', ?, datetime('now')) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .bind(until).execute(&pool).await.map_err(|e| e.to_string())?;
+    pool.close().await;
+    Ok(())
 }
 
 #[tauri::command]

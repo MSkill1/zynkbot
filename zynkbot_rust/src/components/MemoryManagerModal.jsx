@@ -896,7 +896,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   if (isMobile) {
     return (
-      <div data-modal="" style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div data-modal="" style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflowX: 'hidden', overflowY: 'auto' /* the Storage panel can be taller than the screen (Matt, 2026-11-12) */ }}>
       <MemoryReportModal isOpen={showReport} openSection={reportSection} onClose={() => { setShowReport(false); setReportSection(''); }} userId={userId}
         onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
         onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />
@@ -941,7 +941,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 </button>
               </div>
               {showStorage && (
-                <div style={{ flex: '1 1 100%', marginTop: '8px' }}>
+                <div style={{ flex: '1 1 100%', marginTop: '8px', paddingBottom: '76px' /* room for the floating ✕ under Clear All */ }}>
                   <CloudBackupSettings onShowKey={handleCopyKey} onClearAll={handleClearAllMemories} />
                 </div>
               )}

@@ -259,7 +259,9 @@ pub async fn generate_reply(
         // A picked photo once arrived as megabytes of text and went into the log whole
         // (2026-10-25): show the first 1,500 characters and the size.
         let n = message.chars().count();
-        if n > 1500 { println!("▶ {} … ({} characters)", message.chars().take(1500).collect::<String>(), n); } else { println!("▶ {}", message); }
+        // HIPAA mode keeps the text out of the app log (2026-11-12): the length only.
+        if is_hipaa { println!("▶ ({} characters; HIPAA mode)", n); }
+        else if n > 1500 { println!("▶ {} … ({} characters)", message.chars().take(1500).collect::<String>(), n); } else { println!("▶ {}", message); }
     }
     println!();
     println!("[RUST] Backend: {}", backend);
@@ -1728,7 +1730,9 @@ pub async fn run_ensemble(
         // A picked photo once arrived as megabytes of text and went into the log whole
         // (2026-10-25): show the first 1,500 characters and the size.
         let n = message.chars().count();
-        if n > 1500 { println!("▶ {} … ({} characters)", message.chars().take(1500).collect::<String>(), n); } else { println!("▶ {}", message); }
+        // HIPAA mode keeps the text out of the app log (2026-11-12): the length only.
+        if is_hipaa { println!("▶ ({} characters; HIPAA mode)", n); }
+        else if n > 1500 { println!("▶ {} … ({} characters)", message.chars().take(1500).collect::<String>(), n); } else { println!("▶ {}", message); }
     }
     println!("  Models: {}", models.join(", "));
     println!();
@@ -2515,6 +2519,25 @@ pub(crate) fn take_picture_line(reply: &mut String) -> Option<String> {
     if note.is_empty() { None } else { Some(note) }
 }
 
+/// A candidate's hybrid score marks a duplicate above 0.98. A memory put in front of the
+/// classifier by a name correction carries a score of 1.0 that was set, not measured, so that
+/// score never makes it a duplicate; the pure-cosine check after it still applies.
+pub(crate) fn duplicate_by_hybrid(hybrid_score: f32, forced: bool) -> bool {
+    !forced && hybrid_score > 0.98
+}
+
+#[cfg(test)]
+mod name_correction_tests {
+    use super::duplicate_by_hybrid;
+
+    #[test]
+    fn a_forced_candidate_is_not_a_duplicate_by_its_set_score() {
+        assert!(duplicate_by_hybrid(0.99, false), "a measured 0.99 is a duplicate");
+        assert!(!duplicate_by_hybrid(0.97, false));
+        assert!(!duplicate_by_hybrid(1.0, true), "the name correction's forced 1.0 is not");
+    }
+}
+
 #[cfg(test)]
 mod picture_line_tests {
     use super::take_picture_line;
@@ -2775,6 +2798,9 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             similar_memories.retain(|(id, _, _, _)| !bg_sibling_ids.contains(id));
             // A name correction: every memory that holds the wrong name goes first, whatever
             // its similarity, so the classifier sees the pair that conflicts (2026-10-25).
+            // Their score of 1.0 is set, not measured, so the duplicate check below ignores
+            // it (2026-11-12: it read 1.0 as "already stored" and dropped the correction).
+            let mut forced_ids: Vec<i32> = Vec::new();
             if let Some((wrong, _)) = &bg_correction {
                 let held: Vec<(i32, String, Option<String>)> = sqlx::query_as(
                     "SELECT id, content, title FROM memories WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status NOT IN ('superseded', 'completed')) AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now')) AND content LIKE ? ORDER BY created_at DESC LIMIT 10")
@@ -2782,6 +2808,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
                 let mut forced: Vec<(i32, String, Option<String>, f32)> = held.into_iter().filter(|(id, _, _)| !bg_sibling_ids.contains(id)).map(|(id, content, title)| (id, content, title, 1.0)).collect();
                 println!("[RUST BACKGROUND] Name correction {} -> {}: {} memories hold the old name", wrong, bg_correction.as_ref().map(|c| c.1.as_str()).unwrap_or(""), forced.len());
                 similar_memories.retain(|(id, _, _, _)| !forced.iter().any(|(f, _, _, _)| f == id));
+                forced_ids = forced.iter().map(|f| f.0).collect();
                 forced.extend(similar_memories.drain(..));
                 similar_memories = forced;
             }
@@ -2798,7 +2825,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             let mut is_duplicate = false;
             for (mem_id, _mem_content, _mem_title, hybrid_score) in &similar_memories {
                 // Check 1: Very high hybrid score indicates duplicate (entity + semantic match)
-                if *hybrid_score > 0.98 {
+                if duplicate_by_hybrid(*hybrid_score, forced_ids.contains(mem_id)) {
                     println!("[RUST BACKGROUND] 🔄 DUPLICATE DETECTED: Memory {} has {:.1}% hybrid similarity",
                              mem_id, hybrid_score * 100.0);
                     println!("[RUST BACKGROUND] Skipping memory storage for duplicate");

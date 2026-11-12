@@ -395,7 +395,7 @@ See [NETWORKING_FEATURES.md](NETWORKING_FEATURES.md) for detailed documentation:
 - **ZynkSync** - Memory synchronization across your devices
 - **ZynkLink** - File sharing between paired devices
 - **ZChat** - Device-to-device messaging
-- **Cloud backup** - Encrypted backup and restore of memories, conversation history and API keys (with model choices and web-search settings) to your own storage bucket (see the Cloud Backup section there)
+- **Cloud backup** - Encrypted backup and restore of memories, conversation history and API keys (with model choices and web-search settings) to your own storage bucket, with a once-a-week reminder when memories have changed since the last backup (see the Cloud Backup section there)
 
 ---
 
@@ -424,7 +424,7 @@ See [ENSEMBLE_MODE.md](ENSEMBLE_MODE.md) for full documentation.
 
 ### ⚡ Quick question
 
-A one-off question asked in its own window, without the conversation you have open (Matt, 2026-11-12). The **Quick** button sits beside Ensemble on a phone and under Send on the desktop. The window takes the whole screen on a phone and is a dialog on the desktop: type or dictate the question, tap Ask, and the answer streams in with a Copy button. The open conversation is not touched and whatever was typed in its box stays there. Memories are recalled as for any message, and the containment mode applies. Every exchange is filed in one standing thread that only this window shows: **Earlier** lists the questions asked before, newest first, on every synced device. The thread is kept out of History and is never the one the Continue line offers.
+A one-off question asked in its own window, without the conversation you have open (Matt, 2026-11-12). The **Quick** button sits under Send, on the phone and on the desktop, and opens empty each time; the question just answered is under Earlier. The window takes the whole screen on a phone and is a dialog on the desktop: type or dictate the question, tap Ask, and the answer streams in with a Copy button. The open conversation is not touched and whatever was typed in its box stays there. Memories are recalled as for any message, and the containment mode applies. Every exchange is filed in one standing thread that only this window shows: **Earlier** lists the questions asked before, newest first, on every synced device. The thread is kept out of History and is never the one the Continue line offers.
 
 ---
 

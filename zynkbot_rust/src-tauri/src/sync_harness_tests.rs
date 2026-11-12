@@ -1108,7 +1108,7 @@ fn b33_a_device_that_left_and_rejoins_after_the_queue_was_pruned_still_catches_u
         assert_eq!(b.memory_contents().await.len(), 1);
 
         // The laptop leaves the network; the desktop learns of it from the notice.
-        b.svc.unpair_device(&a.device_id()).await.expect("laptop leaves");
+        b.svc.leave_sync_network().await.expect("laptop leaves");
         let mut gone = false;
         for _ in 0..60 {
             if !a.svc.get_peers().await.iter().any(|p| p.device_id == b.device_id()) { gone = true; break; }

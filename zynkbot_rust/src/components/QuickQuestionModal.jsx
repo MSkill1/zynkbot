@@ -25,7 +25,12 @@ export default function QuickQuestionModal({ isOpen, onClose, userId, backend, c
   const sessionId = QUICK_SESSION_PREFIX + userId;
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      // Closed: the next open is a fresh box (Matt, 2026-11-12, Pixel). The exchange
+      // just answered is in the thread, under Earlier.
+      setQuestion(''); setExchange(null); setError(null); setEarlier(null);
+      return;
+    }
     const t = setTimeout(() => textareaRef.current?.focus(), 50);
     const onKey = (e) => { if (e.key === 'Escape' && !isLoading) onClose(); };
     window.addEventListener('keydown', onKey);

@@ -213,7 +213,7 @@ This section states current behaviour.
 - The medical request rules are substring matches. "What options do I have?" is refused as a diagnosis request. "How much time does it take?" is refused as a dosing request.
 
 **What is still written to disk**
-- **The app log.** `generate_reply` prints the message (up to 1,500 characters) before the check, and `app_log.rs` writes all such output to `logs/zynkbot.log` in the app data folder. In HIPAA mode a message refused for an identifier is not printed. Every other message is, including one that a medical rule then refuses.
+- **The app log.** `app_log.rs` writes the app's output to `logs/zynkbot.log` in the app data folder. The chat and Ensemble request lines print the typed message in the other modes (up to 1,500 characters); in HIPAA mode they print its length only (since 2026-11-12). Other lines about the request, such as the model's name and timings, are written as in every mode.
 - **Conversation rows from paths that do not check the mode:** onboarding (`store_onboarding_response` in `commands/onboarding.rs`), rows arriving from a paired device over ZynkSync (`sync_outbox.rs`), and a backup restore (`commands/backup.rs`).
 - **Memories from `insert_memory` in `lib.rs`**, which does not check the mode.
 - Memories and history stored before HIPAA mode was selected stay in the database. The recent-memories list on the desktop still shows them.

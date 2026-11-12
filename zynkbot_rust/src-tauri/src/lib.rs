@@ -1985,6 +1985,8 @@ pub fn run() {
             commands::backup::get_r2_config_status,
             commands::backup::backup_memories_to_r2,
             commands::backup::restore_memories_from_r2,
+            commands::backup::get_backup_reminder,
+            commands::backup::snooze_backup_reminder,
             // Model and API key commands
             commands::models::get_models,
             commands::models::ollama_status,
@@ -2080,9 +2082,7 @@ pub fn run() {
             commands::zynksync::sync_to_peer,
             commands::zynksync::request_device_pairing,
             commands::zynksync::verify_pairing_code,
-            commands::zynksync::unpair_device,
             commands::zynksync::add_zynksync_device,
-            commands::zynksync::remove_zynksync_device,
             commands::zynksync::expel_zynksync_device,
             commands::zynksync::unsync_and_reset_identity,
             commands::zynksync::get_zynksync_pairing_code,
