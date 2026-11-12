@@ -23,6 +23,7 @@ import PageIntro, { introSeen } from "./components/PageIntro";
 import SnapInPlans from "./components/SnapInPlans";
 import UserIdentityModal from "./components/UserIdentityModal";
 import EnsembleModal from "./components/EnsembleModal";
+import QuickQuestionModal from "./components/QuickQuestionModal";
 import ConflictResolutionModal from "./components/ConflictResolutionModal";
 import KnowledgeBasePanel from "./components/KnowledgeBasePanel";
 import KnowledgeBaseManager from "./components/KnowledgeBaseManager";
@@ -138,6 +139,11 @@ function modelWindowTokens(modelId, models) {
 
 // Sources saved with a searched or page-read answer (sources_json on the row, 0028), back in
 // the shape ChatMessage renders under the answer. Anything unreadable is simply no list.
+// A stored row as the page shows it (shared by the restore, resume and Continue paths).
+function rowToMessage(m) {
+  return { id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [], web_search_results: parseSources(m.sources_json) };
+}
+
 const parseSources = (text) => {
   if (!text) return undefined;
   try { const v = JSON.parse(text); return v && Array.isArray(v.results) && v.results.length ? v : undefined; } catch (_) { return undefined; }
@@ -201,19 +207,20 @@ export default function App() {
     restoredRef.current = true;
     let fresh = false;
     try { fresh = !sessionStorage.getItem('zynkbot_restored'); sessionStorage.setItem('zynkbot_restored', '1'); } catch (_) { fresh = true; }
-    if (!fresh) return;
+    // A fresh start opens an empty conversation (tester Mike, 2026-11-12): the thread
+    // last written to is offered on one "Continue" line (set by adoptLatestThread) instead
+    // of being put on screen. Until now the thread the backend had as current was restored
+    // here. A page reload inside one run is not a fresh start: the thread it was showing
+    // is put back.
+    if (fresh) return;
     (async () => {
       try {
-        const current = await invoke('get_current_session');
-        if (!current || current === sessionId) return;
-        const rows = await invoke('get_conversation_messages', { sessionId: current });
+        const rows = await invoke('get_conversation_messages', { sessionId });
         if (!rows || rows.length === 0) return;
-        setSessionId(current);
-        try { sessionStorage.setItem('zynkbot_session_id', current); } catch (_) {}
-        setMessages(rows.map((m) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [], web_search_results: parseSources(m.sources_json) })));
-        console.log('[Session] restored thread', current.slice(0, 8), 'with', rows.length, 'messages');
+        setMessages(rows.map(rowToMessage));
+        console.log('[Session] page reloaded; thread', sessionId.slice(0, 8), 'put back with', rows.length, 'messages');
       } catch (e) {
-        console.warn('[Session] could not restore the current thread:', e);
+        console.warn('[Session] could not put the thread back after a reload:', e);
       }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -491,6 +498,9 @@ export default function App() {
   const [showWhyZynkbot, setShowWhyZynkbot] = useState(false);
   const [showUserIdentity, setShowUserIdentity] = useState(false);
   const [showEnsemble, setShowEnsemble] = useState(false);
+  const [showQuickQuestion, setShowQuickQuestion] = useState(false);
+  // The thread offered on the "Continue" line of an empty conversation (2026-11-12).
+  const [continueThread, setContinueThread] = useState(null);
   const [showConflictResolution, setShowConflictResolution] = useState(false);
   const [showZynkCluster, setShowZynkCluster] = useState(false);
   const [showConversationHistory, setShowConversationHistory] = useState(false);
@@ -650,7 +660,7 @@ export default function App() {
 
   // Lock body scroll when any modal is open to prevent scrollbar ghost artifact
   const anyModalOpen = showAbout || showDemoGuide || showWhyZynkbot ||
-    showUserIdentity || showEnsemble || showConflictResolution || showZynkCluster ||
+    showUserIdentity || showEnsemble || showQuickQuestion || showConflictResolution || showZynkCluster ||
     showConversationHistory || showOnboarding ||
     showSnapInModal;
   useLayoutEffect(() => {
@@ -1129,7 +1139,8 @@ export default function App() {
     setSessionId(fresh);
     try { sessionStorage.setItem('zynkbot_session_id', fresh); } catch (_) {}
     setMessages([]);
-    myAnchorRef.current = Date.now(); // a deliberate new conversation: stay until another device writes after this
+    setContinueThread(null);
+    myAnchorRef.current = Date.now(); // a deliberate new conversation
   };
 
   const handleResumeSession = ({ sessionId: resumedId, messages: pastMessages, scrollToEnd = true }) => {
@@ -1188,17 +1199,28 @@ export default function App() {
     noticeTimerRef.current = setTimeout(() => setNotice(''), ms);
   };
 
-  // ONE SHARED CONVERSATION ACROSS DEVICES (2026-10-28, Matt): whichever device wrote to a
-  // thread last, that thread is the current one everywhere. A device lands in it when it is
-  // brought back to the front (or has been idle for a while and a sync brings news); it
-  // never moves while the user is typing, waiting for a reply or has a file attached.
-  // "New" is respected: a device that started a new conversation stays there until another
-  // device writes after that. Old threads stay in History to reopen at any time.
+  // ONE SHARED CONVERSATION ACROSS DEVICES (2026-10-28, Matt; changed 2026-11-12 for tester
+  // Mike): the thread any device wrote to last is known everywhere, but no device puts it
+  // on screen by itself any more. An empty conversation offers it on one "Continue" line,
+  // which goes away as soon as a message is sent there instead; the thread on screen is
+  // refreshed when it is continued on another device. Old threads stay in History.
   const liveRef = useRef({});
   liveRef.current = { sessionId, isLoading, hasDraft: input.trim().length > 0 || attachedFiles.length > 0, editing: editingMessageId !== null, count: messages.length, userId };
   const myAnchorRef = useRef(0);      // when this device last wrote, or asked for a new conversation
   const lastTouchRef = useRef(Date.now());
   const adoptingRef = useRef(false);
+  const handleContinueThread = async () => {
+    const t = continueThread;
+    if (!t) return;
+    try {
+      const rows = await invoke('get_conversation_messages', { sessionId: t.session_id });
+      handleResumeSession({ sessionId: t.session_id, messages: (rows || []).map(rowToMessage) });
+      myAnchorRef.current = Math.max(myAnchorRef.current, new Date(t.last_active).getTime());
+      setContinueThread(null);
+    } catch (e) {
+      notify('Could not open that conversation.');
+    }
+  };
   const adoptLatestThread = async (why, allowSwitch = true) => {
     const st = liveRef.current;
     if (!st.userId || adoptingRef.current || st.isLoading || st.hasDraft || st.editing) return;
@@ -1209,7 +1231,6 @@ export default function App() {
       const theirs = new Date(latest.last_active).getTime();
       const rows = await invoke('get_conversation_messages', { sessionId: latest.session_id });
       if (!rows || rows.length === 0) return;
-      const asMessage = (m) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at, recalled_memories: [], web_search_results: parseSources(m.sources_json) });
       if (latest.session_id === liveRef.current.sessionId) {
         // Same thread, written on another device meanwhile: append what this device lacks.
         // The thread is replaced by the stored copy, never appended to: the page can hold
@@ -1217,19 +1238,17 @@ export default function App() {
         // and appending could double a message.
         const have = liveRef.current.count;
         if (rows.length > have && theirs > myAnchorRef.current + 2000) {
-          setMessages(rows.map(asMessage));
+          setMessages(rows.map(rowToMessage));
           myAnchorRef.current = theirs;
           console.log('[Session] this thread was continued on another device; refreshed (' + why + ')');
         }
         return;
       }
-      // A different thread: only when another device wrote after this one last did, and
-      // (for a sync event) only once this device has been quiet for a while.
-      if (!allowSwitch || theirs <= myAnchorRef.current + 2000) return;
-      handleResumeSession({ sessionId: latest.session_id, messages: rows.map(asMessage) });
-      myAnchorRef.current = theirs;
-      notify('Continuing the conversation from your other device.', 3500);
-      console.log('[Session] switched to the thread another device was using (' + why + ')');
+      // A different thread is never put on screen by itself. An empty conversation offers
+      // it on the "Continue" line; a conversation with messages is left alone.
+      if (liveRef.current.count > 0) return;
+      setContinueThread({ session_id: latest.session_id, title: latest.title || '', last_active: latest.last_active });
+      console.log('[Session] offering the thread last written to (' + why + ')');
     } catch (e) {
       console.warn('[Session] could not check for the shared thread:', e);
     } finally {
@@ -2156,7 +2175,7 @@ export default function App() {
         // close button exists at that corner. Otherwise the two overlap and the first
         // tap toggles the sidebar instead of closing the modal (reported on API Keys,
         // then on the User Identity modal opened from the sidebar's info button).
-        hideToggle={showConversationHistory || showEnsemble || voice.showVoiceModal
+        hideToggle={showConversationHistory || showEnsemble || showQuickQuestion || voice.showVoiceModal
           || showUserIdentity || showAbout || showDemoGuide || showWhyZynkbot || showConflictResolution || showZynkCluster || showReport
           || controlsPage !== null}
         onOpen={() => {
@@ -2731,9 +2750,18 @@ export default function App() {
               )}
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
-                  introSeen('chat')
+                  <>
+                  {continueThread && (
+                    <button onClick={handleContinueThread} title="Open the conversation you were in last"
+                      style={{ display: 'flex', alignItems: 'center', gap: '8px', maxWidth: '100%', minHeight: '42px', padding: '8px 14px', marginBottom: '10px', background: '#2b2d3a', border: '1px solid #44475a', borderRadius: '8px', color: '#8be9fd', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 'bold', textAlign: 'left' }}>
+                      <span style={{ flexShrink: 0 }}>▶ Continue:</span>
+                      <span style={{ color: '#f8f8f2', fontWeight: 'normal', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{continueThread.title || 'your last conversation'}</span>
+                    </button>
+                  )}
+                  {introSeen('chat')
                     ? <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
-                    : <PageIntro introKey="chat" accent="#8be9fd" noLink>Type or dictate a message. Under the box: <b>KB</b> searches your documents, the paper clip attaches a file, the picture button attaches a photo from your gallery, and the camera takes one. Zynkbot remembers what you tell it about yourself, here on this device; Memory Manager shows what it kept, and you can edit or delete any of it. With your own API key, the model company answers each question and bills you for it; under its API terms it does not use your messages to train on or to build a profile of you, the way a chat subscription can.</PageIntro>
+                    : <PageIntro introKey="chat" accent="#8be9fd" noLink>Type or dictate a message. Under the box: <b>KB</b> searches your documents, the paper clip attaches a file, the picture button attaches a photo from your gallery, and the camera takes one. <b>Quick</b> asks a one-off question in its own window, outside this conversation. Zynkbot remembers what you tell it about yourself, here on this device; Memory Manager shows what it kept, and you can edit or delete any of it. With your own API key, the model company answers each question and bills you for it; under its API terms it does not use your messages to train on or to build a profile of you, the way a chat subscription can.</PageIntro>}
+                  </>
                 ) : (
                   (() => {
                     // Find indices of the last user message and last assistant message
@@ -3201,16 +3229,16 @@ export default function App() {
                 )}
               </div>
 
-              {/* Right: 2×2 Button Grid. Stop is in the conversation now (2026-11-10, on trial).
+              {/* Right: Button Grid. Stop is in the conversation now (2026-11-10, on trial).
                   On the desktop Send fills the place it left; on a phone a Send over both rows
-                  was "huge" (Matt, 2026-11-10), so it keeps its size and the top-right cell is
-                  empty until Quick question takes it.
-                  Desktop: Voice | Ensemble / Send across both columns
-                  Mobile:  Ensemble | (empty) / MemoryManager | Send */}
+                  was "huge" (Matt, 2026-11-10), so it keeps its size and Quick question has the
+                  top-right cell (2026-11-12).
+                  Desktop: Voice | Ensemble / Send across both columns / Quick across both columns
+                  Mobile:  Ensemble | Quick / MemoryManager | Send */}
               <div className="chat-button-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: '85px 85px',
-                gridTemplateRows: '42px 42px',
+                gridTemplateRows: isMobile ? '42px 42px' : '42px 42px 42px',
                 gap: '10px'
               }}>
                 {/* Desktop-only: Voice in grid (mobile has circular button on textarea) */}
@@ -3278,6 +3306,44 @@ export default function App() {
                   onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
                 >
                   Ensemble
+                </button>
+
+                {/* Quick question (2026-11-12): a one-off question in its own window, answered
+                    without this conversation's history. Mobile: TR (1,2); desktop: a third row
+                    under Send. */}
+                <button
+                  onClick={() => setShowQuickQuestion(true)}
+                  disabled={isLoading}
+                  title="Ask a one-off question in its own window, without this conversation"
+                  style={{
+                    width: isMobile ? '85px' : '180px',
+                    height: '42px',
+                    minWidth: isMobile ? '85px' : '180px',
+                    maxWidth: isMobile ? '85px' : '180px',
+                    minHeight: '42px',
+                    maxHeight: '42px',
+                    padding: '0',
+                    background: 'linear-gradient(135deg, #8be9fd 0%, #5fd0ea 100%)',
+                    color: '#282a36',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    opacity: isLoading ? 0.5 : 1,
+                    fontWeight: 'bold',
+                    fontSize: '0.75rem',
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                    flex: 'none',
+                    gridColumn: isMobile ? 2 : '1 / span 2',
+                    gridRow: isMobile ? 1 : 3,
+                  }}
+                  onMouseOver={(e) => !isLoading && (e.target.style.transform = 'translateY(-2px)')}
+                  onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
+                >
+                  ⚡ Quick
                 </button>
 
                 {/* Send. It never doubles as Stop: a Send that changes meaning mid-request was
@@ -3419,6 +3485,14 @@ export default function App() {
           setShowConflictResolution(false);
           setCurrentConflict(null);
         }}
+      />
+      <QuickQuestionModal
+        isOpen={showQuickQuestion}
+        onClose={() => setShowQuickQuestion(false)}
+        userId={userId}
+        backend={modelType}
+        containmentMode={containmentMode}
+        isMobile={isMobile}
       />
       <EnsembleModal
         isOpen={showEnsemble}

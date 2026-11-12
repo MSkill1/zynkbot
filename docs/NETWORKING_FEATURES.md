@@ -30,7 +30,7 @@ All features work over any shared local network (home WiFi, office LAN, or mobil
 
 ### One conversation across devices (October 2026)
 
-Whichever device you wrote to last, that thread is the current one on all of your paired devices. Another device lands in it when you bring the app back to the front, when the app starts, or, if it was left open, once it has been quiet for 45 seconds after the new messages arrive. A device never switches while you are typing, waiting for a reply or have a file attached. A device where you tapped New stays on its new thread until another device writes after that. Old threads stay in History and can be reopened at any time.
+Whichever device you wrote to last, that thread is known on all of your paired devices, but since 2026-11-12 no device puts it on screen by itself (tester Mike found a thread from another device appearing on open unwelcome). The app opens to an empty conversation with one line at the top, "▶ Continue: <title>", naming that thread; tap it to carry on there, or just send a message and the line goes away. A thread that is on screen is refreshed when it is continued on another device. Old threads stay in History and can be reopened at any time.
 
 ### How It Works (since the outbox rebuild, October 2026)
 

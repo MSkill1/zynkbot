@@ -187,7 +187,7 @@ Every completed exchange is automatically saved to a local database. Conversatio
 - **Resume** — reload a past session into the active chat, restoring full conversation context
 - Delete individual sessions
 - **Pin** a conversation (pin icon on its row) and it sits in a "Pinned" group at the top of the list whatever its date, and also under its own date group; pinned state is included in cloud backups <!-- added by Claude 2026-09-09, review -->
-- **Thread restore after a restart**: when the app is opened fresh (after an update, a crash or being swiped away), it asks the backend which conversation was current; if that thread has messages and is not the one the page already has, it is put back on screen instead of an empty chat. This is what keeps hands-free "Hey Zynk" turns, which join the current thread from outside the page, from disappearing. <!-- added by Claude 2026-09-09, review -->
+- **A fresh start opens an empty conversation** (since 2026-11-12, asked for by tester Mike). The thread any of your devices wrote to last is offered on one line at the top, "▶ Continue: <title>"; tap it to carry on there. The line goes away as soon as a message is sent in the new conversation instead. Until then the app put the last thread straight on screen. This is what keeps hands-free "Hey Zynk" turns, which join the current thread from outside the page, from disappearing. <!-- added by Claude 2026-09-09, review -->
 
 **HIPAA mode:** Conversation history is completely disabled. No records are written — raw conversation text is more sensitive than extracted facts, and disabling both is the correct default.
 
@@ -419,6 +419,12 @@ On the desktop the Ensemble button opens whatever model you are using; the windo
 **Best for:** fact-checking, catching hallucinations, contested questions, and any decision where you want more than one AI perspective before acting.
 
 See [ENSEMBLE_MODE.md](ENSEMBLE_MODE.md) for full documentation.
+
+---
+
+### ⚡ Quick question
+
+A one-off question asked in its own window, without the conversation you have open (Matt, 2026-11-12). The **Quick** button sits beside Ensemble on a phone and under Send on the desktop. The window takes the whole screen on a phone and is a dialog on the desktop: type or dictate the question, tap Ask, and the answer streams in with a Copy button. The open conversation is not touched and whatever was typed in its box stays there. Memories are recalled as for any message, and the containment mode applies. Every exchange is filed in one standing thread that only this window shows: **Earlier** lists the questions asked before, newest first, on every synced device. The thread is kept out of History and is never the one the Continue line offers.
 
 ---
 

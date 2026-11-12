@@ -11,25 +11,37 @@ pub async fn list_conversation_sessions(
     let pool = sqlx::SqlitePool::connect(&db_url)
         .await
         .map_err(|e: sqlx::Error| e.to_string())?;
+    // The standing "Quick questions" thread is read inside the Quick window, not here
+    // (Matt, 2026-11-12: History is full enough).
     conversation_history::list_sessions(&pool, &user_id, limit.unwrap_or(50), offset.unwrap_or(0))
         .await
+        .map(|v| v.into_iter().filter(|s| !is_quick_thread(&s.session_id)).collect())
         .map_err(|e: sqlx::Error| e.to_string())
+}
+
+/// The one thread the Quick question window files into (QuickQuestionModal.jsx).
+pub(crate) fn is_quick_thread(session_id: &str) -> bool {
+    session_id.starts_with("quick-questions-")
 }
 
 /// The thread any of the user's devices wrote to most recently (2026-10-28, single shared
 /// context): the one every device lands in when it is brought back to the front. Threads
-/// with no messages (a started-and-abandoned "New") are not counted.
+/// with no messages (a started-and-abandoned "New") are not counted, and neither is the
+/// standing "Quick questions" thread (2026-11-12): a quick question must not move every
+/// device into that thread.
 #[tauri::command]
 pub async fn get_latest_thread(user_id: String) -> Result<Option<serde_json::Value>, String> {
     let db_url = crate::db::get_db_url();
     let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e: sqlx::Error| e.to_string())?;
-    let row: Option<(String, String, i64)> = sqlx::query_as(
-        "SELECT session_id, last_active, message_count FROM conversation_sessions
-         WHERE user_id = ? AND message_count > 0 ORDER BY last_active DESC LIMIT 1")
+    let row: Option<(String, String, i64, Option<String>)> = sqlx::query_as(
+        "SELECT session_id, last_active, message_count, title FROM conversation_sessions
+         WHERE user_id = ? AND message_count > 0 AND session_id NOT LIKE 'quick-questions-%'
+         ORDER BY last_active DESC LIMIT 1")
         .bind(&user_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
     pool.close().await;
-    Ok(row.map(|(session_id, last_active, message_count)| serde_json::json!({
-        "session_id": session_id, "last_active": last_active, "message_count": message_count })))
+    Ok(row.map(|(session_id, last_active, message_count, title)| serde_json::json!({
+        "session_id": session_id, "last_active": last_active, "message_count": message_count,
+        "title": title.unwrap_or_default() })))
 }
 
 #[tauri::command]
@@ -64,6 +76,7 @@ pub async fn search_conversations(
         date_to.as_deref(),
     )
     .await
+    .map(|v| v.into_iter().filter(|s| !is_quick_thread(&s.session_id)).collect())
     .map_err(|e: sqlx::Error| e.to_string())
 }
 

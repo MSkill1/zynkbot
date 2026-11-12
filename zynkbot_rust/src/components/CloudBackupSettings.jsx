@@ -19,6 +19,13 @@ export default function CloudBackupSettings({ onShowKey, onClearAll }) {
   const [secretKey, setSecretKey] = useState("");
   const [bucket, setBucket] = useState("zynkbot-backups");
   const [status, setStatus] = useState({ type: "idle", message: "" });
+  const [nameCopied, setNameCopied] = useState(false);
+
+  // Cloudflare's own rule for a bucket name (developers.cloudflare.com/r2/buckets/create-buckets):
+  // lower-case letters, numbers and hyphens, 3 to 63 characters, not starting or ending with a
+  // hyphen. Checked here so the mismatch is caught in the app, not on the Cloudflare page
+  // (Matt's father, 2026-11-12).
+  const BUCKET_RULE = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 
   const load = async () => {
     try {
@@ -41,13 +48,18 @@ export default function CloudBackupSettings({ onShowKey, onClearAll }) {
       setStatus({ type: 'error', message: 'Endpoint, Access Key ID, and Secret Key are required.' });
       return;
     }
+    const bucketName = bucket.trim() || 'zynkbot-backups';
+    if (!BUCKET_RULE.test(bucketName)) {
+      setStatus({ type: 'error', message: 'Bucket name: Cloudflare takes only lower-case letters, numbers and hyphens, 3 to 63 characters, not starting or ending with a hyphen.' });
+      return;
+    }
     setStatus({ type: 'saving', message: 'Saving…' });
     try {
       const vals = {
         R2_ENDPOINT: endpoint.trim(),
         R2_ACCESS_KEY_ID: accessKey.trim(),
         R2_SECRET_ACCESS_KEY: secretKey.trim(),
-        R2_BUCKET: bucket.trim() || 'zynkbot-backups',
+        R2_BUCKET: bucketName,
       };
       for (const [k, v] of Object.entries(vals)) {
         await invoke('set_api_key', { key: k, value: v });
@@ -93,11 +105,23 @@ export default function CloudBackupSettings({ onShowKey, onClearAll }) {
       </div>
       <div style={{ fontSize: '0.82rem', color: '#9aa5c4', lineHeight: 1.5 }}>
         Backups are encrypted before they leave this device, with a key that stays on your own devices.
-        They are stored in a Cloudflare R2 bucket of your own.{' '}
-        <button onClick={() => openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens')}
-          style={{ background: 'none', border: 'none', color: '#8be9fd', cursor: 'pointer', padding: 0, font: 'inherit', textDecoration: 'underline' }}>
-          Get your free Cloudflare account
-        </button>
+        They are stored in a Cloudflare R2 bucket of your own. Setting it up takes three steps:
+        <ol style={{ margin: '6px 0 0', paddingLeft: '20px' }}>
+          <li>
+            <button onClick={() => openUrl('https://dash.cloudflare.com/sign-up')}
+              style={{ background: 'none', border: 'none', color: '#8be9fd', cursor: 'pointer', padding: 0, font: 'inherit', textDecoration: 'underline' }}>
+              Create a free Cloudflare account
+            </button>.
+          </li>
+          <li>In Cloudflare, open <b style={{ color: '#f8f8f2' }}>R2</b> and create a bucket named exactly as the bucket name below. Cloudflare takes only lower-case letters, numbers and hyphens in the name; capitals and spaces are refused.</li>
+          <li>Under <b style={{ color: '#f8f8f2' }}>R2 API tokens</b>,{' '}
+            <button onClick={() => openUrl('https://dash.cloudflare.com/?to=/:account/r2/api-tokens')}
+              style={{ background: 'none', border: 'none', color: '#8be9fd', cursor: 'pointer', padding: 0, font: 'inherit', textDecoration: 'underline' }}>
+              create a token
+            </button>{' '}
+            that can read and write objects, and copy its endpoint URL, Access Key ID and Secret Access Key into the boxes here.
+          </li>
+        </ol>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
         <label style={labelStyle}>Endpoint URL</label>
@@ -116,7 +140,14 @@ export default function CloudBackupSettings({ onShowKey, onClearAll }) {
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px' }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label style={labelStyle}>Bucket Name</label>
-          <input type="text" value={bucket} onChange={e => setBucket(e.target.value)} placeholder="zynkbot-backups" style={inputStyle} />
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <input type="text" value={bucket} onChange={e => setBucket(e.target.value.toLowerCase().replace(/\s+/g, ''))} placeholder="zynkbot-backups" style={inputStyle} />
+            <button onClick={async () => { try { await navigator.clipboard.writeText(bucket.trim() || 'zynkbot-backups'); setNameCopied(true); setTimeout(() => setNameCopied(false), 2000); } catch (_) {} }}
+              title="Copy the bucket name to paste into Cloudflare"
+              style={{ padding: '0 10px', borderRadius: '4px', border: '1px solid #44475a', background: '#282a36', color: '#f8f8f2', cursor: 'pointer', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+              {nameCopied ? '✓ Copied' : '📋 Copy'}
+            </button>
+          </div>
         </div>
         <button onClick={save}
           style={{ padding: '8px 20px', borderRadius: '4px', border: 'none', background: status.type === 'ok' ? '#50fa7b' : '#6272a4', color: status.type === 'ok' ? '#282a36' : '#fff', cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap', minHeight: '36px' }}>
