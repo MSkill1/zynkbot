@@ -94,7 +94,7 @@ The local classifier is `system/toxic-bert` with six outputs: toxic, severe_toxi
 
 Recall finds stored memories to place in the prompt.
 
-**Names in the message.** `NLPEnhancer::extract_entities` (`nlp_enhancer.rs`) runs the `dslim/bert-base-NER` model plus a rule-based pass. The words are lower-cased and a stop-word list is removed. The result, `query_entities`, is used for this search and is saved with the memory job for later (7.2).
+**Names in the message.** `NLPEnhancer::extract_entities` (`nlp_enhancer.rs`) runs the `dslim/bert-base-NER` model plus a rule-based pass. The words are lower-cased and a stop-word list is removed; common contractions ("i'm", "don't") are on the list since 2026-11-12, after the rule-based pass handed "i'm" over as a name and the search weighted memories that held it. The result, `query_entities`, is used for this search and is saved with the memory job for later (7.2).
 
 **Embedding.** `llm/local_embeddings.rs` `generate_local_embedding` embeds the message with `all-MiniLM-L6-v2` into a 384-number vector. A long message (40 words or more, `memory::LONG_MESSAGE_WORDS`) is also cut into parts of about 20 words at sentence ends (`memory::recall_chunks`, at most about six; a run-on dictation is cut by words) and each part is embedded too (`commands/chat.rs` `embed_with_parts`). A memory's cosine is then the mean of its score against the whole message and its best score against any part (`memory::combine_similarity`). Added 2026-11-12 after a 114-word question about a hair routine scored every hair memory under the 0.35 line and recalled nothing, while the 20-word fact extracted from the same message scored them at 58-62%; measured in `docs/BENCHMARKS.md`, section 2.
 

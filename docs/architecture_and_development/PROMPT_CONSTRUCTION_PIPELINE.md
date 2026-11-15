@@ -123,7 +123,7 @@ USER'S STORED MEMORIES:
 ```
 The quote is cut to 400 characters (300 on-device).
 
-**Which memories arrive here.** `generate_reply` passes the hybrid search results, highest score first, followed by the memories reached through one link from them (at most 8). The search returns up to 30 memories for a cloud backend and 10 otherwise. See the part on memory recall in [MEMORY_PROCESSING_PIPELINE.md](MEMORY_PROCESSING_PIPELINE.md).
+**Which memories arrive here.** `generate_reply` passes the hybrid search results, highest score first, followed by the memories reached through one link from them (at most 8). The search returns up to 30 memories for a cloud backend and 10 otherwise. The question is searched as a whole and, from 40 words, by its sentence-sized parts as well (2026-11-12), so one point made in a long message can still find its memory. See the part on memory recall in [MEMORY_PROCESSING_PIPELINE.md](MEMORY_PROCESSING_PIPELINE.md).
 
 ---
 
