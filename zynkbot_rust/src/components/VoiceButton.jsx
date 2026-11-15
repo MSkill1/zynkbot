@@ -20,12 +20,20 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, onLive, disa
     window.dispatchEvent(new CustomEvent('zynkbot:dictation', { detail: { active } }));
   };
 
+  // The recording ended by itself (the mic button's timers, 2026-11-15): the same
+  // hand-over as a tap on Stop.
+  const onEnded = (text) => {
+    if (text && onTranscript) onTranscript(text);
+    if (onLive) onLive(null);
+    announceDictation(false);
+  };
+
   useImperativeHandle(ref, () => ({
     triggerRecord: async () => {
       if (!isRecording) {
         announceDictation(true);
         if (onLive) onLive('');
-        await startRecording({ onLive });
+        await startRecording({ onLive, onEnded });
       }
     },
     // Send was pressed while recording (2026-11-08): the recording ends and its final
@@ -62,7 +70,7 @@ const VoiceButton = forwardRef(function VoiceButton({ onTranscript, onLive, disa
     } else {
       announceDictation(true);
       if (onLive) onLive('');
-      await startRecording({ onLive });
+      await startRecording({ onLive, onEnded });
     }
   };
 

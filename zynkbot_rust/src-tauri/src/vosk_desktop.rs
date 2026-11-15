@@ -31,6 +31,41 @@ use vosk::{DecodingState, Model, Recognizer};
 /// Receives the text recognised so far, every time it changes (at most a few times a second).
 pub type LiveSink = Box<dyn Fn(String) + Send + Sync + 'static>;
 
+/// Called once, with the text so far, when a recording ends by itself (the timers below).
+pub type EndSink = Box<dyn Fn(String) + Send + Sync + 'static>;
+
+/// The mic button's own timers (2026-11-15). A mic left on while the user walked away
+/// ran until Stop was tapped and then stopped slowly: the live session was asked for
+/// the transcript of minutes of nothing, or a clip too large for the one-shot upload
+/// went up. Once something has been said, no new words for `BUTTON_SILENCE` ends the
+/// recording; nothing said at all for `BUTTON_NO_SPEECH` ends it; `BUTTON_CAP` ends it
+/// regardless. The text so far is delivered as if Stop had been tapped. Hands-free on
+/// Android has shorter timers of its own (Dictation.kt); these are for typing by voice,
+/// where a person stops to think mid-sentence.
+pub const BUTTON_SILENCE: Duration = Duration::from_secs(20);
+pub const BUTTON_NO_SPEECH: Duration = Duration::from_secs(30);
+pub const BUTTON_CAP: Duration = Duration::from_secs(180);
+
+/// What the timers watch: when the recognised text last changed.
+struct Activity {
+    started: Instant,
+    last_change: Option<Instant>,
+    last_text: String,
+}
+
+/// Why a recording ends by itself, or None to carry on. `text_based` is false when no
+/// words can arrive before stop (the OpenAI clip upload): then only the cap applies.
+pub fn self_stop_reason(text_based: bool, since_start: Duration, since_change: Option<Duration>) -> Option<&'static str> {
+    if text_based {
+        match since_change {
+            None if since_start >= BUTTON_NO_SPEECH => return Some("nothing said in 30 s"),
+            Some(d) if d >= BUTTON_SILENCE => return Some("no new words for 20 s"),
+            _ => {}
+        }
+    }
+    if since_start >= BUTTON_CAP { Some("listening cap, 3 minutes") } else { None }
+}
+
 /// Vosk recogniser plus the utterances it has already finished.
 struct VoskState {
     rec: Recognizer,
@@ -108,12 +143,16 @@ fn get_model() -> Result<Arc<Model>, String> {
     Ok(arc)
 }
 
-pub fn start(engine: Engine, on_live: Option<LiveSink>) -> Result<(), String> {
+pub fn start(engine: Engine, on_live: Option<LiveSink>, on_ended: Option<EndSink>) -> Result<(), String> {
     let mut guard = ACTIVE_SESSION
         .lock()
         .map_err(|e| format!("Session lock poisoned: {e}"))?;
-    if guard.is_some() {
+    if guard.as_ref().map_or(false, |s| !s.thread.is_finished()) {
         return Err("A recording is already in progress".to_string());
+    }
+    // A session that ended by itself is finished with; let it go.
+    if let Some(old) = guard.take() {
+        let _ = old.thread.join();
     }
 
     // Vosk: preload model on the caller thread so load errors surface here.
@@ -127,7 +166,7 @@ pub fn start(engine: Engine, on_live: Option<LiveSink>) -> Result<(), String> {
     let (result_tx, result_rx) = mpsc::channel::<Result<String, String>>();
 
     let thread = thread::spawn(move || {
-        run_audio_thread(engine, model, on_live, ready_tx, stop_rx, result_tx);
+        run_audio_thread(engine, model, on_live, on_ended, ready_tx, stop_rx, result_tx);
     });
 
     match ready_rx.recv() {
@@ -156,10 +195,8 @@ pub fn stop() -> Result<String, String> {
     };
     let session = session.ok_or_else(|| "No recording in progress".to_string())?;
 
-    session
-        .stop_tx
-        .send(())
-        .map_err(|e| format!("Failed to signal stop: {e}"))?;
+    // A send error means the thread already ended by itself; its result is waiting.
+    let _ = session.stop_tx.send(());
     let result = session
         .result_rx
         .recv()
@@ -172,6 +209,7 @@ fn run_audio_thread(
     engine: Engine,
     model: Option<Arc<Model>>,
     on_live: Option<LiveSink>,
+    on_ended: Option<EndSink>,
     ready_tx: Sender<Result<(), String>>,
     stop_rx: Receiver<()>,
     result_tx: Sender<Result<String, String>>,
@@ -229,7 +267,24 @@ fn run_audio_thread(
 
     let rec_cb = recognizer.clone();
     let buf_cb = openai_buffer.clone();
-    let live_cb: Option<Arc<LiveSink>> = on_live.map(Arc::new);
+    // Every change in the recognised text is noted for the timers, whether or not the
+    // page asked for live text.
+    let activity = Arc::new(Mutex::new(Activity { started: Instant::now(), last_change: None, last_text: String::new() }));
+    let activity_sink = activity.clone();
+    let on_live_tracked: LiveSink = Box::new(move |text: String| {
+        if let Ok(mut a) = activity_sink.lock() {
+            if text != a.last_text {
+                if !text.trim().is_empty() {
+                    a.last_change = Some(Instant::now());
+                }
+                a.last_text = text.clone();
+            }
+        }
+        if let Some(cb) = &on_live {
+            cb(text);
+        }
+    });
+    let live_cb: Option<Arc<LiveSink>> = Some(Arc::new(on_live_tracked));
     let live_cb2 = live_cb.clone();
 
     // OpenAI: open the live session now; the socket connects in the background while
@@ -287,8 +342,23 @@ fn run_audio_thread(
 
     let _ = ready_tx.send(Ok(()));
 
-    // Block until stop is signaled.
-    let _ = stop_rx.recv();
+    // Block until stop is signaled, or until the mic button's own timers end it.
+    let text_based = matches!(engine, Engine::Vosk) || live_session.is_some();
+    let self_ended = loop {
+        match stop_rx.recv_timeout(Duration::from_millis(250)) {
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let (since_start, since_change) = match activity.lock() {
+                    Ok(a) => (a.started.elapsed(), a.last_change.map(|t| t.elapsed())),
+                    Err(_) => (Duration::ZERO, None),
+                };
+                if let Some(reason) = self_stop_reason(text_based, since_start, since_change) {
+                    println!("[Dictation] Ended by itself after {:.0}s: {}", since_start.as_secs_f32(), reason);
+                    break true;
+                }
+            }
+            _ => break false,
+        }
+    };
 
     drop(stream);
 
@@ -325,7 +395,49 @@ fn run_audio_thread(
             }
         }
     };
+    if self_ended {
+        if let Some(cb) = &on_ended {
+            let delivered = match &text {
+                Ok(t) => t.clone(),
+                Err(e) => {
+                    eprintln!("[Dictation] Ended by itself but gave no text: {e}");
+                    String::new()
+                }
+            };
+            cb(delivered);
+        }
+    }
     let _ = result_tx.send(text);
+}
+
+#[cfg(test)]
+mod self_stop_tests {
+    use super::*;
+    const S: fn(u64) -> Duration = Duration::from_secs;
+
+    #[test]
+    fn nothing_said_ends_at_thirty_seconds() {
+        assert_eq!(self_stop_reason(true, S(29), None), None);
+        assert_eq!(self_stop_reason(true, S(30), None), Some("nothing said in 30 s"));
+    }
+
+    #[test]
+    fn a_pause_after_words_ends_at_twenty_seconds() {
+        assert_eq!(self_stop_reason(true, S(90), Some(S(19))), None);
+        assert_eq!(self_stop_reason(true, S(90), Some(S(20))), Some("no new words for 20 s"));
+    }
+
+    #[test]
+    fn steady_talk_ends_only_at_the_cap() {
+        assert_eq!(self_stop_reason(true, S(179), Some(S(1))), None);
+        assert_eq!(self_stop_reason(true, S(180), Some(S(1))), Some("listening cap, 3 minutes"));
+    }
+
+    #[test]
+    fn without_live_text_only_the_cap_applies() {
+        assert_eq!(self_stop_reason(false, S(120), None), None);
+        assert_eq!(self_stop_reason(false, S(180), None), Some("listening cap, 3 minutes"));
+    }
 }
 
 fn dispatch(

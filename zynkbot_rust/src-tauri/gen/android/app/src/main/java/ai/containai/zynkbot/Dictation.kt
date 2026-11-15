@@ -19,7 +19,11 @@ import java.io.File
  * is the result, or the clip is uploaded as before if the stream failed or heard
  * nothing. Timers, hands-free only:
  * nothing said within 6 s → done; 1.5 s after the text stops changing → done; 30 s
- * cap. The app's mic button runs without timers and ends on [stop].
+ * cap. The app's mic button ends on [stop], and since 2026-11-15 by itself too, on
+ * timers of its own sized for typing by voice (BUTTON_*): 20 s after the last new word,
+ * 30 s with nothing said, 3 minutes at most. A mic left on while the user walked away
+ * used to run until the tap and then take a long time to stop, with minutes of nothing
+ * to transcribe or upload.
  *
  * Callbacks arrive on the main looper. [Listener.onFinal] gets the text ("" = nothing
  * heard) or null when the dictation was cancelled or failed.
@@ -45,6 +49,9 @@ class Dictation(
         const val SILENCE_MS = 1500L      // after the last change in the text
         const val NO_SPEECH_MS = 6000L    // chime, then nothing: close, as Siri does
         const val CAP_MS = 30_000L        // ongoing speech cannot extend it (TV)
+        const val BUTTON_SILENCE_MS = 20_000L     // mic button: after the last new word
+        const val BUTTON_NO_SPEECH_MS = 30_000L   // mic button: nothing said at all
+        const val BUTTON_CAP_MS = 180_000L        // mic button: regardless
         private const val RATE = MicStream.SAMPLE_RATE
 
         /** The Vosk model, loaded once per process and shared with the wake-word
@@ -72,6 +79,10 @@ class Dictation(
     private var sawSpeech = false
     private var chunks = 0
     private var partialsWithText = 0
+    /** The live text last handed to the listener, and when it last changed (wall clock;
+     *  -1 until any words arrive): what the mic button's timers watch, for both engines. */
+    @Volatile private var lastEmitted = ""
+    @Volatile private var textChangedAt = -1L
     private val endpointer = if (engine == Engine.WHISPER) OpenAiDictation.Endpointer(timers) else null
     /** The live OpenAI session, connecting from the moment the dictation exists so the
      *  socket is usually up by the first word. Null for Vosk, without a key, or with
@@ -101,7 +112,7 @@ class Dictation(
             if (done) return
             chunks++
             samplesTotal += n
-            when (engine) {
+            val byEngine = when (engine) {
                 Engine.VOSK -> feedVosk(pcm, n)
                 Engine.WHISPER -> {
                     val ended = endpointer!!.feed(pcm, n)
@@ -109,8 +120,23 @@ class Dictation(
                     if (ended) "speech ended" else null
                 }
             }
+            byEngine ?: if (timers) null else buttonTimeout()
         }
         if (finished != null) finish(finished)
+    }
+
+    /** The mic button's timers (no hands-free timers): the reason to end, or null. With
+     *  no live text possible (OpenAI without the stream) only the cap applies; a stream
+     *  that never delivered a word counts as nothing said, and the clip still goes up. */
+    private fun buttonTimeout(): String? {
+        val ms = elapsed()
+        val textBased = engine == Engine.VOSK || live != null
+        if (textBased) {
+            val changed = textChangedAt
+            if (changed < 0 && ms >= BUTTON_NO_SPEECH_MS) return "nothing said in ${BUTTON_NO_SPEECH_MS / 1000} s"
+            if (changed >= 0 && System.currentTimeMillis() - changed >= BUTTON_SILENCE_MS) return "no new words for ${BUTTON_SILENCE_MS / 1000} s"
+        }
+        return if (ms >= BUTTON_CAP_MS) "listening cap, 3 minutes" else null
     }
 
     /** Under [lock]. Returns the reason the dictation is over, or null to carry on. */
@@ -207,7 +233,13 @@ class Dictation(
         }
     }
 
-    private fun emit(live: String) { main.post { listener.onPartial(live) } }
+    private fun emit(live: String) {
+        if (live != lastEmitted) {
+            lastEmitted = live
+            if (live.isNotBlank()) textChangedAt = System.currentTimeMillis()
+        }
+        main.post { listener.onPartial(live) }
+    }
     private fun closeVosk() { try { rec?.close() } catch (_: Exception) {}; rec = null }
     private fun elapsed() = System.currentTimeMillis() - startedAt
     private fun text(json: String?, field: String) =

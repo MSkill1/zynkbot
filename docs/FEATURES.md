@@ -405,7 +405,7 @@ Zynkbot's own, on Android since 2026-10-25: "set a timer for ten minutes", "set 
 
 ### 🎤 Dictation
 
-The mic button turns speech into text in the message box. Two engines, chosen on the Voice page under System Controls:
+The mic button turns speech into text in the message box. Tap it again to stop, or let it stop by itself: since 2026-11-15 a recording ends 20 seconds after the last new word, 30 seconds in if nothing was said, and after 3 minutes at most, and the words so far go into the box either way, so a mic left on while you walk away no longer runs until you come back. Two engines, chosen on the Voice page under System Controls:
 
 - **Offline — Vosk** (default): runs on the device, no internet, no audio leaves it. Lowercase text, no punctuation.
 - **OpenAI**: the recording goes to OpenAI (model `gpt-4o-mini-transcribe`) and comes back with punctuation and capitals. Needs an OpenAI key. On the Linux desktop the words appear while you speak; after Stop the app waits up to 8 seconds for the last of them, then the final text replaces the live words. If the live connection cannot be opened, the recording is sent when you stop, as before.

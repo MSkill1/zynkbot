@@ -123,7 +123,7 @@ A wake that the verifier rejects, or that is flagged by the checks above, ends w
 
 ## 6. Choosing the dictation engine
 
-Dictation means turning your speech into text. Open System Controls, then the Voice page, and look under "Dictation Engine". The choice applies to both the mic button in the chat and hands-free "Hey Zynk". With the offline engine, the words appear in the message box as you speak; the box has Copy and Clear buttons while there is text in it.
+Dictation means turning your speech into text. Open System Controls, then the Voice page, and look under "Dictation Engine". The choice applies to both the mic button in the chat and hands-free "Hey Zynk". With the offline engine, the words appear in the message box as you speak; the box has Copy and Clear buttons while there is text in it. Tap the mic once to start and once to stop; a recording also stops by itself 20 seconds after the last new word, 30 seconds in if nothing was said, or after 3 minutes, and the words so far go into the box.
 
 Offline, Vosk (the default). Runs on the phone. No internet needed and no audio leaves the device. It produces lowercase text with no punctuation, and numbers come out as words ("ten minutes"). Models understand requests fine without punctuation.
 

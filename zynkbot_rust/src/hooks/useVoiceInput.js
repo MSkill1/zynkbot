@@ -19,11 +19,36 @@ export function useVoiceInput() {
   // (Windows, macOS) still hears the whole clip only when recording stops.
   const onLiveRef = useRef(null);
   const liveUnlistenRef = useRef(null);
+  // A recording can end by itself (2026-11-15): the mic button's own timers, 20 s
+  // after the last new word, 30 s with nothing said, 3 minutes at most, on every
+  // platform (Rust: vosk_desktop::BUTTON_*; Android: Dictation.BUTTON_*; the browser
+  // path below has the same numbers in selfStopReason). The words so far are handed to
+  // `onEnded(text)` exactly as a tap on Stop would hand them over, so the caller puts
+  // them in the box and lets go of the microphone.
+  const onEndedRef = useRef(null);
+  const endedUnlistenRef = useRef(null);
   const stopLive = () => {
     window.__voskLive = null;
     try { liveUnlistenRef.current?.(); } catch (_) {}
     liveUnlistenRef.current = null;
     onLiveRef.current = null;
+    try { endedUnlistenRef.current?.(); } catch (_) {}
+    endedUnlistenRef.current = null;
+  };
+  const endedBySelf = (text) => {
+    stopLive();
+    setIsRecording(false);
+    setIsTranscribing(false);
+    const cb = onEndedRef.current;
+    onEndedRef.current = null;
+    cb?.(text || '');
+  };
+  const SELF_STOP_SILENCE_MS = 20000, SELF_STOP_NO_SPEECH_MS = 30000, SELF_STOP_CAP_MS = 180000;
+  const selfStopReason = (sinceStartMs, sinceActivityMs) => {
+    if (sinceActivityMs === null && sinceStartMs >= SELF_STOP_NO_SPEECH_MS) return 'nothing said in 30 s';
+    if (sinceActivityMs !== null && sinceActivityMs >= SELF_STOP_SILENCE_MS) return 'quiet for 20 s';
+    if (sinceStartMs >= SELF_STOP_CAP_MS) return 'listening cap, 3 minutes';
+    return null;
   };
 
   const isAndroid = () => !!window.VoskBridge;
@@ -39,9 +64,16 @@ export function useVoiceInput() {
     window.__voskLive = (text) => { onLiveRef.current?.(text || ''); };
     setIsRecording(true);
     window.__voskError = (msg) => {
-      setIsRecording(false);
+      endedBySelf('');
       console.error('[VoiceInput] Vosk start error:', msg);
       if (!msg.includes('not downloaded')) alert('Voice input error: ' + msg);
+    };
+    // Set before any tap on Stop (which installs its own resolver below): the text
+    // arriving here means the dictation ended by itself.
+    window.__voskResult = (text) => {
+      window.__voskResult = null;
+      window.__voskError = null;
+      endedBySelf(text);
     };
     window.VoskBridge.startListening();
   };
@@ -115,6 +147,10 @@ export function useVoiceInput() {
     audioContextRef.current = null;
   };
 
+  const browserStartRef = useRef(0);
+  const browserLoudRef = useRef(0);
+  const browserEndingRef = useRef(false);
+
   const startRecordingDesktop = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -130,8 +166,24 @@ export function useVoiceInput() {
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
+      browserStartRef.current = Date.now();
+      browserLoudRef.current = 0;
+      browserEndingRef.current = false;
       processor.onaudioprocess = (e) => {
-        audioBufferRef.current.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+        const data = e.inputBuffer.getChannelData(0);
+        audioBufferRef.current.push(new Float32Array(data));
+        // No words arrive before stop on this path, so the timers watch loudness
+        // instead (the mic runs with automatic gain here, so one level serves).
+        let acc = 0;
+        for (let i = 0; i < data.length; i++) acc += data[i] * data[i];
+        const now = Date.now();
+        if (Math.sqrt(acc / data.length) > 0.02) browserLoudRef.current = now;
+        const reason = selfStopReason(now - browserStartRef.current, browserLoudRef.current ? now - browserLoudRef.current : null);
+        if (reason && !browserEndingRef.current) {
+          browserEndingRef.current = true;
+          console.log('[VoiceInput] Recording ended by itself: ' + reason);
+          stopRecordingDesktop().then(endedBySelf);
+        }
       };
       source.connect(processor);
       processor.connect(audioContext.destination);
@@ -186,6 +238,7 @@ export function useVoiceInput() {
       if (onLiveRef.current) {
         liveUnlistenRef.current = await listen('dictation-live', (e) => { onLiveRef.current?.(e.payload || ''); });
       }
+      endedUnlistenRef.current = await listen('dictation-ended', (e) => { endedBySelf(e.payload || ''); });
       await invoke(cmd);
       setIsRecording(true);
     } catch (error) {
@@ -218,9 +271,10 @@ export function useVoiceInput() {
   // navigator.platform reports "Win32" on 64-bit Windows too.
   const isDesktopWindows = () => navigator.platform.toLowerCase().includes('win');
 
-  const startRecording = async ({ onLive } = {}) => {
+  const startRecording = async ({ onLive, onEnded } = {}) => {
     const source = getSource();
     onLiveRef.current = typeof onLive === 'function' ? onLive : null;
+    onEndedRef.current = typeof onEnded === 'function' ? onEnded : null;
     if (isAndroid()) {
       // Both engines go through the Kotlin bridge, which reads the selector itself:
       // Vosk offline, or OpenAI streamed live (2026-10-28; before that OpenAI recorded
@@ -244,6 +298,7 @@ export function useVoiceInput() {
   const stopRecording = async () => {
     if (!isRecording) return '';
     const source = getSource();
+    onEndedRef.current = null;
     stopLive();
     if (isAndroid()) return stopRecordingVosk();
     if (isDesktopLinux()) {

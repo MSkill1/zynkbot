@@ -1403,11 +1403,18 @@ async fn start_vosk_recording(app: tauri::AppHandle) -> Result<(), String> {
     {
         // The words recognised so far go to the page as "dictation-live" events, so
         // the composer can show them while the user is still speaking (2026-10-20).
+        // When the recording ends by itself (vosk_desktop::BUTTON_*), the text goes to
+        // the page as one "dictation-ended" event instead of a stop call's reply.
+        let app_ended = app.clone();
+        let ended: vosk_desktop::EndSink = Box::new(move |text: String| {
+            use tauri::Emitter;
+            let _ = app_ended.emit("dictation-ended", text);
+        });
         let live: vosk_desktop::LiveSink = Box::new(move |text: String| {
             use tauri::Emitter;
             let _ = app.emit("dictation-live", text);
         });
-        return tokio::task::spawn_blocking(move || vosk_desktop::start(vosk_desktop::Engine::Vosk, Some(live)))
+        return tokio::task::spawn_blocking(move || vosk_desktop::start(vosk_desktop::Engine::Vosk, Some(live), Some(ended)))
             .await
             .map_err(|e| format!("start task join failed: {e}"))?;
     }
@@ -1443,11 +1450,16 @@ async fn start_openai_recording(app: tauri::AppHandle) -> Result<(), String> {
         // while the user speaks, and the words so far reach the page as the same
         // "dictation-live" events Vosk sends (openai_realtime.rs; falls back to the
         // one-shot upload when the socket cannot be opened or DICTATION_STREAM=0).
+        let app_ended = app.clone();
+        let ended: vosk_desktop::EndSink = Box::new(move |text: String| {
+            use tauri::Emitter;
+            let _ = app_ended.emit("dictation-ended", text);
+        });
         let live: vosk_desktop::LiveSink = Box::new(move |text: String| {
             use tauri::Emitter;
             let _ = app.emit("dictation-live", text);
         });
-        return tokio::task::spawn_blocking(move || vosk_desktop::start(vosk_desktop::Engine::OpenAI, Some(live)))
+        return tokio::task::spawn_blocking(move || vosk_desktop::start(vosk_desktop::Engine::OpenAI, Some(live), Some(ended)))
             .await
             .map_err(|e| format!("start task join failed: {e}"))?;
     }
