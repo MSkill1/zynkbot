@@ -570,6 +570,88 @@ pub async fn hybrid_search(
     namespace: Option<&str>,
     limit: i32,
 ) -> Result<Vec<Memory>, sqlx::Error> {
+    hybrid_search_multi(pool, &[query_embedding], query_entities, hints, user_id, session_id, namespace, limit).await
+}
+
+/// A long message is searched by its parts as well as whole (2026-11-12). A 114-word
+/// question about a hair routine, embedded as one text, scored every hair memory under
+/// the 0.35 line and recalled nothing; the 20-word fact the pipeline extracted from the
+/// same message scored them at 58-62%. Messages under LONG_MESSAGE_WORDS get no parts.
+/// Sentences are grouped in order until a part holds CHUNK_WORDS words, or a sixth of
+/// the message for a very long one, so a message yields about MAX_CHUNKS parts at most;
+/// a run-on sentence with no punctuation (dictation) is cut by words. The parts are
+/// embedded on the device like the message, about 0.4 s each on a phone.
+pub const LONG_MESSAGE_WORDS: usize = 40;
+pub const CHUNK_WORDS: usize = 20;
+pub const MAX_CHUNKS: usize = 6;
+pub fn recall_chunks(message: &str) -> Vec<String> {
+    let words = message.split_whitespace().count();
+    if words < LONG_MESSAGE_WORDS { return Vec::new(); }
+    let target = CHUNK_WORDS.max((words + MAX_CHUNKS - 1) / MAX_CHUNKS);
+    // Sentences, with a run-on sentence cut into pieces of `target` words.
+    let mut pieces: Vec<String> = Vec::new();
+    for sentence in message.split_inclusive(|c: char| matches!(c, '.' | '?' | '!' | '\n')) {
+        // A stray "." from an ellipsis is not a word.
+        let ws: Vec<&str> = sentence.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).collect();
+        if ws.is_empty() { continue; }
+        if ws.len() > 2 * target {
+            for w in ws.chunks(target) { pieces.push(w.join(" ")); }
+        } else {
+            pieces.push(ws.join(" "));
+        }
+    }
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_words = 0;
+    for piece in pieces {
+        let n = piece.split_whitespace().count();
+        if !current.is_empty() { current.push(' '); }
+        current.push_str(&piece);
+        current_words += n;
+        if current_words >= target {
+            chunks.push(std::mem::take(&mut current));
+            current_words = 0;
+        }
+    }
+    if current_words >= 4 {
+        chunks.push(current);
+    } else if !current.is_empty() {
+        if let Some(last) = chunks.last_mut() { last.push(' '); last.push_str(&current); }
+    }
+    chunks
+}
+
+/// A memory's meaning score against the query texts: the message first, then its parts.
+/// `combine_similarity` says how the message's own score and the best part's are joined.
+pub fn best_similarity(queries: &[Vec<f32>], memory: &[f32]) -> f64 {
+    let Some((whole, parts)) = queries.split_first() else { return 0.0 };
+    let whole = cosine_similarity(whole, memory) as f64;
+    let best_part = parts.iter().map(|q| cosine_similarity(q, memory) as f64).fold(f64::MIN, f64::max);
+    if parts.is_empty() { whole } else { combine_similarity(whole, best_part) }
+}
+
+/// How the message's own similarity and its best part's are joined: their mean. Measured
+/// on chunk_bench 2026-11-12: the better of the two rescued the 114-word hair question
+/// (not returned at all, then rank 2) but let a part about test strips push the expected
+/// keto-reading memory from rank 1 to 6 on the 51 older questions; the mean rescued the
+/// hair question to rank 1 and changed no other rank (docs/BENCHMARKS.md, section 2).
+pub fn combine_similarity(whole: f64, best_part: f64) -> f64 {
+    (whole + best_part) / 2.0
+}
+
+/// `hybrid_search` with several query embeddings: the message and its parts (see
+/// `recall_chunks`). A memory's semantic score is its best against any of them.
+#[allow(clippy::too_many_arguments)]
+pub async fn hybrid_search_multi(
+    pool: &SqlitePool,
+    query_embeddings: &[Vec<f32>],
+    query_entities: Vec<String>,
+    hints: &QueryHints,
+    user_id: Option<&str>,
+    session_id: Option<&str>,
+    namespace: Option<&str>,
+    limit: i32,
+) -> Result<Vec<Memory>, sqlx::Error> {
     const MIN_SIMILARITY: f64 = 0.35;
 
     let query_entities_lower: Vec<String> =
@@ -618,7 +700,7 @@ pub async fn hybrid_search(
             let semantic = r
                 .embedding
                 .as_ref()
-                .map(|b| cosine_similarity(&query_embedding, &blob_to_f32(b)) as f64)
+                .map(|b| best_similarity(query_embeddings, &blob_to_f32(b)))
                 .unwrap_or(0.0);
 
             let entity =
@@ -648,6 +730,9 @@ pub async fn hybrid_search(
     }
     memories.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(Ordering::Equal));
 
+    if query_embeddings.len() > 1 {
+        println!("[HybridSearch] Searched with the message and {} parts of it", query_embeddings.len() - 1);
+    }
     println!("[HybridSearch] Returned {} memories:", memories.len());
     for (i, m) in memories.iter().enumerate() {
         if let Some(sim) = m.similarity {
@@ -1089,5 +1174,58 @@ mod query_hint_tests {
         assert_eq!(stem_word("classes"), "class");
         assert_eq!(stem_word("ALS"), "als");
         assert_eq!(stem_word("glass"), "glass");
+    }
+}
+
+#[cfg(test)]
+mod recall_chunk_tests {
+    use super::{recall_chunks, best_similarity, LONG_MESSAGE_WORDS, MAX_CHUNKS};
+
+    const HAIR: &str = "So I have the new conditioner and shampoo here, and the long-term conditioner. What is the procedure I'm supposed to use? I'm supposed to do a regular shower, use the new shampoo, use the new conditioner. And then after that, you know, wash my body. And then after that, put in this new... Thick paste conditioner for 15 minutes? I mean, I'm not gonna stand in the bathtub for 15 minutes. Should I go and sit down without letting my hair touch anything and let it soak in for 15 minutes, and then get back in the shower and rinse it out? Should I remove all the old stuff? I do have that serum thing.";
+
+    #[test]
+    fn a_short_message_has_no_parts() {
+        assert!(recall_chunks("What is my current weight?").is_empty());
+        let just_under: String = vec!["word"; LONG_MESSAGE_WORDS - 1].join(" ");
+        assert!(recall_chunks(&just_under).is_empty());
+    }
+
+    #[test]
+    fn a_long_message_is_cut_at_sentences_and_covers_every_word() {
+        let parts = recall_chunks(HAIR);
+        assert!(parts.len() >= 4 && parts.len() <= MAX_CHUNKS + 1, "{} parts", parts.len());
+        let words: usize = parts.iter().map(|p| p.split_whitespace().count()).sum();
+        assert_eq!(words, HAIR.split_whitespace().count());
+        assert!(parts.iter().all(|p| p.split_whitespace().count() <= 45), "{:?}", parts);
+        assert!(parts[0].starts_with("So I have the new conditioner"));
+        // Every part ends where a sentence ends.
+        assert!(parts.iter().all(|p| p.ends_with(['.', '?', '!'])), "{:?}", parts);
+    }
+
+    #[test]
+    fn dictation_without_punctuation_is_cut_by_words() {
+        let run_on: String = (0..100).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
+        let parts = recall_chunks(&run_on);
+        assert!(parts.len() >= 4 && parts.len() <= MAX_CHUNKS + 1, "{} parts", parts.len());
+        let words: usize = parts.iter().map(|p| p.split_whitespace().count()).sum();
+        assert_eq!(words, 100);
+    }
+
+    #[test]
+    fn a_very_long_message_still_yields_about_six_parts() {
+        let long: String = (0..60).map(|i| format!("Sentence number {i} says a few more words here.")).collect::<Vec<_>>().join(" ");
+        let parts = recall_chunks(&long);
+        assert!(parts.len() <= MAX_CHUNKS + 1, "{} parts", parts.len());
+    }
+
+    #[test]
+    fn best_similarity_is_the_mean_of_the_message_and_its_best_part() {
+        let m = vec![1.0, 0.0];
+        let whole = vec![0.0, 1.0];
+        let far = vec![0.0, 1.0];
+        let part = vec![1.0, 0.0];
+        assert!((best_similarity(&[whole.clone()], &m) - 0.0).abs() < 1e-6, "no parts: the message's own score");
+        assert!((best_similarity(&[whole.clone(), far, part.clone()], &m) - 0.5).abs() < 1e-6, "the best part counts, averaged with the message");
+        assert!((best_similarity(&[part.clone(), part], &m) - 1.0).abs() < 1e-6);
     }
 }

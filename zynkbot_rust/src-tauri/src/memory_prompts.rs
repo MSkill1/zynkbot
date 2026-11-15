@@ -26,7 +26,7 @@ pub fn extraction_prompt(message: &str, subject: &str, recent_turns: Option<&str
 pub fn extraction_prompt_with(message: &str, subject: &str, recent_turns: Option<&str>, today: NaiveDate, slim: bool) -> String {
     let namespaces = memory_extras::CANONICAL_NAMESPACES.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ");
     let context = match recent_turns.map(str::trim).filter(|t| !t.is_empty()) {
-        Some(t) => format!("The conversation just before this message, so you know who or what the message refers to. List only facts the message itself states.\n{t}\n\n"),
+        Some(t) => format!("The conversation just before this message, so you know who or what the message refers to: when the message only points at someone or something ('he', 'the new shampoo', 'that cream') and this names them, use the name. Facts that appear only here, and not in the message, are not listed.\n{t}\n\n"),
         None => String::new(),
     };
     format!(
@@ -34,7 +34,7 @@ pub fn extraction_prompt_with(message: &str, subject: &str, recent_turns: Option
 
 {context}Read {subject}'s message below. List the personal facts about {subject} in it, up to {max}, one sentence per fact, keeping the message's own words and every detail (names, places, dates, numbers): the people in their life, where they live and go, their work and past work, health, how they are feeling, what they own and the services they use, routines and habits, plans and events, likes and dislikes, names and numbers they ask to keep.
 
-Rules: only what the message states, nothing guessed. One thing with its details is one fact: 'I'm flying to Denver Thursday for my nephew's wedding' is one fact (where, when, why together), not three. What {subject} asks is not a fact, but what {subject} states while asking is: 'Raspberry pie is my favorite. What's a good recipe?' holds one fact, that raspberry pie is {subject}'s favorite, because {subject} states it. 'Could I put salt in my coffee?' holds none, because {subject} only asks; a question says nothing about what {subject} does or has. Nothing from text {subject} quotes, pastes or asks to translate. Greetings and thanks are not facts. If the message holds no fact about {subject}, write NONE.
+Rules: only what the message states, nothing guessed. A fact must say what it is about: a thing the message calls only 'that serum thing' or 'the stuff', with no name for it in the conversation before, is not identified and gives no fact, even when the rest of the message does. A thing {subject} only mentions, that is not theirs (a neighbor's new gadget), is not a fact about {subject}. {max} is a ceiling, not a target; most messages hold one fact or none. One thing with its details is one fact: 'I'm flying to Denver Thursday for my nephew's wedding' is one fact (where, when, why together), not three. What {subject} asks is not a fact, but what {subject} states while asking is: 'Raspberry pie is my favorite. What's a good recipe?' holds one fact, that raspberry pie is {subject}'s favorite, because {subject} states it. 'Could I put salt in my coffee?' holds none, because {subject} only asks; a question says nothing about what {subject} does or has. Nothing from text {subject} quotes, pastes or asks to translate. Greetings and thanks are not facts. If the message holds no fact about {subject}, write NONE.
 
 For each fact give:
 - \"fact\": one sentence in the third person, starting with \"{subject}\"

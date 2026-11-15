@@ -96,9 +96,9 @@ Recall finds stored memories to place in the prompt.
 
 **Names in the message.** `NLPEnhancer::extract_entities` (`nlp_enhancer.rs`) runs the `dslim/bert-base-NER` model plus a rule-based pass. The words are lower-cased and a stop-word list is removed. The result, `query_entities`, is used for this search and is saved with the memory job for later (7.2).
 
-**Embedding.** `llm/local_embeddings.rs` `generate_local_embedding` embeds the message with `all-MiniLM-L6-v2` into a 384-number vector.
+**Embedding.** `llm/local_embeddings.rs` `generate_local_embedding` embeds the message with `all-MiniLM-L6-v2` into a 384-number vector. A long message (40 words or more, `memory::LONG_MESSAGE_WORDS`) is also cut into parts of about 20 words at sentence ends (`memory::recall_chunks`, at most about six; a run-on dictation is cut by words) and each part is embedded too (`commands/chat.rs` `embed_with_parts`). A memory's cosine is then the mean of its score against the whole message and its best score against any part (`memory::combine_similarity`). Added 2026-11-12 after a 114-word question about a hair routine scored every hair memory under the 0.35 line and recalled nothing, while the 20-word fact extracted from the same message scored them at 58-62%; measured in `docs/BENCHMARKS.md`, section 2.
 
-**Hybrid search.** `memory.rs` `hybrid_search` fetches the user's candidate memories and scores each one in Rust (`hybrid_score`):
+**Hybrid search.** `memory.rs` `hybrid_search_multi` (`hybrid_search` is the one-embedding form) fetches the user's candidate memories and scores each one in Rust (`hybrid_score`):
 
 ```
 base  = entity_overlap * 0.6 + cosine * 0.4     when at least one name matches
@@ -253,7 +253,7 @@ Failure handling:
 
 ### 6.1 Prompt and output
 
-The prompt gives today's date and the last exchange, then asks for the personal facts about the user stated in the message: at most three (`MAX_FACTS`), one sentence each in the third person, keeping the message's own words. What the user asks is not a fact. Text they quote, paste or ask to have translated is not a source of facts. The answer is `NONE` when the message holds no fact.
+The prompt gives today's date and the last exchange, then asks for the personal facts about the user stated in the message: at most three (`MAX_FACTS`), one sentence each in the third person, keeping the message's own words. What the user asks is not a fact. Text they quote, paste or ask to have translated is not a source of facts. The answer is `NONE` when the message holds no fact. Since 2026-11-12 three more rules, after an evening on which "has that serum thing" and "mentions Fructis stuff" were stored as memories: a thing the message calls only "that serum thing", with no name for it in the last exchange, gives no fact, even when the rest of the message does; a pronoun or "the new shampoo" takes its name from the last exchange, but facts that appear only there are not listed; a thing the user only mentions that is not theirs (a neighbour's new gadget) is not a fact about the user; three is a ceiling, not a target. Measured on the memory bench, three wordings and three runs each (`docs/BENCHMARKS.md`, section 1, cases e85 to e88, 2026-11-15).
 
 Fields per fact:
 

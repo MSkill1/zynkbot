@@ -1,7 +1,7 @@
 {
  "version": 1,
  "subject": "Matt",
- "note": "Memory bench cases (2026-10-22). Extraction: a produced fact matches an expected one when it contains every term in `must`; messages with an empty `expected` should produce nothing; `days_ago` names the event date the fact should carry, relative to the run day; `context` is the exchange just before the message. Relationships: one existing memory per case; expected type among updates/contradicts/related/none (four types since 2026-10-23). Synthetic, plain personal facts; not anyone's private life. 2026-10-24: e71-e84 added from the kinds of junk seen in real use (translation requests, pasted third-party text, questions restated as facts, TV speech) plus dated facts, feelings, and two cases that need the previous turn to resolve a pronoun.",
+ "note": "Memory bench cases (2026-10-22). Extraction: a produced fact matches an expected one when it contains every term in `must`; messages with an empty `expected` should produce nothing; `days_ago` names the event date the fact should carry, relative to the run day; `context` is the exchange just before the message. Relationships: one existing memory per case; expected type among updates/contradicts/related/none (four types since 2026-10-23). Synthetic, plain personal facts; not anyone's private life. 2026-10-24: e71-e84 added from the kinds of junk seen in real use (translation requests, pasted third-party text, questions restated as facts, TV speech) plus dated facts, feelings, and two cases that need the previous turn to resolve a pronoun. 2026-11-12: e85-e88 added after the hair-care memories of that evening (a thing the message only points at, named in the turn before; a bare mention; a long message with one fact).",
  "extraction": [
   {
    "id": "e01",
@@ -846,6 +846,44 @@
      "must": [
       "indiana",
       "sister"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e85",
+   "context": "Matt: The Curl Bounce shampoo and conditioner and the Cantu deep conditioner came today.\nZynkbot: Good. Shampoo, then the conditioner, and the Cantu once a week for fifteen minutes.",
+   "message": "So I have the new conditioner and shampoo here, and the long-term conditioner. What is the procedure I'm supposed to use? Regular shower, the new shampoo, the new conditioner, and then after that put in this thick paste conditioner for 15 minutes? I'm not going to stand in the bathtub for 15 minutes. Should I remove all the old stuff? I do have that serum thing.",
+   "expected": [
+    {
+     "must": [
+      "curl bounce"
+     ]
+    },
+    {
+     "must": [
+      "cantu"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "e86",
+   "message": "Should I remove all the old stuff from the shower? I do have that serum thing.",
+   "expected": []
+  },
+  {
+   "id": "e87",
+   "message": "My neighbor was going on about some new air fryer thing, whatever. Anyway, what's a good keto breakfast that isn't eggs?",
+   "expected": []
+  },
+  {
+   "id": "e88",
+   "message": "Okay so here's the thing, I was reading about sleep and I don't know, maybe I'm overthinking it, but I've been getting up at 4:30 for the gym since October and I feel fine most days, but then around three in the afternoon I'm useless, like is that the early start or is that just lunch, and does it matter if I read in bed, I don't know, what do you think?",
+   "expected": [
+    {
+     "must": [
+      "4:30"
      ]
     }
    ]

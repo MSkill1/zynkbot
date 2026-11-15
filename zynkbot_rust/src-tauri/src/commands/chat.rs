@@ -515,6 +515,9 @@ pub async fn generate_reply(
         ".", ",", "!", "?", ";", ":", "-", "'", "\"",
         // Add common words that aren't meaningful as entities
         "never", "always", "anything", "something", "nothing", "everything",
+        // Contractions the fallback extractor let through as names ("i'm", 2026-11-12)
+        "i'm", "i've", "i'd", "i'll", "it's", "that's", "there's", "what's", "let's", "don't", "can't",
+        "didn't", "won't", "isn't", "wasn't", "you're", "we're", "they're", "im", "ive", "dont",
     ].into_iter().collect();
 
     let query_entities: Vec<String> = all_entities
@@ -543,6 +546,7 @@ pub async fn generate_reply(
     .await
     .map_err(|e| format!("Failed to run embedding task: {}", e))?
     .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+    let query_embeddings = embed_with_parts(query_embedding, &query).await;
 
     // HYBRID SEARCH: Use hybrid_search for weighted entity + semantic scoring
     // Search limit matches build_memory_context caps: API gets more headroom, local stays lean
@@ -564,9 +568,9 @@ pub async fn generate_reply(
 
     let query_hints = crate::memory::query_hints(&query);
     println!("[RUST] Query hints: namespaces {:?}, words {:?}", query_hints.namespaces, query_hints.words);
-    let recalled_memories = crate::memory::hybrid_search(
+    let recalled_memories = crate::memory::hybrid_search_multi(
         &db_pool,
-        query_embedding,
+        &query_embeddings,
         query_entities.clone(),  // Clone so we can use it again for entity search
         &query_hints,
         Some(search_user_id),
@@ -1820,11 +1824,12 @@ pub async fn run_ensemble(
     .await
     .map_err(|e| format!("Failed to run embedding task: {}", e))?
     .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+    let query_embeddings = embed_with_parts(query_embedding, &search_query).await;
 
     // Search for relevant memories using hybrid search
-    let recalled_memories = crate::memory::hybrid_search(
+    let recalled_memories = crate::memory::hybrid_search_multi(
         &db_pool,
-        query_embedding,
+        &query_embeddings,
         query_entity_strings,
         &crate::memory::query_hints(&search_query),
         Some(&user_id),
@@ -2639,6 +2644,26 @@ pub(crate) struct MemoryBg {
     /// A name correction in the message (wrong, right): memories holding the wrong name
     /// are put in front of the relationship classifier (2026-10-25).
     pub(crate) bg_correction: Option<(String, String)>,
+}
+
+/// The message's embedding and, for a long message, one per part of it
+/// (memory::recall_chunks, 2026-11-12), so recall is not lost on a 114-word question.
+/// A part that cannot be embedded is logged and left out; the message's own always stays.
+async fn embed_with_parts(whole: Vec<f32>, message: &str) -> Vec<Vec<f32>> {
+    let mut out = vec![whole];
+    let parts = crate::memory::recall_chunks(message);
+    if parts.is_empty() { return out; }
+    let n = parts.len();
+    let t = std::time::Instant::now();
+    match tokio::task::spawn_blocking(move || crate::llm::local_embeddings::generate_local_embeddings_batch(parts, Some(8))).await {
+        Ok(Ok(embs)) => {
+            out.extend(embs);
+            println!("[RUST] Long message: {} parts embedded in {:.2}s", n, t.elapsed().as_secs_f32());
+        }
+        Ok(Err(e)) => println!("[RUST] Long message: {} parts not embedded: {}", n, e),
+        Err(e) => println!("[RUST] Long message: {} parts not embedded: {}", n, e),
+    }
+    out
 }
 
 /// The last two turns as "User: … / Zynkbot: …", each cut to 300 characters.

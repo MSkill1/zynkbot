@@ -6,6 +6,7 @@
 //!   MEMORY_BENCH_BACKENDS="/path/a.gguf,/path/b.gguf,anthropic" \
 //!   LD_LIBRARY_PATH=lib/vosk cargo test --lib memory_bench -- --ignored --nocapture
 //!
+//! MEMORY_BENCH_SKIP_RELATIONSHIPS runs the extraction cases only.
 //! MEMORY_BENCH_SET overrides the case file; MEMORY_BENCH_OUT the results folder
 //! (default ~/Documents/Zynk_related/memory_bench). Cloud backends need their key in the
 //! environment or in the desktop app's .env, which is read if present.
@@ -150,7 +151,9 @@ async fn memory_bench() {
         }
 
         let slim_rel = std::env::var("MEMORY_BENCH_SLIM").is_ok();
-        for c in &cases.relationships {
+        // MEMORY_BENCH_SKIP_RELATIONSHIPS: extraction only (a prompt change to call 2 leaves call 3 as it was).
+        let skip_rel = std::env::var("MEMORY_BENCH_SKIP_RELATIONSHIPS").is_ok();
+        for c in cases.relationships.iter().filter(|_| !skip_rel) {
             pause().await;
             let similar: Vec<(i32, String, Option<String>, f32)> = c.existing.iter().map(|e| (e.id, e.content.clone(), e.title.clone(), 0.8)).collect();
             let t = std::time::Instant::now();

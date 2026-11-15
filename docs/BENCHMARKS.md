@@ -15,7 +15,9 @@ benches write, never from memory.
   nothing else?): on 84 messages with 69 expected facts and 26 messages that should store
   nothing, Claude Sonnet finds 69 of 69 and stores nothing wrong; the 4-billion-parameter
   model that runs on the phone finds 66 of 69 and stores nothing wrong on the 26, after a
-  fine-tune 68 of 69. (2026-10-24, 2026-10-28)
+  fine-tune 68 of 69. (2026-10-24, 2026-10-28) With four cases added on 2026-11-12 and
+  three rules added to the prompt, GPT finds 70 of 72 and stores junk on 0 to 1 of 28
+  no-fact messages, the fine-tuned phone model 70 of 72 and junk on 1. (2026-11-15)
 - **Linking memories** (does the model say how a new fact relates to what is stored:
   updates it, contradicts it, is related, or unrelated?): Claude 44 of 44; the phone model
   28 of 44, after the fine-tune 38 of 44. (2026-10-24, 2026-10-28)
@@ -38,9 +40,9 @@ message: the reply, then a separate call that lists the facts in the message (ca
 then a call that says how each new fact relates to the memories already stored (call 3).
 The bench runs calls 2 and 3 on a fixed set of cases and scores them.
 
-- *Extraction:* 84 messages. 58 hold 69 expected facts in all; a produced fact counts as
+- *Extraction:* 88 messages (84 until 2026-11-12). 60 hold 72 expected facts in all; a produced fact counts as
   found when it contains every required term of an expected fact (for example "cat" and
-  "louie"). 26 messages should produce nothing: questions, pasted third-party text,
+  "louie"). 28 messages should produce nothing: questions, pasted third-party text,
   translation requests, television speech, greetings; a fact produced from one of those
   counts as junk. A produced fact that matches no expectation counts as invented. Two
   cases check that a date stated relatively ("yesterday") lands on the right calendar day.
@@ -67,6 +69,35 @@ favourite; what's a good recipe?" holds one fact) and its negative twin ("Could 
 in my coffee?" holds none). One wording round (round 4, which showed an empty-answer
 example up front) dropped the phone model to 34 and was reverted: a small model copies the
 example it is shown. The full round-by-round table is in the project's result files.
+
+**Results, 2026-11-15** (three rules added to the extraction prompt on 2026-11-12, after a
+114-word hair-care message on the phone stored "has serum thing" and "has new products";
+four cases from that evening joined the bench, e85 to e88; three runs per model, extraction
+only; the cloud model is GPT through the user's key, the phone model the fine-tuned Sophro
+on this desktop's engine; the three numbers in a cell are the three runs):
+
+| Model | Facts found (of 72) | Invented | Junk messages (of 28) |
+|---|---|---|---|
+| GPT, before | 70, 70, 70 | 4, 4, 4 | 4, 4, 4 |
+| GPT, after | 70, 70, 70 | 2, 3, 2 | 1, 1, 0 |
+| Sophro (phone), before | 69, 69, 69 | 3, 3, 3 | 2, 2, 2 |
+| Sophro (phone), after | 70, 70, 70 | 3, 3, 3 | 1, 1, 1 |
+
+Three wording rounds. The first cost the cloud model both facts of a vet-visit message in
+two runs of three: "List only facts the message itself states", meant to stop facts being
+taken from the exchange before, was read as "ignore the dog's name given there". The second
+named the exception (a pronoun or "the new shampoo" takes its name from the exchange
+before) and got those facts back, but the cloud model still kept "has the serum thing" from
+the hair message in every run. The third says that a thing called only "that serum thing",
+with no name for it anywhere, gives no fact even when the rest of the message does, and the
+cloud model dropped it in all three runs. The phone model keeps "has a serum thing" under
+every wording: the fine-tune taught it to keep such lines and the prompt cannot unteach it,
+so that waits for the next training run; it is the phone model's one remaining junk
+message. The cloud model's one is "This is a test to see if the local model works", which it
+stored as a fact before the change too. The phone model also gained a fact the old wording
+lost ("Indiana, to see my sister" was stored as living in Indiana). Result files:
+`~/Documents/Zynk_related/memory_bench/20261112_before/` and `20261112_after3/`
+(`20261112_after/` and `_after2/` are the first two wordings).
 
 **Relationship types.** The scheme was reduced on 2026-10-23 from six types to four. On
 the 44 cases Claude scores 43–44 under every wording tried; the phone model's two habits,
@@ -140,6 +171,30 @@ Food words now point at health as well as kitchen, which removed a second such m
 real database's own family questions ranked first before and after: its family memories
 carry the words the questions use; the demo's did not. Still unsolved: "What do I do for
 fun?" (no name, no topic word, the memory says "sailing").
+
+**The chunk bench, 2026-11-12** (`chunk_bench` in the same file; `CHUNKS_2026-11-12_final.md`
+in the results folder). On the phone that evening a 114-word question about a hair routine
+recalled one memory, an irrelevant one: the whole message, embedded as one text, scored every
+hair memory under the 0.35 line, while the 20-word fact the pipeline extracted from the same
+message a minute later scored them at 58-62%. The bench embeds a long message (40 words or
+more) by its parts as well, about 20 words each at sentence ends, and tries several ways of
+joining a memory's score against the whole with its best score against a part. Scored on the
+2026-10-29 copy (630 memories after expiry; the 46 questions plus five long ones written for
+the bench) and on a copy of the desktop database of 12 November with the real message.
+
+| Joining rule | Old copy, in top 4 | in top 10 | MRR | The real 114-word message, rank |
+|---|---|---|---|---|
+| message alone (before) | 35 / 51 | 36 / 51 | 0.63 | not returned |
+| best of message and parts | 34 / 51 | 36 / 51 | 0.62 | 2 |
+| best of message and 0.9 × parts | 35 / 51 | 36 / 51 | 0.62 | 2 |
+| mean of message and best part (shipped) | 35 / 51 | 36 / 51 | 0.63 | 1 |
+
+Reading: the five long questions written for the bench were already found by the whole
+message (four of five), so the gain shows only on the real one. Taking the best of message
+and parts rescued it but let a part about test strips push the expected keto-reading memory
+from 1st to 6th on the old copy; the mean rescued it to 1st and changed no other rank.
+Embedding the parts cost 0.9 s for all 51 questions on the desktop; a phone embeds one text
+in about 0.4 s, so a long message there pays one to two seconds.
 
 ## 3. The fine-tuned phone model
 
@@ -240,7 +295,8 @@ land as JSON and Markdown in the folder named by the `*_OUT` variable (default
 ```
 # Memory bench: making and linking memories. Backends are provider names (keys from the
 # app's settings file) or the path of a GGUF file. MEMORY_BENCH_SLIM=1 uses the phone's
-# prompt; MEMORY_BENCH_SKIP_EXTRACTION=1 runs the relationship cases only.
+# prompt; MEMORY_BENCH_SKIP_EXTRACTION=1 runs the relationship cases only, and
+# MEMORY_BENCH_SKIP_RELATIONSHIPS=1 the extraction cases only.
 MEMORY_BENCH_BACKENDS=anthropic,/path/to/model.gguf MEMORY_BENCH_SLIM=1 \
   LD_LIBRARY_PATH=lib/vosk cargo test --features cuda --lib memory_bench -- --ignored --nocapture
 
@@ -256,6 +312,10 @@ REPLY_BENCH_MODEL=/path/to/model.gguf,anthropic REPLY_BENCH_VARIANTS=after \
 # Recall bench: finding memories, against a COPY of a database (never the live file).
 RECALL_BENCH_DB=/path/copy.db LD_LIBRARY_PATH=lib/vosk \
   cargo test --features cuda --lib recall_bench -- --ignored --nocapture
+
+# Chunk bench: a long message searched by its parts as well as whole, same copy.
+RECALL_BENCH_DB=/path/copy.db LD_LIBRARY_PATH=lib/vosk \
+  cargo test --features cuda --lib chunk_bench -- --ignored --nocapture
 
 # Weighting study on the same copy.
 RECALL_BENCH_DB=/path/copy.db LD_LIBRARY_PATH=lib/vosk \

@@ -1,5 +1,5 @@
 {
-  "note": "Recall bench (2026-10-25): questions against Matt's own memory database (a read-only copy, RECALL_BENCH_DB), each with the ids of the memories that answer it. Scored by where the first expected memory ranks under the production hybrid search, for four ways of embedding a memory: the stored fact (current), title+fact, fact+source message, and the source message alone (what the old pipeline stored). Ids are those of Matt's desktop database on 2026-10-25; the file is a labs tool, not a product test. Six topic questions with no name in them (family) were added 2026-11-04 for the hint bench; their ids are from the 2026-10-29 15:00 backup of the same database.",
+  "note": "Recall bench (2026-10-25): questions against Matt's own memory database (a read-only copy, RECALL_BENCH_DB), each with the ids of the memories that answer it. Scored by where the first expected memory ranks under the production hybrid search, for four ways of embedding a memory: the stored fact (current), title+fact, fact+source message, and the source message alone (what the old pipeline stored). Ids are those of Matt's desktop database on 2026-10-25; the file is a labs tool, not a product test. Six topic questions with no name in them (family) were added 2026-11-04 for the hint bench; their ids are from the 2026-10-29 15:00 backup of the same database. 2026-11-12: five long messages (over 40 words, written for the bench) added after a 114-word hair-care message recalled nothing on the phone; chunk_bench scores them.",
   "user_id": "cc591dcc-2d80-4aed-a924-5e313645d6ba",
   "cases": [
     {
@@ -330,6 +330,47 @@
         3097,
         3098,
         3093
+      ]
+    },
+    {
+      "q": "So I have the shampoo and the conditioner here and that leave-in stuff. What is the order I'm supposed to use them in? Regular shower first, then the shampoo, then the conditioner, and then after that the leave-in on damp hair? Do I rinse it? And the serum, is that before or after I dry it? I am not going to stand there for fifteen minutes.",
+      "expect": [
+        2436,
+        2380,
+        2431,
+        3052
+      ]
+    },
+    {
+      "q": "My hair is getting to the point where I can't do anything with it. It is sticking out everywhere in the morning and I look like a wild man. I don't want to cut it, I want to get it to my shoulders, but what do I do in the meantime, some kind of hat maybe, I have never worn one, or a headband, I don't know.",
+      "expect": [
+        2431,
+        3052,
+        3055,
+        2532,
+        2380
+      ]
+    },
+    {
+      "q": "Okay so the table came and it has a scratch on the top, not deep, you can feel it with a fingernail but barely. I was going to get the stuff you told me about from Amazon but I forgot the names. What were they again, the scratch cover and the cleaner? And do I use the cleaner first or the cover first?",
+      "expect": [
+        2467,
+        3061
+      ]
+    },
+    {
+      "q": "I weighed myself this morning and I want to compare with what I was last week. I have been doing the fasting thing, eating at eight at night and nothing until the next evening, and I feel fine, a little hungry around noon. What was my weight the last couple of times I told you?",
+      "expect": [
+        2786,
+        2737,
+        2739
+      ]
+    },
+    {
+      "q": "I pricked my finger and did the blood thing with the meter and got a number but I can't remember what the first reading was the other day, was it point four? Also how do I know if the strips are still good, they were in the box in the kitchen for a few days.",
+      "expect": [
+        2772,
+        2773
       ]
     }
   ]

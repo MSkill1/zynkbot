@@ -337,6 +337,118 @@ async fn hint_bench() {
     println!("written {}", path.display());
 }
 
+/// Does searching a long message by its parts find what the whole misses? (2026-11-12,
+/// after a 114-word hair-care question recalled nothing on the phone.) Same database copy
+/// and questions as `hint_bench`, the shipped formula (namespace 0.05, tags 0.25, threshold
+/// 0.35), two settings: the message alone, and the message with its parts from
+/// `memory::recall_chunks` where a memory's meaning score is its best against any of them.
+/// Reported for all questions and for the long ones (LONG_MESSAGE_WORDS and over).
+///
+///   RECALL_BENCH_DB=/path/copy.db LD_LIBRARY_PATH=lib/vosk \
+///   cargo test --features cuda --lib chunk_bench -- --ignored --nocapture
+#[tokio::test]
+#[ignore]
+async fn chunk_bench() {
+    let db = std::env::var("RECALL_BENCH_DB").expect("RECALL_BENCH_DB");
+    let set_path = std::env::var("RECALL_BENCH_SET").unwrap_or_else(|_| "../../labs/recall_bench/cases.json".into());
+    let out_dir = std::env::var("RECALL_BENCH_OUT").map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| dirs::home_dir().unwrap().join("Documents/Zynk_related/recall_bench"));
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let set: Set = serde_json::from_str(&std::fs::read_to_string(&set_path).expect("case file")).expect("case json");
+    let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}?mode=ro", db)).await.expect("db");
+    let raw: Vec<(i32, Option<String>, String, Option<String>, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT id, entities_detected, namespace, tags, embedding FROM memories \
+         WHERE user_id = ? AND (temporal_status IS NULL OR temporal_status != 'superseded') \
+         AND (expires_at IS NULL OR substr(expires_at, 1, 10) >= date('now'))")
+        .bind(&set.user_id).fetch_all(&pool).await.expect("rows");
+    let rows: Vec<(i32, Option<String>, String, Option<String>, Option<Vec<f32>>)> = raw.into_iter()
+        .map(|(id, ents, ns, tags, emb)| (id, ents, ns, tags, emb.map(|b| crate::memory::blob_to_f32_pub(&b)))).collect();
+
+    // (name, how the message's similarity and its best part's are joined)
+    type Combine = (&'static str, fn(f64, f64) -> f64);
+    let settings: Vec<Combine> = vec![
+        ("message alone (before)", |w, _p| w),
+        ("best of message and parts", |w, p| w.max(p)),
+        ("best of message and 0.9 x parts", |w, p| w.max(0.9 * p)),
+        ("mean of message and best part", |w, p| (w + p) / 2.0),
+        ("shipped (memory::combine_similarity)", crate::memory::combine_similarity),
+    ];
+    const THRESHOLD: f64 = 0.35;
+    let enhancer = crate::nlp_enhancer::NLPEnhancer::new();
+    let mut table = String::from("| # | words | parts | question | ");
+    table.push_str(&settings.iter().map(|f| f.0).collect::<Vec<_>>().join(" | "));
+    table.push_str(" |\n|---|---|---|---|");
+    table.push_str(&"---|".repeat(settings.len()));
+    table.push('\n');
+    let mut hits: Vec<(usize, usize, f64)> = vec![(0, 0, 0.0); settings.len()];
+    let mut long_hits: Vec<(usize, usize, f64)> = vec![(0, 0, 0.0); settings.len()];
+    let mut scored_cases = 0usize;
+    let mut long_cases = 0usize;
+    let mut embed_seconds = 0f32;
+    for (ci, case) in set.cases.iter().enumerate() {
+        if case.expect.is_empty() { continue; }
+        scored_cases += 1;
+        let words = case.q.split_whitespace().count();
+        let long = words >= crate::memory::LONG_MESSAGE_WORDS;
+        if long { long_cases += 1; }
+        let qe = crate::llm::local_embeddings::generate_local_embedding(&case.q).expect("q embed");
+        let parts = crate::memory::recall_chunks(&case.q);
+        let n_parts = parts.len();
+        let t = std::time::Instant::now();
+        let part_embs = if parts.is_empty() { Vec::new() } else { crate::llm::local_embeddings::generate_local_embeddings_batch(parts, Some(8)).expect("part embed") };
+        embed_seconds += t.elapsed().as_secs_f32();
+        let ents: Vec<String> = enhancer.extract_entities(&case.q).into_iter().map(|e| e.word.to_lowercase()).filter(|e| e.len() > 1).collect();
+        let hints = crate::memory::query_hints(&case.q);
+        let mut cells = Vec::new();
+        for (si, (_, combine)) in settings.iter().enumerate() {
+            let mut scores: Vec<(i32, f64)> = rows.iter().filter_map(|(id, stored_ents, ns, tags, emb)| {
+                let s = emb.as_ref().map(|e| {
+                    let whole = crate::llm::local_embeddings::cosine_similarity(&qe, e) as f64;
+                    if part_embs.is_empty() { whole } else {
+                        let best_part = part_embs.iter().map(|p| crate::llm::local_embeddings::cosine_similarity(p, e) as f64).fold(f64::MIN, f64::max);
+                        combine(whole, best_part)
+                    }
+                }).unwrap_or(0.0);
+                let e = entity_overlap(stored_ents, &ents);
+                let ns_hit = hints.namespaces.iter().any(|n| n == ns);
+                let t = crate::memory::tag_overlap_score_pub(tags, &hints.words);
+                let score = crate::memory::hybrid_score(s, e, ns_hit, t, crate::memory::NAMESPACE_BOOST, crate::memory::TAG_WEIGHT);
+                if score >= THRESHOLD || e > 0.0 { Some((*id, score)) } else { None }
+            }).collect();
+            scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            let rank = rank_of(&scores, &case.expect);
+            if let Some(rk) = rank {
+                for h in [&mut hits[si]].into_iter().chain(if long { Some(&mut long_hits[si]) } else { None }) {
+                    if rk <= 4 { h.0 += 1; } if rk <= 10 { h.1 += 1; } h.2 += 1.0 / rk as f64;
+                }
+            }
+            cells.push(rank.map(|r| r.to_string()).unwrap_or_else(|| "–".into()));
+        }
+        let shown: String = case.q.chars().take(90).collect();
+        table.push_str(&format!("| {} | {} | {} | {} | {} |\n", ci + 1, words, n_parts, shown, cells.join(" | ")));
+    }
+    let summarise = |hits: &Vec<(usize, usize, f64)>, n: usize| {
+        let mut s = String::from("| setting | found in top 4 (phone) | found in top 10 (cloud) | mean reciprocal rank |\n|---|---|---|---|\n");
+        for (si, (name, _)) in settings.iter().enumerate() {
+            let (h4, h10, mrr) = hits[si];
+            s.push_str(&format!("| {} | {}/{} | {}/{} | {:.2} |\n", name, h4, n, h10, n, if n > 0 { mrr / n as f64 } else { 0.0 }));
+        }
+        s
+    };
+    let report = format!(
+        "# Chunk bench {}\n\n{} memories in the database copy; {} scored questions, {} of them long ({} words or more). \
+         Rank of the first expected memory under the shipped formula when the message is searched alone and when its parts are searched too; – means not returned at all. \
+         Embedding the parts took {:.1}s in all on this machine.\n\n\
+         ## All questions\n\n{}\n## Long questions only\n\n{}\n## Per question (rank)\n\n{}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M"), rows.len(), scored_cases, long_cases, crate::memory::LONG_MESSAGE_WORDS, embed_seconds,
+        summarise(&hits, scored_cases), summarise(&long_hits, long_cases), table);
+    println!("\n{}", report);
+    let tag = std::env::var("RECALL_BENCH_TAG").unwrap_or_default();
+    let path = out_dir.join(format!("CHUNKS_{}{}.md", chrono::Local::now().format("%Y-%m-%d"), tag));
+    std::fs::write(&path, &report).unwrap();
+    println!("written {}", path.display());
+}
+
 /// Probe: what the built-in guide search returns for a question, with the same call and
 /// threshold chat.rs uses. RECALL_BENCH_DB=<db copy> GUIDE_Q="How do I ...?"
 #[tokio::test]
