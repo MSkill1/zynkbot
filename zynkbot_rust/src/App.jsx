@@ -332,10 +332,10 @@ export default function App() {
   // which ignores the page colours and shows no description per entry.
   const MODES = [
     ['normal', 'Normal', 'The usual Zynkbot: warm, direct and honest. Nothing extra is sent.'],
-    ['tool', 'Tool', 'Does what is asked and nothing more. No commentary, no suggestions.'],
+    ['tool', 'Tool', 'Does what is asked and nothing more. No commentary, no suggestions. Remembers nothing about you.'],
     ['debate', 'Debate', 'Challenges weak reasoning and names the weakest point; argues the other side when asked.'],
-    ['premise', 'Premise', 'Takes what you state as true for this conversation and reasons from it, no fact-checking.'],
-    ['editing', 'Editing', 'Fixes grammar, spelling and clarity only; keeps your wording, tone and meaning.'],
+    ['premise', 'Premise', 'Takes what you state as true for this conversation and reasons from it, no fact-checking. Remembers nothing about you.'],
+    ['editing', 'Editing', 'Fixes grammar, spelling and clarity only; keeps your wording, tone and meaning. Remembers nothing about you.'],
   ];
   const MODE_HELP = Object.fromEntries(MODES.map(([k, name, blurb]) => [k, k === 'normal' ? '' : `${name}: ${blurb}`]));
   // Check-in question (labs/check_in, 2026-10-29): asked once a day at the start of a
