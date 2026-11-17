@@ -201,15 +201,17 @@ Every completed exchange is automatically saved to a local database. Conversatio
 
 A conversation mode is a short set of instructions put in front of the prompt for the conversation you are in. It changes how the model answers, not what it can see. The **Mode** control sits to the right of the conversation title; it opens a list with one line on each mode. While a mode other than Normal is on, a line under the title says what it does. The mode applies until you set it back to Normal or reload the app.
 
-| Mode | What it does |
-|---|---|
-| Normal | The usual Zynkbot: warm, direct and honest. Nothing extra is sent. |
-| Tool | Does what is asked and nothing more. No commentary, no suggestions. |
-| Debate | Challenges weak reasoning and names the weakest point; argues the other side when asked. |
-| Premise | Takes what you state as true for this conversation and reasons from it, no fact-checking. |
-| Editing | Fixes grammar, spelling and clarity only; keeps your wording, tone and meaning. |
+| Mode | What it does | Learns about you |
+|---|---|---|
+| Normal | The usual Zynkbot: warm, direct and honest. Nothing extra is sent. | Yes |
+| Tool | Does what is asked and nothing more. No commentary, no suggestions. | No |
+| Debate | Challenges weak reasoning and names the weakest point; argues the other side when asked. | Yes |
+| Premise | Takes what you state as true for this conversation and reasons from it, no fact-checking. | No |
+| Editing | Fixes grammar, spelling and clarity only; keeps your wording, tone and meaning. | No |
 
-Conversation modes are not containment modes (the safety layer above). A mode is prompt text; containment is enforced in code.
+Since 2026-11-17 (Matt, after a tester's Editing-mode paste produced two memories about a family member) Tool, Premise and Editing conversations store nothing about you: a pasted paragraph is someone's words to be fixed, a task says little about you, and a premise is true only for the sake of the argument. "Remember: ..." still stores in every mode. Editing also recalls no memories and sends none of the usual companion prompt: the model gets the editing instruction, the text you returned last (so "shorter" works) and the new text, and nothing else, which is also what makes it fast (`chat_modes::editing_prompt`).
+
+Conversation modes are not containment modes (the safety layer above). A mode is prompt text, plus the memory rule above; containment is enforced in code.
 
 ---
 

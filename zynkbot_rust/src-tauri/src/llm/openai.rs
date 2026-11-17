@@ -33,6 +33,40 @@ struct OpenAIRequest {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+}
+
+/// How hard a reasoning model thinks before it answers (2026-11-17): "low" for gpt-5.x
+/// and the o-series on api.openai.com, and for Grok 4.5 and later on api.x.ai (xAI's
+/// reasoning guide: grok-4.5, 4.6 and 4.7 take low, medium or high and cannot switch
+/// reasoning off). On the Pixel (2026-11-16) gpt-5.4 took 67 s to its first word with
+/// no level set. Nothing is sent for gpt-4.1, gpt-4o, older Grok ids, Mistral or a
+/// custom endpoint, which may reject the field. ZYNK_CLOUD_EFFORT overrides the level.
+pub(crate) fn reasoning_effort_for(model: &str, api_url: &str) -> Option<String> {
+    let m = model.to_lowercase();
+    let supported = if api_url.starts_with("https://api.openai.com/") {
+        m.starts_with("gpt-5") || (m.starts_with('o') && m[1..].starts_with(|c: char| c.is_ascii_digit()))
+    } else if api_url.starts_with("https://api.x.ai/") {
+        m.strip_prefix("grok-")
+            .and_then(|v| v.split(|c: char| !(c.is_ascii_digit() || c == '.')).next())
+            .and_then(|v| v.parse::<f32>().ok())
+            .map_or(false, |v| v >= 4.5)
+    } else {
+        false
+    };
+    if !supported { return None; }
+    Some(std::env::var("ZYNK_CLOUD_EFFORT").ok().map(|v| v.trim().to_lowercase()).filter(|v| !v.is_empty()).unwrap_or_else(|| "low".to_string()))
+}
+
+/// A stream that ended for length with no text: the model spent the whole allowance
+/// reasoning. Named for what happened instead of "empty reply".
+fn starved_of_text(text: &str, finish_reason: Option<&str>) -> Result<(), LLMError> {
+    if text.trim().is_empty() && finish_reason == Some("length") {
+        println!("[Rust OpenAI] ✗ The model spent its whole reply allowance reasoning and wrote no text");
+        return Err(LLMError::APIError("the model spent its whole reply allowance reasoning and wrote no text".to_string()));
+    }
+    Ok(())
 }
 
 // --- Streaming SSE types (OpenAI-compatible, also used by xAI) ---
@@ -118,6 +152,7 @@ pub async fn send_message(
         max_completion_tokens: max_tokens,
         temperature,
         stream: None,
+        reasoning_effort: reasoning_effort_for(&model, OPENAI_API_URL),
     };
 
     println!("[Rust OpenAI] Sending request to GPT: {}", model);
@@ -203,6 +238,7 @@ where
         max_completion_tokens: max_tokens,
         temperature,
         stream: Some(true),
+        reasoning_effort: reasoning_effort_for(&model, api_url),
     };
 
     println!("[Rust OpenAI] Starting streaming request to: {}", model);
@@ -232,6 +268,7 @@ where
     let mut line_buffer = String::new();
     let mut full_text = String::new();
     let mut output_tokens: u32 = 0;
+    let mut finish_reason: Option<String> = None;
 
     'outer: while let Some(chunk_result) = byte_stream.next().await {
         if crate::GENERATION_CANCELLED.load(std::sync::atomic::Ordering::SeqCst) {
@@ -273,6 +310,7 @@ where
                     full_text.push_str(&token);
                     on_token(token);
                 }
+                if choice.finish_reason.is_some() { finish_reason = choice.finish_reason.clone(); }
                 if choice.finish_reason.as_deref() == Some("stop") {
                     output_tokens = full_text.split_whitespace().count() as u32; // approximate
                 }
@@ -281,6 +319,7 @@ where
     }
 
     println!("[Rust OpenAI] ✅ Streaming complete");
+    starved_of_text(&full_text, finish_reason.as_deref())?;
 
     Ok(LLMResponse {
         content: full_text,
@@ -313,12 +352,15 @@ where
     })).collect();
     content_blocks.push(serde_json::json!({ "type": "text", "text": text }));
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "model": chat_model_for(model, api_url).as_ref(),
         "stream": true,
-        "max_completion_tokens": 4096,
+        "max_completion_tokens": 8192,
         "messages": [{ "role": "user", "content": content_blocks }]
     });
+    if let Some(level) = reasoning_effort_for(model, api_url) {
+        body["reasoning_effort"] = serde_json::json!(level);
+    }
 
     println!("[Rust OpenAI] Starting vision streaming request to: {}", model);
 
@@ -341,6 +383,7 @@ where
     let mut line_buffer = String::new();
     let mut full_text = String::new();
     let mut output_tokens: u32 = 0;
+    let mut finish_reason: Option<String> = None;
 
     'outer: while let Some(chunk_result) = byte_stream.next().await {
         if crate::GENERATION_CANCELLED.load(std::sync::atomic::Ordering::SeqCst) {
@@ -377,6 +420,7 @@ where
                     full_text.push_str(&token);
                     on_token(token);
                 }
+                if choice.finish_reason.is_some() { finish_reason = choice.finish_reason.clone(); }
                 if choice.finish_reason.as_deref() == Some("stop") {
                     output_tokens = full_text.split_whitespace().count() as u32;
                 }
@@ -385,6 +429,7 @@ where
     }
 
     println!("[Rust OpenAI] ✅ Vision streaming complete");
+    starved_of_text(&full_text, finish_reason.as_deref())?;
 
     Ok(LLMResponse {
         content: full_text,
@@ -396,6 +441,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_effort_goes_to_the_models_that_take_it() {
+        let oa = "https://api.openai.com/v1/chat/completions";
+        let xai = "https://api.x.ai/v1/chat/completions";
+        for m in ["gpt-5.5", "gpt-5.4-mini", "gpt-5", "o3", "o4-mini", "o1"] { assert_eq!(reasoning_effort_for(m, oa).as_deref(), Some("low"), "{m}"); }
+        for m in ["gpt-4.1", "gpt-4o", "gpt-4o-mini"] { assert_eq!(reasoning_effort_for(m, oa), None, "{m}"); }
+        for m in ["grok-4.5", "grok-4.6", "grok-4.7", "grok-5"] { assert_eq!(reasoning_effort_for(m, xai).as_deref(), Some("low"), "{m}"); }
+        for m in ["grok-4.3", "grok-4.20-0309-reasoning", "grok-3-mini"] { assert_eq!(reasoning_effort_for(m, xai), None, "{m}"); }
+        assert_eq!(reasoning_effort_for("gpt-5.5", "https://api.mistral.ai/v1/chat/completions"), None);
+        assert_eq!(reasoning_effort_for("gpt-5.5", "http://localhost:11434/v1/chat/completions"), None);
+    }
+
+    #[test]
+    fn a_stream_that_only_reasoned_is_an_error_and_a_short_answer_is_not() {
+        assert!(starved_of_text("", Some("length")).is_err());
+        assert!(starved_of_text("Yes.", Some("length")).is_ok());
+        assert!(starved_of_text("", Some("stop")).is_ok());
+        assert!(starved_of_text("", None).is_ok());
+    }
 
     #[test]
     fn error_object_in_stream_is_reported() {
@@ -418,6 +483,7 @@ mod tests {
             model: "gpt-4".to_string(),
             messages,
             max_completion_tokens: Some(100),
+            reasoning_effort: None,
             temperature: None,
             stream: None,
         };

@@ -19,6 +19,37 @@ struct AnthropicRequest {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<serde_json::Value>,
+}
+
+/// Whether the model takes `output_config.effort`: Opus from 4.5, Sonnet from 4.6, Haiku
+/// from 5, and every Fable, Mythos or 5-series id. Older ids reject the field.
+pub(crate) fn supports_effort(model: &str) -> bool {
+    let m = model.to_lowercase();
+    let rest = match m.strip_prefix("claude-") { Some(r) => r, None => return false };
+    let (family, ver) = match rest.split_once('-') { Some(x) => x, None => return false };
+    let mut parts = ver.split('-').filter_map(|p| p.parse::<u32>().ok());
+    let major = parts.next().unwrap_or(0);
+    let minor = parts.next().unwrap_or(0);
+    match family {
+        "opus" => (major, minor) >= (4, 5),
+        "sonnet" => (major, minor) >= (4, 6),
+        "haiku" => major >= 5,
+        "fable" | "mythos" => true,
+        _ => major >= 5,
+    }
+}
+
+/// How hard the model thinks before it answers (2026-11-17). Sonnet 5, Opus 5 and their
+/// successors think whenever the request does not say how much, and the thinking counts
+/// against max_tokens: on the Pixel (2026-11-16) an Editing reply thought through its
+/// whole 4096-token allowance and wrote nothing, and another took 87 s. "low" is the
+/// level for conversation; ZYNK_CLOUD_EFFORT overrides it (low, medium, high).
+pub(crate) fn effort_config(model: &str) -> Option<serde_json::Value> {
+    if !supports_effort(model) { return None; }
+    let level = std::env::var("ZYNK_CLOUD_EFFORT").ok().map(|v| v.trim().to_lowercase()).filter(|v| !v.is_empty()).unwrap_or_else(|| "low".to_string());
+    Some(serde_json::json!({ "effort": level }))
 }
 
 // --- Streaming SSE types ---
@@ -51,6 +82,9 @@ struct AnthropicStreamDelta {
     delta_type: Option<String>,
     #[serde(default)]
     text: Option<String>,
+    /// On the message_delta event: end_turn, max_tokens, stop_sequence, refusal.
+    #[serde(default)]
+    stop_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,6 +148,7 @@ pub async fn send_message(
         system: system_prompt,
         temperature,
         stream: None,
+        output_config: effort_config(model),
     };
 
     println!("[Rust Anthropic] Sending request to Claude: {}", model);
@@ -230,6 +265,7 @@ where
         system: system_prompt,
         temperature,
         stream: Some(true),
+        output_config: effort_config(model),
     };
 
     println!("[Rust Anthropic] Starting streaming request to Claude: {}", model);
@@ -261,6 +297,7 @@ where
     let mut full_text = String::new();
     let mut input_tokens: u32 = 0;
     let mut output_tokens: u32 = 0;
+    let mut stop_reason: Option<String> = None;
 
     while let Some(chunk_result) = byte_stream.next().await {
         if crate::GENERATION_CANCELLED.load(std::sync::atomic::Ordering::SeqCst) {
@@ -312,6 +349,9 @@ where
                             output_tokens = tokens;
                         }
                     }
+                    if let Some(d) = event.delta {
+                        if d.stop_reason.is_some() { stop_reason = d.stop_reason; }
+                    }
                 }
                 // Until 2026-10-21 this fell into the catch-all below: four replies
                 // that day ended as "Streaming complete (0 tokens)" with the page
@@ -330,6 +370,7 @@ where
     }
 
     println!("[Rust Anthropic] ✅ Streaming complete ({} tokens)", output_tokens);
+    if let Err(e) = starved_of_text(&full_text, stop_reason.as_deref(), max_tokens.unwrap_or(4096)) { return Err(e); }
 
     Ok(LLMResponse {
         content: full_text,
@@ -339,6 +380,17 @@ where
             output_tokens,
         }),
     })
+}
+
+/// A stream that hit max_tokens with no text: the model spent the whole allowance
+/// thinking (2026-11-16, Pixel: "Vision streaming complete (4096 tokens)" and an empty
+/// reply). Named for what happened instead of "empty reply".
+fn starved_of_text(text: &str, stop_reason: Option<&str>, max_tokens: u32) -> Result<(), LLMError> {
+    if text.trim().is_empty() && stop_reason == Some("max_tokens") {
+        println!("[Rust Anthropic] ✗ The model spent its whole allowance of {} tokens thinking and wrote no text", max_tokens);
+        return Err(LLMError::APIError(format!("the model spent its whole reply allowance ({} tokens) thinking and wrote no text", max_tokens)));
+    }
+    Ok(())
 }
 
 /// Send a vision request (text + one or more images) to Claude with streaming.
@@ -378,6 +430,9 @@ where
     if let Some(sys) = system_prompt {
         body["system"] = serde_json::json!(sys);
     }
+    if let Some(cfg) = effort_config(model) {
+        body["output_config"] = cfg;
+    }
 
     println!("[Rust Anthropic] Starting vision streaming request to Claude: {}", model);
 
@@ -402,6 +457,7 @@ where
     let mut full_text = String::new();
     let mut input_tokens: u32 = 0;
     let mut output_tokens: u32 = 0;
+    let mut stop_reason: Option<String> = None;
 
     while let Some(chunk_result) = byte_stream.next().await {
         if crate::GENERATION_CANCELLED.load(std::sync::atomic::Ordering::SeqCst) {
@@ -447,6 +503,9 @@ where
                             output_tokens = tokens;
                         }
                     }
+                    if let Some(d) = event.delta {
+                        if d.stop_reason.is_some() { stop_reason = d.stop_reason; }
+                    }
                 }
                 // Until 2026-10-21 this fell into the catch-all below: four replies
                 // that day ended as "Streaming complete (0 tokens)" with the page
@@ -465,6 +524,7 @@ where
     }
 
     println!("[Rust Anthropic] ✅ Vision streaming complete ({} tokens)", output_tokens);
+    if let Err(e) = starved_of_text(&full_text, stop_reason.as_deref(), max_tokens.unwrap_or(4096)) { return Err(e); }
 
     Ok(LLMResponse {
         content: full_text,
@@ -476,6 +536,27 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effort_goes_to_the_models_that_take_it() {
+        for m in ["claude-sonnet-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-5-20251101", "claude-sonnet-4-6", "claude-fable-5", "claude-haiku-5-5"] {
+            assert!(supports_effort(m), "{m}");
+        }
+        for m in ["claude-opus-4-1-20250805", "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001", "gpt-5.5", ""] {
+            assert!(!supports_effort(m), "{m}");
+        }
+        assert_eq!(effort_config("claude-opus-4-1-20250805"), None);
+        assert_eq!(effort_config("claude-sonnet-5").unwrap()["effort"], "low");
+    }
+
+    #[test]
+    fn a_stream_that_only_thought_is_an_error_and_a_short_answer_is_not() {
+        assert!(starved_of_text("", Some("max_tokens"), 4096).is_err());
+        assert!(starved_of_text("  \n", Some("max_tokens"), 4096).is_err());
+        assert!(starved_of_text("", Some("end_turn"), 4096).is_ok());
+        assert!(starved_of_text("Yes.", Some("max_tokens"), 4096).is_ok());
+        assert!(starved_of_text("", None, 4096).is_ok());
+    }
 
     #[test]
     fn error_event_in_stream_parses() {

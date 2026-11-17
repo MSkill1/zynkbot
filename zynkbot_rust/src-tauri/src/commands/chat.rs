@@ -318,6 +318,9 @@ pub async fn generate_reply(
     // `user_query` carries only the clean question — use it for safety checks, memory search,
     // KB search, and conversation history. Falls back to `message` when no file is attached.
     let query = user_query.unwrap_or_else(|| message.clone());
+    // Editing mode sends its own short prompt (chat_modes::editing_prompt, 2026-11-17):
+    // no memory recall, no companion prompt, no earlier pictures, no MEMORY line.
+    let lean_editing = crate::chat_modes::is_lean(mode.as_deref());
 
     // Put the thread in History now, not after the reply: a thread whose first
     // answer was still streaming was invisible there (2026-09-14). HIPAA keeps no
@@ -568,18 +571,23 @@ pub async fn generate_reply(
 
     let query_hints = crate::memory::query_hints(&query);
     println!("[RUST] Query hints: namespaces {:?}, words {:?}", query_hints.namespaces, query_hints.words);
-    let recalled_memories = crate::memory::hybrid_search_multi(
-        &db_pool,
-        &query_embeddings,
-        query_entities.clone(),  // Clone so we can use it again for entity search
-        &query_hints,
-        Some(search_user_id),
-        None,  // Don't filter by session - search ALL memories across all sessions!
-        namespace_filter,  // Search system namespace if Zynkbot query, else all namespaces
-        memory_search_limit,
-    )
-    .await
-    .map_err(|e| format!("Memory search failed: {}", e))?;
+    let recalled_memories = if lean_editing {
+        println!("[Mode] editing: no memory recall");
+        Vec::new()
+    } else {
+        crate::memory::hybrid_search_multi(
+            &db_pool,
+            &query_embeddings,
+            query_entities.clone(),  // Clone so we can use it again for entity search
+            &query_hints,
+            Some(search_user_id),
+            None,  // Don't filter by session - search ALL memories across all sessions!
+            namespace_filter,  // Search system namespace if Zynkbot query, else all namespaces
+            memory_search_limit,
+        )
+        .await
+        .map_err(|e| format!("Memory search failed: {}", e))?
+    };
 
     // Filter out system memories for non-Zynkbot queries
     let recalled_memories: Vec<crate::memory::Memory> = if is_zynkbot_query {
@@ -770,6 +778,7 @@ pub async fn generate_reply(
         }).unwrap_or_default();
         let keep = v.len().saturating_sub(3);
         v.drain(..keep);
+        if lean_editing { v.clear(); }
         v
     };
     let vision_images: Option<Vec<crate::llm::ImageAttachment>> = {
@@ -797,16 +806,24 @@ pub async fn generate_reply(
         .collect();
 
     // Build full prompt (user_display_name was fetched before the pool was closed)
-    let mut full_prompt = engine.build_prompt(
-        &message,
-        engine_history.as_deref(),
-        Some(&engine_memories),
-        is_api_model,
-        user_display_name.as_deref(),
-    );
+    let mut full_prompt = if lean_editing {
+        println!("[Mode] editing: lean prompt, no memories or earlier turns");
+        let last_reply = conversation_history.as_ref()
+            .and_then(|h| h.iter().rev().find(|t| t.role == "assistant").map(|t| t.content.clone()));
+        let with_picture = image_data.as_ref().map_or(false, |v| !v.is_empty());
+        crate::chat_modes::editing_prompt(&message, last_reply.as_deref(), with_picture)
+    } else {
+        engine.build_prompt(
+            &message,
+            engine_history.as_deref(),
+            Some(&engine_memories),
+            is_api_model,
+            user_display_name.as_deref(),
+        )
+    };
 
     // The conversation mode's block goes in front of everything (2026-10-28).
-    if let Some(b) = crate::chat_modes::block(mode.as_deref()) {
+    if let Some(b) = crate::chat_modes::block(mode.as_deref()).filter(|_| !lean_editing) {
         println!("[Mode] {}", mode.as_deref().unwrap_or(""));
         full_prompt = format!("{}\n\n{}", b, full_prompt);
     }
@@ -859,8 +876,9 @@ pub async fn generate_reply(
         }
     }
 
-    // What each picture is, and the one-line record asked for (2026-10-28).
-    if let Some(ref imgs) = vision_images {
+    // What each picture is, and the one-line record asked for (2026-10-28). Not in
+    // Editing mode: a picture there is text to fix, and the reply is the text alone.
+    if let Some(imgs) = vision_images.as_ref().filter(|_| !lean_editing) {
         let now = image_data.as_ref().map_or(0, |v| v.len());
         let mut block = String::from("\n\nPictures attached, in order:");
         for (n, (said, _)) in earlier_pictures.iter().enumerate() {
@@ -922,7 +940,7 @@ pub async fn generate_reply(
                 &full_prompt,
                 imgs,
                 None,
-                Some(4096),
+                Some(CLOUD_REPLY_TOKENS),
                 move |token| { sink_c.token(&token); },
             ).await.map_err(|e| e.to_string())?;
             response.content
@@ -937,7 +955,7 @@ pub async fn generate_reply(
                 model_name,
                 messages,
                 None,
-                Some(4096),
+                Some(CLOUD_REPLY_TOKENS),
                 None,
                 move |token| { sink_c.token(&token); },
             ).await.map_err(|e| format_api_error(&forced_backend, &e.to_string()))?;
@@ -984,7 +1002,7 @@ pub async fn generate_reply(
                 &api_key,
                 model_name,
                 messages,
-                Some(4096),
+                Some(CLOUD_REPLY_TOKENS),
                 None,
                 "https://api.openai.com/v1/chat/completions",
                 crate::llm::openai::default_client(false),
@@ -1024,7 +1042,7 @@ pub async fn generate_reply(
                 &api_key,
                 xai_model,
                 messages,
-                Some(4096),
+                Some(CLOUD_REPLY_TOKENS),
                 None,
                 "https://api.x.ai/v1/chat/completions",
                 crate::llm::openai::default_client(false),
@@ -1062,7 +1080,7 @@ pub async fn generate_reply(
                 &api_key,
                 mistral_model,
                 messages,
-                Some(4096),
+                Some(CLOUD_REPLY_TOKENS),
                 None,
                 "https://api.mistral.ai/v1/chat/completions",
                 crate::llm::openai::default_client(false),
@@ -1613,9 +1631,17 @@ pub async fn generate_reply(
     // invented answer was stored as a memory and then "confirmed" by a later
     // memory (GitHub #17/#22). An explicit "Remember:" still stores verbatim.
     let kb_ungrounded_reply = kb_enabled && !kb_grounded && !is_explicit_remember;
+    // Tool, Premise and Editing conversations teach Zynkbot nothing about the user
+    // (chat_modes::records_memory, 2026-11-17); "Remember:" still stores in every mode.
+    let mode_keeps_nothing = !is_explicit_remember && !crate::chat_modes::records_memory(mode.as_deref());
     let effective_skip_memory = skip_memory_storage.unwrap_or(false)
         || hipaa_ephemeral_enforcement
-        || kb_ungrounded_reply;
+        || kb_ungrounded_reply
+        || mode_keeps_nothing;
+
+    if mode_keeps_nothing {
+        println!("[Mode] {}: nothing is learned about the user from this message", mode.as_deref().unwrap_or("").trim().to_lowercase());
+    }
 
     if hipaa_ephemeral_enforcement {
         println!("[HIPAA] 🔒 Ephemeral mode enforced - memory extraction and storage disabled");
@@ -1639,7 +1665,7 @@ pub async fn generate_reply(
     let call1_yes = if is_explicit_remember { true }
         else if on_device_flow { memory_flag != Some(false) }
         else { memory_flag == Some(true) || legacy_fact_line };
-    if !is_explicit_remember && !on_device_flow && memory_flag.is_none() && !legacy_fact_line && memory_gate_passed {
+    if !is_explicit_remember && !on_device_flow && memory_flag.is_none() && !legacy_fact_line && memory_gate_passed && !effective_skip_memory {
         println!("[RUST] Reply carried no MEMORY line; nothing stored (call 1 of the memory pipeline)");
     }
     if !effective_skip_memory && memory_gate_passed && call1_yes {
@@ -1681,7 +1707,7 @@ pub async fn generate_reply(
  else {
         // Nothing was extracted for this exchange. Record why, so "103 sessions with no
         // memories" can be told apart into gate-refused vs. deliberately skipped.
-        let reason = if effective_skip_memory { "skipped" } else if !memory_gate_passed { "gate_skipped" } else { "model_declined" };
+        let reason = if mode_keeps_nothing { "mode_skipped" } else if effective_skip_memory { "skipped" } else if !memory_gate_passed { "gate_skipped" } else { "model_declined" };
         let sid = session_id.clone();
         tokio::spawn(async move {
             if let Ok(pool) = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
@@ -2491,6 +2517,12 @@ mod tests {
 /// had made, and disowned it in its next reply ("I don't actually have the ability to set
 /// alarms"), while the alarm was set. The page marks these lines with ⏰ or ⏱️; the phrases
 /// are the ones VoiceCommands.kt and useVoiceSession.js speak.
+/// Reply allowance for a cloud chat call (2026-11-17): 8192, up from 4096. On Sonnet 5,
+/// Opus 5 and gpt-5.x the model's thinking shares this allowance with the answer, and at
+/// 4096 one Pixel reply thought through all of it and wrote nothing. The effort level sent
+/// with each call (anthropic.rs, openai.rs) keeps the thinking short; this is the margin.
+pub(crate) const CLOUD_REPLY_TOKENS: u32 = 8192;
+
 pub(crate) fn history_turn_for_model(role: &str, content: &str) -> String {
     if role != "assistant" { return content.to_string(); }
     let text = content.trim();
