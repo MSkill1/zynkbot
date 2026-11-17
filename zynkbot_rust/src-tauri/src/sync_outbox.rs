@@ -218,7 +218,7 @@ async fn load_sessions(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
     let in_clause = sync_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
         "SELECT session_id, user_id, title, started_at, last_active, message_count,
-                model_backend, containment_mode, sync_id, pinned, pinned_at
+                model_backend, containment_mode, sync_id, pinned, pinned_at, closed_at
          FROM conversation_sessions WHERE sync_id IN ({})", in_clause);
     let mut q = sqlx::query(&sql);
     for s in sync_ids { q = q.bind(s); }
@@ -235,6 +235,7 @@ async fn load_sessions(pool: &SqlitePool, sync_ids: &[String]) -> Result<Vec<Syn
         sync_id: row.get("sync_id"),
         pinned: row.try_get::<i64, _>("pinned").ok().map(|v| v != 0),
         pinned_at: row.try_get("pinned_at").ok().flatten(),
+        closed_at: row.try_get("closed_at").ok().flatten(),
     }).collect())
 }
 
@@ -819,9 +820,13 @@ async fn apply_session(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, s:
     sqlx::query(
         "INSERT INTO conversation_sessions
              (session_id, user_id, title, started_at, last_active, message_count,
-              model_backend, containment_mode, sync_id, pinned, pinned_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              model_backend, containment_mode, sync_id, pinned, pinned_at, closed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (session_id) DO UPDATE SET
+             -- A close follows its newest press of New (0029), the same rule as a pin.
+             closed_at        = CASE WHEN EXCLUDED.closed_at IS NOT NULL
+                                      AND (conversation_sessions.closed_at IS NULL OR EXCLUDED.closed_at > conversation_sessions.closed_at)
+                                     THEN EXCLUDED.closed_at ELSE conversation_sessions.closed_at END,
              -- A pin follows its newest change (0025): the incoming one wins only when it is
              -- dated and later than ours; an older peer that sends no pin leaves ours alone.
              pinned           = CASE WHEN EXCLUDED.pinned_at IS NOT NULL
@@ -839,7 +844,7 @@ async fn apply_session(tx: &mut Transaction<'_, Sqlite>, local_user_id: &str, s:
              sync_id          = COALESCE(conversation_sessions.sync_id, EXCLUDED.sync_id)")
         .bind(&s.session_id).bind(local_user_id).bind(&s.title).bind(s.started_at).bind(s.last_active)
         .bind(s.message_count).bind(&s.model_backend).bind(&s.containment_mode).bind(&sync_id)
-        .bind(s.pinned.unwrap_or(false) as i64).bind(&s.pinned_at)
+        .bind(s.pinned.unwrap_or(false) as i64).bind(&s.pinned_at).bind(&s.closed_at)
         .execute(&mut **tx).await.map_err(|e| format!("outbox: upsert session {}: {}", s.session_id, e))?;
     Ok(true)
 }

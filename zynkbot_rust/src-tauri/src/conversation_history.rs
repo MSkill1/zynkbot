@@ -140,6 +140,19 @@ pub async fn open_session(
     Ok(result.rows_affected() > 0)
 }
 
+/// Close a conversation: New was pressed on it (0029). Closed while closed_at is at or
+/// after last_active; a later message reopens it by moving last_active.
+pub async fn set_session_closed(pool: &SqlitePool, session_id: &str, user_id: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE conversation_sessions SET closed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE session_id = ? AND user_id = ?",
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Pin or unpin a conversation; pinned ones are listed first.
 pub async fn set_session_pinned(
     pool: &SqlitePool,

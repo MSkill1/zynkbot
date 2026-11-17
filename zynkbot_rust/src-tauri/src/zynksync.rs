@@ -138,6 +138,9 @@ pub struct SyncConversationSession {
     pub pinned: Option<bool>,
     #[serde(default)]
     pub pinned_at: Option<String>,
+    /// When New was last pressed on the thread (0029); closed while at or after last_active.
+    #[serde(default)]
+    pub closed_at: Option<String>,
 }
 
 /// Conversation message payload for cross-device sync

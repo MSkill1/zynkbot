@@ -33,15 +33,30 @@ pub(crate) fn is_quick_thread(session_id: &str) -> bool {
 pub async fn get_latest_thread(user_id: String) -> Result<Option<serde_json::Value>, String> {
     let db_url = crate::db::get_db_url();
     let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e: sqlx::Error| e.to_string())?;
-    let row: Option<(String, String, i64, Option<String>)> = sqlx::query_as(
-        "SELECT session_id, last_active, message_count, title FROM conversation_sessions
+    // The thread written to last, or nothing when it was closed with New (0029): the next
+    // older thread is not offered in its place, since New means "I am done here" and not
+    // "show me last week's instead" (tester Mike, 2026-11-17).
+    let row: Option<(String, String, i64, Option<String>, i64)> = sqlx::query_as(
+        "SELECT session_id, last_active, message_count, title,
+                (closed_at IS NOT NULL AND julianday(closed_at) >= julianday(last_active)) AS closed
+         FROM conversation_sessions
          WHERE user_id = ? AND message_count > 0 AND session_id NOT LIKE 'quick-questions-%'
          ORDER BY last_active DESC LIMIT 1")
         .bind(&user_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
     pool.close().await;
-    Ok(row.map(|(session_id, last_active, message_count, title)| serde_json::json!({
+    Ok(row.filter(|r| r.4 == 0).map(|(session_id, last_active, message_count, title, _)| serde_json::json!({
         "session_id": session_id, "last_active": last_active, "message_count": message_count,
         "title": title.unwrap_or_default() })))
+}
+
+/// New was pressed on this thread: it is closed on every device once the row syncs.
+#[tauri::command]
+pub async fn close_thread(session_id: String, user_id: String) -> Result<bool, String> {
+    let pool = sqlx::SqlitePool::connect(&crate::db::get_db_url()).await.map_err(|e: sqlx::Error| e.to_string())?;
+    let r = conversation_history::set_session_closed(&pool, &session_id, &user_id).await.map_err(|e| e.to_string());
+    pool.close().await;
+    if r.as_ref().map_or(false, |v| *v) { println!("[Session] thread {} closed with New", session_id); }
+    r
 }
 
 #[tauri::command]

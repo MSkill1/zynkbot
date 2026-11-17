@@ -501,7 +501,6 @@ export default function App() {
   const [showQuickQuestion, setShowQuickQuestion] = useState(false);
   const [memoryManagerOpen, setMemoryManagerOpen] = useState(false);
   // The thread offered on the "Continue" line of an empty conversation (2026-11-12).
-  const [continueThread, setContinueThread] = useState(null);
   // The backup reminder (Matt, 2026-11-12): one line over the conversation, once a week,
   // when backup storage is set up and memories have changed since the last backup.
   const [backupReminder, setBackupReminder] = useState(null);
@@ -1155,11 +1154,15 @@ export default function App() {
 
   const handleNewConversation = async () => {
     if (messages.length > 0 && !(await confirmDialog('Start a new conversation? The current one stays in Conversation History.'))) return;
+    // New closes the thread on every device (tester Mike, 2026-11-17): the mark syncs, and
+    // a closed thread is not opened again anywhere until a message is sent in it.
+    if (messages.length > 0) {
+      try { await invoke('close_thread', { sessionId, userId }); } catch (e) { console.warn('[Session] could not close the thread:', e); }
+    }
     const fresh = uuidv4();
     setSessionId(fresh);
     try { sessionStorage.setItem('zynkbot_session_id', fresh); } catch (_) {}
     setMessages([]);
-    setContinueThread(null);
     myAnchorRef.current = Date.now(); // a deliberate new conversation
   };
 
@@ -1229,18 +1232,6 @@ export default function App() {
   const myAnchorRef = useRef(0);      // when this device last wrote, or asked for a new conversation
   const lastTouchRef = useRef(Date.now());
   const adoptingRef = useRef(false);
-  const handleContinueThread = async () => {
-    const t = continueThread;
-    if (!t) return;
-    try {
-      const rows = await invoke('get_conversation_messages', { sessionId: t.session_id });
-      handleResumeSession({ sessionId: t.session_id, messages: (rows || []).map(rowToMessage) });
-      myAnchorRef.current = Math.max(myAnchorRef.current, new Date(t.last_active).getTime());
-      setContinueThread(null);
-    } catch (e) {
-      notify('Could not open that conversation.');
-    }
-  };
   const adoptLatestThread = async (why, allowSwitch = true) => {
     const st = liveRef.current;
     if (!st.userId || adoptingRef.current || st.isLoading || st.hasDraft || st.editing) return;
@@ -1264,11 +1255,15 @@ export default function App() {
         }
         return;
       }
-      // A different thread is never put on screen by itself. An empty conversation offers
-      // it on the "Continue" line; a conversation with messages is left alone.
-      if (liveRef.current.count > 0) return;
-      setContinueThread({ session_id: latest.session_id, title: latest.title || '', last_active: latest.last_active });
-      console.log('[Session] offering the thread last written to (' + why + ')');
+      // An empty conversation opens the thread last written to, on whichever device it was
+      // (tester Mike, 2026-11-17: "if I haven't closed it by clicking New, it is great to pop
+      // up on any device"). get_latest_thread returns nothing when that thread was closed
+      // with New. A conversation with messages is left alone. From 11-12 to 11-17 the
+      // thread was offered on a "Continue" line instead and New only cleared that line here.
+      if (liveRef.current.count > 0 || !allowSwitch) return;
+      handleResumeSession({ sessionId: latest.session_id, messages: rows.map(rowToMessage) });
+      myAnchorRef.current = Math.max(myAnchorRef.current, theirs);
+      console.log('[Session] opened the thread last written to (' + why + ')');
     } catch (e) {
       console.warn('[Session] could not check for the shared thread:', e);
     } finally {
@@ -2799,13 +2794,6 @@ export default function App() {
               <div className="conversation-history" ref={attachChatContainer} style={{minHeight: 'unset', marginBottom: 0}}>
                 {messages.length === 0 ? (
                   <>
-                  {continueThread && (
-                    <button onClick={handleContinueThread} title="Open the conversation you were in last"
-                      style={{ display: 'flex', alignItems: 'center', gap: '8px', maxWidth: '100%', minHeight: '42px', padding: '8px 14px', marginBottom: '10px', background: '#2b2d3a', border: '1px solid #44475a', borderRadius: '8px', color: '#8be9fd', cursor: 'pointer', fontSize: '0.95rem', fontWeight: 'bold', textAlign: 'left' }}>
-                      <span style={{ flexShrink: 0 }}>▶ Continue:</span>
-                      <span style={{ color: '#f8f8f2', fontWeight: 'normal', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{continueThread.title || 'your last conversation'}</span>
-                    </button>
-                  )}
                   {introSeen('chat')
                     ? <p style={{color: '#9aa5c4'}}>Start a conversation...</p>
                     : <PageIntro introKey="chat" accent="#8be9fd" noLink>Type or dictate a message. Under the box: <b>KB</b> searches your documents, the paper clip attaches a file, the picture button attaches a photo from your gallery, and the camera takes one. <b>Quick</b> asks a one-off question in its own window, outside this conversation. Zynkbot remembers what you tell it about yourself, here on this device; Memory Manager shows what it kept, and you can edit or delete any of it. With your own API key, the model company answers each question and bills you for it; under its API terms it does not use your messages to train on or to build a profile of you, the way a chat subscription can.</PageIntro>}
