@@ -5,6 +5,8 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import VoiceButton from './VoiceButton';
 import ControlsPage from './ControlsPage';
 
+export const ENSEMBLE_SESSION_PREFIX = 'ensemble-';
+
 export default function EnsembleModal({
   isOpen,
   onClose,
@@ -22,7 +24,36 @@ export default function EnsembleModal({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [searchKBEnabled, setSearchKBEnabled] = useState(false);
   const [attachedFile, setAttachedFile] = useState(null);
+  const [earlier, setEarlier] = useState(null); // null: hidden; a list: shown
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const questionRef = useRef(null);
+  // Every run is saved by the backend into this standing thread before the result reaches
+  // the window (Matt, 2026-11-18: a long answer was lost to a closed window). Earlier reads
+  // it back; the thread is kept out of History (is_hidden_thread in commands/conversation.rs).
+  const historyId = ENSEMBLE_SESSION_PREFIX + userId;
+
+  // Earlier runs, newest first: question, summary, and the models' own replies from the row.
+  const toggleEarlier = async () => {
+    if (earlier) { setEarlier(null); return; }
+    setLoadingEarlier(true);
+    try {
+      const rows = await invoke('get_conversation_messages', { sessionId: historyId });
+      const runs = [];
+      for (const r of rows || []) {
+        if (r.role === 'user') runs.push({ q: r, a: null });
+        else if (r.role === 'assistant' && runs.length && !runs[runs.length - 1].a) runs[runs.length - 1].a = r;
+      }
+      setEarlier(runs.reverse().slice(0, 30).map(run => {
+        let ens = null;
+        try { ens = run.a?.sources_json ? JSON.parse(run.a.sources_json)?.ensemble : null; } catch (_) { ens = null; }
+        return { ...run, replies: Array.isArray(ens?.individual) ? ens.individual : [], coordinator: ens?.coordinator || '' };
+      }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoadingEarlier(false);
+    }
+  };
 
   const insertTranscriptAtCursor = (text) => {
     const el = questionRef.current;
@@ -158,6 +189,7 @@ export default function EnsembleModal({
     setError(null);
     setSearchKBEnabled(false);
     setAttachedFile(null);
+    setEarlier(null);
     onClose();
   };
 
@@ -169,6 +201,7 @@ export default function EnsembleModal({
     setError(null);
     setSearchKBEnabled(false);
     setAttachedFile(null);
+    setEarlier(null);
     onClose();
   };
 
@@ -233,7 +266,7 @@ export default function EnsembleModal({
                 <li><strong>Phase 2:</strong> Coordinator judges (not averages) the responses, identifies consensus & uncertainty, and synthesizes the best answer</li>
               </ol>
               <p style={{ marginTop: '8px', color: '#50fa7b', fontSize: '0.85rem' }}>
-                ✨ Purpose: Research and fact-checking tool - responses are not stored as memories
+                ✨ Purpose: Research and fact-checking tool - responses are not stored as memories. Every run is kept under Earlier in this window, on all your devices; Add to conversation also puts the summary in the open conversation.
               </p>
               <p style={{ marginTop: '4px', color: '#9aa5c4', fontSize: '0.8rem', fontStyle: 'italic' }}>
                 Use ensemble for questions like "Compare X vs Y", "What's the latest version of Z?", or when you want multiple AI perspectives on a research question. For personal conversation with memory, use regular chat.
@@ -529,7 +562,8 @@ export default function EnsembleModal({
             )}
 
             {/* Buttons */}
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <EarlierButton onClick={toggleEarlier} loading={loadingEarlier} shown={!!earlier} disabled={isLoading} />
               <button
                 onClick={handleClose}
                 style={{
@@ -711,7 +745,8 @@ export default function EnsembleModal({
             </div>
 
             {/* Action Buttons */}
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <EarlierButton onClick={toggleEarlier} loading={loadingEarlier} shown={!!earlier} disabled={isLoading} />
               <button
                 onClick={handleCancel}
                 style={{
@@ -743,8 +778,53 @@ export default function EnsembleModal({
             </div>
           </>
         )}
+        {earlier && !isLoading && (
+          <div style={{ marginTop: '20px', borderTop: '1px solid #44475a', paddingTop: '10px' }}>
+            <div style={{ color: '#9aa5c4', fontSize: '0.85rem', marginBottom: '10px' }}>
+              Earlier runs{earlier.length === 0 ? ': none yet' : ', newest first'}
+            </div>
+            {earlier.map(run => (
+              <div key={run.q.id} style={{ padding: '12px', background: '#282a36', borderRadius: '8px', border: '1px solid #44475a', marginBottom: '12px' }}>
+                <div style={{ color: '#6272a4', fontSize: '0.75rem', marginBottom: '6px' }}>
+                  {new Date(run.q.created_at).toLocaleString()}{run.a?.model_backend ? ' · ' + run.a.model_backend : ''}
+                </div>
+                <div style={{ color: '#8be9fd', fontWeight: 'bold', marginBottom: '8px', whiteSpace: 'pre-wrap' }}>{run.q.content}</div>
+                <p style={{ color: '#f8f8f2', whiteSpace: 'pre-wrap', fontSize: '0.9rem', lineHeight: '1.5' }}>
+                  {run.a ? run.a.content : 'No answer was saved.'}
+                </p>
+                {run.replies.length > 0 && (
+                  <details style={{ marginTop: '10px' }}>
+                    <summary style={{ color: '#8be9fd', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      The models' own replies ({run.replies.length}){run.coordinator ? ' · coordinator ' + run.coordinator : ''}
+                    </summary>
+                    {run.replies.map((resp, idx) => (
+                      <div key={idx} style={{ marginTop: '8px', padding: '10px', background: '#1e1f29', borderRadius: '6px', border: `1px solid ${resp.success ? '#44475a' : '#ff5555'}` }}>
+                        <strong style={{ color: resp.success ? '#50fa7b' : '#ff5555', fontSize: '0.85rem' }}>{resp.model}</strong>
+                        <p style={{ color: '#f8f8f2', whiteSpace: 'pre-wrap', fontSize: '0.85rem', lineHeight: '1.5', marginTop: '4px' }}>{resp.response}</p>
+                      </div>
+                    ))}
+                  </details>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         </>
         )}
     </ControlsPage>
+  );
+}
+
+// "Earlier" / "Hide earlier", at the left of the button row (the same button Quick question has).
+function EarlierButton({ onClick, loading, shown, disabled }) {
+  return (
+    <button onClick={onClick} disabled={disabled || loading} title="Ensemble runs saved before"
+      style={{
+        marginRight: 'auto', padding: '10px 16px', background: 'none', color: '#8be9fd',
+        border: '1px solid #44475a', borderRadius: '6px', fontWeight: 'bold',
+        cursor: (disabled || loading) ? 'not-allowed' : 'pointer',
+      }}>
+      {loading ? 'Loading…' : shown ? 'Hide earlier' : 'Earlier'}
+    </button>
   );
 }

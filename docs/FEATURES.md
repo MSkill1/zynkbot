@@ -420,6 +420,8 @@ On the desktop the Ensemble button opens whatever model you are using; the windo
 
 **Best for:** fact-checking, catching hallucinations, contested questions, and any decision where you want more than one AI perspective before acting.
 
+Every run is kept (2026-11-18): the question, the synthesized answer and each model's own reply are saved before the result is shown, so a window closed by accident loses nothing. **Earlier** in the Ensemble window lists the runs, newest first, on every synced device; the thread they live in is kept out of History, like the Quick questions thread. **Add to conversation** puts the question and the synthesized answer into the open conversation as one exchange, which is saved and synced like any other.
+
 See [ENSEMBLE_MODE.md](ENSEMBLE_MODE.md) for full documentation.
 
 ---

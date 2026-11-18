@@ -2164,6 +2164,7 @@ pub fn run() {
             commands::conversation::close_thread,
             commands::conversation::seal_thread,
             commands::conversation::log_web_search_answer,
+            commands::conversation::add_ensemble_to_thread,
             commands::conversation::verify_seal_file,
             commands::conversation::seal_signer_key,
             commands::conversation::get_conversation_messages,

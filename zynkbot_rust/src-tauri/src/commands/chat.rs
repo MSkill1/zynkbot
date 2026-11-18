@@ -2308,6 +2308,21 @@ pub async fn run_ensemble(
     }
     let synthesized_response = if notes.is_empty() { reply_text } else { format!("{}\n\n{}", notes.join("\n\n"), reply_text) };
 
+    // Every run is filed in the standing Ensemble thread before the window sees it
+    // (2026-11-18), so a window closed by accident loses nothing: "Earlier" in the window
+    // reads it back, on every synced device. A failure to save is logged, not returned,
+    // since the answer itself is in hand.
+    {
+        let standing = format!("{}{}", super::conversation::ENSEMBLE_PREFIX, user_id);
+        let asked = user_query.as_deref().unwrap_or(&message);
+        if let Err(e) = super::conversation::log_ensemble_exchange(
+            &db_pool, &standing, &user_id, asked, &synthesized_response, &models, &containment_mode,
+            &coordinator_model, &serde_json::Value::Array(individual_responses.clone()), &search_results_json,
+        ).await {
+            eprintln!("[Ensemble] ⚠️ {}", e);
+        }
+    }
+
     // Clean up database connection
     db_pool.close().await;
 

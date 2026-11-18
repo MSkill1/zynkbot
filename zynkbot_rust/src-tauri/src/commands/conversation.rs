@@ -11,24 +11,29 @@ pub async fn list_conversation_sessions(
     let pool = sqlx::SqlitePool::connect(&db_url)
         .await
         .map_err(|e: sqlx::Error| e.to_string())?;
-    // The standing "Quick questions" thread is read inside the Quick window, not here
-    // (Matt, 2026-11-12: History is full enough).
+    // The standing "Quick questions" and "Ensemble" threads are read inside their own
+    // windows, not here (Matt, 2026-11-12: History is full enough).
     conversation_history::list_sessions(&pool, &user_id, limit.unwrap_or(50), offset.unwrap_or(0))
         .await
-        .map(|v| v.into_iter().filter(|s| !is_quick_thread(&s.session_id)).collect())
+        .map(|v| v.into_iter().filter(|s| !is_hidden_thread(&s.session_id)).collect())
         .map_err(|e: sqlx::Error| e.to_string())
 }
 
-/// The one thread the Quick question window files into (QuickQuestionModal.jsx).
-pub(crate) fn is_quick_thread(session_id: &str) -> bool {
-    session_id.starts_with("quick-questions-")
+/// The standing threads read inside their own windows and kept out of History: the one
+/// the Quick question window files into (QuickQuestionModal.jsx) and, since 2026-11-18,
+/// the one every Ensemble run is saved to (EnsembleModal.jsx, "Earlier").
+pub(crate) fn is_hidden_thread(session_id: &str) -> bool {
+    session_id.starts_with("quick-questions-") || session_id.starts_with(ENSEMBLE_PREFIX)
 }
+
+/// The Ensemble window's standing thread is `ensemble-<user id>`.
+pub(crate) const ENSEMBLE_PREFIX: &str = "ensemble-";
 
 /// The thread any of the user's devices wrote to most recently (2026-10-28, single shared
 /// context): the one every device lands in when it is brought back to the front. Threads
-/// with no messages (a started-and-abandoned "New") are not counted, and neither is the
-/// standing "Quick questions" thread (2026-11-12): a quick question must not move every
-/// device into that thread.
+/// with no messages (a started-and-abandoned "New") are not counted, and neither are the
+/// standing "Quick questions" and "Ensemble" threads (2026-11-12, 2026-11-18): a quick
+/// question or an Ensemble run must not move every device into that thread.
 #[tauri::command]
 pub async fn get_latest_thread(user_id: String) -> Result<Option<serde_json::Value>, String> {
     let db_url = crate::db::get_db_url();
@@ -40,7 +45,8 @@ pub async fn get_latest_thread(user_id: String) -> Result<Option<serde_json::Val
         "SELECT session_id, last_active, message_count, title,
                 (closed_at IS NOT NULL AND julianday(closed_at) >= julianday(last_active)) AS closed
          FROM conversation_sessions
-         WHERE user_id = ? AND message_count > 0 AND session_id NOT LIKE 'quick-questions-%'
+         WHERE user_id = ? AND message_count > 0
+           AND session_id NOT LIKE 'quick-questions-%' AND session_id NOT LIKE 'ensemble-%'
          ORDER BY last_active DESC LIMIT 1")
         .bind(&user_id).fetch_optional(&pool).await.map_err(|e| e.to_string())?;
     pool.close().await;
@@ -91,7 +97,7 @@ pub async fn search_conversations(
         date_to.as_deref(),
     )
     .await
-    .map(|v| v.into_iter().filter(|s| !is_quick_thread(&s.session_id)).collect())
+    .map(|v| v.into_iter().filter(|s| !is_hidden_thread(&s.session_id)).collect())
     .map_err(|e: sqlx::Error| e.to_string())
 }
 
@@ -289,4 +295,78 @@ pub async fn log_web_search_answer(session_id: String, user_id: String, query: S
     let result = conversation_history::log_exchange_with_sources(&pool, &session_id, &user_id, &user_line, &answer, &backend, &containment_mode, true, "typed", sources.as_ref()).await;
     pool.close().await;
     result.map_err(|e| format!("Could not log the searched answer: {}", e))
+}
+
+/// An Ensemble run saved as one exchange: the question as the user line, the synthesized
+/// answer as the reply, the models as the backend, and the individual replies, the
+/// coordinator and any web sources on the row's sources_json (Matt, 2026-11-18: a long
+/// answer was lost when the window was closed by accident). `run_ensemble` files every run
+/// into the standing `ensemble-<user>` thread before it returns, so nothing depends on the
+/// window staying open; "Add to conversation" files the same exchange into the open thread
+/// through `add_ensemble_to_thread`. Both sync like any other message. Skipped in HIPAA
+/// mode, as the searched answer is.
+pub(crate) async fn log_ensemble_exchange(
+    pool: &sqlx::SqlitePool,
+    session_id: &str,
+    user_id: &str,
+    question: &str,
+    answer: &str,
+    models: &[String],
+    containment_mode: &str,
+    coordinator_model: &str,
+    individual_responses: &serde_json::Value,
+    search_results: &serde_json::Value,
+) -> Result<(), String> {
+    if containment_mode.eq_ignore_ascii_case("hipaa") { return Ok(()); }
+    let standing = session_id.starts_with(ENSEMBLE_PREFIX);
+    let backend = format!("Ensemble: {}", models.join(", "));
+    // The web sources keep the shape ChatMessage renders ({query, results, num_results});
+    // the replies sit beside them under "ensemble".
+    let mut sources = match search_results {
+        serde_json::Value::Object(m) => serde_json::Value::Object(m.clone()),
+        _ => serde_json::json!({}),
+    };
+    sources["ensemble"] = serde_json::json!({
+        "coordinator": coordinator_model,
+        "individual": individual_responses,
+    });
+    conversation_history::log_exchange_with_sources(
+        pool, session_id, user_id, question, answer, &backend, containment_mode,
+        !standing, "typed", Some(&sources),
+    ).await.map_err(|e| format!("Could not save the Ensemble answer: {}", e))?;
+    if standing {
+        // Named once; the row is not rewritten (and re-synced) when the name is there.
+        let title: Option<String> = sqlx::query_scalar("SELECT title FROM conversation_sessions WHERE session_id = ? AND user_id = ?")
+            .bind(session_id).bind(user_id).fetch_optional(pool).await.map_err(|e| e.to_string())?.flatten();
+        if title.as_deref().map_or(true, |t| t.trim().is_empty()) {
+            conversation_history::set_session_title(pool, session_id, user_id, "Ensemble").await.map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// "Add to conversation" in the Ensemble window: the run goes into the open thread as one
+/// exchange, so it is there after a restart and on every synced device (it used to be
+/// shown on screen only).
+#[tauri::command]
+pub async fn add_ensemble_to_thread(
+    session_id: String,
+    user_id: String,
+    question: String,
+    answer: String,
+    models: Vec<String>,
+    containment_mode: String,
+    coordinator_model: Option<String>,
+    individual_responses: Option<serde_json::Value>,
+    search_results: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let pool = crate::db::create_pool().await.map_err(|e| format!("Database error: {}", e))?;
+    let result = log_ensemble_exchange(
+        &pool, &session_id, &user_id, &question, &answer, &models, &containment_mode,
+        coordinator_model.as_deref().unwrap_or(""),
+        individual_responses.as_ref().unwrap_or(&serde_json::Value::Null),
+        search_results.as_ref().unwrap_or(&serde_json::Value::Null),
+    ).await;
+    pool.close().await;
+    result
 }

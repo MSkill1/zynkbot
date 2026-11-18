@@ -3540,6 +3540,20 @@ export default function App() {
         sessionId={sessionId}
         containmentMode={containmentMode}
         onEnsembleComplete={(result) => {
+          // Saved into the open thread as one exchange (2026-11-18): it used to be on screen
+          // only, gone on the next restart and never on the other devices.
+          if (sessionId) {
+            invoke('add_ensemble_to_thread', {
+              sessionId, userId,
+              question: result.question,
+              answer: result.synthesized_response,
+              models: (result.individual_responses || []).map(r => r.model),
+              containmentMode,
+              coordinatorModel: result.coordinator_model || null,
+              individualResponses: result.individual_responses || null,
+              searchResults: result.search_results || null,
+            }).catch(e => notify('The Ensemble answer is on screen but could not be saved: ' + e, 6000));
+          }
           const now = new Date().toISOString();
           const userMessage = {
             id: Date.now(),

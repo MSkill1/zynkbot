@@ -129,7 +129,7 @@ This is more useful than asking any single model — you get the actual dispute 
 4. Enter your question
 5. Wait for all models to respond (typically 1–3 minutes; local models may take longer)
 6. Review individual responses and the synthesized answer
-7. Optionally add the result to your active conversation
+7. Optionally add the result to your active conversation (saved there as one exchange). Every run is kept anyway: **Earlier** in the window lists the runs made before, with each model's own reply, on every synced device.
 
 **Coordinator model:** The coordinator is automatically selected as the most capable API model in your selection (preference order: Anthropic → OpenAI → xAI → local). If only local models are selected, the first selected model acts as coordinator. User-selectable coordinator is planned for a future release.
 
