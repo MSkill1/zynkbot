@@ -17,13 +17,18 @@ import PageIntro from './PageIntro';
  *   for a controls page, "Close" for a window opened from chat.
  * - `dismissOnOutside`: whether a tap outside the card closes it (default yes). Off for
  *   a window the user must answer (the conflict card) or wait for (the loading screen).
+ * - `size`: "small" for a window with a line or two in it (a name prompt, a yes/no
+ *   card), which stays a short centred card on the phone instead of filling the
+ *   screen; "wide" for one that needs the room (the memory graph). Default: the
+ *   560px card, full screen on a phone.
  */
 export default function ControlsPage({ icon, title, subtitle, accent = '#44475a', onClose, intro, introKey, children,
-  zIndex, closeLabel = 'Back to System Controls', dismissOnOutside = true }) {
+  zIndex, closeLabel = 'Back to System Controls', dismissOnOutside = true, size }) {
+  const sizeClass = size === 'small' || size === 'wide' ? ` ${size}` : '';
   return (
-    <div className="controls-page-overlay" style={zIndex != null ? { zIndex } : undefined} onClick={dismissOnOutside ? onClose : undefined}>
+    <div className={`controls-page-overlay${sizeClass}`} style={zIndex != null ? { zIndex } : undefined} onClick={dismissOnOutside ? onClose : undefined}>
       <div
-        className="controls-page"
+        className={`controls-page${sizeClass}`}
         style={{ borderColor: accent }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"

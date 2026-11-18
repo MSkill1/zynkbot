@@ -108,6 +108,11 @@
 .controls-page-body { padding: 14px 16px 18px; }
 .controls-page-body > * { max-width: 100%; box-sizing: border-box; }
 
+/* The size variants (ui-redo, 2026-11-18): a small window stays a short centred card
+   everywhere, a wide one takes most of a desktop screen. */
+.controls-page.small { max-width: 420px; }
+.controls-page.wide { max-width: 1100px; }
+
 @media (max-width: 520px) {
   .controls-page-overlay { padding: 0; }
   .controls-page {
@@ -119,6 +124,13 @@
   }
   /* No safe-area padding: MainActivity reserves the status bar natively; env() here
      added it a second time and left a gray band above every page (Matt, 2026-10-25). */
+  .controls-page-overlay.small { padding: 16px; }
+  .controls-page.small {
+    height: auto;
+    max-height: 90dvh;
+    border-radius: 14px;
+    border-width: 2px;
+  }
 }
 
 /* Current Model page (ui-redo, 2026-10-24): one row per model, keys and servers below. */

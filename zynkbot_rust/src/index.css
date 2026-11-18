@@ -15,12 +15,14 @@
    the overlay classes above; everything else under #root becomes unselectable
    while any of them is mounted. */
 #root:has([data-modal], .modal-overlay, .zfb-overlay, .kb-manager-overlay,
-          .kb-selector-overlay, .graph-modal-overlay, .onboarding-modal-overlay) {
+          .kb-selector-overlay, .graph-modal-overlay, .onboarding-modal-overlay,
+          .controls-page-overlay) {
   -webkit-user-select: none;
   user-select: none;
 }
 [data-modal], .modal-overlay, .zfb-overlay, .kb-manager-overlay,
-.kb-selector-overlay, .graph-modal-overlay, .onboarding-modal-overlay {
+.kb-selector-overlay, .graph-modal-overlay, .onboarding-modal-overlay,
+.controls-page-overlay {
   -webkit-user-select: text;
   user-select: text;
 }
