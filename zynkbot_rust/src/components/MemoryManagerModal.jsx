@@ -93,6 +93,24 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   const [reportSection, setReportSection] = useState(''); // section to open when About me is reopened from the tag banner (2026-09-09: no way back after tapping a tag)
   const [cameFromReport, setCameFromReport] = useState(false); // Back from a memory opened via About me returns to About me
   const [tagFilter, setTagFilter] = useState(''); // set when a tag was tapped in About me; shown as a banner over the list
+  // The ✕ steps back before it closes (Matt, 2026-11-18): on a memory opened from About me
+  // it returns to About me, which is what a reflex tap means there; on the phone's memory
+  // detail it does what Back does; only from the list does it close the Memory Manager.
+  const closeOrBack = () => {
+    if (selectedMemory && (cameFromReport || isMobile)) {
+      setSelectedMemory(null); setIsEditing(false);
+      if (cameFromReport) { setCameFromReport(false); setShowReport(true); }
+      return;
+    }
+    onClose();
+  };
+  // Reopening starts fresh (Matt, 2026-11-18): a Memory Manager closed by accident deep
+  // inside About me came back on that screen; now it forgets its place when it closes.
+  useEffect(() => {
+    if (isOpen) return;
+    setSelectedMemory(null); setIsEditing(false); setShowReport(false); setReportSection('');
+    setCameFromReport(false); setTagFilter(''); setSearchQuery(''); setShowGraphModal(false);
+  }, [isOpen]);
   const [onlyRequested, setOnlyRequested] = useState(false); // "Remembered on request": only memories stored with "Remember: ..."
 
   const loadKeyStatus = async () => {
@@ -901,7 +919,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     return (
       <>
       {/* The shared page shell (ui-redo, 2026-11-18). */}
-      <ControlsPage icon="🧠" title="Memory Manager" subtitle={onDeviceModel ? onDeviceNote : undefined} accent="#bd93f9" onClose={onClose} zIndex={2000} closeLabel="Close">
+      <ControlsPage icon="🧠" title="Memory Manager" subtitle={onDeviceModel ? onDeviceNote : undefined} accent="#bd93f9" onClose={closeOrBack} zIndex={2000} closeLabel="Close">
         {/* Buttons row (the Storage panel can be taller than the screen; the page scrolls, Matt, 2026-11-12) */}
         <div style={{ padding: '12px 16px', borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
           {selectedMemory ? (
@@ -1296,7 +1314,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
   return (
     <>
     {/* The shared page shell (ui-redo, 2026-11-18). Wide: the body is three columns. */}
-    <ControlsPage icon="🧠" title="Memory Manager" subtitle={onDeviceModel ? onDeviceNote : undefined} accent="#bd93f9" onClose={onClose} zIndex={2000} size="wide" closeLabel="Close">
+    <ControlsPage icon="🧠" title="Memory Manager" subtitle={onDeviceModel ? onDeviceNote : undefined} accent="#bd93f9" onClose={closeOrBack} zIndex={2000} size="wide" closeLabel="Close">
         {/* Buttons row under the shell head. Wraps so the Storage panel (flex-basis 100%)
             drops under the buttons instead of sitting beside them (2026-11-01). */}
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
