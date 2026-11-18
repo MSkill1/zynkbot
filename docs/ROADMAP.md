@@ -968,6 +968,7 @@ Hash chain integrity layer on top of the v1.0 conversation history tables. The b
 
 - **Homomorphic Encryption** — search encrypted memories without decrypting (research phase).
 - **Federated Learning** — collaborative model improvement without data sharing.
+- **Device-separation kit (idea, Matt, 2026-11-18)** — a one-time purchase installed on every device that stops Google services from tying the household's devices and accounts to each other. Prompted by a fresh sign-in on a phone that offered, as if it were the obvious choice, to put that account on the Android TV box found on the same network. What a kit can do: stop the local discovery those offers ride on (multicast and Cast/DIAL discovery, Bluetooth "nearby device" scanning, and Google Play services' network access to the LAN) with per-device firewall rules and a router profile (client isolation or a separate network for the TV and the phones), plus a written setup for keeping one account per device. What it cannot do: undo linking Google already holds server-side for devices signed into the same account, or stop prompts that come from the account rather than the network; and blocking discovery also blocks casting and nearby sharing, which the user has to accept. Honest shape: a guide plus configuration, a Zynkbot snap-in at most, competing with free tools (NetGuard, RethinkDNS, GrapheneOS's own controls) by doing it for the user. Not scheduled; parked here so the idea is not lost.
 
 ### Secure Vault (Passwords & Financial Info)
 
