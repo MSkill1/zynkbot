@@ -26,6 +26,9 @@ function dateLabel(dateStr) {
   return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
+// The order the groups are drawn in; month groups follow, newest first.
+const GROUP_ORDER = ["Current thread", "Pinned", "Today", "Yesterday", "This Week"];
+
 function groupSessions(sessions, currentSessionId) {
   const groups = {};
   // The thread the user is in right now goes first, above Pinned. Without this it
@@ -35,20 +38,31 @@ function groupSessions(sessions, currentSessionId) {
   const current = currentSessionId ? sessions.find((s) => s.session_id === currentSessionId) : null;
   if (current) groups["Current thread"] = [current];
   for (const s of sessions) {
+    // Every thread is listed once. The current thread is only under "Current thread",
+    // even when it is pinned; it goes back under Pinned when the user leaves it. A
+    // pinned thread is only under Pinned, not under its date as well (Matt, 2026-11-18:
+    // the same thread twice is confusing).
     if (current && s.session_id === current.session_id) continue;
     // A thread is listed from its first message, so one whose first reply failed
     // (or an empty one that arrived from another device) has no messages. Only the
     // current thread is worth showing in that state.
     if (!s.message_count) continue;
-    // Pinned conversations sit in their own group at the top, and also under their
-    // date, so one used today is still found under Today (2026-11-01).
-    const labels = s.pinned ? ["Pinned", dateLabel(s.last_active)] : [dateLabel(s.last_active)];
-    for (const label of labels) {
-      if (!groups[label]) groups[label] = [];
-      groups[label].push(s);
-    }
+    const label = s.pinned ? "Pinned" : dateLabel(s.last_active);
+    if (!groups[label]) groups[label] = [];
+    groups[label].push(s);
   }
-  return groups;
+  // Draw the groups in a fixed order. They used to be drawn in the order they were
+  // first met, and since pinned threads come first from the database their date
+  // groups were created before Today, which then sat at the very bottom of the list,
+  // below last month's threads (Matt's ice-maker thread, 2026-11-18).
+  const ordered = {};
+  for (const label of GROUP_ORDER) if (groups[label]) ordered[label] = groups[label];
+  const newest = (group) => Math.max(...group.map((s) => new Date(s.last_active).getTime() || 0));
+  Object.keys(groups)
+    .filter((label) => !GROUP_ORDER.includes(label))
+    .sort((a, b) => newest(groups[b]) - newest(groups[a]))
+    .forEach((label) => { ordered[label] = groups[label]; });
+  return ordered;
 }
 
 export default function ConversationHistoryPanel({ isOpen, onClose, userId, containmentMode, onResume, currentSessionId }) {
