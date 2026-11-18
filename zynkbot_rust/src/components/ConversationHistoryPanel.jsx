@@ -67,6 +67,16 @@ function groupSessions(sessions, currentSessionId) {
 
 export default function ConversationHistoryPanel({ isOpen, onClose, userId, containmentMode, onResume, currentSessionId }) {
   const [sessions, setSessions] = useState([]);
+  // Each group is a drop-down (Matt, 2026-11-18): the recent groups open, the months closed,
+  // and a tap on the bar flips it. The set holds the labels flipped from their default.
+  const [flippedGroups, setFlippedGroups] = useState(() => new Set());
+  const groupOpenByDefault = (label) => GROUP_ORDER.includes(label) || label === "Results";
+  const isGroupOpen = (label) => (flippedGroups.has(label) ? !groupOpenByDefault(label) : groupOpenByDefault(label));
+  const toggleGroup = (label) => setFlippedGroups((prev) => {
+    const next = new Set(prev);
+    if (next.has(label)) next.delete(label); else next.add(label);
+    return next;
+  });
   const [selectedSession, setSelectedSession] = useState(null);
   const [messages, setMessages] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -422,10 +432,26 @@ export default function ConversationHistoryPanel({ isOpen, onClose, userId, cont
             )}
             {!isLoading && Object.entries(groups).map(([label, group]) => (
               <div key={label}>
-                <div style={{ padding: "6px 16px 4px", fontSize: "0.75rem", fontWeight: 600, color: GROUP_COLORS[label] || "#a4acd0", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  {label}
+                {/* The group's bar: a drop-down, except while searching (one flat list). */}
+                <div
+                  role={label === "Results" ? undefined : "button"}
+                  onClick={label === "Results" ? undefined : () => toggleGroup(label)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "8px",
+                    padding: "9px 16px", minHeight: "36px", boxSizing: "border-box",
+                    fontSize: "0.75rem", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em",
+                    color: GROUP_COLORS[label] || "#a4acd0",
+                    background: "rgba(68,71,90,0.25)", borderBottom: "1px solid rgba(68,71,90,0.5)",
+                    cursor: label === "Results" ? "default" : "pointer", userSelect: "none",
+                  }}
+                >
+                  {label !== "Results" && (
+                    <span style={{ width: "12px", display: "inline-block", fontSize: "0.7rem" }}>{isGroupOpen(label) ? "▾" : "▸"}</span>
+                  )}
+                  <span style={{ flex: 1 }}>{label}</span>
+                  <span style={{ color: "#6272a4", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>{group.length}</span>
                 </div>
-                {group.map((session) => (
+                {isGroupOpen(label) && group.map((session) => (
                   <div
                     key={session.session_id}
                     onClick={() => openSession(session)}
