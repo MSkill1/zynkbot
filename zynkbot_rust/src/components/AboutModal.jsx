@@ -1,6 +1,7 @@
 import React from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import "../styles/AboutModal.css";
+import ControlsPage from "./ControlsPage";
 
 // A plain <a target="_blank"> does nothing inside the app window: the address has to be
 // handed to the system browser (2026-11-10). The phone's own bridge is tried first.
@@ -14,12 +15,8 @@ export default function AboutModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="about-modal-container" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>×</button>
-
-        <h2>About Zynkbot</h2>
-
+    <ControlsPage icon="ℹ️" title="About" accent="#ffb86c" closeLabel="Close" zIndex={2000} onClose={onClose}>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
         <div className="about-section">
           <h3>Privacy-First AI Assistant</h3>
 
@@ -117,7 +114,6 @@ export default function AboutModal({ isOpen, onClose }) {
         <div className="about-footer">
           <p>The AI that works for you — not the other way around.</p>
         </div>
-      </div>
-    </div>
+    </ControlsPage>
   );
 }

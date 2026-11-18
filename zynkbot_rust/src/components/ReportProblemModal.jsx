@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import ControlsPage from './ControlsPage';
 
 const ISSUES_URL = 'https://github.com/MSkill1/zynkbot/issues/new';
 
@@ -73,17 +74,8 @@ export default function ReportProblemModal({ isOpen, onClose, context, threadTex
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#22232a', color: '#f8f8f2', borderRadius: '10px', padding: '18px',
-          width: 'min(720px, 94vw)', maxHeight: '90vh', overflowY: 'auto', position: 'relative',
-          border: '1px solid #44475a',
-        }}
-      >
-        <button className="modal-close" onClick={onClose} aria-label="Close">×</button>
-        <h2 style={{ margin: '0 0 6px 0', color: '#8be9fd' }}>Report a problem</h2>
+    <ControlsPage icon="🧾" title="Report a problem" accent="#8be9fd" closeLabel="Close" zIndex={2000} onClose={onClose}>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
         <p style={{ margin: '0 0 12px 0', color: '#9aa5c4', fontSize: '0.9rem', lineHeight: 1.5 }}>
           This builds a text report on your device: app version, build, device, the model in use,
           your description, and the last few hundred lines of Zynkbot's own log with any keys masked.
@@ -130,7 +122,6 @@ export default function ReportProblemModal({ isOpen, onClose, context, threadTex
             />
           </>
         )}
-      </div>
-    </div>
+    </ControlsPage>
   );
 }

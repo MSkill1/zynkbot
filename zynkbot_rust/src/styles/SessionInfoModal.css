@@ -1,14 +1,3 @@
-.session-info-modal {
-  background: #22232a;
-  border: 2px solid #44475a;
-  border-radius: 12px;
-  padding: 2rem;
-  max-width: 600px;
-  width: 90%;
-  position: relative;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-}
-
 .info-section {
   margin-bottom: 1.5rem;
   background: #181a20;

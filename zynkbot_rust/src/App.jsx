@@ -3599,39 +3599,13 @@ export default function App() {
         onKeepScreenAwakeChange={voice.setKeepScreenAwake}
       />
 
-      {/* Einstein Demo Loading Modal (blocking, no dismiss) */}
+      {/* Einstein demo loading screen: the shared page shell (ui-redo, 2026-11-18); no ✕
+          and no tap-outside, it closes itself when the seed data is in. */}
       {isLoadingEinstein && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.9)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 9999,
-          padding: '20px'
-        }}>
-          <div style={{
-            background: '#282a36',
-            borderRadius: '12px',
-            padding: '40px',
-            maxWidth: '600px',
-            width: '100%',
-            border: '2px solid #8be9fd',
-            boxShadow: '0 8px 32px rgba(139, 233, 253, 0.3)'
-          }}>
-            <div style={{ textAlign: 'center', marginBottom: '30px' }}>
-              <div style={{ fontSize: '3rem', marginBottom: '20px' }}>🧠</div>
-              <h2 style={{ color: '#8be9fd', margin: '0 0 15px 0' }}>Restoring Einstein</h2>
-              <p style={{ color: '#9aa5c4', fontSize: '0.9rem', margin: 0 }}>
-                Applying pre-computed seed data. This should only take a moment...
-              </p>
-            </div>
-
-            {/* Animated Progress Bar */}
+        <ControlsPage icon="🧠" title="Restoring Einstein" subtitle="Applying pre-computed seed data. This should only take a moment..."
+          accent="#8be9fd" zIndex={9999} dismissOnOutside={false}>
+          <div style={{ padding: '10px 0 6px' }}>
+            {/* Animated progress bar */}
             <div style={{
               width: '100%',
               height: '8px',
@@ -3662,7 +3636,7 @@ export default function App() {
               ⏳ Creating the memories, their embeddings and links...
             </p>
           </div>
-        </div>
+        </ControlsPage>
       )}
 
       {/* Add shimmer animation */}

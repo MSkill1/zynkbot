@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import CostGuideModal from "./CostGuideModal";
 import "../styles/GettingStartedModal.css";
+import ControlsPage from "./ControlsPage";
 
 export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) {
   const [showCostGuide, setShowCostGuide] = useState(false);
@@ -10,12 +11,8 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
   return (
     <>
     <CostGuideModal isOpen={showCostGuide} onClose={() => setShowCostGuide(false)} />
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="getting-started-modal-container" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>×</button>
-
-        <h2>Getting Started with Zynkbot</h2>
-
+    <ControlsPage icon="🚀" title="Getting Started" accent="#8be9fd" closeLabel="Close" zIndex={2000} onClose={onClose}>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
         <div className="guide-intro" style={{ marginBottom: '16px' }}>
           <p style={{ marginBottom: '10px' }}>
             Zynkbot is different from ChatGPT and other AI assistants — instead of hiding memories in a black box,
@@ -205,8 +202,7 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
             <strong>💡 Tip:</strong> To ask about Zynkbot's own features, include "Zynkbot" in your question — e.g., <em>"Zynkbot, how does Ensemble Mode work?"</em>
           </p>
         </div>
-      </div>
-    </div>
+    </ControlsPage>
     </>
   );
 }

@@ -1,6 +1,7 @@
 import React from "react";
 import { invoke } from '@tauri-apps/api/core';
 import "../styles/AboutModal.css";
+import ControlsPage from "./ControlsPage";
 
 export default function ZynkClusterModal({ isOpen, onClose }) {
   if (!isOpen) return null;
@@ -14,12 +15,8 @@ export default function ZynkClusterModal({ isOpen, onClose }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="about-modal-container" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>×</button>
-
-        <h2 style={{color: '#8be9fd', marginBottom: '20px'}}>🧠 ZynkCluster: Distributed MoE Inference</h2>
-
+    <ControlsPage icon="🧠" title="ZynkCluster" subtitle="Distributed MoE Inference" accent="#8be9fd" closeLabel="Close" zIndex={2000} onClose={onClose}>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
         <div className="about-section">
           <h3>What is this?</h3>
           <p style={{lineHeight: '1.6', color: '#f8f8f2'}}>
@@ -152,7 +149,6 @@ export default function ZynkClusterModal({ isOpen, onClose }) {
             collaboration welcome.
           </p>
         </div>
-      </div>
-    </div>
+    </ControlsPage>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import PageIntro from './PageIntro';
+import ControlsPage from './ControlsPage';
 import { openUrl } from '@tauri-apps/plugin-opener';
 
 // Offline Vosk dictation ships for Android, Linux desktop and Windows desktop.
@@ -12,33 +12,6 @@ const voskAvailable =
   !!window.VoskBridge ||
   navigator.platform.toLowerCase().includes('linux') ||
   navigator.platform.toLowerCase().includes('win');
-
-const overlayStyle = {
-  position: 'fixed',
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  background: 'rgba(0, 0, 0, 0.7)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  zIndex: 2000,
-  padding: '20px',
-};
-
-const cardStyle = {
-  background: '#282a36',
-  border: '1px solid #44475a',
-  borderRadius: '12px',
-  width: '100%',
-  maxWidth: '420px',
-  maxHeight: '90vh',
-  overflowY: 'auto',
-  boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-  padding: '24px',
-  position: 'relative',
-};
 
 const sectionHeadingStyle = {
   color: '#8be9fd',
@@ -136,12 +109,7 @@ const FLAT_COMMANDS = [
 
 function VoiceCommandsModal({ onClose }) {
   return (
-    <div style={{ ...overlayStyle, zIndex: 2100 }} onClick={onClose}>
-      <div style={{ ...cardStyle, maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ marginBottom: '16px' }}>
-          <h2 style={{ margin: 0, color: '#8be9fd', fontSize: '1.1rem' }}>📋 Voice Commands</h2>
-        </div>
-
+    <ControlsPage icon="📋" title="Voice Commands" accent="#8be9fd" zIndex={2500} closeLabel="Close" onClose={onClose}>
         {FLAT_COMMANDS.map(({ cmd, desc }) => (
           <div key={cmd} style={{ marginBottom: '12px' }}>
             <div style={{
@@ -160,22 +128,7 @@ function VoiceCommandsModal({ onClose }) {
             <div style={{ color: '#9aa5c4', fontSize: '0.82rem', paddingLeft: '2px' }}>{desc}</div>
           </div>
         ))}
-
-      </div>
-
-      {/* Floating close button - bottom right, like settings panel */}
-      <button
-        onClick={onClose}
-        style={{
-          position: 'fixed', bottom: '20px', right: '20px',
-          width: '56px', height: '56px', borderRadius: '50%',
-          background: '#44475a', color: '#f8f8f2', border: 'none',
-          fontSize: '1.5rem', cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          zIndex: 2110, display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }}
-      >✕</button>
-    </div>
+    </ControlsPage>
   );
 }
 
@@ -239,14 +192,18 @@ export default function VoiceModal({
   const effectiveSource = voskAvailable ? (voiceInputSource || 'vosk') : 'openai';
 
   return (
-    <div data-modal="" style={overlayStyle} onClick={onClose}>
-      <div style={cardStyle} onClick={(e) => e.stopPropagation()}>
-
-        {/* Header */}
-        <div style={{ marginBottom: '8px' }}>
-          <h2 style={{ margin: 0, color: '#8be9fd', fontSize: '1.2rem' }}>🎙️ Voice Settings</h2>
-        </div>
-        <PageIntro introKey="voice" accent="#8be9fd">Dictation types what you say into the message box. "Hey Zynk" asks a question hands-free: one question per wake, and it never listens on its own. Spoken replies read the answers aloud. <b>Try this:</b> turn on Hey Zynk and wait a few seconds for the microphone to turn green and shrink to a dot. Then say it, wait for the tone, and ask something short.</PageIntro>
+    <>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
+      <ControlsPage
+        icon="🎤"
+        title="Voice"
+        accent="#8be9fd"
+        zIndex={2000}
+        closeLabel="Close"
+        onClose={onClose}
+        introKey="voice"
+        intro={<>Dictation types what you say into the message box. "Hey Zynk" asks a question hands-free: one question per wake, and it never listens on its own. Spoken replies read the answers aloud. <b>Try this:</b> turn on Hey Zynk and wait a few seconds for the microphone to turn green and shrink to a dot. Then say it, wait for the tone, and ask something short.</>}
+      >
 
         {/* Hey Zynk first: the switch people open this screen for was below the fold,
             behind the close button (Matt, 2026-09-20). */}
@@ -365,9 +322,7 @@ export default function VoiceModal({
             {/* What teaching does, before it starts. Shown over the settings; Start begins
                 counting (and, for "again", clears the clips already on the phone). */}
             {teachInfo && (
-              <div style={{ ...overlayStyle, zIndex: 2100 }} onClick={() => setTeachInfo(null)}>
-                <div style={{ ...cardStyle, maxWidth: '380px', padding: '20px' }} onClick={(e) => e.stopPropagation()}>
-                  <h3 style={{ margin: '0 0 10px 0', color: '#8be9fd', fontSize: '1.05rem' }}>Teach Zynkbot your voice</h3>
+              <ControlsPage icon="🎤" title="Teach Zynkbot your voice" accent="#8be9fd" size="small" zIndex={2500} closeLabel="Close" onClose={() => setTeachInfo(null)}>
                   <div style={{ color: '#f8f8f2', fontSize: '0.88rem', lineHeight: 1.5 }}>
                     <p style={{ margin: '0 0 10px 0' }}>
                       Zynkbot needs to know your voice before "Hey Zynk" will answer, so that a
@@ -394,8 +349,7 @@ export default function VoiceModal({
                       padding: '8px 14px', borderRadius: '6px', border: '1px solid #6272a4', background: '#50fa7b', color: '#282a36', cursor: 'pointer',
                     }}>Start</button>
                   </div>
-                </div>
-              </div>
+              </ControlsPage>
             )}
 
             {heyZynkEnabled && !wakeWordModelReady && (
@@ -598,22 +552,9 @@ export default function VoiceModal({
           </button>
         </div>
 
-      </div>
-
-      {/* Floating close button - bottom right, like settings panel */}
-      <button
-        onClick={onClose}
-        style={{
-          position: 'fixed', bottom: '20px', right: '20px',
-          width: '56px', height: '56px', borderRadius: '50%',
-          background: '#44475a', color: '#f8f8f2', border: 'none',
-          fontSize: '1.5rem', cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }}
-      >✕</button>
+      </ControlsPage>
 
       {showCommands && <VoiceCommandsModal onClose={() => setShowCommands(false)} />}
-    </div>
+    </>
   );
 }

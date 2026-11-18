@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import "../styles/ConflictResolutionModal.css";
 import VoiceButton from "./VoiceButton";
+import ControlsPage from "./ControlsPage";
 
 export default function ConflictResolutionModal({ isOpen, conflict, onResolve, onClose }) {
   const [selectedOption, setSelectedOption] = useState(null);
@@ -55,11 +56,19 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
   };
 
   return (
-    <div className="modal-overlay" style={{ zIndex: 3000 }}>
-      <div className="modal-content conflict-resolution">
-        <button className="modal-close" onClick={handleCancel}>×</button>
-
-        <h2>{isUpdate ? '🔁 Is this an update?' : '⚠️ Possible Conflict Detected'}</h2>
+    <ControlsPage
+      icon={isUpdate ? '🔁' : '⚠️'}
+      title={isUpdate ? 'Is this an update?' : 'Possible Conflict Detected'}
+      accent="#ffb86c"
+      onClose={handleCancel}
+      closeLabel="Close"
+      zIndex={3000}
+      dismissOnOutside={false}
+      size="wide"
+    >
+      {/* The shared page shell (ui-redo, 2026-11-18). The user must answer, so a tap on
+          the background does nothing; ✕ cancels as the old × did. */}
+      <div className="conflict-resolution">
         <p className="conflict-subtitle">
           {isUpdate ? 'The new statement may replace an older memory' : 'Two memories may contradict each other'}
           {sharedEntities && sharedEntities.length > 0 && <> about <strong>{sharedEntities.join(", ")}</strong></>}.
@@ -236,6 +245,6 @@ export default function ConflictResolutionModal({ isOpen, conflict, onResolve, o
           and I'll reference it in the future.
         </div>
       </div>
-    </div>
+    </ControlsPage>
   );
 }

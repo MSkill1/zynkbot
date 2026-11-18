@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import VoiceButton from './VoiceButton';
+import ControlsPage from './ControlsPage';
 
 export default function EnsembleModal({
   isOpen,
@@ -172,38 +173,19 @@ export default function EnsembleModal({
   };
 
   return (
-    <div data-modal=""
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0, 0, 0, 0.7)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        padding: '20px'
-      }}
+    /* The shared page shell (ui-redo, 2026-11-18). The ✕ and a tap outside close without
+       adding to the conversation, like the old floating ✕; a tap outside is ignored while
+       the models are running or a result is waiting to be added, so neither is lost. */
+    <ControlsPage
+      icon="🤝"
+      title="Ensemble"
+      accent="#bd93f9"
+      zIndex={2000}
+      size="wide"
+      closeLabel="Close"
+      onClose={handleCancel}
+      dismissOnOutside={!isLoading && !result}
     >
-      <div
-        style={{
-          background: '#1e1f29',
-          borderRadius: '12px',
-          padding: '30px',
-          maxWidth: '900px',
-          width: '100%',
-          maxHeight: '90vh',
-          overflow: 'auto',
-          border: '1px solid #44475a',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-          position: 'relative'
-        }}
-      >
-        <h2 style={{ color: '#8be9fd', marginBottom: '10px' }}>
-          🤝 Multi-Model Ensemble
-        </h2>
 
         {isChildMode ? (
           <>
@@ -763,20 +745,6 @@ export default function EnsembleModal({
         )}
         </>
         )}
-      </div>
-
-      {/* Floating close button - bottom right, like settings panel */}
-      <button
-        onClick={handleCancel}
-        style={{
-          position: 'fixed', bottom: '20px', right: '20px',
-          width: '56px', height: '56px', borderRadius: '50%',
-          background: '#44475a', color: '#f8f8f2', border: 'none',
-          fontSize: '1.5rem', cursor: 'pointer',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-          zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
-        }}
-      >✕</button>
-    </div>
+    </ControlsPage>
   );
 }

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save } from '@tauri-apps/plugin-dialog';
+import ControlsPage from './ControlsPage';
 import '../styles/ZynkFileBrowserModal.css';
 
 /** Format seconds as "1h 23m 45s", "2m 15s", or "8s". */
@@ -539,36 +540,32 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
   const topFolderKeys = Object.keys(tree.children);
 
   return ReactDOM.createPortal(
-    <div className="zfb-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="zfb-modal">
-        <div className="zfb-header">
-          <div className="zfb-header-left">
-            <h2>📁 {shareName || 'Shared Files'}</h2>
-          </div>
-          <div className="zfb-header-right">
-            {!loading && (
-              <span className="zfb-count">{files.length} file{files.length !== 1 ? 's' : ''}</span>
-            )}
-            {window.AndroidPaths && isOwnShare ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleAddFile} title="Pick one file, or long-press the first to pick several">
-                  + Add Files
-                </button>
-                <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleRefreshOwn} disabled={loading}>
-                  🔄 Refresh
-                </button>
-              </div>
-            ) : isOwnShare ? (
-              <button className="zfb-refresh-btn" onClick={handleRefreshOwn} disabled={loading} title="Refresh">
+    <ControlsPage icon="📁" title={shareName || 'Shared Files'} closeLabel="Close" zIndex={3000} accent="#f1fa8c" onClose={onClose}>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
+      {/* The list scrolls inside the card: .zfb-page is a bounded flex column. */}
+      <div className="zfb-page">
+        <div className="zfb-toolbar">
+          {!loading && (
+            <span className="zfb-count">{files.length} file{files.length !== 1 ? 's' : ''}</span>
+          )}
+          {window.AndroidPaths && isOwnShare ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleAddFile} title="Pick one file, or long-press the first to pick several">
+                + Add Files
+              </button>
+              <button className="zfb-refresh-btn" style={{ width: '100%' }} onClick={handleRefreshOwn} disabled={loading}>
                 🔄 Refresh
               </button>
-            ) : (
-              <button className="zfb-refresh-btn" onClick={loadFiles} disabled={loading} title="Refresh">
-                🔄 Refresh
-              </button>
-            )}
-            <button className="zfb-close-btn" onClick={onClose}>✕</button>
-          </div>
+            </div>
+          ) : isOwnShare ? (
+            <button className="zfb-refresh-btn" onClick={handleRefreshOwn} disabled={loading} title="Refresh">
+              🔄 Refresh
+            </button>
+          ) : (
+            <button className="zfb-refresh-btn" onClick={loadFiles} disabled={loading} title="Refresh">
+              🔄 Refresh
+            </button>
+          )}
         </div>
 
         <div className="zfb-body">
@@ -736,7 +733,7 @@ export default function ZynkFileBrowserModal({ isOpen, onClose, shareId, deviceI
           </div>
         )}
       </div>
-    </div>,
+    </ControlsPage>,
     document.body
   );
 }

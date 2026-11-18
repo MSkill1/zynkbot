@@ -126,13 +126,16 @@
   background: #6affaa;
 }
 
-/* Main Content - 3 Columns */
+/* Main Content - 3 Columns. The height used to come from the 90vh card; inside the
+   page shell (ui-redo, 2026-11-18) the grid sets it, so each column still scrolls on
+   its own instead of the list stretching the whole page. */
 .modal-content {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
   gap: 2px;
   background: #44475a;
-  flex: 1;
+  height: calc(92vh - 250px);
+  min-height: 320px;
   overflow: hidden;
 }
 
@@ -580,8 +583,8 @@
   flex: 1;
 }
 
-/* Checkbox Styling */
-.memory-manager-modal input[type="checkbox"] {
+/* Checkbox Styling (the desktop columns) */
+.modal-content input[type="checkbox"] {
   width: 18px;
   height: 18px;
   cursor: pointer;

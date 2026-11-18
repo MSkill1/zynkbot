@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { confirmDialog } from '../utils/confirmDialog';
+import ControlsPage from './ControlsPage';
 
 export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, onIdentityAdopted, onMemoriesSynced }) {
   const [peers, setPeers] = useState([]);
@@ -882,51 +883,39 @@ export default function ZynkSyncPanel({ userId, onOpenUserIdentity, onOpenChat, 
       )}
 
       {showNamePrompt && (
-        <div data-modal=""
-          style={{
-            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-            background: 'rgba(0,0,0,0.6)', display: 'flex',
-            alignItems: 'center', justifyContent: 'center', zIndex: 2200, padding: '20px',
-          }}
-          onClick={() => { setShowNamePrompt(false); setNamePromptPurpose(null); }}
+        <ControlsPage icon="🔄" title="Name this device" accent="#8be9fd" size="small" zIndex={2200} closeLabel="Close"
+          onClose={() => { setShowNamePrompt(false); setNamePromptPurpose(null); }}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: '#282a36', border: '1px solid #44475a', borderRadius: '8px',
-              padding: '20px', maxWidth: '360px', width: '100%',
-            }}
-          >
-            <p style={{ margin: '0 0 8px', color: '#8be9fd', fontWeight: 'bold' }}>
-              What should this device be called on the network?
-            </p>
-            <p style={{ margin: '0 0 12px', color: '#9aa5c4', fontSize: '0.82rem' }}>
-              Other paired devices will show this name instead of a device ID. You can
-              change it again any time from this panel.
-            </p>
-            <input
-              type="text"
-              autoFocus
-              value={nameDraft}
-              maxLength={40}
-              placeholder="e.g. Matt's Pixel"
-              onChange={(e) => setNameDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveDeviceName(); }}
-              className="search-input"
-              style={{ width: '100%', boxSizing: 'border-box', marginBottom: '14px' }}
-            />
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => { setShowNamePrompt(false); setNamePromptPurpose(null); }}
-                style={{ padding: '8px 16px', background: 'none', border: '1px solid #44475a', color: '#9aa5c4', borderRadius: '4px', cursor: 'pointer' }}
-              >Cancel</button>
-              <button
-                onClick={handleSaveDeviceName}
-                style={{ padding: '8px 16px', background: '#50fa7b', color: '#282a36', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
-              >Save</button>
-            </div>
+          {/* The shared page shell (ui-redo, 2026-11-18). */}
+          <p style={{ margin: '0 0 8px', color: '#8be9fd', fontWeight: 'bold' }}>
+            What should this device be called on the network?
+          </p>
+          <p style={{ margin: '0 0 12px', color: '#9aa5c4', fontSize: '0.82rem' }}>
+            Other paired devices will show this name instead of a device ID. You can
+            change it again any time from this panel.
+          </p>
+          <input
+            type="text"
+            autoFocus
+            value={nameDraft}
+            maxLength={40}
+            placeholder="e.g. Matt's Pixel"
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveDeviceName(); }}
+            className="search-input"
+            style={{ width: '100%', boxSizing: 'border-box', marginBottom: '14px' }}
+          />
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => { setShowNamePrompt(false); setNamePromptPurpose(null); }}
+              style={{ padding: '8px 16px', background: 'none', border: '1px solid #44475a', color: '#9aa5c4', borderRadius: '4px', cursor: 'pointer' }}
+            >Cancel</button>
+            <button
+              onClick={handleSaveDeviceName}
+              style={{ padding: '8px 16px', background: '#50fa7b', color: '#282a36', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer' }}
+            >Save</button>
           </div>
-        </div>
+        </ControlsPage>
       )}
     </div>
   );

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import VoiceButton from './VoiceButton';
 import { confirmDialog } from '../utils/confirmDialog';
+import ControlsPage from './ControlsPage';
 
 export default function ZChatModal({
   isOpen,
@@ -165,89 +166,42 @@ export default function ZChatModal({
 
   if (!isOpen || !device) return null;
 
-  // Render modal to document.body to avoid clipping by parent containers
+  // Rendered into document.body so a parent container (the ZynkLink panel) cannot clip it.
+  // The contents are a column of a fixed height so the message list scrolls on its own
+  // (the shell's head and padding take about 110px of the card).
   return ReactDOM.createPortal(
-    <div data-modal=""
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0, 0, 0, 0.7)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 9999,
-        padding: '20px'
-      }}
-      onClick={onClose}
+    <ControlsPage
+      icon="💬"
+      title={`Chat with ${device.device_name}`}
+      accent="#8be9fd"
+      onClose={onClose}
+      closeLabel="Close"
+      zIndex={3000}
     >
-      <div
-        style={{
-          background: '#1e1f29',
-          borderRadius: '12px',
-          padding: '20px',
-          maxWidth: '600px',
-          width: '100%',
-          height: '600px',
-          display: 'flex',
-          flexDirection: 'column',
-          border: '1px solid #44475a',
-          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)'
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '15px',
-          paddingBottom: '15px',
-          borderBottom: '2px solid #44475a'
-        }}>
-          <h3 style={{ margin: 0, color: '#8be9fd' }}>
-            💬 Chat with {device.device_name}
-          </h3>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              onClick={handleClearHistory}
-              onMouseDown={() => setClearActive(true)}
-              onMouseUp={() => setClearActive(false)}
-              onMouseLeave={() => setClearActive(false)}
-              onTouchStart={() => setClearActive(true)}
-              onTouchEnd={() => setClearActive(false)}
-              style={{
-                background: clearActive ? '#6272a4' : '#44475a',
-                color: clearActive ? '#f8f8f2' : '#9aa5c4',
-                border: 'none',
-                borderRadius: '4px',
-                padding: '6px 12px',
-                cursor: 'pointer',
-                fontSize: '0.85rem',
-                transition: 'background 0.1s, color 0.1s'
-              }}
-              title="Clear chat history"
-            >
-              🗑 Clear
-            </button>
-            <button
-              onClick={onClose}
-              style={{
-                background: '#ff5555',
-                color: '#f8f8f2',
-                border: 'none',
-                borderRadius: '4px',
-                padding: '6px 12px',
-                cursor: 'pointer',
-                fontWeight: 'bold',
-                fontSize: '0.9rem'
-              }}
-            >
-              ✕
-            </button>
-          </div>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
+      <div style={{ display: 'flex', flexDirection: 'column', height: 'min(600px, calc(92vh - 110px))' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+          <button
+            onClick={handleClearHistory}
+            onMouseDown={() => setClearActive(true)}
+            onMouseUp={() => setClearActive(false)}
+            onMouseLeave={() => setClearActive(false)}
+            onTouchStart={() => setClearActive(true)}
+            onTouchEnd={() => setClearActive(false)}
+            style={{
+              background: clearActive ? '#6272a4' : '#44475a',
+              color: clearActive ? '#f8f8f2' : '#9aa5c4',
+              border: 'none',
+              borderRadius: '4px',
+              padding: '6px 12px',
+              cursor: 'pointer',
+              fontSize: '0.85rem',
+              transition: 'background 0.1s, color 0.1s'
+            }}
+            title="Clear chat history"
+          >
+            🗑 Clear
+          </button>
         </div>
 
         {/* Messages Area */}
@@ -446,7 +400,7 @@ export default function ZChatModal({
           )}
         </div>
       </div>
-    </div>,
+    </ControlsPage>,
     document.body
   );
 }

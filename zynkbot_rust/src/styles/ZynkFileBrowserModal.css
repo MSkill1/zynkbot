@@ -1,64 +1,29 @@
-/* ZynkLink File Browser Modal */
+/* ZynkLink File Browser: the file list of one share, inside the shared page shell
+   (ControlsPage, ui-redo 2026-11-18). The shell draws the frame, heading and ✕; this
+   sheet styles the contents. */
 
-.zfb-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 9999;
-  padding: 20px;
-}
-
-.zfb-modal {
-  background: #282a36;
-  border-radius: 12px;
-  width: 90%;
-  max-width: 860px;
-  max-height: 85vh;
+/* A bounded flex column so the file list scrolls inside the card while the toolbar,
+   the downloads panel and the status message keep their place. */
+.zfb-page {
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  overflow: hidden;
+  min-height: 0;
+  max-height: 70vh;
 }
 
-/* Header */
-.zfb-header {
+/* File count and refresh/add buttons, above the list (the old title bar's right side). */
+.zfb-toolbar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 18px 24px;
-  border-bottom: 2px solid #44475a;
-  background: #21222c;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 0 10px;
   flex-shrink: 0;
-}
-
-.zfb-header-left {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.zfb-header-left h2 {
-  margin: 0;
-  color: #f8f8f2;
-  font-size: 1.3rem;
-  font-weight: 600;
 }
 
 .zfb-count {
   color: #9aa5c4;
   font-size: 0.85rem;
-}
-
-.zfb-header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .zfb-refresh-btn {
@@ -81,28 +46,12 @@
   cursor: not-allowed;
 }
 
-.zfb-close-btn {
-  background: none;
-  border: none;
-  color: #f8f8f2;
-  font-size: 1.4rem;
-  line-height: 1;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  transition: background 0.2s;
-}
-
-.zfb-close-btn:hover {
-  background: #44475a;
-}
-
 /* Body */
 .zfb-body {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  padding: 16px 20px;
+  padding: 0;
 }
 
 .zfb-body::-webkit-scrollbar {
@@ -401,42 +350,8 @@
 }
 
 @media (max-width: 600px) {
-  .zfb-modal {
-    width: 98%;
-    max-height: 92vh;
-  }
-
-  .zfb-header {
-    padding: 14px 16px;
-  }
-
-  /* Narrow-screen header layout: title must be able to shrink and truncate
-     so the close button never pushes off the right edge. */
-  .zfb-header-left {
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-
-  .zfb-header-left h2 {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 1.1rem;
-  }
-
-  .zfb-header-right {
-    flex-shrink: 0;
-    gap: 6px;
-  }
-
   .zfb-count {
     display: none;
-  }
-
-  .zfb-close-btn {
-    padding: 4px 10px;
-    font-size: 1.3rem;
   }
 
   .zfb-file-row {
@@ -447,6 +362,14 @@
   .zfb-file-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+}
+
+/* On a phone the shell is full screen (its 520px media query): the column takes the
+   screen minus the shell's head and padding. */
+@media (max-width: 520px) {
+  .zfb-page {
+    max-height: calc(100dvh - 110px);
   }
 }
 

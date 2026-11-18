@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import '../styles/SessionInfoModal.css';
+import ControlsPage from './ControlsPage';
 
 export default function SessionInfoModal({ show, onClose, userId, sessionId }) {
   const [copiedUser, setCopiedUser] = useState(false);
@@ -20,12 +21,8 @@ export default function SessionInfoModal({ show, onClose, userId, sessionId }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="session-info-modal" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>×</button>
-
-        <h2 style={{color: '#8be9fd', marginBottom: '1.5rem'}}>Session Information</h2>
-
+    <ControlsPage icon="🪪" title="Session Information" accent="#8be9fd" closeLabel="Close" zIndex={2000} size="small" onClose={onClose}>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
         <div className="info-section">
           <div className="info-label">User ID</div>
           <div className="info-value-row">
@@ -51,7 +48,6 @@ export default function SessionInfoModal({ show, onClose, userId, sessionId }) {
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </ControlsPage>
   );
 }

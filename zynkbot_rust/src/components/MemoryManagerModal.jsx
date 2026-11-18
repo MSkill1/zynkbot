@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import MemoryReportModal from './MemoryReportModal';
 import MemoryGraphModal from "./MemoryGraphModal";
 import CloudBackupSettings from "./CloudBackupSettings";
+import ControlsPage from "./ControlsPage";
 import "../styles/MemoryManagerModal.css";
 import { confirmDialog } from '../utils/confirmDialog';
 
@@ -669,19 +670,14 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
 
   if (!isOpen) return null;
 
-  // ── Key Save Modal ─────────────────────────────────────────────────────────
+  // ── Key Save window ────────────────────────────────────────────────────────
+  // Cancel and the shell's ✕ do the same thing; a tap outside does nothing, the user
+  // must answer. It sits over the Memory Manager (2000) and the map (2500).
+  const closeKeySave = () => { setShowKeySaveModal(false); setPendingBackup(false); setKeyCopied(false); setPassphraseMode(false); setPassphraseInput(''); setPassphraseConfirm(''); };
   const KeySaveModal = showKeySaveModal ? (
-    <div data-modal="" style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 2000,
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
-    }}>
-      <div style={{
-        background: '#21222c', border: '2px solid #ffb86c', borderRadius: '10px',
-        padding: '24px', maxWidth: '460px', width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.6)'
-      }}>
-        <h3 style={{ color: '#ffb86c', margin: '0 0 8px', fontSize: '1.1rem' }}>
-          ⚠ Save your backup key before continuing
-        </h3>
+    /* The shared page shell (ui-redo, 2026-11-18). */
+    <ControlsPage icon="⚠️" title="Save your backup key" accent="#ffb86c" onClose={closeKeySave}
+      zIndex={2600} size="small" dismissOnOutside={false} closeLabel="Close">
         <p style={{ color: '#9aa5c4', fontSize: '0.85rem', margin: '0 0 16px', lineHeight: 1.5 }}>
           Your memories are encrypted client-side — Zynkbot never sees your key.
           If you lose this device without saving the key, your backup cannot be recovered.
@@ -773,14 +769,13 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             {keyCopied ? "✓ I've saved my key — continue" : "Copy or set a passphrase to continue"}
           </button>
           <button
-            onClick={() => { setShowKeySaveModal(false); setPendingBackup(false); setKeyCopied(false); setPassphraseMode(false); setPassphraseInput(''); setPassphraseConfirm(''); }}
+            onClick={closeKeySave}
             style={{ padding: '10px 14px', borderRadius: '4px', border: '1px solid #44475a', background: 'none', color: '#9aa5c4', cursor: 'pointer', fontSize: '0.85rem' }}
           >
             Cancel
           </button>
         </div>
-      </div>
-    </div>
+    </ControlsPage>
   ) : null;
 
   // ── Mobile layout ─────────────────────────────────────────────────────────
@@ -894,16 +889,21 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
     </div>
   );
 
+  // The windows that open on top of this one (About me, the key prompt, the map) are
+  // rendered beside the shell, not inside it, so their own layers count.
+  const reportModal = (
+    <MemoryReportModal isOpen={showReport} openSection={reportSection} onClose={() => { setShowReport(false); setReportSection(''); }} userId={userId}
+      onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
+      onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />
+  );
+
   if (isMobile) {
     return (
-      <div data-modal="" style={{ position: 'fixed', inset: 0, background: '#282a36', zIndex: 1000, display: 'flex', flexDirection: 'column', overflowX: 'hidden', overflowY: 'auto' /* the Storage panel can be taller than the screen (Matt, 2026-11-12) */ }}>
-      <MemoryReportModal isOpen={showReport} openSection={reportSection} onClose={() => { setShowReport(false); setReportSection(''); }} userId={userId}
-        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
-        onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />
-        {KeySaveModal}
-
-        {/* Header */}
-        <div style={{ padding: '12px 16px', paddingTop: '12px' /* status bar is reserved natively (build27); env() here double-padded on phones with a cutout */, borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
+      <>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
+      <ControlsPage icon="🧠" title="Memory Manager" subtitle={onDeviceModel ? onDeviceNote : undefined} accent="#bd93f9" onClose={onClose} zIndex={2000} closeLabel="Close">
+        {/* Buttons row (the Storage panel can be taller than the screen; the page scrolls, Matt, 2026-11-12) */}
+        <div style={{ padding: '12px 16px', borderBottom: backupMsg ? 'none' : '1px solid #44475a', background: '#1e1f2e', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', flexShrink: 0 }}>
           {selectedMemory ? (
             <>
               <button
@@ -916,8 +916,6 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             </>
           ) : (
             <>
-              <h2 style={{ margin: 0, color: '#50fa7b', fontSize: '1.1rem', flex: '1 1 100%' }}>Memory Manager</h2>
-              {onDeviceModel && <div style={{ flex: '1 1 100%', fontSize: '0.8rem', color: '#9aa5c4', margin: '2px 0 4px' }}>{onDeviceNote}</div>}
               {/* About me across the top; Backup, Restore and Storage on one row under it.
                   The key and Clear All live inside the Storage panel, out of the way of a
                   stray tap (Matt, 2026-10-25). */}
@@ -941,7 +939,7 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 </button>
               </div>
               {showStorage && (
-                <div style={{ flex: '1 1 100%', marginTop: '8px', paddingBottom: '76px' /* room for the floating ✕ under Clear All */ }}>
+                <div style={{ flex: '1 1 100%', marginTop: '8px' }}>
                   <CloudBackupSettings onShowKey={handleCopyKey} onClearAll={handleClearAllMemories} />
                 </div>
               )}
@@ -965,19 +963,6 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             {backupMsg}
           </div>
         )}
-
-        {/* Floating close button - bottom right, like settings panel */}
-        <button
-          onClick={onClose}
-          style={{
-            position: 'fixed', bottom: '20px', right: '20px',
-            width: '56px', height: '56px', borderRadius: '50%',
-            background: '#44475a', color: '#f8f8f2', border: 'none',
-            fontSize: '1.5rem', cursor: 'pointer',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-            zIndex: 1010, display: 'flex', alignItems: 'center', justifyContent: 'center'
-          }}
-        >✕</button>
 
         {/* LIST VIEW */}
         {!selectedMemory && (
@@ -1278,46 +1263,43 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
             </div>
           </>
         )}
+      </ControlsPage>
+      {reportModal}
+      {KeySaveModal}
 
-        {/* Graph modal */}
-        {showGraphModal && (
-          <MemoryGraphModal
-            isOpen={showGraphModal}
-            onClose={() => setShowGraphModal(false)}
-            memoryId={selectedMemory?.id}
-            userId={userId}
-            onNavigate={async (newMemoryId) => {
-              try {
-                const memory = await invoke('get_memory', { memoryId: newMemoryId });
-                if (!memory) throw new Error(`Failed to fetch memory ${newMemoryId}`);
-                setSelectedMemory(memory);
-                setShowGraphModal(false);
-                fetchRelationships(newMemoryId);
-              } catch (error) {
-                console.error('Failed to navigate to memory:', error);
-                alert(`Error loading memory: ${error.message}`);
-              }
-            }}
-          />
-        )}
-      </div>
+      {/* Graph modal */}
+      {showGraphModal && (
+        <MemoryGraphModal
+          isOpen={showGraphModal}
+          onClose={() => setShowGraphModal(false)}
+          memoryId={selectedMemory?.id}
+          userId={userId}
+          onNavigate={async (newMemoryId) => {
+            try {
+              const memory = await invoke('get_memory', { memoryId: newMemoryId });
+              if (!memory) throw new Error(`Failed to fetch memory ${newMemoryId}`);
+              setSelectedMemory(memory);
+              setShowGraphModal(false);
+              fetchRelationships(newMemoryId);
+            } catch (error) {
+              console.error('Failed to navigate to memory:', error);
+              alert(`Error loading memory: ${error.message}`);
+            }
+          }}
+        />
+      )}
+      </>
     );
   }
   // ── End mobile layout ──────────────────────────────────────────────────────
 
   return (
     <>
-      <MemoryReportModal isOpen={showReport} openSection={reportSection} onClose={() => { setShowReport(false); setReportSection(''); }} userId={userId}
-        onOpenMemory={(id) => { const m = memories.find((x) => x.id === id); if (m) { setShowReport(false); setSearchQuery(''); setCameFromReport(true); setSelectedMemory(m); } }}
-        onFilterTag={(tag) => { setShowReport(false); setSelectedMemory(null); setSearchQuery(tag); setTagFilter(tag); }} />
-    {KeySaveModal}
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="memory-manager-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Header. Wraps so the Storage panel (flex-basis 100%) drops under the buttons
-            instead of sitting beside them and squeezing the title (2026-11-01). */}
-        <div className="modal-header" style={{ flexWrap: 'wrap' }}>
-          <h2>Memory Manager</h2>
-          {onDeviceModel && <div style={{ fontSize: '0.85rem', color: '#9aa5c4', flex: '1 1 100%' }}>{onDeviceNote}</div>}
+    {/* The shared page shell (ui-redo, 2026-11-18). Wide: the body is three columns. */}
+    <ControlsPage icon="🧠" title="Memory Manager" subtitle={onDeviceModel ? onDeviceNote : undefined} accent="#bd93f9" onClose={onClose} zIndex={2000} size="wide" closeLabel="Close">
+        {/* Buttons row under the shell head. Wraps so the Storage panel (flex-basis 100%)
+            drops under the buttons instead of sitting beside them (2026-11-01). */}
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '10px' }}>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button onClick={() => setShowReport(true)} title="What Zynkbot knows about you, read from this device"
               style={{ background: '#bd93f9', border: 'none', color: '#282a36', padding: '8px 14px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '14px' }}>
@@ -1343,7 +1325,6 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
                 {backupMsg}
               </span>
             )}
-            <button onClick={onClose} className="close-button">✕</button>
           </div>
           {showStorage && (
             <div style={{ flex: '1 1 100%', marginTop: '10px' }}>
@@ -1813,35 +1794,37 @@ export default function MemoryManagerModal({ isOpen, onClose, userId, onMemories
           </div>
         </div>
 
-        {/* Graph Modal */}
-        {showGraphModal && selectedMemory && (
-          <MemoryGraphModal
-            isOpen={showGraphModal}
-            onClose={() => setShowGraphModal(false)}
-            memoryId={selectedMemory.id}
-            userId={userId}
-            onNavigate={async (newMemoryId) => {
-              // Fetch the memory by ID from API (not just cached list)
-              // This ensures we can navigate to ANY memory in the graph, not just the 8 recent ones
-              try {
-                const memory = await invoke('get_memory', { memoryId: newMemoryId });
-                if (!memory) {
-                  throw new Error(`Failed to fetch memory ${newMemoryId}`);
-                }
+    </ControlsPage>
+    {reportModal}
+    {KeySaveModal}
 
-                setSelectedMemory(memory);
-                setShowGraphModal(false);
-                // Fetch relationships for the new memory
-                fetchRelationships(newMemoryId);
-              } catch (error) {
-                console.error('Failed to navigate to memory:', error);
-                alert(`Error loading memory: ${error.message}`);
-              }
-            }}
-          />
-        )}
-      </div>
-    </div>
+    {/* Graph Modal */}
+    {showGraphModal && selectedMemory && (
+      <MemoryGraphModal
+        isOpen={showGraphModal}
+        onClose={() => setShowGraphModal(false)}
+        memoryId={selectedMemory.id}
+        userId={userId}
+        onNavigate={async (newMemoryId) => {
+          // Fetch the memory by ID from API (not just cached list)
+          // This ensures we can navigate to ANY memory in the graph, not just the 8 recent ones
+          try {
+            const memory = await invoke('get_memory', { memoryId: newMemoryId });
+            if (!memory) {
+              throw new Error(`Failed to fetch memory ${newMemoryId}`);
+            }
+
+            setSelectedMemory(memory);
+            setShowGraphModal(false);
+            // Fetch relationships for the new memory
+            fetchRelationships(newMemoryId);
+          } catch (error) {
+            console.error('Failed to navigate to memory:', error);
+            alert(`Error loading memory: ${error.message}`);
+          }
+        }}
+      />
+    )}
     </>
   );
 }

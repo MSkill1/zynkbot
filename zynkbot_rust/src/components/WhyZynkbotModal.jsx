@@ -1,16 +1,13 @@
 import React from "react";
 import "../styles/WhyZynkbotModal.css";
+import ControlsPage from "./ControlsPage";
 
 export default function WhyZynkbotModal({ isOpen, onClose }) {
   if (!isOpen) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="why-modal-container" onClick={(e) => e.stopPropagation()}>
-        <button className="modal-close" onClick={onClose}>×</button>
-
-        <h1 className="modal-title">Why Zynkbot?</h1>
-
+    <ControlsPage icon="💡" title="Why Zynkbot?" accent="#8be9fd" closeLabel="Close" zIndex={2000} size="wide" onClose={onClose}>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
         {/* Data Privacy Comparison */}
         <section className="privacy-section">
           <h2>Data Privacy: Zynkbot vs. ChatGPT</h2>
@@ -276,7 +273,6 @@ export default function WhyZynkbotModal({ isOpen, onClose }) {
         <footer className="modal-footer">
           <i>Memory without surveillance, intelligence without manipulation.</i>
         </footer>
-      </div>
-    </div>
+    </ControlsPage>
   );
 }

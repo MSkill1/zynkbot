@@ -12,32 +12,6 @@
   z-index: 1000;
 }
 
-/* Modal Container - Unique class to avoid conflicts */
-.why-modal-container {
-  background: #22232a;
-  border: 2px solid #44475a;
-  border-radius: 12px;
-  padding: 2.5rem;
-  max-width: 1000px;
-  width: 90%;
-  max-height: 90vh;
-  overflow-y: auto;
-  position: relative;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-  display: block; /* Force vertical stacking */
-}
-
-/* Modal Title */
-.modal-title {
-  color: #8be9fd;
-  font-size: 2.5rem;
-  font-weight: 700;
-  text-align: center;
-  margin: 0 0 2rem 0;
-  padding-bottom: 1.5rem;
-  border-bottom: 2px solid #44475a;
-}
-
 /* Close Button */
 .modal-close {
   position: absolute;
@@ -331,12 +305,6 @@
 
 /* Responsive */
 @media (max-width: 768px) {
-  .why-modal-container {
-    width: 95vw;
-    padding: 1.5rem;
-    max-height: 95vh;
-  }
-
   .privacy-section h2,
   .modes-section h2,
   .networks-section h2,

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import VoiceButton from './VoiceButton';
 import ChatMessage from './ChatMessage';
+import ControlsPage from './ControlsPage';
 
 // Quick question (Matt, 2026-11-12). A one-off question asked in its own window and
 // answered without the open conversation's history, so the thread being worked on is
@@ -11,7 +12,7 @@ import ChatMessage from './ChatMessage';
 // (the resume logic skips that thread, see get_latest_thread). The question can be
 // dictated and the answer copied. Earlier questions are read inside this window
 // ("Earlier"), and the thread is kept out of History (Matt, 2026-11-12: History is full
-// enough). The window fills the screen on a phone and is a dialog on the desktop.
+// enough). The window is the shared page shell: full screen on a phone, a card on the desktop.
 export const QUICK_SESSION_PREFIX = 'quick-questions-';
 
 export default function QuickQuestionModal({ isOpen, onClose, userId, backend, containmentMode, isMobile }) {
@@ -110,32 +111,27 @@ export default function QuickQuestionModal({ isOpen, onClose, userId, backend, c
     if (e.key === 'Enter' && !e.shiftKey && !isMobile) { e.preventDefault(); ask(); }
   };
 
-  const panelStyle = isMobile ? {
-    background: '#1e1f29', width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-    padding: '14px 12px', boxSizing: 'border-box',
+  // The contents are a column so the answer area scrolls on its own under the question
+  // box: filling the shell's full-screen card on a phone, capped at the card's height on
+  // the desktop (the shell's head and padding take about 110px).
+  const columnStyle = isMobile ? {
+    display: 'flex', flexDirection: 'column', height: 'calc(100dvh - 110px)',
   } : {
-    background: '#1e1f29', borderRadius: '12px', padding: '22px 24px', maxWidth: '680px', width: '100%',
-    maxHeight: '90vh', display: 'flex', flexDirection: 'column', border: '1px solid #44475a',
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)', boxSizing: 'border-box',
+    display: 'flex', flexDirection: 'column', maxHeight: 'calc(92vh - 110px)',
   };
 
   return (
-    <div data-modal=""
-      style={{
-        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-        background: 'rgba(0, 0, 0, 0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 1000, padding: isMobile ? 0 : '20px',
-      }}
-      onClick={(e) => { if (e.target === e.currentTarget && !isLoading) onClose(); }}
+    <ControlsPage
+      icon="⚡"
+      title="Quick question"
+      accent="#8be9fd"
+      onClose={() => { if (!isLoading) onClose(); }}
+      closeLabel="Close"
+      zIndex={2000}
+      dismissOnOutside={!isLoading}
     >
-      <div style={panelStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-          <h2 style={{ color: '#8be9fd', margin: 0, fontSize: isMobile ? '1.2rem' : '1.4rem' }}>⚡ Quick question</h2>
-          <button onClick={onClose} disabled={isLoading} title="Close"
-            style={{ background: 'none', border: 'none', color: '#f8f8f2', fontSize: '1.4rem', cursor: isLoading ? 'not-allowed' : 'pointer', padding: '4px 8px', opacity: isLoading ? 0.5 : 1 }}>
-            ✕
-          </button>
-        </div>
+      {/* The shared page shell (ui-redo, 2026-11-18). ✕ and a tap outside wait for an answer in progress. */}
+      <div style={columnStyle}>
         <div style={{ color: '#9aa5c4', fontSize: '0.82rem', lineHeight: 1.5, marginBottom: '10px' }}>
           Answered on its own, without the conversation you have open. Earlier questions stay in this window.
         </div>
@@ -230,6 +226,6 @@ export default function QuickQuestionModal({ isOpen, onClose, userId, backend, c
           </button>
         </div>
       </div>
-    </div>
+    </ControlsPage>
   );
 }

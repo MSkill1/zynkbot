@@ -1,26 +1,10 @@
 /* Conflict Resolution Modal Styles - Dark Theme to match other modals */
 
-/* Modal container — display:block overrides the 3-col grid from .modal-content */
+/* The card's contents; the frame (box, title, ✕) is the shared page shell since the
+   ui-redo of 2026-11-18. */
 .conflict-resolution {
   display: block;
-  background: #22232a;
-  border: 2px solid #44475a;
-  border-radius: 12px;
-  padding: 2.5rem;
-  max-width: 1000px;
-  width: 90vw;
-  max-height: 85vh;
-  overflow-y: auto;
-  position: relative;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   color: #ececec;
-}
-
-/* Compact header */
-.conflict-resolution h2 {
-  color: #ffb86c;
-  margin: 0 0 0.25rem 0;
-  font-size: 1.6rem;
 }
 
 .conflict-subtitle {
@@ -351,8 +335,4 @@
     width: 100%;
   }
 
-  .conflict-resolution {
-    max-width: 95vw;
-    padding: 1.5rem;
-  }
 }

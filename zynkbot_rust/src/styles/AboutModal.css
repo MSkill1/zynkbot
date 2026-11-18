@@ -11,22 +11,6 @@
   z-index: 1000;
 }
 
-.about-modal-container {
-  background: #22232a;
-  border: 2px solid #44475a;
-  border-radius: 12px;
-  padding: 2.5rem;
-  max-width: 800px;
-  max-height: 85vh;
-  overflow-y: auto;
-  position: relative;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-}
-
-.about-modal-content {
-  max-width: 800px;
-}
-
 .modal-close {
   position: absolute;
   top: 1rem;
@@ -44,12 +28,6 @@
 
 .modal-close:hover {
   color: #ff5555;
-}
-
-.about-modal-container h2 {
-  color: #ffb86c;
-  margin-bottom: 1.5rem;
-  font-size: 1.8rem;
 }
 
 .about-section {

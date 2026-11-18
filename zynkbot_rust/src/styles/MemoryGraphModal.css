@@ -1,46 +1,10 @@
-/* Memory Graph Modal */
-.graph-modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.9);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;  /* Higher than MemoryManagerModal */
-  padding: 20px;
-  overflow: hidden;
-}
-
-.memory-graph-modal {
-  background: #282a36;
-  border-radius: 12px;
-  width: 95%;
-  max-width: 1800px;
-  height: 90vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
-  border: 1px solid #44475a;
+/* Memory Map. The frame is the shared page shell (ControlsPage, size "wide";
+   ui-redo, 2026-11-18); this box holds the controls, the map and the details panel,
+   which is placed against its bottom-left corner. */
+.graph-modal-body {
   position: relative;
+  border-radius: 12px;
   overflow: hidden;
-}
-
-/* Header */
-.graph-modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px;
-  border-bottom: 1px solid #44475a;
-}
-
-.graph-modal-header h2 {
-  margin: 0;
-  color: #bd93f9;
-  font-size: 1.5rem;
 }
 
 /* Controls */
@@ -142,9 +106,12 @@
   cursor: pointer;
 }
 
-/* Graph Container */
+/* Graph Container: the canvas takes the container's size, so it needs a fixed height
+   (the shell body is a plain block). What is left of the shell's 92vh after its head,
+   the controls row and the paddings. */
 .graph-container {
-  flex: 1;
+  height: calc(92vh - 175px);
+  min-height: 300px;
   position: relative;
   background: #1e1f29;
   overflow: hidden;
@@ -298,7 +265,13 @@
   }
 }
 
+/* On a phone the shell is the whole screen (100dvh) and the controls wrap to two
+   rows, so the map gets what is left of the screen */
+@media (max-width: 520px) {
+  .graph-container { height: calc(100dvh - 215px); }
+}
+
 /* Force Graph Canvas Overrides */
-.memory-graph-modal canvas {
+.graph-container canvas {
   border-radius: 0 0 12px 12px;
 }

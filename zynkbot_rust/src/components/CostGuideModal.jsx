@@ -1,4 +1,5 @@
 import React from "react";
+import ControlsPage from "./ControlsPage";
 
 export default function CostGuideModal({ isOpen, onClose }) {
   if (!isOpen) return null;
@@ -10,17 +11,8 @@ export default function CostGuideModal({ isOpen, onClose }) {
   ];
 
   return (
-    <div data-modal=""
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
-      onClick={onClose}
-    >
-      <div
-        style={{ background: '#282a36', borderRadius: '12px', width: '100%', maxWidth: '680px', maxHeight: '85vh', overflowY: 'auto', padding: '28px', position: 'relative' }}
-        onClick={e => e.stopPropagation()}
-      >
-        <button onClick={onClose} style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', color: '#6272a4', fontSize: '1.4rem', cursor: 'pointer', lineHeight: 1 }}>×</button>
-
-        <h2 style={{ color: '#50fa7b', marginTop: 0, marginBottom: '6px' }}>💰 What Will API Keys Cost Me?</h2>
+    <ControlsPage icon="💰" title="What Will API Keys Cost Me?" accent="#50fa7b" closeLabel="Close" zIndex={2500} onClose={onClose}>
+      {/* The shared page shell (ui-redo, 2026-11-18). */}
         <p style={{ color: '#ff5555', fontSize: '0.85rem', marginBottom: '20px', lineHeight: 1.5 }}>
           <strong>⚠️ Speculative estimates.</strong> Prices change frequently. Always check each provider's site and watch your usage dashboard during your first month.
         </p>
@@ -98,7 +90,6 @@ export default function CostGuideModal({ isOpen, onClose }) {
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
           <button onClick={onClose} style={{ padding: '10px 24px', background: '#50fa7b', color: '#282a36', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem' }}>Got it</button>
         </div>
-      </div>
-    </div>
+    </ControlsPage>
   );
 }

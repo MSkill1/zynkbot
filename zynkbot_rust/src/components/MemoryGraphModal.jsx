@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { invoke } from '@tauri-apps/api/core';
 import ForceGraph2D from 'react-force-graph-2d';
 import "../styles/MemoryGraphModal.css";
+import ControlsPage from './ControlsPage';
 
 // The memory map (2026-11-03, Matt): a hub for each person, place or thing that two or
 // more memories mention, memories hanging off their hubs and tinted by namespace, and
@@ -413,13 +414,10 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
   const hubsPresent = new Set(graphData.nodes.filter(n => n.hub).map(n => n.kind));
 
   return (
-    <div className="graph-modal-overlay" onClick={onClose}>
-      <div className="memory-graph-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="graph-modal-header">
-          <h2>Memory Map</h2>
-          <button onClick={onClose} className="close-button">✕</button>
-        </div>
-
+    <ControlsPage icon="🗺️" title="Memory Map" accent="#bd93f9" onClose={onClose} zIndex={2500} size="wide" closeLabel="Close">
+      {/* The shared page shell (ui-redo, 2026-11-18). Wide, and above the Memory Manager (2000). */}
+      {/* The map and the details panel (absolute, bottom-left) share one positioned box */}
+      <div className="graph-modal-body">
         <div className="graph-controls">
           <button
             onClick={() => {
@@ -593,6 +591,6 @@ export default function MemoryGraphModal({ isOpen, onClose, memoryId, userId, on
           </div>
         )}
       </div>
-    </div>
+    </ControlsPage>
   );
 }
