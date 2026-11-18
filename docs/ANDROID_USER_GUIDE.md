@@ -62,7 +62,9 @@ Limits on one listen:
 
 Without the assistant role, "Hey Zynk" still works, but there is no Z on screen, nothing to tap to cancel, and dictation always uses the offline engine (section 6).
 
-Other apps' recordings: if another app is using the microphone (a call, a voice memo, another assistant), Zynkbot pauses its listening and resumes when that app is done. If the end of the other recording is missed, Zynkbot checks again after two minutes and takes the microphone back when it is free.
+The power button is the other way in. If your phone's "press and hold the power button" gesture is set to the digital assistant (the Pixel's setting is under Settings, System, Gestures; other phones put it under Buttons or Gestures), holding the power button opens Zynkbot's voice prompt directly, with the same chime and the same green Z, and it works whether or not Hey Zynk is listening. If "Hey Zynk" ever does not answer, hold the power button and ask that way. The button does nothing for Zynkbot while the gesture is set to the power menu instead.
+
+Phone calls and other apps' recordings: during a phone call (a normal call, or a voice or video call in another app) and while another app is using the microphone (a voice memo, another assistant), Zynkbot pauses its listening and takes the microphone back when the call or the recording ends. If the end of another app's recording is missed, Zynkbot checks again after two minutes and takes the microphone back when it is free. Before 2026-11-18 a phone call left Zynkbot deaf until Hey Zynk was switched off and on again (KI-109).
 
 
 After a restart. If Hey Zynk was on, it comes back on its own about a minute after the phone boots, without opening the app (the Voice page switch "Start listening when the phone starts", on by default). If the phone refuses, a notification "Hey Zynk is off since the restart" offers a tap that starts it. Measured working on a Pixel 10 Pro XL and a OnePlus 12R, 2026-10-25.

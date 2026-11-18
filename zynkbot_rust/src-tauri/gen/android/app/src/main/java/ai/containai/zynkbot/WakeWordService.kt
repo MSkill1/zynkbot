@@ -209,6 +209,7 @@ class WakeWordService : Service() {
         const val TURN_MAX_MS = 180_000L       // a turn (chime → reply spoken) longer than this is closed by the watchdog
         const val DICTATION_MAX_MS = 60_000L   // a dictation that outlives its own 30 s cap by this much is aborted
         const val PAUSE_MAX_MS = PAUSE_WATCHDOG_MS   // paused for another recording: resume regardless after this
+        const val CALL_END_GRACE_MS = 1500L          // the audio mode goes normal a moment before the call lets go of the microphone
         const val CHIME_SETTLE_MS = 350L       // dictation after a chime drops this much: the chime's tail reached Whisper as speech (15:07, "Beep!")
 
         /** MainActivity sets this to push the state name into the page
@@ -315,23 +316,36 @@ class WakeWordService : Service() {
 
     private fun watchdogTick() {
         val now = System.currentTimeMillis()
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        // Backstop for the call watch: phones below Android 12 have no mode listener, so
+        // a call is noticed here, within a minute, and its end likewise.
+        val callNow = isCallMode(am.mode)
+        if (callNow != inCall && !callEndPending && (mic.state == MicState.State.LISTENING || mic.state == MicState.State.PAUSED)) {
+            inCall = callNow
+            WakeLog.w(TAG, if (callNow) "Watchdog: the phone is in a call — pausing" else "Watchdog: the call has ended — resuming")
+            events.execute { updateForeign() }
+            return
+        }
         when (mic.state) {
             MicState.State.LISTENING -> if (!stream.isOpen) {
                 WakeLog.w(TAG, "Watchdog: listening but the stream is closed — reopening")
                 events.execute { apply(MicState.Event.StreamLost) }
             }
-            MicState.State.PAUSED -> {
-                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            MicState.State.PAUSED -> if (inCall) {
+                // A call lasts as long as it lasts; the mode says when it ends.
+            } else {
                 val others = am.activeRecordingConfigurations.filter { it.clientAudioSessionId != stream.sessionId }
                 if (others.isEmpty()) {
                     WakeLog.w(TAG, "Watchdog: paused for a recording that no longer exists — resuming")
-                    events.execute { apply(MicState.Event.ForeignEnded) }
+                    otherRecording = false
+                    events.execute { updateForeign() }
                 } else if (now - pausedAt > PAUSE_MAX_MS) {
                     // A page dictation stream that broke and was never released kept this
                     // paused for 13 minutes (Pixel, 2026-09-19). Nothing legitimately records
                     // for that long, and Android lets one app capture twice.
                     WakeLog.w(TAG, "Watchdog: still paused for another recording after ${PAUSE_MAX_MS / 1000} s — resuming anyway")
-                    events.execute { apply(MicState.Event.ForeignEnded) }
+                    otherRecording = false
+                    events.execute { updateForeign() }
                 }
             }
             MicState.State.TURN -> if (now - turnStartedAt > TURN_MAX_MS) {
@@ -455,6 +469,10 @@ class WakeWordService : Service() {
     @Volatile private var turnStartedAt = 0L
     @Volatile private var chimeEndedAt = 0L
     @Volatile private var pausedAt = 0L
+    // The two reasons the microphone is someone else's. The state machine sees one
+    // condition (foreignActive), raised when either starts and lowered when both have ended.
+    @Volatile private var otherRecording = false   // another app records (the recording watch)
+    @Volatile private var inCall = false           // the phone is in a call (the audio mode)
     @Volatile private var isForegrounded = false // guards against double startForeground on Android 14+
     private var threshold = 0.5f
     private var lastModelDir: String? = null     // the page's model directory; reloaded on every page-on
@@ -526,6 +544,7 @@ class WakeWordService : Service() {
         registerReceiver(screenReceiver, filter)
         registerRecordingWatch()
         registerPlaybackWatch()
+        registerCallWatch()
         watchdogHandler.postDelayed(watchdog, WATCHDOG_MS)
     }
 
@@ -597,6 +616,7 @@ class WakeWordService : Service() {
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         unregisterRecordingWatch()
         unregisterPlaybackWatch()
+        unregisterCallWatch()
         watchdogHandler.removeCallbacks(watchdog)
         // Synchronously: the process may be going away with us.
         apply(MicState.Event.PageOff)
@@ -999,14 +1019,93 @@ class WakeWordService : Service() {
     private fun onRecordingsChanged(configs: List<AudioRecordingConfiguration>) {
         val mine = stream.sessionId
         val others = configs.filter { it.clientAudioSessionId != mine }
-        if (others.isNotEmpty() && !mic.foreignActive) {
+        if (others.isNotEmpty() && !otherRecording) {
             val what = others.joinToString { "src=${it.clientAudioSource}/session=${it.clientAudioSessionId}" }
             WakeLog.i(TAG, "Another recording is active ($what)")
-            events.execute { apply(MicState.Event.ForeignStarted) }
-        } else if (others.isEmpty() && mic.foreignActive) {
+            otherRecording = true
+            events.execute { updateForeign() }
+        } else if (others.isEmpty() && otherRecording) {
             WakeLog.i(TAG, "Other recording ended")
-            events.execute { apply(MicState.Event.ForeignEnded) }
+            otherRecording = false
+            events.execute { updateForeign() }
         }
+    }
+
+    /** The one "someone else has the microphone" condition the state machine knows,
+     *  from the two sources: an event only on an edge, so a call and a recording that
+     *  overlap cannot reopen the stream while one of them is still going. */
+    private fun updateForeign() {
+        val want = otherRecording || inCall
+        if (want && !mic.foreignActive) apply(MicState.Event.ForeignStarted)
+        else if (!want && mic.foreignActive) apply(MicState.Event.ForeignEnded)
+    }
+
+    // ── Phone calls ──────────────────────────────────────────────────────────
+    // Android gives the microphone to a call. A stream we already hold gets silence for
+    // the call's length and, on the Pixel 10 (2026-11-17, KI-109), for the seventeen
+    // minutes after it: the listener skipped 3750 of 3750 chunks as quiet until the
+    // stream was closed and opened again. A call is not a recording, so the recording
+    // watch never fired. The audio mode says when a call starts and ends; a call is
+    // treated exactly like another app's recording: stream closed, models kept, a fresh
+    // stream when the mode is normal again.
+
+    private var modeListener: AudioManager.OnModeChangedListener? = null
+    private val callHandler = Handler(Looper.getMainLooper())
+    @Volatile private var callEndPending = false   // the grace after a call is running
+
+    /** A cellular call, a VoIP call, call screening or a redirected call. Ringing is not
+     *  a call: the microphone is still ours while the phone rings. */
+    private fun isCallMode(mode: Int): Boolean =
+        mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION ||
+        mode == AudioManager.MODE_CALL_SCREENING || mode == AudioManager.MODE_CALL_REDIRECT ||
+        mode == AudioManager.MODE_COMMUNICATION_REDIRECT
+
+    private fun registerCallWatch() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && modeListener == null) {
+            try {
+                val l = AudioManager.OnModeChangedListener { mode -> onAudioMode(mode) }
+                am.addOnModeChangedListener(mainExecutor, l)
+                modeListener = l
+            } catch (e: Exception) { WakeLog.w(TAG, "Call watch unavailable: ${e.message}") }
+        }
+        onAudioMode(am.mode)
+    }
+
+    private fun unregisterCallWatch() {
+        callHandler.removeCallbacks(callEnded)
+        callEndPending = false
+        val l = modeListener ?: return
+        modeListener = null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).removeOnModeChangedListener(l) } catch (_: Exception) {}
+        }
+    }
+
+    private fun onAudioMode(mode: Int) {
+        val call = isCallMode(mode)
+        callHandler.removeCallbacks(callEnded)
+        callEndPending = false
+        if (call && !inCall) {
+            inCall = true
+            WakeLog.i(TAG, "Phone call started (audio mode $mode)")
+            events.execute { updateForeign() }
+        } else if (!call && inCall) {
+            // The mode goes normal a moment before the call lets go of the microphone;
+            // a stream opened at once can be the silent one again.
+            callEndPending = true
+            callHandler.postDelayed(callEnded, CALL_END_GRACE_MS)
+        }
+    }
+
+    private val callEnded = Runnable {
+        callEndPending = false
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (isCallMode(am.mode)) return@Runnable
+        if (!inCall) return@Runnable
+        inCall = false
+        WakeLog.i(TAG, "Phone call ended")
+        events.execute { updateForeign() }
     }
 
     // ── Trigger clips ────────────────────────────────────────────────────────
