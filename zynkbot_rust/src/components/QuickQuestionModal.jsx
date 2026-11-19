@@ -67,12 +67,16 @@ export default function QuickQuestionModal({ isOpen, onClose, userId, backend, c
         conversationHistory: [],
         kbEnabled: false,
       });
-      setExchange(x => x ? {
-        ...x,
-        answer: response?.reply_text || '',
-        streaming: false,
-        metadata: { model_backend: response?.model_backend, containment_mode: response?.containment_mode, blocked: response?.blocked },
-      } : x);
+      const metadata = { model_backend: response?.model_backend, containment_mode: response?.containment_mode, blocked: response?.blocked };
+      if (response?.web_search_needed && response?.web_search_query) {
+        // The model asked for a web search. There is no "search?" button in this window,
+        // so it searches at once, as hands-free does (Matt, 2026-11-18: the request
+        // itself landed in the box as the answer). The searched answer replaces the
+        // streamed request; the thread keeps it as "Web search: <query>" plus the answer.
+        await searchAndAnswer(response.web_search_query, q, metadata);
+        return;
+      }
+      setExchange(x => x ? { ...x, answer: response?.reply_text || '', streaming: false, metadata } : x);
       // Named once; the title is kept when it is already set.
       invoke('set_session_title', { sessionId, userId, title: 'Quick questions' }).catch(() => {});
     } catch (e) {
@@ -81,6 +85,69 @@ export default function QuickQuestionModal({ isOpen, onClose, userId, backend, c
     } finally {
       if (unlisten) unlisten();
       setIsLoading(false);
+    }
+  };
+
+  // The same search the conversation runs from its "search the web" button (App.jsx
+  // handleExecuteWebSearch): a cloud model's own search comes back with the answer
+  // written; a local model gets results and a second, memory-free turn writes the answer.
+  const searchAndAnswer = async (searchQuery, originalQuery, metadata) => {
+    setExchange(x => x ? { ...x, answer: `Searching the web for: "${searchQuery}"…`, streaming: true, metadata } : x);
+    let streamedWords = false;
+    const unlistenSearch = await listen('stream-token', (event) => {
+      const first = !streamedWords;
+      streamedWords = true;
+      setExchange(x => x ? { ...x, answer: (first ? '' : x.answer) + event.payload } : x);
+    });
+    let searchResults;
+    try {
+      searchResults = await invoke('execute_web_search', { query: searchQuery, maxResults: 5, fetchTopN: 3, backend });
+    } finally {
+      unlistenSearch();
+    }
+    const threadSources = {
+      query: searchQuery,
+      results: (searchResults.results || []).map((r) => ({ title: r.title, url: r.url, snippet: r.snippet })),
+      num_results: (searchResults.results || []).length,
+    };
+    if (searchResults.answer) {
+      setExchange(x => x ? { ...x, answer: searchResults.answer, streaming: false, metadata, webSearchQuery: searchQuery, webSearchResults: searchResults } : x);
+      invoke('log_web_search_answer', { sessionId, userId, query: searchQuery, answer: searchResults.answer, backend, containmentMode, sources: threadSources })
+        .catch(e => console.warn('[QuickQuestion] could not log the searched answer:', e));
+      return;
+    }
+    let searchContext = `Here are the web search results for "${searchQuery}":\n\n`;
+    if (searchResults.results && searchResults.results.length > 0) {
+      searchResults.results.forEach((result, index) => {
+        searchContext += `Source ${index + 1}: ${result.title}\nURL: ${result.url}\n`;
+        if (result.snippet) searchContext += `Summary: ${result.snippet}\n`;
+        if (result.content) searchContext += `Content: ${result.content.substring(0, 800)}\n`;
+        searchContext += '\n';
+      });
+    } else {
+      searchContext += 'No results found.\n';
+    }
+    const llmPrompt = `Answer the user's question using the web search results below. Be direct and concise — do not explain your reasoning process, do not narrate what you are doing, just answer.\n\nQuestion: "${originalQuery}"\n\n${searchContext}\n\nAnswer directly based on the search results. If the results don't contain enough information, say so briefly.`;
+    setExchange(x => x ? { ...x, answer: '', streaming: true } : x);
+    const unlisten = await listen('stream-token', (event) => {
+      setExchange(x => x ? { ...x, answer: x.answer + event.payload } : x);
+    });
+    try {
+      const llmResponse = await invoke('send_message_with_memory', {
+        message: llmPrompt,
+        userQuery: `Web search: "${searchQuery}"`,
+        userId,
+        sessionId,
+        backend,
+        containmentMode,
+        conversationHistory: [],
+        skipContainment: true,
+        skipMemoryStorage: true,
+        webSources: threadSources,
+      });
+      setExchange(x => x ? { ...x, answer: llmResponse?.reply_text || '', streaming: false, metadata, webSearchQuery: searchQuery, webSearchResults: searchResults } : x);
+    } finally {
+      unlisten();
     }
   };
 
@@ -181,6 +248,7 @@ export default function QuickQuestionModal({ isOpen, onClose, userId, backend, c
                   id: exchange.id + 1, role: 'assistant',
                   content: exchange.answer || (exchange.streaming ? 'Waiting…' : ''),
                   timestamp: exchange.askedAt, isStreaming: exchange.streaming,
+                  web_search_query: exchange.webSearchQuery, web_search_results: exchange.webSearchResults,
                 }}
                 metadata={exchange.metadata || null}
                 sessionId={sessionId}
