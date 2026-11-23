@@ -65,6 +65,22 @@ class SyncForegroundService : Service() {
         return START_NOT_STICKY
     }
 
+    // Android 14 gives a dataSync foreground service six hours a day and then calls this;
+    // a service that has not stopped a few seconds later takes the whole process down
+    // (ForegroundServiceDidNotStopInTimeException). On Matt's OnePlus that happened at
+    // 03:41 on 2026-11-22 and on the two mornings before, and the crash took the wake-word
+    // listener with it, which then heard nothing until the app was opened (KI-110). The
+    // sync server lives in the Rust core and runs as long as the process does; only this
+    // notification goes. The two-argument form is what Android 15+ calls.
+    override fun onTimeout(startId: Int) {
+        Log.i(TAG, "Foreground time limit reached; stopping the sync notification")
+        WakeLog.i(TAG, "Sync notification stopped: Android's six-hour foreground limit")
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (e: Exception) { Log.w(TAG, "stopForeground: ${e.message}") }
+        stopSelf()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) { onTimeout(startId) }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createNotificationChannel() {

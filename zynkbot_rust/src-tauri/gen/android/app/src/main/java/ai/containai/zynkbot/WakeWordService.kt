@@ -896,14 +896,22 @@ class WakeWordService : Service() {
                         return
                     }
                     val pooled = WakeVerifier.pooledFeatures(flatEmb, EMB_WINDOW, EMB_SIZE)
-                    // Playback gate: the phone itself was making sound (a notification tone,
-                    // an app's "boing", a video) in the last second — the model heard the
-                    // speaker. Kept as a labelled false clip for the verifier's training.
-                    // Our own timer ringing is not foreign audio: the whole point is to
-                    // say "Hey Zynk" over it (the echo canceller carries the rest).
-                    if (playbackRecently() && !ZynkTimer.ringing) {
-                        WakeLog.i(TAG, "Detection ignored: this phone was playing audio (score=%.3f)".format(score))
-                        saveTriggerClip(score, pooled, label = false)
+                    // Playback: the phone itself had a player running in the last second (a
+                    // notification tone, an app's "boing", a video). Until 2026-11-22 that ended
+                    // the detection here and filed the clip as "not the owner" for the voice
+                    // profile's training. On the OnePlus the live wallpaper's silent video
+                    // player counts as playback whenever the home or lock screen shows, so
+                    // every real "Hey Zynk" said at the home screen was dropped and 248 of
+                    // Matt's own were labelled false since the 11-11 reset (KI-111). The voice
+                    // profile is the judge of "speaker or owner" and is enforced before anything
+                    // answers, so playback now only keeps a clip from being saved as a real one
+                    // while the voice is being taught; otherwise it is noted and the detection
+                    // goes on to the profile. Our own timer ringing is not foreign audio: the
+                    // whole point is to say "Hey Zynk" over it (the echo canceller carries the rest).
+                    val playing = playbackRecently() && !ZynkTimer.ringing
+                    val enrolling = enrollmentState(this)
+                    if (playing && enrolling == "active") {
+                        WakeLog.i(TAG, "Teaching wake ignored: this phone was playing audio (score=%.3f)".format(Locale.US, score))
                         consecutiveHighScores = 0
                         cooldownRemaining = COOLDOWN_CHUNKS / 2
                         embBuffer.clear()
@@ -923,7 +931,6 @@ class WakeWordService : Service() {
                     // Voice enrollment: the owner is saying the wake word on purpose. Save it as
                     // a real clip, chime, and stop there: no turn, and no verifier (there may
                     // not be one yet). At ENROLL_CLIPS the profile trains.
-                    val enrolling = enrollmentState(this)
                     if (enrolling == "active" && !cardIsOpen()) {
                         WakeLog.i(TAG, "Teaching wake ignored: the Voice page is not open (score=%.3f)".format(Locale.US, score))
                         consecutiveHighScores = 0
@@ -960,8 +967,8 @@ class WakeWordService : Service() {
                         return
                     }
                     val wouldReject = v != null && vScore >= 0f && vScore <= v.threshold
-                    WakeLog.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS vad=%.2f verifier=%.3f%s".format(
-                        level, voice, vScore, if (strict) " (strict mode)" else ""))
+                    WakeLog.i(TAG, "Wake word detected! score=$score threshold=$threshold level=%.1f dBFS vad=%.2f verifier=%.3f%s%s".format(
+                        level, voice, vScore, if (strict) " (strict mode)" else "", if (playing) " (playback active)" else ""))
                     if (wouldReject) {
                         WakeLog.i(TAG, "Detection ignored: verifier says not the owner (%.3f <= %.2f)".format(vScore, v!!.threshold))
                         saveTriggerClip(score, pooled)
