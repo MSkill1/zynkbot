@@ -1,3 +1,17 @@
+/* One scrollbar for the whole app (Matt, 2026-11-26, Linux desktop): the engine's
+   default on WebKitGTK is a wide light bar with square ends, which stood out against
+   the dark theme in the conversation, the sidebar and every window. Thin, dark and
+   rounded everywhere; the track is the surface behind it. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #44475a transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #44475a; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: #6272a4; background-clip: padding-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
 /* Force GPU compositing on modal overlays to prevent WebKitGTK compositing artifacts */
 .modal-overlay,
 .zfb-overlay,

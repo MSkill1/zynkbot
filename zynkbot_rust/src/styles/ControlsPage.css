@@ -90,13 +90,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: #44475a transparent;
 }
-.controls-page-body::-webkit-scrollbar { width: 10px; height: 10px; }
-.controls-page-body::-webkit-scrollbar-track { background: transparent; }
-.controls-page-body::-webkit-scrollbar-thumb { background: #44475a; border-radius: 6px; border: 2px solid #282a36; }
-.controls-page-body::-webkit-scrollbar-thumb:hover { background: #6272a4; }
 .controls-page-head {
   display: flex;
   align-items: center;

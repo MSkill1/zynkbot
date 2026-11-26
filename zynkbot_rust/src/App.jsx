@@ -2293,7 +2293,7 @@ export default function App() {
           title="ZynkCluster"
           subtitle="In the lab: measured on two machines"
           dim
-          onClick={() => setControlsPage('cluster')}
+          onClick={() => setShowZynkCluster(true)}
         />}
         <ControlsMenuButton
           icon="🧪"
@@ -2621,34 +2621,8 @@ export default function App() {
           </button>
         </ControlsPage>
       )}
-      {controlsPage === 'cluster' && (
-        <ControlsPage icon="🔬" title="ZynkCluster" subtitle="In the lab: measured on two machines, November 2026" onClose={() => setControlsPage(null)}>
-          <button
-            onClick={() => setShowZynkCluster(true)}
-            style={{
-              width: '100%',
-              padding: '12px',
-              background: 'linear-gradient(135deg, #bd93f9 0%, #9b72e6 100%)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-              fontSize: '0.95rem',
-              transition: 'transform 0.2s',
-              marginBottom: '10px'
-            }}
-            onMouseOver={(e) => e.target.style.transform = 'translateY(-2px)'}
-            onMouseOut={(e) => e.target.style.transform = 'translateY(0)'}
-          >
-            🔬 ZynkCluster (Upcoming)
-          </button>
-          <p style={{fontSize: '0.85rem', color: '#bd93f9', lineHeight: '1.4', margin: '0'}}>
-            Research on <strong>distributed MoE inference</strong> - a novel approach to running large models across local networks.
-            <br /><em style={{fontSize: '0.8rem', color: '#9aa5c4'}}>Design phase | Architecture docs & code examples available</em>
-          </p>
-        </ControlsPage>
-      )}
+      {/* ZynkCluster: the sidebar row opens the window itself (Matt, 2026-11-26); the page
+          with one button that opened it is gone. */}
 
       {/* Main Content - Chat + Insights (2 columns) */}
       <div className={isMobile ? 'mobile-main-content' : undefined} style={{
