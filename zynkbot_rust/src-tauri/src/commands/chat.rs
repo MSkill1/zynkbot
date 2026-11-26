@@ -543,16 +543,20 @@ pub async fn generate_reply(
         .map_err(|e| format!("Failed to connect to database: {}", e))?;
     println!("[⏱️ PERF] Database connection: {:.3}s", step_start.elapsed().as_secs_f32());
 
-    // Generate embedding for hybrid search
+    // Generate embedding for hybrid search. Editing mode recalls nothing, so it does not
+    // embed either: the whole-message and per-part embeddings cost two to three seconds
+    // on the phone and were thrown away (code review, 2026-11-26).
     let step_start = std::time::Instant::now();
-    let query_text_for_embedding = query.clone();
-    let query_embedding = tokio::task::spawn_blocking(move || {
-        crate::llm::local_embeddings::generate_local_embedding(&query_text_for_embedding)
-    })
-    .await
-    .map_err(|e| format!("Failed to run embedding task: {}", e))?
-    .map_err(|e| format!("Failed to generate embedding: {}", e))?;
-    let query_embeddings = embed_with_parts(query_embedding, &query).await;
+    let query_embeddings: Vec<Vec<f32>> = if lean_editing { Vec::new() } else {
+        let query_text_for_embedding = query.clone();
+        let query_embedding = tokio::task::spawn_blocking(move || {
+            crate::llm::local_embeddings::generate_local_embedding(&query_text_for_embedding)
+        })
+        .await
+        .map_err(|e| format!("Failed to run embedding task: {}", e))?
+        .map_err(|e| format!("Failed to generate embedding: {}", e))?;
+        embed_with_parts(query_embedding, &query).await
+    };
 
     // HYBRID SEARCH: Use hybrid_search for weighted entity + semantic scoring
     // Search limit matches build_memory_context caps: API gets more headroom, local stays lean
