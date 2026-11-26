@@ -178,12 +178,13 @@ impl Transport {
     /// Does the device at `host:port` answer as `device_id`? A GET of its public info
     /// route through the pinned-certificate client, three seconds at most. Err carries
     /// the reason: no answer, or another device's id. A candidate that failed is not
-    /// tried again for ten minutes (`address_probe_failed`); within that window the
+    /// tried again for thirty seconds (`address_probe_failed`; ten minutes until 2026-11-26,
+    /// which pinned a dead address on the very reconnect the probe was for); within that window the
     /// answer is Err with no network traffic.
     pub(crate) async fn address_answers_as(&self, device_id: &str, host: &str, port: u16) -> Result<(), String> {
         let candidate = format!("{}:{}", host, port);
         if let Some((addr, when)) = self.address_probe_failed.read().await.get(device_id) {
-            if *addr == candidate && Utc::now().signed_duration_since(*when).num_seconds() < 600 {
+            if *addr == candidate && Utc::now().signed_duration_since(*when).num_seconds() < 30 {
                 return Err(String::new());
             }
         }
