@@ -29,6 +29,10 @@ pub(crate) fn supports_effort(model: &str) -> bool {
     let m = model.to_lowercase();
     let rest = match m.strip_prefix("claude-") { Some(r) => r, None => return false };
     let (family, ver) = match rest.split_once('-') { Some(x) => x, None => return false };
+    // The older naming put the number first ("claude-3-5-sonnet-20241022",
+    // "claude-3-7-sonnet-20250219", "claude-3-opus-…"): none of those take the field.
+    // Until 2026-11-26 "3-5-…" parsed as major 5 and was sent effort (code review).
+    if family.chars().next().map_or(false, |c| c.is_ascii_digit()) { return false; }
     let mut parts = ver.split('-').filter_map(|p| p.parse::<u32>().ok());
     let major = parts.next().unwrap_or(0);
     let minor = parts.next().unwrap_or(0);
@@ -847,5 +851,24 @@ mod web_stream_tests {
         let mut blocks = Vec::new();
         let ev = serde_json::json!({"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}});
         assert!(fold_stream_event(&mut blocks, &ev, &|_| {}).unwrap_err().to_string().contains("Overloaded"));
+    }
+}
+
+#[cfg(test)]
+mod effort_tests {
+    use super::supports_effort;
+    #[test]
+    fn supports_effort_by_model_name() {
+        assert!(supports_effort("claude-opus-4-5"));
+        assert!(supports_effort("claude-sonnet-4-6"));
+        assert!(supports_effort("claude-sonnet-5-5"));
+        assert!(supports_effort("claude-haiku-5-5"));
+        assert!(supports_effort("claude-fable-5-1"));
+        assert!(!supports_effort("claude-sonnet-4-5"));
+        assert!(!supports_effort("claude-haiku-4-5"));
+        assert!(!supports_effort("claude-3-5-sonnet-20241022"));
+        assert!(!supports_effort("claude-3-7-sonnet-20250219"));
+        assert!(!supports_effort("claude-3-opus-20240229"));
+        assert!(!supports_effort("claude-instant-1.2"));
     }
 }
