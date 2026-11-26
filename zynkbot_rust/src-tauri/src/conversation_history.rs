@@ -321,6 +321,7 @@ pub async fn list_sessions(
                 message_count, model_backend, containment_mode, pinned
          FROM conversation_sessions
          WHERE user_id = ?
+           AND session_id NOT LIKE 'quick-questions-%' AND session_id NOT LIKE 'ensemble-%'
          ORDER BY pinned DESC, last_active DESC
          LIMIT ? OFFSET ?",
     )

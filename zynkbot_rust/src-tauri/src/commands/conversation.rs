@@ -12,10 +12,11 @@ pub async fn list_conversation_sessions(
         .await
         .map_err(|e: sqlx::Error| e.to_string())?;
     // The standing "Quick questions" and "Ensemble" threads are read inside their own
-    // windows, not here (Matt, 2026-11-12: History is full enough).
+    // windows, not here (Matt, 2026-11-12: History is full enough). The query leaves
+    // them out before the page is cut; filtering after LIMIT returned short pages that
+    // lost real threads once there were more than a page of them (code review, 2026-11-26).
     conversation_history::list_sessions(&pool, &user_id, limit.unwrap_or(50), offset.unwrap_or(0))
         .await
-        .map(|v| v.into_iter().filter(|s| !is_hidden_thread(&s.session_id)).collect())
         .map_err(|e: sqlx::Error| e.to_string())
 }
 
@@ -40,10 +41,14 @@ pub async fn get_latest_thread(user_id: String) -> Result<Option<serde_json::Val
     let pool = sqlx::SqlitePool::connect(&db_url).await.map_err(|e: sqlx::Error| e.to_string())?;
     // The thread written to last, or nothing when it was closed with New (0029): the next
     // older thread is not offered in its place, since New means "I am done here" and not
-    // "show me last week's instead" (tester Mike, 2026-11-17).
+    // "show me last week's instead" (tester Mike, 2026-11-17). Both times are compared
+    // to the second: closed_at carries milliseconds and last_active does not, so a
+    // message written in the same second as the close used to leave the thread closed
+    // (code review, 2026-11-26). A device whose clock runs behind can still write a
+    // last_active before the close; that is the clock, not this test.
     let row: Option<(String, String, i64, Option<String>, i64)> = sqlx::query_as(
         "SELECT session_id, last_active, message_count, title,
-                (closed_at IS NOT NULL AND julianday(closed_at) >= julianday(last_active)) AS closed
+                (closed_at IS NOT NULL AND strftime('%s', closed_at) >= strftime('%s', last_active)) AS closed
          FROM conversation_sessions
          WHERE user_id = ? AND message_count > 0
            AND session_id NOT LIKE 'quick-questions-%' AND session_id NOT LIKE 'ensemble-%'
