@@ -104,6 +104,8 @@ Estimate: two days for 1–5 with the Kitchen kit; 6–7 are shared with the mem
 
 A second kit, separate from the Kitchen kit, sold as a one-time purchase. Dictate your groceries to Zynkbot and it organises the list for you. Nothing designed yet beyond that; same four-part shape as above (standing instructions, a `grocery` namespace, opening questions, quick prompts) when it is written up.
 
+**Priority (2026-11-26):** Matt's mother wants the grocery kit most of all; Matt: build it first, or beside the Kitchen kit, if not too difficult. First sketch of its job: a running list added to by voice or text ("we're out of milk"), grouped by store section, read back or shown in the store, with what is usually bought and when it was last bought; the Kitchen kit's "what to make tonight" feeds it.
+
 ## Tester task (for the beta package)
 
 "For two weeks, tell Zynkbot what you cooked and how it went, by voice or typed, in whatever words you like. Once or twice, ask it what to make. At the end, open Memory Manager and look at the Kitchen memories. Tell us: did it remember the right things, did it suggest anything you actually cooked, and did anything it remembered make you uncomfortable?"
