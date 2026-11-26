@@ -37,6 +37,9 @@ object WakeBoot {
         prefs(ctx).edit().putBoolean("hey_zynk_enabled", on).putFloat("threshold", threshold).apply()
     }
     fun startOnBoot(ctx: Context): Boolean = prefs(ctx).getBoolean("start_on_boot", true)
+    /** The page's last threshold and the models' folder, for a start with no intent (boot, update, KI-109 restart). */
+    fun threshold(ctx: Context): Float = prefs(ctx).getFloat("threshold", 0.72f)
+    fun modelDir(ctx: Context): String = File(ctx.applicationContext.filesDir, "wake-word-models").absolutePath
     fun setStartOnBoot(ctx: Context, on: Boolean) { prefs(ctx).edit().putBoolean("start_on_boot", on).apply() }
 
     fun shouldStart(ctx: Context): Boolean = heyZynkEnabled(ctx) && startOnBoot(ctx) && WakeWordService.instance == null
@@ -46,8 +49,8 @@ object WakeBoot {
         if (!shouldStart(ctx)) { WakeLog.i(TAG, "Boot start ($reason): nothing to do (enabled=${heyZynkEnabled(ctx)}, onBoot=${startOnBoot(ctx)}, running=${WakeWordService.instance != null})"); return }
         val app = ctx.applicationContext
         val intent = Intent(app, WakeWordService::class.java).apply {
-            putExtra("threshold", prefs(app).getFloat("threshold", 0.72f))
-            putExtra("modelDir", File(app.filesDir, "wake-word-models").absolutePath)
+            putExtra("threshold", threshold(app))
+            putExtra("modelDir", modelDir(app))
         }
         try {
             ContextCompat.startForegroundService(app, intent)
@@ -61,6 +64,9 @@ object WakeBoot {
             if (up) cancelNotice(app) else notice(app)
         }, 8_000L)
     }
+
+    /** "Hey Zynk is off since the restart", with a tap that opens the app (the KI-109 restart uses it too). */
+    fun offNotice(ctx: Context) = notice(ctx)
 
     private fun notice(ctx: Context) {
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

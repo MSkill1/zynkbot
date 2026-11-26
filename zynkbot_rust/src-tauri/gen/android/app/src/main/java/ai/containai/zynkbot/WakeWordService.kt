@@ -549,8 +549,29 @@ class WakeWordService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        threshold = intent?.getFloatExtra("threshold", 0.5f) ?: 0.5f
-        val modelDir = intent?.getStringExtra("modelDir") ?: return START_NOT_STICKY
+        // No intent means Android restarted us (START_STICKY) after the process died: a
+        // crash, a swipe from Recents (KI-077 exits the process), an update. Until
+        // 2026-11-26 this returned START_NOT_STICKY and did nothing, so the service
+        // existed with no models and no stream: the page and WakeBoot both saw it as
+        // "running", and the phone heard nothing until the app was opened (KI-109,
+        // part two; seen seven mornings running on the OnePlus). Resume from the
+        // switch the page keeps in WakeBoot, as a boot start does.
+        val restarted = intent == null
+        if (restarted && !WakeBoot.heyZynkEnabled(this)) {
+            WakeLog.i(TAG, "Restarted by Android with Hey Zynk off: stopping")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        threshold = intent?.getFloatExtra("threshold", 0.5f) ?: WakeBoot.threshold(this)
+        val modelDir = intent?.getStringExtra("modelDir") ?: WakeBoot.modelDir(this)
+        if (restarted) {
+            if (!File(modelDir).isDirectory) {
+                WakeLog.w(TAG, "Restarted by Android but the wake-word models are not there: stopping")
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            WakeLog.i(TAG, "Restarted by Android after the process died: resuming the listener (threshold=%.2f)".format(Locale.US, threshold))
+        }
 
         // Only call startForeground once per service lifecycle. On Android 14+,
         // calling startForeground(MICROPHONE) from background context throws SecurityException
@@ -583,6 +604,8 @@ class WakeWordService : Service() {
                 // when the app is in the background. The sync service crashed the
                 // app on exactly that one (2026-09-14); catch everything here.
                 WakeLog.w(TAG, "Cannot start as a foreground service now: ${e.javaClass.simpleName}: ${e.message}")
+                // After a restart there is no page to tell: offer the tap that opens the app.
+                if (restarted) WakeBoot.offNotice(this)
                 stopSelf()
                 return START_NOT_STICKY
             }
