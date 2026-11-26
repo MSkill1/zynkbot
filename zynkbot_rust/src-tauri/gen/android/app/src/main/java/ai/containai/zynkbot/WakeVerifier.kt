@@ -75,7 +75,11 @@ class WakeVerifier private constructor(
                     device = Build.MODEL
                     try { local.writeText(j.put("device", device).toString()); WakeLog.i(TAG, "Profile stamped as taught on $device (this phone trained it)") } catch (_: Exception) {}
                 } else {
-                    device = "another phone"
+                    // Taught before each phone kept its own, with no training state here: it
+                    // may be this phone's (restored from the backup onto a fresh install) or
+                    // another phone's; the two cannot be told apart, and a foreign profile
+                    // that enforces is the worse mistake, so it does not enforce.
+                    device = "unknown"
                 }
             }
             WakeVerifier(arr("mean"), arr("scale"), arr("coef"), j.getDouble("intercept").toFloat(),

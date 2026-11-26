@@ -300,9 +300,11 @@ export default function VoiceModal({
                     <span style={labelStyle}>{collecting ? 'Say "Hey Zynk", wait for the count, say it again' : 'Teach Zynkbot your voice'}</span>
                     <div style={mutedStyle}>
                       {collecting
-                        ? 'Keep this page open; nothing counts while it is closed. TV off. Move around: facing the phone, facing away, from across the room. Until the twenty are in, "Hey Zynk" only counts; it does not answer.'
+                        ? 'Keep this page open; nothing counts while it is closed. TV off. Move around: facing the phone, facing away, from across the room. Vary how you say it: quick and slow, louder and softer, the way it comes out when you mean it. Until the twenty are in, "Hey Zynk" only counts; it does not answer.'
                         : enroll.elsewhere
-                          ? `The voice profile here was taught on another phone (${enroll.device || 'another phone'}), and that phone's microphone sounds different, so "Hey Zynk" is ignored on this one. Teach this phone: say it twenty times.`
+                          ? (enroll.device && enroll.device !== 'unknown'
+                              ? `The voice profile here was taught on another phone (${enroll.device}), and that phone's microphone sounds different, so "Hey Zynk" is ignored on this one. Teach this phone: say it twenty times.`
+                              : 'The voice profile here is from before each phone kept its own, so it may have been taught on another microphone. "Hey Zynk" is ignored on this phone until you teach it: say it twenty times, about two minutes.')
                         : done
                           ? 'Done. A "Hey Zynk" that does not sound like you is ignored. It keeps learning as you use it.'
                           : needsAnother
@@ -333,7 +335,8 @@ export default function VoiceModal({
                     <p style={{ margin: '0 0 10px 0' }}>
                       Say "Hey Zynk" twenty times, with the TV off and this page open. Wait for the count
                       to move between each one, and move around: facing the phone, facing away, from
-                      across the room. Nothing counts while this page is closed, so take your time.
+                      across the room. Vary how you say it too: quick and slow, louder and softer, as it
+                      comes out when you mean it. Nothing counts while this page is closed, so take your time.
                     </p>
                     <p style={{ margin: '0 0 10px 0' }}>
                       When the twenty are in, Zynkbot builds a profile of your voice and keeps learning from
