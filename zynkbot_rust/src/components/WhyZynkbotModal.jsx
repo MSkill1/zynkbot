@@ -208,9 +208,10 @@ export default function WhyZynkbotModal({ isOpen, onClose }) {
               <div className="feature-icon">🔬</div>
               <h3>ZynkCluster — Distributed Inference</h3>
               <p>
-                <strong>🔬 Upcoming:</strong> Distributed Mixture-of-Experts inference across local
-                networks, allowing multiple machines to collaboratively run models too large for any
-                single device. Active research — see in-app documentation.
+                <strong>🔬 In the lab:</strong> a model too large for any one computer, run across
+                several ordinary PCs on your own network. First step measured in November 2026: a
+                120-billion-parameter open model answered across a desktop and a laptop that could
+                not hold it alone. See ZynkCluster under System Controls.
               </p>
             </div>
 

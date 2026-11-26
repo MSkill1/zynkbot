@@ -2291,7 +2291,7 @@ export default function App() {
         {!isMobile && <ControlsMenuButton
           icon="🔬"
           title="ZynkCluster"
-          subtitle="Upcoming"
+          subtitle="In the lab: measured on two machines"
           dim
           onClick={() => setControlsPage('cluster')}
         />}
@@ -2622,7 +2622,7 @@ export default function App() {
         </ControlsPage>
       )}
       {controlsPage === 'cluster' && (
-        <ControlsPage icon="🔬" title="ZynkCluster" subtitle="Upcoming" onClose={() => setControlsPage(null)}>
+        <ControlsPage icon="🔬" title="ZynkCluster" subtitle="In the lab: measured on two machines, November 2026" onClose={() => setControlsPage(null)}>
           <button
             onClick={() => setShowZynkCluster(true)}
             style={{

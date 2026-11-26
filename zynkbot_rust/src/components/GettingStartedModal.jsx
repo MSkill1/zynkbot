@@ -180,10 +180,10 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
             </div>
 
             <div className="feature-item">
-              <strong>🔬 ZynkCluster (Upcoming)</strong>
-              <p>Open <strong>⚙️ System Controls → ZynkCluster</strong> to read about research on distributed
-              Mixture of Experts inference. It is in the design phase; a button there opens the
-              architecture notes and code examples on GitHub.</p>
+              <strong>🔬 ZynkCluster (in the lab)</strong>
+              <p>Open <strong>⚙️ System Controls → ZynkCluster</strong> to read about running a model too big
+              for one computer across several of your own. Its first step was measured on two home
+              machines in November 2026; a button there opens the plan and the numbers on GitHub.</p>
             </div>
 
             <div className="feature-item">
