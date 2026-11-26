@@ -211,9 +211,19 @@ const HELD_CHARS: usize = 400;
 fn stream_piece(s: &str, holding: &mut bool, held: &mut String, on_token: &mut Option<&mut dyn FnMut(&str)>) {
     if !*holding { if let Some(cb) = on_token.as_mut() { cb(s); } return; }
     held.push_str(s);
-    const CLOSE: &str = "<channel|>";
+    const OPEN: &str = "<|channel>"; const CLOSE: &str = "<channel|>";
+    // An answer written before a thought block (Gemma 4 does this too) goes out the
+    // moment the block opens; until 2026-11-26 it was held and then dropped when the
+    // block closed, so the bubble stayed empty until generation ended (code review).
+    if let Some(a) = held.find(OPEN) {
+        if a > 0 {
+            let before = held[..a].to_string();
+            held.replace_range(..a, "");
+            if let Some(cb) = on_token.as_mut() { cb(&before); }
+        }
+    }
     let release = if let Some(i) = held.rfind(CLOSE) { Some(held[i + CLOSE.len()..].to_string()) }
-        else if held.len() >= HELD_CHARS && !held.contains("<|channel>") { Some(std::mem::take(held)) }
+        else if held.len() >= HELD_CHARS && !held.contains(OPEN) { Some(std::mem::take(held)) }
         else { None };
     if let Some(text) = release {
         *holding = false; held.clear();
