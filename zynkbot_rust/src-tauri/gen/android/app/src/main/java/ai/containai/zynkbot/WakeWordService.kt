@@ -165,6 +165,7 @@ class WakeWordService : Service() {
             val v = WakeVerifier.load(context, quiet = true)
             return org.json.JSONObject().put("state", enrollmentState(context)).put("count", clipStats(context).getInt("real"))
                 .put("needed", ENROLL_CLIPS).put("enforcing", v?.enforcesOn(context) == true).put("profile", v?.trained ?: "")
+                .put("elsewhere", v?.taughtElsewhere == true).put("device", v?.device ?: "")
         }
 
         /** Counts behind the Voice-settings "Send my wake-word clips" button. */

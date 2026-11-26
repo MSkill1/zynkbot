@@ -1,5 +1,6 @@
 package ai.containai.zynkbot
 
+import android.os.Build
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
@@ -132,10 +133,10 @@ object WakeVerifierTrainer {
             // The profile in use: the phone's own (with its numbers in the state file) or,
             // failing that, the one built into the APK, whose numbers count only if it
             // enforces here (another owner's numbers say nothing about this voice).
-            val userId = userId(context)
             val inUse = profileInUse(context)
-            val inUseEnforces = inUse?.optJSONArray("owners")?.let { a ->
-                (0 until a.length()).any { a.optString(it) == "*" || (userId.isNotEmpty() && a.optString(it) == userId) } } ?: false
+            // Enforcing here means: owners allow it AND it was taught on this phone model
+            // (2026-11-26); a profile from another phone neither enforces nor sets the bar.
+            val inUseEnforces = WakeVerifier.load(context, quiet = true)?.enforcesOn(context) == true
             // The numbers of the profile in use: from this phone's training state if it
             // trained it, else from inside the file (one received from another device).
             val keepOld: Float; val stopOld: Float
@@ -159,7 +160,8 @@ object WakeVerifierTrainer {
             val owners = JSONArray().apply { if (enforce) put("*") }
             val json = JSONObject()
                 .put("version", 3)
-                .put("trained", "on this phone $stamp from ${pos.size} real clips vs ${neg.size} own false + ${generic.size} generic negatives")
+                .put("trained", "on ${Build.MODEL} $stamp from ${pos.size} real clips vs ${neg.size} own false + ${generic.size} generic negatives")
+                .put("device", Build.MODEL)   // each phone keeps its own profile (2026-11-26)
                 .put("threshold", threshold.toDouble())
                 .put("mean", JSONArray(model.mean.map { it.toDouble() }))
                 .put("scale", JSONArray(model.scale.map { it.toDouble() }))
@@ -183,9 +185,6 @@ object WakeVerifierTrainer {
             return false
         } finally { busy = false }
     }
-
-    private fun userId(context: Context): String =
-        try { File(context.filesDir, "zynkbot/.zynk_user_id").readText().trim() } catch (_: Exception) { "" }
 
     /** The profile WakeVerifier.load would pick up right now: the phone's file (taught
      *  here or received). Null if there is none or it does not parse. */

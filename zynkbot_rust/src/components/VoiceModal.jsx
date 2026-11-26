@@ -301,6 +301,8 @@ export default function VoiceModal({
                     <div style={mutedStyle}>
                       {collecting
                         ? 'Keep this page open; nothing counts while it is closed. TV off. Move around: facing the phone, facing away, from across the room. Until the twenty are in, "Hey Zynk" only counts; it does not answer.'
+                        : enroll.elsewhere
+                          ? `The voice profile here was taught on another phone (${enroll.device || 'another phone'}), and that phone's microphone sounds different, so "Hey Zynk" is ignored on this one. Teach this phone: say it twenty times.`
                         : done
                           ? 'Done. A "Hey Zynk" that does not sound like you is ignored. It keeps learning as you use it.'
                           : needsAnother
@@ -334,8 +336,9 @@ export default function VoiceModal({
                       across the room. Nothing counts while this page is closed, so take your time.
                     </p>
                     <p style={{ margin: '0 0 10px 0' }}>
-                      When the twenty are in, Zynkbot builds a profile of your voice, keeps learning from
-                      every "Hey Zynk" you use, and sends the profile to your other devices.
+                      When the twenty are in, Zynkbot builds a profile of your voice and keeps learning from
+                      every "Hey Zynk" you use. Each phone is taught separately, because every microphone
+                      sounds a little different.
                     </p>
                     {teachInfo === 'again' && (
                       <p style={{ margin: '0 0 10px 0', color: '#ffb86c' }}>Starting over clears the voice clips already on this phone.</p>

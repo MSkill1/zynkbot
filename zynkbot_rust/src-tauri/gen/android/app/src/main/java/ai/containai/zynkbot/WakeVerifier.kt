@@ -1,5 +1,6 @@
 package ai.containai.zynkbot
 
+import android.os.Build
 import android.content.Context
 import android.util.Log
 import org.json.JSONObject
@@ -21,7 +22,15 @@ class WakeVerifier private constructor(
     private val mean: FloatArray, private val scale: FloatArray,
     private val coef: FloatArray, private val intercept: Float, val threshold: Float, val trained: String,
     private val owners: Set<String>,
+    /** The phone model that taught this profile (2026-11-26). Each phone keeps its own:
+     *  a profile taught on one microphone rejected the owner on another (OnePlus,
+     *  Pixel-taught, 6 of 8 real wakes rejected on 2026-11-26). */
+    val device: String,
 ) {
+    /** True when this file was taught on another phone model: it scores and logs but
+     *  blocks nothing, and the Voice page asks the owner to teach this phone. */
+    val taughtElsewhere: Boolean get() = device.isNotEmpty() && device != Build.MODEL
+
     /** A verifier is personal. "owners" is "*" (whoever holds this file: the phone
      *  wrote it from its owner's clips, or it came through the owner's own account or
      *  backup) or a list of Zynkbot user ids, as older files wrote. The user id is
@@ -30,6 +39,7 @@ class WakeVerifier private constructor(
      *  new device id and the verifier silently stopped enforcing). For anyone else
      *  it scores and logs so labelled clips accumulate, but blocks nothing. */
     fun enforcesOn(context: Context): Boolean {
+        if (taughtElsewhere) return false
         // "*" means "whoever this device belongs to": a verifier trained for one
         // person and delivered to that person's phone (custom build or imported file).
         if (owners.contains("*")) return true
@@ -53,9 +63,25 @@ class WakeVerifier private constructor(
             fun arr(k: String): FloatArray { val a = j.getJSONArray(k); return FloatArray(a.length()) { a.getDouble(it).toFloat() } }
             val owners = mutableSetOf<String>()
             j.optJSONArray("owners")?.let { a -> for (i in 0 until a.length()) owners.add(a.getString(i)) }
+            // Which phone taught it (2026-11-26). A file from before that date has no
+            // "device": if this phone's training state says it trained it, stamp it with
+            // this model and keep going; otherwise it came from another phone.
+            var device = j.optString("device", "")
+            if (device.isEmpty()) {
+                val trainedHere = try {
+                    JSONObject(java.io.File(context.filesDir, "zynkbot/wake-word-models/verifier_training.json").readText()).has("trained")
+                } catch (_: Exception) { false }
+                if (trainedHere) {
+                    device = Build.MODEL
+                    try { local.writeText(j.put("device", device).toString()); WakeLog.i(TAG, "Profile stamped as taught on $device (this phone trained it)") } catch (_: Exception) {}
+                } else {
+                    device = "another phone"
+                }
+            }
             WakeVerifier(arr("mean"), arr("scale"), arr("coef"), j.getDouble("intercept").toFloat(),
-                j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"), owners)
-                .also { if (!quiet) WakeLog.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); enforcing here: ${it.enforcesOn(context)}") }
+                j.optDouble("threshold", 0.3).toFloat(), j.optString("trained", "?"), owners, device)
+                .also { if (!quiet) WakeLog.i(TAG, "Loaded verifier ($source, ${it.coef.size} dims, threshold ${it.threshold}, ${it.trained}); taught on ${it.device}, this phone is ${Build.MODEL}; enforcing here: ${it.enforcesOn(context)}" +
+                    (if (it.taughtElsewhere) " (a profile from another phone blocks nothing here; teach this phone)" else "")) }
         } catch (e: Exception) { WakeLog.w(TAG, "No verifier: ${e.message}"); null }
         }
 

@@ -360,11 +360,11 @@ pub async fn seed_secrets_from_env(pool: &SqlitePool) -> Result<usize, String> {
             held.push((crate::commands::models::BACKUP_KEY_PUSH_NAME.to_string(), hex.trim().to_ascii_lowercase()));
         }
     }
-    // The taught wake-word voice profile travels the same way (2026-11-03); the trainer
-    // on the phone writes the file, this picks it up at the next drain.
-    if let Some(profile) = crate::wake_profile::read_wake_profile() {
-        held.push((crate::wake_profile::WAKE_PROFILE_PUSH_NAME.to_string(), profile));
-    }
+    // The taught wake-word voice profile travelled this way from 2026-11-03 to 2026-11-26.
+    // It no longer does: each phone keeps the profile taught on its own microphone (a
+    // Pixel-taught profile rejected the owner on the OnePlus), and two phones pushing
+    // different files under one name would have replaced each other's at every drain.
+    // The cloud backup still carries the backing-up device's profile, for a reinstall.
     let mut recorded = 0;
     for (name, value) in held {
         let current: Option<String> = sqlx::query_scalar("SELECT value FROM sync_secrets WHERE name = ?")
@@ -960,7 +960,14 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
     if is_backup_key {
         crate::commands::backup::install_pushed_backup_key(&sec.value)?;
     } else if is_wake_profile {
-        crate::wake_profile::install_wake_profile(&sec.value)?;
+        // From a device on an older build. A phone that has a profile keeps its own
+        // (2026-11-26); one without takes it, and the wake service decides whether a
+        // profile taught on another phone model enforces (it does not).
+        if crate::wake_profile::has_wake_profile() {
+            println!("[ZynkSync] voice profile received; this device keeps the one taught here");
+        } else {
+            crate::wake_profile::install_wake_profile(&sec.value)?;
+        }
     } else {
         crate::commands::models::apply_env_key(&sec.name, &sec.value)?;
     }

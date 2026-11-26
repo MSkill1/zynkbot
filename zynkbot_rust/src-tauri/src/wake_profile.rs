@@ -3,11 +3,14 @@
 //! `WakeVerifierTrainer` on Android writes `wake-word-models/hey_zynk_verifier.json`
 //! under the app data folder when the owner has taught it twenty "Hey Zynk"s. Until a
 //! phone holds a profile that enforces, the wake word answers nothing. The profile is
-//! one small JSON file (192 weights), so it travels the way the API keys do: recorded in
-//! `sync_secrets` under [`WAKE_PROFILE_PUSH_NAME`], carried to every paired device by the
-//! outbox, and put in the cloud backup beside the keys. A profile that arrives through the
-//! owner's own account or backup is the owner's, so the phone enforces it as it is.
-//! Nothing is read from it here beyond checking it parses as a profile.
+//! one small JSON file (192 weights). From 2026-11-03 to 2026-11-26 it travelled the way
+//! the API keys do, recorded in `sync_secrets` under [`WAKE_PROFILE_PUSH_NAME`] and
+//! carried to every paired device; since 2026-11-26 each phone keeps the profile taught
+//! on its own microphone (a Pixel-taught profile rejected the owner on the OnePlus), so
+//! the outbox no longer sends it and a device that already has one never takes another.
+//! It is still put in the cloud backup beside the keys, for a reinstall of the same phone;
+//! the file names the phone model that taught it and the wake service enforces it only
+//! there. Nothing is read from it here beyond checking it parses as a profile.
 use std::path::PathBuf;
 
 /// Name under which the profile rides in `sync_secrets` and in the backup's key list.
