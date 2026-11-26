@@ -455,8 +455,6 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
         })
     }).collect();
 
-    pool.close().await;
-
     // The API keys, model choices and search settings this device holds (Matt,
     // 2026-11-02: a fresh install restored from the cloud should come back with its
     // keys). The storage settings and the backup key stay out: both are needed to
@@ -489,11 +487,14 @@ pub async fn backup_memories_to_r2(user_id: String) -> Result<serde_json::Value,
     r2_put(&cfg, "backup.enc", encrypted).await?;
     println!("[Backup] Backed up {} memories, {} links, {} sessions, {} messages, {} keys for user {}",
         count, link_count, session_count, message_count, key_count, user_id);
-    // This device's own record of the backup, for the reminder when the bucket cannot be asked.
-    let _ = sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES ('last_backup_at', ?, datetime('now')) \
+    // This device's own record of the backup, for the reminder when the bucket cannot be
+    // asked. Written before the pool closes: until 2026-11-26 the pool was already closed
+    // here, so both writes failed silently and the reminder never re-armed (code review).
+    if let Err(e) = sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES ('last_backup_at', ?, datetime('now')) \
                          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
-        .bind(Utc::now().to_rfc3339()).execute(&pool).await;
-    let _ = sqlx::query("DELETE FROM app_settings WHERE key = 'backup_reminder_snoozed_until'").execute(&pool).await;
+        .bind(Utc::now().to_rfc3339()).execute(&pool).await { eprintln!("[Backup] could not record last_backup_at: {}", e); }
+    if let Err(e) = sqlx::query("DELETE FROM app_settings WHERE key = 'backup_reminder_snoozed_until'").execute(&pool).await { eprintln!("[Backup] could not clear the snooze: {}", e); }
+    pool.close().await;
     Ok(serde_json::json!({
         "success": true,
         "count": count,
