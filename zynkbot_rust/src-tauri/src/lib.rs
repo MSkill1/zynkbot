@@ -2154,6 +2154,8 @@ pub fn run() {
             commands::knowledge_base::clear_all_kb_documents,
             commands::knowledge_base::search_kb,
             commands::knowledge_base::index_snapin_notes,
+            // Once-a-day version check (2026-11-26)
+            commands::update_check::check_for_update,
             // Web search
             commands::web_search::search_web,
             commands::web_search::execute_web_search,

@@ -489,6 +489,26 @@ export default function App() {
       .then((mode) => { if (mode) setContainmentMode(mode); })
       .catch((e) => console.error('Could not load the containment mode:', e));
   }, []);
+  // Once-a-day version check (Matt, 2026-11-26). The backend reads containai.ai at
+  // most once a day (it keeps the answer); the page asks on every start, twenty
+  // seconds in, when the switch is on and the mode is not HIPAA. The request carries
+  // the version and the platform and nothing else; FEATURES.md and the site say so.
+  const [updateCheckOn, setUpdateCheckOn] = useState(() => {
+    try { return localStorage.getItem('zynkbot_update_check') !== 'off'; } catch (_) { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('zynkbot_update_check', updateCheckOn ? 'on' : 'off'); } catch (_) {}
+  }, [updateCheckOn]);
+  const [updateAvailable, setUpdateAvailable] = useState(null);
+  useEffect(() => {
+    if (!updateCheckOn || containmentMode === 'hipaa') { setUpdateAvailable(null); return; }
+    const t = setTimeout(() => {
+      invoke('check_for_update')
+        .then((r) => setUpdateAvailable(r?.newer ? r : null))
+        .catch((e) => console.warn('Version check:', e));
+    }, 20000);
+    return () => clearTimeout(t);
+  }, [updateCheckOn, containmentMode]);
   // "Report a problem" — opened from the sidebar or a reply's ⚑ button.
   const [showReport, setShowReport] = useState(false);
   const [reportContext, setReportContext] = useState('');
@@ -2288,6 +2308,29 @@ export default function App() {
           subtitle="The Zynkbot guides, on the web"
           onClick={() => openUrl('https://github.com/MSkill1/zynkbot#readme')}
         />
+        {/* The once-a-day version check (2026-11-26): one line when a newer release
+            exists, and the switch under it. */}
+        {updateAvailable && (
+          <ControlsMenuButton
+            icon="⬆️"
+            title={`Zynkbot ${updateAvailable.latest} is available`}
+            subtitle={`You have ${updateAvailable.current}. Tap to get it from containai.ai`}
+            onClick={() => openUrl(updateAvailable.url || 'https://containai.ai/zynkbot/')}
+          />
+        )}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 16px 0', color: '#9aa5c4', fontSize: '0.78rem', lineHeight: 1.45, cursor: containmentMode === 'hipaa' ? 'default' : 'pointer', opacity: containmentMode === 'hipaa' ? 0.6 : 1 }}>
+          <input
+            type="checkbox"
+            checked={updateCheckOn && containmentMode !== 'hipaa'}
+            disabled={containmentMode === 'hipaa'}
+            onChange={(e) => setUpdateCheckOn(e.target.checked)}
+            style={{ marginTop: '2px', accentColor: '#8be9fd' }}
+          />
+          <span>
+            Check containai.ai once a day for a new version. The request says which version and platform you run, nothing else.
+            {containmentMode === 'hipaa' ? ' Off in HIPAA mode.' : ''}
+          </span>
+        </label>
         <div style={{ height: '60px' }} />
 
       </CollapsibleSidebar>

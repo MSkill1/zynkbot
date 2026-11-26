@@ -594,7 +594,7 @@ Native desktop application with OS integration:
 **Core principles:**
 
 1. **Local-first**: All data stays on your device by default
-2. **No telemetry**: Zero tracking or data harvesting
+2. **No telemetry**: no usage analytics, no error reporting, no data harvesting. The one request the app makes on its own is a once-a-day version check (below), with a switch
 3. **Transparent**: See exactly what AI remembers
 4. **User control**: Edit, delete, export all data
 5. **Optional APIs**: Cloud LLMs are opt-in, not required
@@ -610,6 +610,7 @@ Native desktop application with OS integration:
 - Conversation prompts (if using API models like GPT-4, Claude)
 - Web search queries, only when you tap a search (to your model's provider, Brave, your search server or DuckDuckGo)
 - Voice dictation audio (only if using OpenAI Whisper cloud engine — Vosk offline mode sends nothing)
+- A once-a-day version check (2026-11-26): the app reads a small file on containai.ai that names the newest release and tells you when one exists. The request carries the version you run and the platform (Android, Linux, Windows) and nothing else: no identifier, no account, nothing from your data. The site's ordinary server log then shows how many copies of each version are in use, which is all it learns. The switch is in the sidebar, under Help and documentation; off in HIPAA mode.
 
 **What NEVER leaves your device:**
 - Memory database

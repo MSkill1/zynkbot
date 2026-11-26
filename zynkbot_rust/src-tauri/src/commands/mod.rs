@@ -12,6 +12,7 @@ pub mod onboarding;
 pub mod report;
 pub mod safety;
 pub mod sync_codes;
+pub mod update_check;
 pub mod user_identity;
 pub mod utils;
 pub mod web_search;

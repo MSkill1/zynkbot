@@ -42,11 +42,19 @@ object WakeBoot {
     fun modelDir(ctx: Context): String = File(ctx.applicationContext.filesDir, "wake-word-models").absolutePath
     fun setStartOnBoot(ctx: Context, on: Boolean) { prefs(ctx).edit().putBoolean("start_on_boot", on).apply() }
 
-    fun shouldStart(ctx: Context): Boolean = heyZynkEnabled(ctx) && startOnBoot(ctx) && WakeWordService.instance == null
+    /** A service object in state OFF is an empty shell, not a listener: on the OnePlus
+     *  2026-11-26 the process came back after a swipe from Recents with the service
+     *  created but never started (no intent arrived), and "running" here hid it (KI-109). */
+    fun listenerRunning(): Boolean {
+        val s = WakeWordService.instance ?: return false
+        return s.state() != MicState.State.OFF
+    }
+    fun shouldStart(ctx: Context): Boolean = heyZynkEnabled(ctx) && startOnBoot(ctx) && !listenerRunning()
 
     /** Try to start the listener from `reason`; verify in 8 s; notify if it is not up. */
     fun tryStart(ctx: Context, reason: String) {
-        if (!shouldStart(ctx)) { WakeLog.i(TAG, "Boot start ($reason): nothing to do (enabled=${heyZynkEnabled(ctx)}, onBoot=${startOnBoot(ctx)}, running=${WakeWordService.instance != null})"); return }
+        if (!shouldStart(ctx)) { WakeLog.i(TAG, "Boot start ($reason): nothing to do (enabled=${heyZynkEnabled(ctx)}, onBoot=${startOnBoot(ctx)}, running=${listenerRunning()}, state=${WakeWordService.instance?.state()?.name ?: "none"})"); return }
+        if (WakeWordService.instance != null) WakeLog.i(TAG, "Boot start ($reason): the service exists but is OFF (an empty shell after a process restart); starting it properly")
         val app = ctx.applicationContext
         val intent = Intent(app, WakeWordService::class.java).apply {
             putExtra("threshold", threshold(app))
