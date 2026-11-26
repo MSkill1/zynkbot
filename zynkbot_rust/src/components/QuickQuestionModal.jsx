@@ -25,6 +25,12 @@ export default function QuickQuestionModal({ isOpen, onClose, userId, backend, c
   const textareaRef = useRef(null);
   const sessionId = QUICK_SESSION_PREFIX + userId;
 
+  // The latest onClose and loading flag, read through refs so the effect below runs
+  // once per open: with them in its dependency list it re-ran on every App render and
+  // re-focused the box, which on the phone popped the keyboard back up while the user
+  // was reading an earlier answer (code review, 2026-11-26).
+  const onCloseRef = useRef(onClose); onCloseRef.current = onClose;
+  const isLoadingRef = useRef(isLoading); isLoadingRef.current = isLoading;
   useEffect(() => {
     if (!isOpen) {
       // Closed: the next open is a fresh box (Matt, 2026-11-12, Pixel). The exchange
@@ -33,10 +39,10 @@ export default function QuickQuestionModal({ isOpen, onClose, userId, backend, c
       return;
     }
     const t = setTimeout(() => textareaRef.current?.focus(), 50);
-    const onKey = (e) => { if (e.key === 'Escape' && !isLoading) onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape' && !isLoadingRef.current) onCloseRef.current(); };
     window.addEventListener('keydown', onKey);
     return () => { clearTimeout(t); window.removeEventListener('keydown', onKey); };
-  }, [isOpen, isLoading, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
