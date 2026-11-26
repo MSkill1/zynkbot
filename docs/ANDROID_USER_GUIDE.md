@@ -85,7 +85,7 @@ Alarms. "Set an alarm for 7 30 AM", "alarm at 6", "wake me up at 7 15", "set an 
 
 Stopwatch. "Start stopwatch", "stop stopwatch" (keeps the time; "start stopwatch" again continues), "reset stopwatch", "check stopwatch" or "check stopwatch time".
 
-When it rings. Say "Hey Zynk" (any wake stops the ring; whether the phone hears you over its own alarm tone depends on its echo cancelling), tap the big orange Stop button that appears above the message box, or tap Stop on the notification. Left alone it stops after 30 seconds.
+When it rings. Tap the big orange Stop button that appears above the message box, or tap Stop on the notification. "Hey Zynk" cannot be heard over the ring (the phone's own alarm tone masks it), so stopping it is a tap. Left alone it stops after 30 seconds.
 
 Punctuation from the cloud dictation ("Stop, stopwatch.", "7.30 a.m.") is handled.
 

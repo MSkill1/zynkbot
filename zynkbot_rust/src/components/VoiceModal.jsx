@@ -98,7 +98,7 @@ const FLAT_COMMANDS = [
   { cmd: '"Set a timer for 10 minutes"', desc: 'Zynkbot\'s own timer: it rings and tells you with the phone asleep or the app closed. Any duration in seconds, minutes or hours. Set as many as you like; each shows above the message box.' },
   { cmd: '"Stop timer" / "Cancel timer"', desc: 'Cancels the timer. With several running it names them; say "cancel the 10 minute timer".' },
   { cmd: '"Check timer"', desc: 'Says how much time is left on each. "How much time is left" works too.' },
-  { cmd: 'When it rings', desc: 'Say "Hey Zynk", tap Stop on the notification, or tap Stop in the app. It rings for 30 seconds, then stops on its own.' },
+  { cmd: 'When it rings', desc: 'Tap Stop on the notification, or tap Stop in the app. "Hey Zynk" cannot be heard over the ring. It rings for 30 seconds, then stops on its own.' },
   { cmd: '"Set an alarm for 7:30 AM"', desc: 'Zynkbot\'s own alarm, same as the timer. If Zynkbot is not allowed exact alarms on this phone, the clock app takes it instead. Without am or pm it is the next 7:30 to come. "Wake me up at 7:30" works too. Alarms are on the phone only.' },
   { cmd: '"Cancel alarm"', desc: 'Removes the alarm. With several set it names them; say "cancel the 7 30 alarm".' },
   { cmd: '"Check alarms"', desc: 'Says which alarms are set. "What alarms" works too.' },

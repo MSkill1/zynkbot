@@ -58,6 +58,7 @@
 /* Controls */
 .modal-controls {
   display: flex;
+  flex-wrap: wrap;   /* Refresh drops to a second line instead of running off the card (Matt, 2026-11-26) */
   gap: 10px;
   padding: 15px 20px;
   border-bottom: 1px solid #44475a;

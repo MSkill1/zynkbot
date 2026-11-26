@@ -67,25 +67,43 @@
   padding: 12px;
   z-index: 1000;
 }
+/* The card clips its contents to its rounded corners and the body scrolls inside it
+   (2026-11-26, Matt, Linux desktop): when the card itself scrolled, the scrollbar ran
+   the full height with square ends over the rounded frame, and a wide body (the
+   Memory Manager's filter row) added a horizontal one. The scrollbar is also drawn
+   thin and rounded where the engine allows. */
 .controls-page {
   width: 100%;
   max-width: 560px;
   max-height: 92vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #282a36;
   border-radius: 14px;
   border: 2px solid #44475a;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
   box-sizing: border-box;
 }
+.controls-page-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #44475a transparent;
+}
+.controls-page-body::-webkit-scrollbar { width: 10px; height: 10px; }
+.controls-page-body::-webkit-scrollbar-track { background: transparent; }
+.controls-page-body::-webkit-scrollbar-thumb { background: #44475a; border-radius: 6px; border: 2px solid #282a36; }
+.controls-page-body::-webkit-scrollbar-thumb:hover { background: #6272a4; }
 .controls-page-head {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
   border-bottom: 2px solid #44475a;
-  position: sticky;
-  top: 0;
+  flex-shrink: 0;
   background: #282a36;
   z-index: 1;
 }
@@ -105,7 +123,7 @@
   flex-shrink: 0;
 }
 .controls-page-close:hover { background: #44475a; }
-.controls-page-body { padding: 14px 16px 18px; }
+.controls-page-body { padding: 14px 16px 18px; box-sizing: border-box; }
 .controls-page-body > * { max-width: 100%; box-sizing: border-box; }
 
 /* The size variants (ui-redo, 2026-11-18): a small window stays a short centred card

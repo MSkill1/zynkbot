@@ -126,34 +126,32 @@
    instead of on a row of their own under the text; a row per message made every
    exchange about 60 px taller than the early UI. Phones keep the row below, where it
    stopped landing on top of short replies (2026-09-07). The grid places the name
-   and the buttons on row 1 and everything else full-width below them. */
+   and the buttons on row 1 and everything else full-width below them.
+   2026-11-26 (Matt, on trial): only the user's own messages keep the buttons on the
+   "You:" line; Zynkbot's replies get the row back under the text, because Copy and
+   Regenerate are what you do after reading, and the eye is at the bottom then. */
 @media (min-width: 769px) {
-  .message-user,
-  .message-bot {
+  .message-user {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     column-gap: 8px;
     align-items: center;
   }
-  .message-user > *,
-  .message-bot > * {
+  .message-user > * {
     grid-column: 1 / -1;
     min-width: 0;
   }
-  .message-user > .message-header,
-  .message-bot > .message-header {
+  .message-user > .message-header {
     grid-column: 1;
     grid-row: 1;
     margin-bottom: 0;
   }
-  .message-user > .message-action-row,
-  .message-bot > .message-action-row {
+  .message-user > .message-action-row {
     grid-column: 2;
     grid-row: 1;
     margin-top: 0;
   }
-  .message-user > .message-content,
-  .message-bot > .message-content {
+  .message-user > .message-content {
     margin-top: 4px;
   }
 }
