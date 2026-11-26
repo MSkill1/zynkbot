@@ -593,7 +593,7 @@ pub(crate) async fn ask_llm_for_links_only(
 ) -> Result<Vec<RelationshipClassification>, String> {
     if similar_memories.is_empty() { return Ok(Vec::new()); }
     let prompt = links_only_prompt(extracted_fact, similar_memories);
-    let response = if backend.ends_with(".gguf") || backend == "local" {
+    let response = if commands::chat::is_local_backend(backend) {
         call_local_for_memory_decision(&prompt, backend, Some(LINKS_SCHEMA)).await?
     } else {
         call_backend_with_prompt(&prompt, backend).await?
@@ -933,7 +933,7 @@ async fn call_custom_for_memory_decision(prompt: &str) -> Result<String, String>
 #[allow(dead_code)]
 pub(crate) async fn call_backend_with_prompt(prompt: &str, backend: &str) -> Result<String, String> {
     // The local test comes first: a local model's string is its file path.
-    if backend.ends_with(".gguf") || backend == "local" { call_local_for_memory_decision(prompt, backend, None).await }
+    if commands::chat::is_local_backend(backend) { call_local_for_memory_decision(prompt, backend, None).await }
     else if backend.contains("anthropic") { call_anthropic_for_memory_decision(prompt).await }
     else if backend.contains("openai") { call_openai_for_memory_decision(prompt).await }
     else if backend.contains("xai") { call_xai_for_memory_decision(prompt).await }
@@ -946,7 +946,7 @@ pub(crate) async fn call_backend_with_prompt(prompt: &str, backend: &str) -> Res
 /// decoding); cloud models get the prompt as is. The memory bench's call 2 goes through here.
 #[allow(dead_code)]
 pub(crate) async fn call_backend_with_schema(prompt: &str, backend: &str, schema: &'static str) -> Result<String, String> {
-    if backend.ends_with(".gguf") || backend == "local" { call_local_for_memory_decision(prompt, backend, Some(schema)).await }
+    if commands::chat::is_local_backend(backend) { call_local_for_memory_decision(prompt, backend, Some(schema)).await }
     else { call_backend_with_prompt(prompt, backend).await }
 }
 
@@ -1071,7 +1071,7 @@ Respond with ONLY valid JSON, no markdown, starting with {{:
   "entities": [{{"name": "Vermont", "kind": "place"}}]
 }}"#
     );
-    let response = if backend.ends_with(".gguf") || backend == "local" {
+    let response = if commands::chat::is_local_backend(backend) {
         call_local_for_memory_decision(&prompt, backend, Some(EXTRAS_SCHEMA)).await?
     } else if backend.contains("anthropic") {
         call_anthropic_for_memory_decision(&prompt).await?

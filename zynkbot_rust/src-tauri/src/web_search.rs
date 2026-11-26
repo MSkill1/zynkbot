@@ -302,7 +302,7 @@ pub fn engine_for_with(backend: Option<&str>, lookup: impl Fn(&str) -> Option<St
     let backend = backend.unwrap_or("").to_lowercase();
     // A local model's backend string is its file path; "grok" or "mistral" in the path
     // must not pick that provider's search.
-    let local = backend.ends_with(".gguf") || backend.contains("local");
+    let local = crate::commands::chat::is_local_backend(&backend);
     if forced.is_none() && !local {
         if backend == "anthropic" && setting("ANTHROPIC_API_KEY").is_some() { return Engine::Anthropic; }
         if backend == "openai" && setting("OPENAI_API_KEY").is_some() { return Engine::OpenAI; }

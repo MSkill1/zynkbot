@@ -306,7 +306,7 @@ fn resolve_voice_backend() -> Option<String> {
         let p = pref.to_lowercase();
         // The local test comes first: a local model's string is its file path, which can
         // contain a provider's name.
-        let usable = if p.contains("local") || p.ends_with(".gguf") {
+        let usable = if crate::commands::chat::is_local_backend(p) {
                 crate::llm::local_models::resolve_default_model_path().is_ok()
             }
             else if p.contains("anthropic") || p.contains("claude") { has("ANTHROPIC_API_KEY") }

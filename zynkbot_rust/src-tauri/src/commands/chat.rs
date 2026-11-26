@@ -28,6 +28,9 @@ async fn build_custom_client(base_url: &str) -> reqwest::Client {
 /// full file path, so it must be tested before any provider word: a path with "claude",
 /// "gpt" or "mistral" in it was answered by that provider while the page said the local
 /// model was in use (found 2026-11-10).
+/// The one test for "is this backend a local model" (code review, 2026-11-26: it was
+/// written four times with two meanings; lib.rs took only the exact word "local").
+/// A local model's backend string is its file path, or the word "local".
 pub(crate) fn is_local_backend(backend: &str) -> bool {
     backend.ends_with(".gguf") || backend.to_lowercase().contains("local")
 }
@@ -687,7 +690,7 @@ pub async fn generate_reply(
         // On-device model (2026-10-22): four chunks, not ten. Ten chunks were 5,649
         // characters, and with the rest of the prompt that was 4,212 tokens in a 4K
         // window: "Prompt too long" instead of an answer.
-        let on_device = forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local");
+        let on_device = is_local_backend(&forced_backend);
         let kb_chunk_limit = if on_device { 4 } else { 10 };
         let kb_similarity_threshold = 0.15;
         let kb_weak_limit = if on_device { 2 } else { 5 };
@@ -754,7 +757,7 @@ pub async fn generate_reply(
 
     // STEP 5: Build prompt using conversation engine
     let engine = ConversationEngine::new()
-        .with_on_device(forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local"));
+        .with_on_device(is_local_backend(&forced_backend));
 
     // Convert conversation history to conversation engine format
     let engine_history: Option<Vec<crate::conversation_engine::ConversationTurn>> = conversation_history.as_ref().map(|hist| {
@@ -1122,7 +1125,7 @@ pub async fn generate_reply(
         ).await.map_err(|e| format!("Custom endpoint error: {} — is Ollama running?", e))?;
         response.content
 
-    } else if forced_backend.to_lowercase().contains("local") || forced_backend.ends_with(".gguf") {
+    } else if is_local_backend(&forced_backend) {
         if image_data.is_some() {
             return Err("This local model can't read pictures. Switch to a cloud model (Claude, OpenAI, Grok or Mistral) for this question.".to_string());
         }
@@ -1657,7 +1660,7 @@ pub async fn generate_reply(
     let rewrite_request = !is_explicit_remember && crate::memory_extras::is_rewrite_request(&query);
     if rewrite_request { println!("[RUST] Translate/rewrite request: no memory extraction for this message"); }
     let memory_gate_passed = is_explicit_remember || (engine.is_memory_worthy(&query) && !rewrite_request);
-    let on_device_flow = forced_backend.ends_with(".gguf") || forced_backend.to_lowercase().contains("local");
+    let on_device_flow = is_local_backend(&forced_backend);
     // Call 1's answer. Cloud and custom: the MEMORY line, or an old-style fact line, says
     // yes; no line at all means no memory. On-device: no marker is asked for, so every
     // non-trivial message goes to call 2, which decides (an explicit "no" is honoured).
@@ -2732,7 +2735,7 @@ fn recent_turns_text(history: Option<&[ConversationTurn]>) -> Option<String> {
 pub(crate) async fn extract_facts(bg: &MemoryBg) -> Result<Vec<crate::memory_prompts::ExtractedFact>, String> {
     let subject = bg.bg_user_name.clone().unwrap_or_else(|| "User".to_string());
     let today = chrono::Local::now().date_naive();
-    let on_device = bg.bg_forced_backend.ends_with(".gguf") || bg.bg_forced_backend.to_lowercase().contains("local");
+    let on_device = is_local_backend(&bg.bg_forced_backend);
     let prompt = crate::memory_prompts::extraction_prompt_with(&bg.bg_message, &subject, bg.bg_recent_turns.as_deref(), today, on_device);
     let schema = if on_device { crate::memory_prompts::EXTRACTION_SCHEMA_SLIM } else { crate::memory_prompts::EXTRACTION_SCHEMA };
     let text = crate::call_backend_with_schema(&prompt, &bg.bg_forced_backend, schema).await
@@ -2940,7 +2943,7 @@ pub(crate) async fn run_memory_background(bg: MemoryBg, fact: crate::memory_prom
             // ("Remember:" skips call 2, so its title comes from here). On-device links go
             // through the floor and the dropped-types list (lib.rs LOCAL_LINK_CONFIDENCE_FLOOR /
             // LOCAL_DROPPED_LINK_TYPES, memory bench 2026-10-22/23) and are tagged "local_llm".
-            let bg_on_device = bg_forced_backend.ends_with(".gguf") || bg_forced_backend.to_lowercase().contains("local");
+            let bg_on_device = is_local_backend(&bg_forced_backend);
             let link_created_by = if bg_on_device { "local_llm" } else { "llm" };
             // The phone stores the fact first and asks for its links after (Matt, 2026-11-09):
             // on the Pixel the reply, the fact call and the links call took two minutes and
