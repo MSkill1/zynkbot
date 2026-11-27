@@ -437,6 +437,48 @@ static BACKEND: Lazy<LlamaBackend> = Lazy::new(|| {
 
 static MODEL_CACHE: Lazy<Mutex<Option<LocalModelSession>>> = Lazy::new(|| Mutex::new(None));
 
+// ── unload when idle (2026-11-27) ────────────────────────────────────────────
+// The loaded model is the largest thing in the process (2 to 3 GB for a 4B model).
+// Kept for ever it costs a phone its other apps and makes Android more likely to kill
+// Zynkbot in the background, where the wake-word listener lives. After a stretch with
+// no local-model call the session is dropped; the next call loads it again (a few
+// seconds) and reads its prompt in full, since the kept context goes with it. Shorter
+// on the phone, where memory is tight, than on the desktop.
+
+/// Idle time after which the model is unloaded.
+#[cfg(target_os = "android")]
+pub const IDLE_UNLOAD_SECS: u64 = 10 * 60;
+#[cfg(not(target_os = "android"))]
+pub const IDLE_UNLOAD_SECS: u64 = 30 * 60;
+
+/// When the cached session was last used (or loaded).
+static LAST_USED: Lazy<Mutex<std::time::Instant>> = Lazy::new(|| Mutex::new(std::time::Instant::now()));
+static UNLOADER_STARTED: std::sync::Once = std::sync::Once::new();
+
+/// Drop the cached session if it has been idle for `idle` and no foreground turn is
+/// waiting for it. Never blocks on a call in progress. Returns true when it unloaded.
+pub fn unload_if_idle(idle: std::time::Duration) -> bool {
+    let Ok(mut cache) = MODEL_CACHE.try_lock() else { return false };
+    if cache.is_none() { return false; }
+    if FOREGROUND_WAITING.load(std::sync::atomic::Ordering::SeqCst) > 0 { return false; }
+    let since = LAST_USED.lock().unwrap_or_else(|e| e.into_inner()).elapsed();
+    if since < idle { return false; }
+    let path = cache.as_ref().map(|s| s.model_path.clone()).unwrap_or_default();
+    *cache = None;
+    println!("[Rust Local Models] Unloaded {} after {} min without a call", path, since.as_secs() / 60);
+    true
+}
+
+/// Start the thread that checks once a minute; started with the first model load.
+fn start_idle_unloader() {
+    UNLOADER_STARTED.call_once(|| {
+        std::thread::Builder::new().name("local-model-idle".into()).spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            unload_if_idle(std::time::Duration::from_secs(IDLE_UNLOAD_SECS));
+        }).ok();
+    });
+}
+
 /// Run `f` with a cached `LocalModelSession` for `model_path`.
 /// Loads the model on first call or when the path changes; reuses otherwise.
 pub fn with_cached_session<F, R>(model_path: &str, f: F) -> Result<R, LLMError>
@@ -453,8 +495,12 @@ where
             println!("[Rust Local Models] Model changed — unloading previous model");
         }
         *cache = Some(LocalModelSession::load(model_path)?);
+        start_idle_unloader();
     }
-    f(cache.as_ref().unwrap())
+    *LAST_USED.lock().unwrap_or_else(|e| e.into_inner()) = std::time::Instant::now();
+    let result = f(cache.as_ref().unwrap());
+    *LAST_USED.lock().unwrap_or_else(|e| e.into_inner()) = std::time::Instant::now();
+    result
 }
 
 /// Resolve which local model to use when the caller didn't name one explicitly.
@@ -1112,5 +1158,21 @@ mod kept_context_tests {
         assert_eq!(reuse_count(&[], &t(&[1, 2])), 0);
         assert_eq!(reuse_count(&t(&[5, 6]), &t(&[1, 2])), 0);
         assert_eq!(reuse_count(&t(&[1]), &[]), 0);
+    }
+}
+
+#[cfg(test)]
+mod idle_unload_tests {
+    use super::*;
+
+    /// With nothing loaded the check is a no-op and never touches the lock for long.
+    #[test]
+    fn nothing_loaded_nothing_unloaded() {
+        assert!(!unload_if_idle(std::time::Duration::from_secs(0)));
+    }
+
+    #[test]
+    fn idle_limits_are_minutes_not_seconds() {
+        assert!(IDLE_UNLOAD_SECS >= 5 * 60, "an unload after seconds would reload on every turn");
     }
 }
