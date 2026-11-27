@@ -756,6 +756,9 @@ pub async fn generate_reply(
         }
     }
 
+    // The kits that are on: their instructions, answers and current items (kits.rs).
+    let kit_block = if lean_editing { None } else { crate::kits::prompt_block(&db_pool, &user_id).await };
+
     // Close database connection
     db_pool.close().await;
 
@@ -832,6 +835,11 @@ pub async fn generate_reply(
     // The conversation mode's block goes in front of everything (2026-10-28).
     if let Some(b) = crate::chat_modes::block(mode.as_deref()).filter(|_| !lean_editing) {
         println!("[Mode] {}", mode.as_deref().unwrap_or(""));
+        full_prompt = format!("{}\n\n{}", b, full_prompt);
+    }
+    // Then the kits' block (2026-11-27), in front of the mode's.
+    if let Some(b) = &kit_block {
+        println!("[Kits] block of {} chars in front of the prompt", b.len());
         full_prompt = format!("{}\n\n{}", b, full_prompt);
     }
 
@@ -1561,6 +1569,22 @@ pub async fn generate_reply(
     let picture_note = if image_data.is_some() { take_picture_line(&mut final_reply_text) } else { None };
     if let Some(ref n) = picture_note { println!("[Picture] note kept with the message: {}", n); }
 
+    // A kit's action lines (kits.rs): off the reply, onto the list. A turn that changed a
+    // list is not also sent through the memory extractor: the item is the memory.
+    let kit_actions = if kit_block.is_some() { crate::kits::take_actions(&mut final_reply_text) } else { Vec::new() };
+    let kit_acted = !kit_actions.is_empty();
+    if kit_acted {
+        match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
+            Ok(pool) => {
+                for line in crate::kits::apply_actions(&pool, &user_id, &kit_actions).await { println!("[Kits] {}", line); }
+                pool.close().await;
+                let kits: Vec<&str> = kit_actions.iter().map(|a| a.kit.as_str()).collect();
+                sink.event("kit-items-changed", serde_json::json!({ "kits": kits }));
+            }
+            Err(e) => println!("[Kits] could not open the database to apply {} action(s): {}", kit_actions.len(), e),
+        }
+    }
+
     println!("[⏱️ PERF] Total request time: {:.2}s", request_start.elapsed().as_secs_f32());
 
     // Pages the model read for this answer, else what the caller searched (0028).
@@ -1644,7 +1668,8 @@ pub async fn generate_reply(
     let effective_skip_memory = skip_memory_storage.unwrap_or(false)
         || hipaa_ephemeral_enforcement
         || kb_ungrounded_reply
-        || mode_keeps_nothing;
+        || mode_keeps_nothing
+        || kit_acted;
 
     if mode_keeps_nothing {
         println!("[Mode] {}: nothing is learned about the user from this message", mode.as_deref().unwrap_or("").trim().to_lowercase());

@@ -483,7 +483,7 @@ object NativeVoiceAnswerer {
         }
 
         companion object {
-            private val MARKERS = listOf("MEMORY_EXTRACT", "WEB_SEARCH_NEEDED")
+            private val MARKERS = listOf("MEMORY_EXTRACT", "WEB_SEARCH_NEEDED", "[kit:")   // a kit's action lines end the spoken part (2026-11-27)
         }
     }
 }

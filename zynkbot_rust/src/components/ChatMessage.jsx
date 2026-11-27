@@ -33,6 +33,11 @@ export default function ChatMessage({ message, metadata, onExecuteWebSearch, ses
   if (images.length > 0 && typeof content === 'string') {
     content = content.replace(/\n?\[Picture:[^\]]*\]\s*/g, '').trim();
   }
+  // A kit's action lines ("[kit:grocery add | milk | dairy]") are taken off the stored
+  // reply by the backend; while the reply streams they are hidden here (2026-11-27).
+  if (typeof content === 'string' && content.includes('[kit:')) {
+    content = content.replace(/\n?\**\[kit:[^\]\n]*(\]|$)\**\s*/g, '').trim();
+  }
   const saveToGallery = (img) => {
     if (!window.AndroidPaths?.saveImageBase64ToGallery) return;
     if (!window.confirm('Save this picture to the gallery (Pictures/Zynkbot)?')) return;

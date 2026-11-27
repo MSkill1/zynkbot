@@ -1,0 +1,20 @@
+{
+  "id": "kitchen",
+  "name": "Kitchen",
+  "version": 1,
+  "icon": "🍳",
+  "tagline": "Remembers what you cook and what you like. Helps you plan the next meal.",
+  "namespace": "kitchen",
+  "instructions": "The user is using Zynkbot to plan and track what they cook and eat. When they describe a meal or a recipe, remember it with today's date, the dish, how it turned out, and any quantities they state (for example carbohydrates, calories, servings). When they ask what to cook, suggest dishes that fit any way of eating they have told you about, prefer what they have liked, avoid ingredients they have refused or are allergic to, and say why you chose it in one line. When they ask how they are doing, summarise the current week from their logged meals in plain words. Never comment on their weight or body. Keep answers short.",
+  "questions": [
+    { "id": "diet", "text": "Are you following a way of eating right now? (keto, low-carb, vegetarian, none, something else)" },
+    { "id": "refuse", "text": "Any foods you just won't eat?" },
+    { "id": "allergies", "text": "Any allergies or intolerances?" },
+    { "id": "household", "text": "How many people do you usually cook for?" }
+  ],
+  "prompts": [
+    { "label": "What can I make tonight?", "text": "What can I make tonight from what I usually have, that fits how I'm eating?" },
+    { "label": "Log what I just ate", "text": "Remember: I just ate " },
+    { "label": "How am I doing this week?", "text": "How am I doing this week against how I said I want to eat?" }
+  ]
+}

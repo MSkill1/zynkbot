@@ -11,10 +11,10 @@ use chrono::{Datelike, NaiveDate};
 
 /// Namespaces the UI knows how to show. Anything else the model proposes is
 /// replaced by the caller's fallback (the NLP enhancer's guess).
-pub const CANONICAL_NAMESPACES: [&str; 15] = [
+pub const CANONICAL_NAMESPACES: [&str; 16] = [
     "personal", "work", "career", "health", "family", "education", "technology",
     "science", "philosophy", "politics", "travel", "achievements", "biography",
-    "kitchen", "hobbies",
+    "kitchen", "hobbies", "grocery",
 ];
 
 /// One named thing in a memory, as the model reports it.

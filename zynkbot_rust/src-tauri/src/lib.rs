@@ -100,6 +100,7 @@ mod web_read;   // a page the user points at, read for the prompt (2026-10-27)
 mod conversation_history;  // Persistent conversation log with full-text search
 mod seal;  // a seal the user makes: one thread as a signed file (2026-10-27)
 mod chat_modes;  // a mode's block in front of the prompt (2026-10-28)
+pub mod kits;  // opt-in kits: a block in front of the prompt, items as memories (2026-11-27)
 pub mod sync_outbox;  // the ZynkSync outbox: drain and receive (step 2)
 mod db;  // Database connection pool
 mod tls; // TLS certificate management for ZynkSync/ZynkLink/ZChat
@@ -2136,6 +2137,13 @@ pub fn run() {
             commands::checkin::next_memory_checkin,
             commands::checkin::answer_memory_checkin,
             commands::checkin::get_checkin_enabled,
+            commands::kits::list_kits,
+            commands::kits::set_kit_enabled,
+            commands::kits::kit_items,
+            commands::kits::kit_add_item,
+            commands::kits::kit_set_item_state,
+            commands::kits::kit_remove_item,
+            commands::kits::forget_kit,
             commands::checkin::set_checkin_enabled,
             commands::zynklink::get_linked_devices,
             // External file/folder opening + Knowledge Base
