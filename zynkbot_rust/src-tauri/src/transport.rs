@@ -121,6 +121,26 @@ async fn bind_with_reuseaddr(addr: SocketAddr, port: u16) -> Result<TcpListener,
     Err(last_err.unwrap_or_else(|| "bind failed".to_string()))
 }
 
+// ── leaving an unreachable peer alone (2026-11-27) ───────────────────────────
+// With a partner off (the closed laptop, a phone out of the house) the heartbeat tried
+// it every 15 s and the sync loop built it a 300-row slice every few minutes, all night,
+// for nothing: 409 failed attempts on the OnePlus between 21:00 and 08:00 on 26/27
+// November. Each failure now doubles the wait before the next try, up to a cap, and the
+// first sign of life from the peer (it reaches us, or answers a ping) clears the wait.
+
+/// Failed attempts in a row and the moment the next one is allowed.
+#[derive(Debug, Clone, Copy)]
+pub struct PeerBackoff {
+    pub fails: u32,
+    pub until: DateTime<Utc>,
+}
+
+/// Seconds to wait after `fails` failures in a row: `base`, doubling, capped at `max`.
+pub fn backoff_secs(fails: u32, base: u64, max: u64) -> u64 {
+    let doubled = base.saturating_mul(1u64 << fails.min(20));
+    doubled.min(max)
+}
+
 /// The shared peer-to-peer layer for one device.
 pub struct Transport {
     identity: std::sync::RwLock<SyncIdentity>,
@@ -141,6 +161,9 @@ pub struct Transport {
     pub(crate) peer_last_synced: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
     /// Debounce for connection-error logging per peer.
     pub(crate) last_conn_error_logged: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
+    /// Per peer: how many connection attempts in a row have failed, and until when the
+    /// loops leave it alone. Cleared the moment the peer reaches us or answers.
+    pub(crate) peer_backoff: Arc<RwLock<HashMap<String, PeerBackoff>>>,
     /// Per peer: the last candidate address (host:port) that did not answer as that peer,
     /// and when it was tried; the same candidate is not probed again for ten minutes (KI-105).
     pub(crate) address_probe_failed: Arc<RwLock<HashMap<String, (String, DateTime<Utc>)>>>,
@@ -154,6 +177,26 @@ pub struct Transport {
 }
 
 impl Transport {
+    /// True while the loops should leave `device_id` alone.
+    pub(crate) async fn backoff_active(&self, device_id: &str) -> bool {
+        self.peer_backoff.read().await.get(device_id).map_or(false, |b| b.until > Utc::now())
+    }
+
+    /// One more failed attempt: wait `base` seconds, doubling per failure, at most `max`.
+    /// Returns the wait chosen.
+    pub(crate) async fn backoff_note_failure(&self, device_id: &str, base: u64, max: u64) -> u64 {
+        let mut map = self.peer_backoff.write().await;
+        let fails = map.get(device_id).map_or(0, |b| b.fails) + 1;
+        let secs = backoff_secs(fails - 1, base, max);
+        map.insert(device_id.to_string(), PeerBackoff { fails, until: Utc::now() + chrono::Duration::seconds(secs as i64) });
+        secs
+    }
+
+    /// The peer answered: forget its failures.
+    pub(crate) async fn backoff_clear(&self, device_id: &str) {
+        self.peer_backoff.write().await.remove(device_id);
+    }
+
     pub fn new(identity: SyncIdentity, port: Option<u16>, db_pool: SqlitePool, cert_pem: String, key_pem: String, cert_der: Vec<u8>) -> Self {
         Self {
             identity: std::sync::RwLock::new(identity),
@@ -165,6 +208,7 @@ impl Transport {
             peer_last_seen: Arc::new(RwLock::new(HashMap::new())),
             peer_last_synced: Arc::new(RwLock::new(HashMap::new())),
             last_conn_error_logged: Arc::new(RwLock::new(HashMap::new())),
+            peer_backoff: Arc::new(RwLock::new(HashMap::new())),
             address_probe_failed: Arc::new(RwLock::new(HashMap::new())),
             failed_pairing_attempts: Arc::new(RwLock::new(HashMap::new())),
             pairing_code: Arc::new(RwLock::new(None)),
@@ -562,6 +606,7 @@ pub async fn inject_verified_device(
                                 println!("[ZynkSync] {} reached us from {}:{} but that address {}; keeping its known address", device_name, ip_to_store, port_to_store, reason);
                             }
                             transport.last_conn_error_logged.write().await.remove(&device_id);
+                            transport.peer_backoff.write().await.remove(&device_id);
                             req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
                             return next.run(req).await;
                         }
@@ -584,6 +629,7 @@ pub async fn inject_verified_device(
                 // re-stamped it, and the skip also applied inside the pull it was serving —
                 // so a device that called us every minute received nothing for hours.
                 transport.last_conn_error_logged.write().await.remove(&device_id);
+                transport.peer_backoff.write().await.remove(&device_id);
                 req.extensions_mut().insert(VerifiedDevice { device_id, device_name });
             }
         }
@@ -632,5 +678,22 @@ mod tests {
         assert_eq!(split_host_port(" 10.0.0.2:1 ", DEFAULT_SYNC_PORT), ("10.0.0.2".into(), 1));
         assert_eq!(split_host_port("10.0.0.2:notaport", DEFAULT_SYNC_PORT), ("10.0.0.2:notaport".into(), 57963));
         assert_eq!(extract_host_port("https://192.168.0.5:57963/api/x"), Some(("192.168.0.5".into(), 57963)));
+    }
+}
+
+#[cfg(test)]
+mod backoff_tests {
+    use super::backoff_secs;
+
+    #[test]
+    fn doubles_from_the_base_and_stops_at_the_cap() {
+        assert_eq!(backoff_secs(0, 15, 120), 15);
+        assert_eq!(backoff_secs(1, 15, 120), 30);
+        assert_eq!(backoff_secs(2, 15, 120), 60);
+        assert_eq!(backoff_secs(3, 15, 120), 120);
+        assert_eq!(backoff_secs(9, 15, 120), 120);
+        assert_eq!(backoff_secs(0, 60, 600), 60);
+        assert_eq!(backoff_secs(4, 60, 600), 600);
+        assert_eq!(backoff_secs(60, 60, 600), 600, "a huge count must not overflow");
     }
 }

@@ -41,6 +41,12 @@ pub const OUTBOX_SETTLE_MAX_SECS: u64 = 6;
 /// Pause between the slices of a first contact, and the most slices one cycle runs.
 pub const FULL_SEND_SLICE_PAUSE_SECS: u64 = 1;
 pub const FULL_SEND_MAX_ROUNDS: usize = 200;
+/// Heartbeat to a silent peer: 15 s, doubling per failure, at most two minutes.
+const HEARTBEAT_BACKOFF_BASE_SECS: u64 = 15;
+const HEARTBEAT_BACKOFF_MAX_SECS: u64 = 120;
+/// Sync with an unreachable peer: a minute, doubling per failure, at most ten minutes.
+const SYNC_BACKOFF_BASE_SECS: u64 = 60;
+const SYNC_BACKOFF_MAX_SECS: u64 = 600;
 use crate::transport::Transport;
 
 
@@ -1215,6 +1221,9 @@ impl ZynkSyncService {
 
             for peer in peers {
                 if !peer.paired { continue; }
+                // A peer that has not answered is pinged less and less often (15 s doubling
+                // to two minutes); its own heartbeat reaching us clears that at once.
+                if self.transport.backoff_active(&peer.device_id).await { continue; }
                 let url = format!("https://{}:{}/api/presence/heartbeat", peer.host, peer.port);
                 let body = serde_json::json!({ "device_id": device_id });
                 let client = self.transport.http_client.read().await.clone();
@@ -1225,12 +1234,15 @@ impl ZynkSyncService {
                     .send()
                     .await;
                 if result.is_ok() {
+                    self.transport.backoff_clear(&peer.device_id).await;
                     {
                         let mut map = self.transport.peer_last_seen.write().await;
                         map.insert(peer.device_id.clone(), Utc::now());
                     }
                     // Deliver any cascade-remove notifications that failed when peer was offline
                     self.flush_pending_removals_for_peer(&peer.device_id, &peer.host).await;
+                } else {
+                    self.transport.backoff_note_failure(&peer.device_id, HEARTBEAT_BACKOFF_BASE_SECS, HEARTBEAT_BACKOFF_MAX_SECS).await;
                 }
             }
         }
@@ -1341,6 +1353,10 @@ impl ZynkSyncService {
 
             // Bidirectional sync with each peer (outbox each way, newest row wins)
             for peer in peers {
+                // An unreachable peer is left alone for a growing while (a minute, doubling
+                // to ten) rather than built a slice every cycle; the heartbeat, or the peer
+                // reaching us, ends the wait.
+                if self.transport.backoff_active(&peer.device_id).await { continue; }
                 // A first contact goes slice after slice, a second apart, instead of one
                 // slice per tick (KI-068 keeps each request at 300 rows; the pacing was
                 // never the point). Capped so a peer that always says "more" cannot pin
@@ -1359,6 +1375,7 @@ impl ZynkSyncService {
                 };
                 match result {
                     Ok(result) => {
+                        self.transport.backoff_clear(&peer.device_id).await;
                         if result.memories_sent > 0 || result.memories_received > 0 {
                             println!("[ZynkSync] ✓ Auto-synced with {} - sent: {}, received: {}",
                                 peer.device_name, result.memories_sent, result.memories_received);
@@ -1389,6 +1406,10 @@ impl ZynkSyncService {
                             || e.contains("refused")
                             || e.contains("timed out");
                         if is_conn_error {
+                            let wait = self.transport.backoff_note_failure(&peer.device_id, SYNC_BACKOFF_BASE_SECS, SYNC_BACKOFF_MAX_SECS).await;
+                            if wait >= SYNC_BACKOFF_MAX_SECS {
+                                println!("[ZynkSync] {} unreachable; next try in {} min", peer.device_name, wait / 60);
+                            }
                             let should_log = {
                                 let map = self.transport.last_conn_error_logged.read().await;
                                 match map.get(&peer.device_id) {

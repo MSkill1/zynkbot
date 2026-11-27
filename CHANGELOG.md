@@ -6,6 +6,17 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 
 ---
 
+## Unreleased <!-- branch v1 -->
+
+### Power (2026-11-27, from the performance and power gate's first measurements)
+
+- **The on-device model is unloaded when idle.** After ten minutes without a local-model call on the phone (thirty on the desktop) the model leaves memory; the next question loads it again, a few seconds, and reads its prompt in full. Before, a 4B model held two to three gigabytes for as long as the app lived, which on a phone costs other apps and makes Android likelier to kill Zynkbot in the background, where the wake-word listener runs.
+- **An unreachable sync partner is left alone for longer and longer.** With the laptop off, the OnePlus pinged it every 15 s and built it a 300-row first-contact slice every few minutes all night (409 failed attempts in eleven hours). Each failure now doubles the wait before the next try: the heartbeat from 15 s up to two minutes, the sync from a minute up to ten. The first sign of life from the partner, its own heartbeat reaching us or an answered ping, ends the wait.
+
+### Repository
+
+- The Tests workflow had failed on every push since 18 November over one unused variable; removed. The Release workflow no longer starts on a version tag (betas are built locally since 9 November); it runs only by hand.
+
 ## [0.9.7-beta1] — 2026-11-27 <!-- branch v1; pre-release for testers, built from 43c2f74 -->
 
 - **Ten findings from a code review of everything since 0.9.6, nine fixed** (2026-11-26). The weekly backup reminder re-arms after a backup (the backup date was written to a database connection already closed, so it never was). Settings that still name an older Anthropic model such as Claude 3.5 or 3.7 Sonnet work again (the new "effort" field was being sent to models that reject it). The History list no longer drops real threads once there are more than a page of them. Editing mode no longer spends two to three seconds on the phone computing memory embeddings it then threw away. The Quick question window no longer pops the keyboard back up on the phone whenever something else in the app changes. A thread continued in the same second it was closed, from any device, counts as open again. A failed address probe to a peer is remembered for thirty seconds instead of ten minutes, so a phone that rejoins Wi-Fi with a new address is not ignored for that long. A local model that writes its answer before a thought block now streams the answer instead of showing an empty bubble until the end. The "is this a local model" test is one function instead of four copies with two meanings. The tenth finding, a voice profile from before 2026-11-26 restored onto a fresh install, keeps its rule (teach the phone once, two minutes) and gets an honest sentence on the Voice page. Also on the Voice page and in the guide: the teaching card asks you to vary how you say the wake, quick and slow, louder and softer, since the profile keeps more of your real wakes when the twenty are not all alike (Matt's own finding, 2026-11-26).
