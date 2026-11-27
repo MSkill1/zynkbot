@@ -248,6 +248,7 @@ object ZynkTimer {
         if (nm.getNotificationChannel(CHANNEL_RING) == null) {
             nm.createNotificationChannel(NotificationChannel(CHANNEL_RING, "Zynkbot timer done", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "The timer or alarm going off"; setSound(null, null) // the service plays the sound itself
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC   // Stop on the lock screen (new installs; the notification sets it too)
             })
         }
     }

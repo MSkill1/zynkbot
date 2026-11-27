@@ -39,9 +39,14 @@ class TimerRingService : Service() {
         val n = NotificationCompat.Builder(this, ZynkTimer.CHANNEL_RING)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle(line)
-            .setContentText("Say \"Hey Zynk\" or tap Stop")
+            .setContentText("Tap Stop")
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            // Public: the whole notification, Stop button included, shows on the lock screen
+            // and Stop works without unlocking (it starts this service, not an activity).
+            // Before 2026-11-27 the default (private) visibility hid it until the phone was
+            // unlocked and the app opened (Matt).
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .addAction(0, "Stop", stop)
             .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
