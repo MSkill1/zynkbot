@@ -210,9 +210,20 @@ the OnePlus, idle in the background with a cloud backend selected, held 1.36 GB 
 0.46 GB was swapped, with no model loaded. The hour-in-the-background check is covered by the
 overnight run above: the process and the listener survived the night.
 
-**(4) Memory bench on the shipped prompts and model.** Run started 2026-11-27 on the desktop
-against `Sophro-4B-memory-v1-Q4_0.gguf` with `MEMORY_BENCH_SLIM=1`; results in
-`~/Documents/Zynk_related/memory_bench/20261127_gate/` and below when finished.
+**(4) Memory bench on the shipped prompts and model.** Three runs on 2026-11-27 on the desktop
+against `Sophro-4B-memory-v1-Q4_0.gguf` with `MEMORY_BENCH_SLIM=1` (the phone's prompt), results
+in `~/Documents/Zynk_related/memory_bench/20261127_gate/`:
+
+| Run | Facts found (of 72) | Invented | Junk messages (of 28) | Relationships right (of 49) | Dates (of 2) |
+|---|---|---|---|---|---|
+| 1, 2 and 3 | 70, 70, 70 | 3, 3, 3 | 1, 1, 1 | 44, 44, 44 | 2, 2, 2 |
+
+Identical to the 12 November "after" row in `docs/BENCHMARKS.md` (70, 3, 1); the prompt changes
+since then (d6ecd14, 15 November) cost nothing on the bench. Part (4) of the gate is met.
+
+**Fixed the same day (next beta):** the model is unloaded after ten idle minutes on the phone
+(thirty on the desktop), and the heartbeat and sync back off from an unreachable peer, doubling
+to two and ten minutes, until it shows a sign of life (`77810d8`, `888ec30`).
 
 ## Measurements to keep taking
 
