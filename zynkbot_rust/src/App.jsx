@@ -1887,14 +1887,11 @@ export default function App() {
   // Keep voice session ref current on every render so wake callbacks never hold a stale closure
   voice.handleSendMessageRef.current = handleSendMessage;
 
-  // True whenever there is something to stop. isLoading covers generation; TTS
-  // playback starts only AFTER isLoading goes false, which is why a Stop tied to
-  // isLoading alone vanished exactly when Zynkbot began speaking.
-  const canStop = isLoading || voice.isTtsSpeaking || voice.isNativeSpeaking;
-
   // Stop lives in the conversation, not in the button grid (Matt, 2026-11-10, on trial):
   // on the waiting line before the first word, on the reply while it arrives, and on the
-  // reply being read aloud. Wherever canStop is true, exactly one of these is on screen.
+  // reply being read aloud. Whenever there is something to stop, exactly one of these is
+  // on screen. (TTS playback starts only AFTER isLoading goes false, which is why a Stop
+  // tied to isLoading alone vanished exactly when Zynkbot began speaking.)
   const waitingShown = isLoading && (modelType?.endsWith('.gguf') || !messages.some(m => m.isStreaming && m.content));
   const speakingNow = voice.isTtsSpeaking || voice.isNativeSpeaking;
   const speakingId = !speakingNow ? null
