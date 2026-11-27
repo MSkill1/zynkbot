@@ -29,6 +29,8 @@ import KnowledgeBasePanel from "./components/KnowledgeBasePanel";
 import KnowledgeBaseManager from "./components/KnowledgeBaseManager";
 import VoiceButton from "./components/VoiceButton";
 import ZChatModal from "./components/ZChatModal";
+import KitsPanel from "./components/KitsPanel";
+import GroceryListModal from "./components/GroceryListModal";
 import ZynkClusterModal from "./components/ZynkClusterModal";
 import OnboardingModal from "./components/OnboardingModal";
 import SetupWizard from "./components/SetupWizard";
@@ -537,6 +539,20 @@ export default function App() {
   // Collapsible section states - all start collapsed
   // System Controls: which section's page is open (null = the list). One at a time.
   const [controlsPage, setControlsPage] = useState(null);
+  // Kits (2026-11-27): the ones switched on, for the chips above the message box; and the
+  // kit whose list window is open.
+  const [kitsOn, setKitsOn] = useState([]);
+  const [listKit, setListKit] = useState(null);
+  const loadKits = useCallback(async () => {
+    try { const v = await invoke('list_kits'); setKitsOn((v.kits || []).filter((k) => k.enabled)); } catch (_) { /* no kits */ }
+  }, []);
+  useEffect(() => { loadKits(); }, [loadKits]);
+  const kitChip = (kit, prompt) => {
+    if (prompt.action === 'open_list') { setListKit(kit); return; }
+    const text = prompt.text || '';
+    if (/[:\s]$/.test(text)) { setInput(text); setTimeout(() => inputTextareaRef.current?.focus(), 0); }
+    else handleSendMessage(text);
+  };
   // Getting Started leads the System Controls list until onboarding has been completed
   // on this device (or the user unticks it on the Getting Started page); then it sits last.
   const [gettingStartedOnTop, setGettingStartedOnTopState] = useState(
@@ -2278,6 +2294,13 @@ export default function App() {
           onClick={() => setControlsPage('kb')}
         />
         <ControlsMenuButton
+          icon="🧰"
+          title="Kits"
+          subtitle={kitsOn.length ? `On: ${kitsOn.map((k) => k.name).join(', ')}` : 'Give the memory a job: groceries, the kitchen'}
+          accent="#50fa7b"
+          onClick={() => setControlsPage('kits')}
+        />
+        <ControlsMenuButton
           icon="🧩"
           title="Snap-ins"
           subtitle="Planned: therapist, legal, journalist"
@@ -2571,6 +2594,13 @@ export default function App() {
         <ControlsPage icon="📚" title="Knowledge Base" subtitle="Your documents, searched when you ask" accent="#ffb86c" introKey="kb" intro={<>The knowledge base is where you put files that matter to you or to a project: notes, manuals, papers, contracts. Index them and Zynkbot knows what is in them. Turn KB on in chat and it reads the parts that match your question before it answers, so you can discuss your own documents in plain conversation. <b>Try this:</b> add a text file, index it, turn on KB and ask about it.</>} onClose={() => setControlsPage(null)}>
         <KnowledgeBasePanel userId={userId} />
         <KnowledgeBaseManager embedded isOpen={false} onClose={() => {}} userId={userId} />
+        </ControlsPage>
+      )}
+
+      {controlsPage === 'kits' && (
+        <ControlsPage icon="🧰" title="Kits" subtitle="Give the memory a job" accent="#50fa7b" introKey="kits" onClose={() => setControlsPage(null)}
+          intro={<>A kit is a packaged use of Zynkbot's memory, switched on when you want it. The Grocery kit keeps a shopping list you add to by voice and tick off in the store. The Kitchen kit remembers what you cook and what you like. A kit is a set of instructions and a place in memory, nothing more: no permissions, nothing leaves the device, and you can read exactly what it tells Zynkbot. Turn one off and its chips go; its memories stay until you say forget.</>}>
+          <KitsPanel userId={userId} notify={notify} onChanged={loadKits} />
         </ControlsPage>
       )}
 
@@ -2913,6 +2943,17 @@ export default function App() {
             </div>
 
             {/* Rotating tip — only shown before first message and while input is empty */}
+            {/* Kit chips (2026-11-27): a kit's two or three ready-made messages while it is on. */}
+            {kitsOn.length > 0 && !isLoading && (
+              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', marginBottom: '6px', padding: '0 4px 2px' }}>
+                {kitsOn.flatMap((kit) => (kit.prompts || []).map((pr) => (
+                  <button key={`${kit.id}-${pr.label}`} type="button" onClick={() => kitChip(kit, pr)} title={`${kit.name} kit`}
+                    style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '14px', background: '#1e1f29', border: '1px solid #44475a', color: '#f8f8f2', fontSize: '0.8rem', cursor: 'pointer' }}>
+                    {pr.action === 'open_list' ? kit.icon : ''} {pr.label}
+                  </button>
+                )))}
+              </div>
+            )}
             {/* Timer / alarm / stopwatch chips: one each, only while something is set, running or ringing. */}
             {voice.timerState && (() => {
               const ts = voice.timerState;
@@ -3626,6 +3667,8 @@ export default function App() {
         keepScreenAwake={voice.keepScreenAwake}
         onKeepScreenAwakeChange={voice.setKeepScreenAwake}
       />
+
+      {listKit && <GroceryListModal kit={listKit} userId={userId} notify={notify} onClose={() => setListKit(null)} />}
 
       {/* Einstein demo loading screen: the shared page shell (ui-redo, 2026-11-18); no ✕
           and no tap-outside, it closes itself when the seed data is in. */}

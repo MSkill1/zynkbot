@@ -25,7 +25,7 @@ function displayToISO(display) {
 const CANONICAL_NAMESPACES = [
   'personal', 'work', 'career', 'health', 'family', 'education',
   'technology', 'science', 'philosophy', 'politics', 'travel',
-  'achievements', 'biography'
+  'achievements', 'biography', 'kitchen', 'hobbies', 'grocery'
 ];
 
 // Facts that came from one message share its text in original_text (call 2 stores one
