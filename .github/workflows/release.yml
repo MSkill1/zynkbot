@@ -1,14 +1,13 @@
 name: Release
 
-# Runs on a version tag (creates a draft GitHub release and attaches the installers)
-# and by hand from the Actions tab (builds everything and keeps the installers as
-# workflow artifacts, no release touched) so the pipeline can be tested without
-# tagging. Rewritten 2026-09-09: the Android job never worked (KI-034) and both
-# desktop jobs failed at v0.9.5-beta1.
+# Runs only by hand from the Actions tab (builds everything and keeps the installers as
+# workflow artifacts, no release touched). Since 2026-11-09 betas and releases are built
+# on Matt's machines and uploaded by hand, because every workflow run is visible to the
+# testers; the tag trigger was removed on 2026-11-27 after the v0.9.7-beta1 tag started
+# a build that nobody wanted. Before that it ran on a version tag and created a draft
+# release (rewritten 2026-09-09: the Android job never worked (KI-034) and both desktop
+# jobs failed at v0.9.5-beta1).
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 jobs:
