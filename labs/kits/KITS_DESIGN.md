@@ -106,6 +106,47 @@ A second kit, separate from the Kitchen kit, sold as a one-time purchase. Dictat
 
 **Priority (2026-11-26):** Matt's mother wants the grocery kit most of all; Matt: build it first, or beside the Kitchen kit, if not too difficult. First sketch of its job: a running list added to by voice or text ("we're out of milk"), grouped by store section, read back or shown in the store, with what is usually bought and when it was last bought; the Kitchen kit's "what to make tonight" feeds it.
 
+## The Grocery kit, in full (2026-11-27, first build)
+
+The one kit with a window of its own: a list the user can tick off in the store. Items are
+memories in the `grocery` namespace, each tagged `needed` or `bought` (with the date it was
+bought), so sync, backup, the Memory Manager and "forget this kit" need nothing new. The list
+window reads those memories and writes the tick as a tag change through the normal memory path.
+
+```json
+{
+  "id": "grocery",
+  "name": "Grocery",
+  "version": 1,
+  "tagline": "A shopping list you add to by voice, grouped the way you walk the store.",
+  "namespace": "grocery",
+  "instructions": "The user keeps a grocery list with Zynkbot. When they say they are out of something, need something, or should pick something up, that is a grocery item: record it as a memory with the item's plain name, the quantity if they said one, the store section it belongs to (produce, dairy, meat and fish, bakery, frozen, pantry, drinks, household, personal care, other) and the tag 'needed'. Answer with one short line naming what was added, nothing more. When they say they bought or got an item, mark that item bought today. When they ask what is on the list, read the needed items grouped by section, shortest words possible. When they ask what they usually buy, name the items bought most often and when each was last bought. If they state a price, keep it with the item. Never add an item they did not name, and never add food they only mention eating or cooking unless they say they need it.",
+  "questions": [
+    { "id": "store", "text": "Which store do you usually shop at?" },
+    { "id": "sections", "text": "Should the list be grouped by store section (produce, dairy, meat, bakery, frozen, pantry, household), or kept in the order you add things?" }
+  ],
+  "prompts": [
+    { "label": "My list", "action": "open_list" },
+    { "label": "Add to the list", "text": "Add to my grocery list: " },
+    { "label": "What do we usually buy?", "text": "What do we usually buy, and when did I last buy each?" }
+  ],
+  "report": { "title": "Grocery", "fields": ["items needed", "items bought this month", "usual items"] }
+}
+```
+
+The "My list" chip opens the window rather than sending a message, the one chip that does.
+
+**The list window.** Needed items grouped by section in a fixed store order; a tick box per item;
+a ticked item moves to "In the cart" at the bottom and can be unticked; a line at the top adds a
+typed or dictated item; "Done" at the bottom marks everything in the cart bought today and closes
+the window. Below the list, a "Usual items" line lists what has been bought in three or more
+weeks, each with "last bought" and a plus to add it back. Hands-free: "what's left on the list"
+reads the unticked items; "got the eggs" ticks one; both go through the model, which edits the
+item's tag.
+
+**What the Kitchen kit adds when both are on:** "what can I make tonight" sees this week's bought
+items; a planned dish can offer to add what is missing. Not in the first build.
+
 ## Tester task (for the beta package)
 
 "For two weeks, tell Zynkbot what you cooked and how it went, by voice or typed, in whatever words you like. Once or twice, ask it what to make. At the end, open Memory Manager and look at the Kitchen memories. Tell us: did it remember the right things, did it suggest anything you actually cooked, and did anything it remembered make you uncomfortable?"
