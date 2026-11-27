@@ -172,6 +172,48 @@ wrong ones cost more than the weak ones are worth).
 - The thread heuristic picked 5 fast cores once and 6 another time on the same phone;
   harmless, but the top-frequency reading moves. Pin to a count once measured.
 
+## Performance and power gate, first measurements (2026-11-27, build 0.9.7-beta1 = 43c2f74)
+
+The gate from ROADMAP.md ("Performance and power gate before the tester round"), taken from the
+devices' own records rather than from test runs, so nothing here touched Matt's data.
+
+**(1) Wake-word idle listening.** Pixel 10 Pro XL, night of 25 to 26 November, Hey Zynk on,
+screen off, off the charger: 44% at 23:00 to 31% at 11:00, about **1.1% per hour** (the bar is
+5%). Source: `dumpsys batterystats --history`. Zynkbot woke the phone about thirty times an hour
+(ZynkSync heartbeat every 15 s, delivery retry every 30 s, listener watchdog every 60 s); no long
+wake-lock holds overnight. For comparison the same phone lost 7.5% per hour on the evening of the
+26th with the screen on and Zynkbot not running. The OnePlus 12R was on the charger both nights,
+so it has no drain figure yet; its listener log shows the service alive all night (a quiet-skip
+line every five minutes from 22:04 to 07:00) with every chunk skipped by the no-voice gate, which
+is what the design intends. KI-110 (overnight crash) did not recur on the OnePlus with this build.
+
+**Listener behaviour on the OnePlus, 27 November 07:20 to 09:40:** 127 raw detections (something
+speaking in the room), 122 rejected by the verifier as not the owner, 5 accepted at verifier
+scores 0.50 to 0.69. Of the rejected, 60 scored under 0.05, 39 between 0.05 and 0.2, 23 at 0.2
+or more. Whether any of the 23 were Matt is for Matt to say. Trigger clips are capped at 20, so
+the rejections cost nothing on disk.
+
+**Found while measuring, not fixed:** with the laptop off and the Pixel unreachable, the OnePlus
+retried the outbox every 30 s all night (220 attempts to the laptop, 189 to the Pixel between
+21:00 and 08:00), each one rebuilding the 300-row first-contact slice before failing on connect.
+Cheap on a charger, worth a back-off when the phone is on battery.
+
+**(2) On-device model speed.** No local-model request has been made on either phone since the
+on-disk log began (11 November on the OnePlus), so there is no figure for the shipped build yet.
+Method, unchanged: the two standard messages, cold and warm, on each phone, with the `Prompt read
+in`, `Generated`, `Local model inference` and `Total request time` lines; on the Pixel (release
+build, no run-as) they are read from logcat.
+
+**(3) Model unloaded when idle; an hour in the background.** Not implemented: nothing in
+`local_models.rs` frees the model after idle time (step 10 of this plan, still open). Zynkbot on
+the OnePlus, idle in the background with a cloud backend selected, held 1.36 GB PSS of which
+0.46 GB was swapped, with no model loaded. The hour-in-the-background check is covered by the
+overnight run above: the process and the listener survived the night.
+
+**(4) Memory bench on the shipped prompts and model.** Run started 2026-11-27 on the desktop
+against `Sophro-4B-memory-v1-Q4_0.gguf` with `MEMORY_BENCH_SLIM=1`; results in
+`~/Documents/Zynk_related/memory_bench/20261127_gate/` and below when finished.
+
 ## Measurements to keep taking
 
 Every change: the same two messages on the same phone, cold and warm — a short question
