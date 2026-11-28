@@ -1,0 +1,360 @@
+{
+ "version": 1,
+ "subject": "Matt",
+ "note": "Grocery kit phrasing (2026-11-28): with the Grocery kit on and the list empty, does the on-device model write the [kit:grocery <verb> | item | ...] line kits.rs parses for everyday phrasings, and none for talk that only mentions food? `kit_line` lists the expected lines in `actions` as '<verb[|verb]> <item>' (verb groups as kits.rs reads them: add/need/needed, bought/got/done, remove/delete/drop); every expected line must be present and no line may name anything else. `must` entries are checked on the reply as a whole (a section or quantity). `no_kit_line` must hold no action line. `list` names the items needed on the list while the case runs (the bought and remove cases; otherwise the list is empty).",
+ "cases": [
+  {
+   "id": "a01",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we need milk",
+   "actions": [
+    "add milk"
+   ]
+  },
+  {
+   "id": "a02",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "add eggs to the list",
+   "actions": [
+    "add eggs"
+   ]
+  },
+  {
+   "id": "a03",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "put bananas on the grocery list",
+   "actions": [
+    "add banana"
+   ]
+  },
+  {
+   "id": "a04",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we're out of coffee",
+   "actions": [
+    "add coffee"
+   ]
+  },
+  {
+   "id": "a05",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "remind me to buy bread",
+   "actions": [
+    "add bread"
+   ]
+  },
+  {
+   "id": "a06",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "I'm almost out of butter",
+   "actions": [
+    "add butter"
+   ]
+  },
+  {
+   "id": "a07",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "can you add orange juice",
+   "actions": [
+    "add orange juice"
+   ]
+  },
+  {
+   "id": "a08",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "pick up some chicken thighs for tomorrow",
+   "actions": [
+    "add chicken"
+   ]
+  },
+  {
+   "id": "a09",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we need milk, eggs and bread",
+   "actions": [
+    "add milk",
+    "add egg",
+    "add bread"
+   ]
+  },
+  {
+   "id": "a10",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "out of toothpaste and we need more cereal too",
+   "actions": [
+    "add toothpaste",
+    "add cereal"
+   ]
+  },
+  {
+   "id": "a11",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "add apples, carrots and a bag of onions",
+   "actions": [
+    "add apple",
+    "add carrot",
+    "add onion"
+   ]
+  },
+  {
+   "id": "b01",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "got the milk",
+   "actions": [
+    "bought milk"
+   ],
+   "list": [
+    "milk"
+   ]
+  },
+  {
+   "id": "b02",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "cross off bananas",
+   "actions": [
+    "bought|remove banana"
+   ],
+   "list": [
+    "bananas"
+   ]
+  },
+  {
+   "id": "b03",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we don't need eggs anymore",
+   "actions": [
+    "remove|bought egg"
+   ],
+   "list": [
+    "eggs"
+   ]
+  },
+  {
+   "id": "b04",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "I bought the coffee",
+   "actions": [
+    "bought coffee"
+   ],
+   "list": [
+    "coffee"
+   ]
+  },
+  {
+   "id": "b05",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "take bread off the list",
+   "actions": [
+    "remove bread"
+   ],
+   "list": [
+    "bread"
+   ]
+  },
+  {
+   "id": "b06",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "picked up the butter and the cereal",
+   "actions": [
+    "bought butter",
+    "bought cereal"
+   ],
+   "list": [
+    "butter",
+    "cereal"
+   ]
+  },
+  {
+   "id": "b07",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "never mind the orange juice, we have some",
+   "actions": [
+    "remove|bought orange juice"
+   ],
+   "list": [
+    "orange juice"
+   ]
+  },
+  {
+   "id": "q01",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we need two pounds of ground beef",
+   "actions": [
+    "add ground beef"
+   ],
+   "must": [
+    "two pounds|2 pounds|2 lb|two lb"
+   ]
+  },
+  {
+   "id": "q02",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "put a dozen eggs on the list",
+   "actions": [
+    "add egg"
+   ],
+   "must": [
+    "dozen|12"
+   ]
+  },
+  {
+   "id": "q03",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "get a gallon of milk",
+   "actions": [
+    "add milk"
+   ],
+   "must": [
+    "gallon"
+   ]
+  },
+  {
+   "id": "c01",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we're out of paper towels",
+   "actions": [
+    "add paper towel"
+   ],
+   "must": [
+    "household"
+   ]
+  },
+  {
+   "id": "c02",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "add dish soap",
+   "actions": [
+    "add dish soap"
+   ],
+   "must": [
+    "household"
+   ]
+  },
+  {
+   "id": "c03",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we need frozen peas",
+   "actions": [
+    "add pea"
+   ],
+   "must": [
+    "frozen"
+   ]
+  },
+  {
+   "id": "c04",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we need spinach and tomatoes",
+   "actions": [
+    "add spinach",
+    "add tomato"
+   ],
+   "must": [
+    "produce"
+   ]
+  },
+  {
+   "id": "c05",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "add cheddar cheese",
+   "actions": [
+    "add cheese"
+   ],
+   "must": [
+    "dairy"
+   ]
+  },
+  {
+   "id": "c06",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we need salmon for Friday",
+   "actions": [
+    "add salmon"
+   ],
+   "must": [
+    "meat and fish|fish"
+   ]
+  },
+  {
+   "id": "c07",
+   "kind": "kit_line",
+   "kit": "grocery",
+   "message": "we're out of shampoo",
+   "actions": [
+    "add shampoo"
+   ],
+   "must": [
+    "personal care"
+   ]
+  },
+  {
+   "id": "n01",
+   "kind": "no_kit_line",
+   "kit": "grocery",
+   "message": "what time is it"
+  },
+  {
+   "id": "n02",
+   "kind": "no_kit_line",
+   "kit": "grocery",
+   "message": "I had milk with breakfast"
+  },
+  {
+   "id": "n03",
+   "kind": "no_kit_line",
+   "kit": "grocery",
+   "message": "my favourite breakfast is oatmeal"
+  },
+  {
+   "id": "n04",
+   "kind": "no_kit_line",
+   "kit": "grocery",
+   "message": "what's on the list"
+  },
+  {
+   "id": "n05",
+   "kind": "no_kit_line",
+   "kit": "grocery",
+   "message": "I'm making pasta with garlic and olive oil tonight"
+  },
+  {
+   "id": "n06",
+   "kind": "no_kit_line",
+   "kit": "grocery",
+   "message": "Dana brought over a loaf of banana bread, it was lovely"
+  },
+  {
+   "id": "n07",
+   "kind": "no_kit_line",
+   "kit": "grocery",
+   "message": "how long does milk keep once opened"
+  }
+ ]
+}

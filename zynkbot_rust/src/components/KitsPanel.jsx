@@ -86,12 +86,14 @@ export default function KitsPanel({ userId, onChanged, notify }) {
             </div>
           )}
 
-          {kit.enabled && asking !== kit.id && (
+          {/* The links under a kit. "Forget everything" shows while the kit is off too (2026-11-28):
+              the page says to turn a kit off and then forget, and the link used to go with the switch. */}
+          {asking !== kit.id && (
             <div style={{ marginTop: '8px', paddingLeft: '26px', display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
-              {kit.questions.length > 0 && <button type="button" style={linkBtn} onClick={() => { setAnswers(kit.answers || {}); setAsking(kit.id); }}>Your answers</button>}
-              <button type="button" style={linkBtn} onClick={() => setShowText({ ...showText, [kit.id]: !showText[kit.id] })}>
+              {kit.enabled && kit.questions.length > 0 && <button type="button" style={linkBtn} onClick={() => { setAnswers(kit.answers || {}); setAsking(kit.id); }}>Your answers</button>}
+              {kit.enabled && <button type="button" style={linkBtn} onClick={() => setShowText({ ...showText, [kit.id]: !showText[kit.id] })}>
                 {showText[kit.id] ? 'Hide what it tells Zynkbot' : 'What it tells Zynkbot'}
-              </button>
+              </button>}
               {confirmForget === kit.id
                 ? <span style={{ fontSize: '0.8rem' }}>Delete every {kit.name} memory on every device? <button type="button" style={{ ...linkBtn, color: '#ff5555' }} onClick={() => forget(kit)}>Yes, forget it all</button> · <button type="button" style={linkBtn} onClick={() => setConfirmForget(null)}>No</button></span>
                 : <button type="button" style={{ ...linkBtn, color: '#ffb86c' }} onClick={() => setConfirmForget(kit.id)}>Forget everything from this kit</button>}

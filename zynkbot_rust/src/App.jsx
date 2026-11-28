@@ -553,7 +553,13 @@ export default function App() {
     listen('kits-updated', () => loadKits()).then((u) => { un = u; }).catch(() => {});
     return () => { if (un) un(); };
   }, [loadKits]);
+  // Several kits on (2026-11-28): the row shows one button per kit; tapping it swaps the row for that
+  // kit's messages, with a way back. With one kit on, its messages show directly. Using a message closes
+  // the kit's row again; a kit switched off while open closes it too.
+  const [kitOpen, setKitOpen] = useState(null);
+  useEffect(() => { if (kitOpen && !kitsOn.some((k) => k.id === kitOpen)) setKitOpen(null); }, [kitsOn, kitOpen]);
   const kitChip = (kit, prompt) => {
+    setKitOpen(null);
     if (prompt.action === 'open_list') { setListKit(kit); return; }
     const text = prompt.text || '';
     if (/[:\s]$/.test(text)) { setInput(text); setTimeout(() => inputTextareaRef.current?.focus(), 0); }
@@ -2949,17 +2955,35 @@ export default function App() {
             </div>
 
             {/* Rotating tip — only shown before first message and while input is empty */}
-            {/* Kit buttons (2026-11-27): a kit's two or three ready-made messages, above the message box while it is on. */}
-            {kitsOn.length > 0 && !isLoading && (
-              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', marginBottom: '6px', padding: '0 4px 2px' }}>
-                {kitsOn.flatMap((kit) => (kit.prompts || []).map((pr) => (
-                  <button key={`${kit.id}-${pr.label}`} type="button" onClick={() => kitChip(kit, pr)} title={`${kit.name} kit`}
-                    style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '14px', background: '#1e1f29', border: '1px solid #44475a', color: '#f8f8f2', fontSize: '0.8rem', cursor: 'pointer' }}>
-                    {pr.action === 'open_list' ? kit.icon : ''} {pr.label}
-                  </button>
-                )))}
-              </div>
-            )}
+            {/* Kit buttons (2026-11-27): a kit's two or three ready-made messages, above the message box while it is on.
+                With several kits on (2026-11-28) the row is one button per kit; tapping one shows its messages in place. */}
+            {kitsOn.length > 0 && !isLoading && (() => {
+              const pill = { flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '14px', background: '#1e1f29', border: '1px solid #44475a', color: '#f8f8f2', fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap' };
+              const openKit = kitsOn.length === 1 ? kitsOn[0] : kitsOn.find((k) => k.id === kitOpen);
+              return (
+                <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', marginBottom: '6px', padding: '0 4px 2px' }}>
+                  {openKit ? (
+                    <>
+                      {kitsOn.length > 1 && (
+                        <button type="button" onClick={() => setKitOpen(null)} title="Back to the kits" aria-label="Back to the kits"
+                          style={{ ...pill, padding: '5px 10px', color: '#9aa5c4' }}>
+                          ‹ {openKit.icon}
+                        </button>
+                      )}
+                      {(openKit.prompts || []).map((pr) => (
+                        <button key={`${openKit.id}-${pr.label}`} type="button" onClick={() => kitChip(openKit, pr)} title={`${openKit.name} kit`} style={pill}>
+                          {pr.action === 'open_list' ? openKit.icon : ''} {pr.label}
+                        </button>
+                      ))}
+                    </>
+                  ) : kitsOn.map((kit) => (
+                    <button key={kit.id} type="button" onClick={() => setKitOpen(kit.id)} title={`${kit.name} kit: show its messages`} style={pill}>
+                      {kit.icon} {kit.name}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
             {/* Timer / alarm / stopwatch chips: one each, only while something is set, running or ringing. */}
             {voice.timerState && (() => {
               const ts = voice.timerState;

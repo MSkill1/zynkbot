@@ -158,38 +158,44 @@ pub async fn prompt_block(pool: &SqlitePool, user_id: &str) -> Option<String> {
     if kits.is_empty() { return None; }
     let mut parts = Vec::new();
     for kit in kits {
-        let mut s = format!("{} kit is on. {}", kit.name, kit.instructions.trim());
         let answers = answers(pool, &kit.id).await;
-        let said: Vec<String> = kit.questions.iter().filter_map(|q| {
-            let a = answers.get(&q.id)?.as_str()?.trim().to_string();
-            if a.is_empty() { None } else { Some(format!("{}: {}", q.id, a)) }
-        }).collect();
-        if !said.is_empty() { s.push_str(&format!("\nWhat the user told the kit: {}.", said.join("; "))); }
-        if kit.actions.is_some() {
-            let items = list_items(pool, user_id, &kit.id).await;
-            let needed: Vec<&KitItem> = items.iter().filter(|i| i.state == "needed").collect();
-            if needed.is_empty() {
-                s.push_str("\nThe list is empty right now.");
-            } else {
-                let mut by_section: Vec<(String, Vec<String>)> = Vec::new();
-                for i in &needed {
-                    let label = match &i.quantity { Some(q) => format!("{} ({})", i.name, q), None => i.name.clone() };
-                    match by_section.iter_mut().find(|(s, _)| *s == i.section) {
-                        Some((_, v)) => v.push(label),
-                        None => by_section.push((i.section.clone(), vec![label])),
-                    }
-                }
-                let line = by_section.iter().map(|(s, v)| format!("{}: {}", s, v.join(", "))).collect::<Vec<_>>().join("; ");
-                s.push_str(&format!("\nOn the list now (needed): {}.", line));
-            }
-        }
-        if let Some(a) = &kit.actions {
-            s.push_str(&format!("\n{}\n{}", a.note.trim(), a.examples.join("\n")));
-            if !a.worked_example.trim().is_empty() { s.push_str(&format!("\n{}", a.worked_example.trim())); }
-        }
-        parts.push(s);
+        let items = if kit.actions.is_some() { list_items(pool, user_id, &kit.id).await } else { Vec::new() };
+        parts.push(kit_block(kit, &answers, &items));
     }
     Some(parts.join("\n\n"))
+}
+
+/// One kit's part of the block, from what the database holds (prompt_block) or from
+/// given answers and items (the reply bench, which has no database; 2026-11-28).
+pub fn kit_block(kit: &Kit, answers: &serde_json::Map<String, serde_json::Value>, items: &[KitItem]) -> String {
+    let mut s = format!("{} kit is on. {}", kit.name, kit.instructions.trim());
+    let said: Vec<String> = kit.questions.iter().filter_map(|q| {
+        let a = answers.get(&q.id)?.as_str()?.trim().to_string();
+        if a.is_empty() { None } else { Some(format!("{}: {}", q.id, a)) }
+    }).collect();
+    if !said.is_empty() { s.push_str(&format!("\nWhat the user told the kit: {}.", said.join("; "))); }
+    if kit.actions.is_some() {
+        let needed: Vec<&KitItem> = items.iter().filter(|i| i.state == "needed").collect();
+        if needed.is_empty() {
+            s.push_str("\nThe list is empty right now.");
+        } else {
+            let mut by_section: Vec<(String, Vec<String>)> = Vec::new();
+            for i in &needed {
+                let label = match &i.quantity { Some(q) => format!("{} ({})", i.name, q), None => i.name.clone() };
+                match by_section.iter_mut().find(|(s, _)| *s == i.section) {
+                    Some((_, v)) => v.push(label),
+                    None => by_section.push((i.section.clone(), vec![label])),
+                }
+            }
+            let line = by_section.iter().map(|(s, v)| format!("{}: {}", s, v.join(", "))).collect::<Vec<_>>().join("; ");
+            s.push_str(&format!("\nOn the list now (needed): {}.", line));
+        }
+    }
+    if let Some(a) = &kit.actions {
+        s.push_str(&format!("\n{}\n{}", a.note.trim(), a.examples.join("\n")));
+        if !a.worked_example.trim().is_empty() { s.push_str(&format!("\n{}", a.worked_example.trim())); }
+    }
+    s
 }
 
 /// The block goes just before the question label the engine ends its prompt with

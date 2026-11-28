@@ -27,6 +27,14 @@
 //! prompt", "text to try in its place"]}; a name listed in REPLY_BENCH_VARIANTS then runs the
 //! current prompt with that one replacement, so several wordings are measured in one run
 //! without a rebuild (2026-11-10, the "I've noted that" wording).
+//!
+//! Kits (2026-11-28, labs/reply_bench/cases_grocery.json): a case naming `kit` gets that
+//! kit's block before the question label, built by kits::kit_block with no answers and the
+//! case's `list` of needed items (none by default), exactly as chat.rs places it. Two kinds score the action lines kits.rs
+//! parses: `kit_line` passes when every entry of `actions` ("add milk", "bought|remove
+//! bananas": a verb group as kits.rs reads it, then a word of the item) is matched by a
+//! line in the reply and no line names anything else; `no_kit_line` passes when the reply
+//! holds no action line at all.
 #![cfg(test)]
 
 use crate::conversation_engine::{ConversationEngine, ConversationTurn, Memory};
@@ -42,6 +50,12 @@ struct Case {
     #[serde(default)] must: Vec<String>,
     #[serde(default)] must_not: Vec<String>,
     #[serde(default)] no_digits: bool,
+    /// A kit whose block goes before the question label while the case runs (kits.rs).
+    #[serde(default)] kit: Option<String>,
+    /// `kit_line`: the action lines expected, as "<verb[|verb]> <item>".
+    #[serde(default)] actions: Vec<String>,
+    /// Items on the kit's list (needed, section "other") while the case runs; empty by default.
+    #[serde(default)] list: Vec<String>,
 }
 #[derive(Deserialize, Clone)]
 struct CaseMemory { content: String, #[serde(default)] days_ago: i64 }
@@ -94,7 +108,40 @@ fn score(c: &Case, reply: &str) -> (bool, Vec<String>) {
     let mut must: Vec<String> = c.must.iter().map(|m| m.replace("{weekday}", &weekday)).collect();
     let mut must_not: Vec<String> = c.must_not.clone();
     match c.kind.as_str() {
-        "statement" => must_not.extend(LOOKUP_PHRASES.iter().map(|s| s.to_string())),
+        "statement" => {
+            must_not.extend(LOOKUP_PHRASES.iter().map(|s| s.to_string()));
+            // KI-113 (OnePlus, 2026-11-28): the reply was a memory line, "(about November 28,
+            // 2026) User's favorite breakfast is…". A reply that opens like one of the prompt's
+            // dated lines, or repeats a recalled memory word for word, is an echo, not an answer.
+            let head = low.trim_start();
+            let dated_head = head.starts_with('(') && head.find(')').map_or(false, |i| i < 40 && (head[..i].contains("about") || head[..i].chars().any(|c| c.is_ascii_digit())));
+            if dated_head { reasons.push("opens like a memory line".into()); }
+            for m in &c.memories {
+                let line = m.content.trim().trim_end_matches('.').to_lowercase();
+                if line.split_whitespace().count() >= 3 && low.contains(&line) { reasons.push(format!("repeats a memory verbatim: {}", m.content)); }
+            }
+        }
+        "kit_line" | "no_kit_line" => {
+            let mut text = reply.to_string();
+            let found = crate::kits::take_actions(&mut text);
+            if c.kind == "no_kit_line" {
+                if !found.is_empty() { reasons.push(format!("a kit line where none belongs: {}", found.iter().map(|a| format!("{} {}", a.verb, a.fields.join(" | "))).collect::<Vec<_>>().join("; "))); }
+            } else {
+                // The verb groups are the ones kits::apply_actions accepts.
+                let group = |v: &str| -> &'static str { match v { "add" | "need" | "needed" => "add", "bought" | "got" | "done" => "bought", "remove" | "delete" | "drop" => "remove", _ => "?" } };
+                let mut used = vec![false; found.len()];
+                for want in &c.actions {
+                    let (verbs, item) = want.split_once(' ').unwrap_or((want.as_str(), ""));
+                    let item = item.trim().to_lowercase();
+                    let hit = found.iter().enumerate().position(|(i, a)| !used[i] && verbs.split('|').any(|v| group(v) == group(&a.verb)) && a.fields.first().map_or(false, |f| f.to_lowercase().contains(&item)));
+                    match hit { Some(i) => used[i] = true, None => reasons.push(format!("no line for: {want}")) }
+                }
+                for (i, a) in found.iter().enumerate() {
+                    if !used[i] { reasons.push(format!("extra line: {} {}", a.verb, a.fields.join(" | "))); }
+                }
+                if found.is_empty() && reply.contains("[kit") { reasons.push("a kit line the app cannot parse".into()); }
+            }
+        }
         "recall" => must_not.extend(["web_search_needed", "don't have that", "don't have a record", "don't have any record", "no record"].iter().map(|s| s.to_string())),
         "missing" => { must.push(MISSING_PHRASES.to_string()); must_not.push("web_search_needed".into()); }
         "web" => must.push("web_search_needed".into()),
@@ -159,7 +206,15 @@ async fn reply_bench() {
             let mut results = Vec::new();
             for c in &cases.cases {
                 let mems = memories_of(c);
-                let after = engine.build_prompt(&c.message, if c.history.is_empty() { None } else { Some(&c.history) }, if mems.is_empty() { None } else { Some(&mems) }, !is_gguf, Some(&cases.subject));
+                let mut after = engine.build_prompt(&c.message, if c.history.is_empty() { None } else { Some(&c.history) }, if mems.is_empty() { None } else { Some(&mems) }, !is_gguf, Some(&cases.subject));
+                if let Some(kit_id) = &c.kit {
+                    // As chat.rs does, with no answers and an empty list; before the swaps, so a trial may reword the kit's text too.
+                    let kit = crate::kits::get(kit_id).unwrap_or_else(|| panic!("case {} names an unknown kit {kit_id}", c.id));
+                    let items: Vec<crate::kits::KitItem> = c.list.iter().enumerate().map(|(i, n)| crate::kits::KitItem {
+                        id: i as i32 + 1, name: n.clone(), section: "other".into(), quantity: None, price: None, state: "needed".into(),
+                        last_bought: None, bought_count: 0, created_at: String::new(), updated_at: None }).collect();
+                    after = crate::kits::place_block(&after, &crate::kits::kit_block(kit, &Default::default(), &items));
+                }
                 let prompt = if variant == "before" { as_before(&after, &cases.subject) }
                     else if let Some((old, new)) = swaps.get(variant.as_str()) {
                         assert!(after.contains(old.as_str()), "the text the trial '{variant}' replaces is not in the prompt");
@@ -238,7 +293,33 @@ async fn reply_bench() {
 mod scoring_tests {
     use super::*;
     fn case(kind: &str, must: &[&str]) -> Case {
-        Case { id: "t".into(), kind: kind.into(), message: "m".into(), memories: vec![], history: vec![], must: must.iter().map(|s| s.to_string()).collect(), must_not: vec![], no_digits: false }
+        Case { id: "t".into(), kind: kind.into(), message: "m".into(), memories: vec![], history: vec![], must: must.iter().map(|s| s.to_string()).collect(), must_not: vec![], no_digits: false, kit: None, actions: vec![], list: vec![] }
+    }
+    #[test]
+    fn a_statement_fails_when_the_reply_is_a_memory_line() {
+        // KI-113: the OnePlus answered a statement with the shape of a recalled line.
+        let mut c = case("statement", &[]);
+        c.memories.push(CaseMemory { content: "Matt has a dog named Pepper.".into(), days_ago: 3 });
+        assert!(!score(&c, "(about November 28, 2026) User's favorite breakfast is oatmeal with blueberries, eaten most weekdays.").0);
+        assert!(!score(&c, "(November 25, 2026) Matt has a dog named Pepper.").0);
+        assert!(!score(&c, "Nice. Matt has a dog named Pepper, so a walk is on the cards.").0, "a memory repeated word for word is an echo");
+        assert!(score(&c, "Oatmeal with blueberries most weekdays sounds like a steady start. Does Pepper get any?").0);
+        assert!(score(&c, "(Honestly) that sounds good.").0, "a bracket without a date is fine");
+    }
+    #[test]
+    fn kit_lines_are_scored_by_verb_group_and_item() {
+        let mut c = case("kit_line", &[]); c.kit = Some("grocery".into()); c.actions = vec!["add milk".into(), "add eggs".into()];
+        assert!(score(&c, "Added milk and eggs.\n[kit:grocery add | milk | dairy]\n[kit:grocery need | eggs | dairy | a dozen]").0, "need is in the add group");
+        assert!(!score(&c, "Added milk.\n[kit:grocery add | milk | dairy]").0, "eggs missing");
+        assert!(!score(&c, "Added milk and eggs.\n[kit:grocery add | milk | dairy]\n[kit:grocery add | eggs | dairy]\n[kit:grocery add | bread | bakery]").0, "bread was not named");
+        assert!(!score(&c, "Milk and eggs, got it.").0, "no lines at all");
+        let mut b = case("kit_line", &[]); b.actions = vec!["bought|remove bananas".into()];
+        assert!(score(&b, "Crossed off bananas.\n[kit:grocery bought | bananas]").0);
+        assert!(score(&b, "[kit:grocery remove | bananas]").0);
+        assert!(!score(&b, "[kit:grocery add | bananas | produce]").0);
+        let n = case("no_kit_line", &[]);
+        assert!(score(&n, "It's about half past three.").0);
+        assert!(!score(&n, "Noted.\n[kit:grocery add | milk | dairy]").0);
     }
     #[test]
     fn a_statement_fails_when_the_reply_looks_things_up() {

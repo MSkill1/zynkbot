@@ -159,7 +159,7 @@ items; a planned dish can offer to add what is missing. Not in the first build.
 
 ## Decisions from the first test (Matt, 2026-11-28)
 
-- **Several kits on at once:** one small button per kit (icon and name) above the message box; tapping it opens that kit's two or three messages. Approved; built with the Kitchen kit work.
+- **Several kits on at once:** one small button per kit (icon and name) above the message box; tapping it opens that kit's two or three messages. Approved; built 2026-11-28 (App.jsx): tapping a kit swaps the row for its messages, with a back button at the left; with one kit on, its messages show directly.
 - **A kit is the same on every device:** the on/off switch and the answers travel to the user's other devices over ZynkSync's key channel (built 2026-11-28); the list items already did, as memories.
 - **The Kits page says** that Zynkbot is free and that buying a kit is how the project is supported.
 - **The Diet idea is not a kit:** meal logging, macros and nutrition databases are a paid snap-in (ROADMAP, Diet Mode). Whether the Kitchen kit drops its two meal-log buttons is still Matt's call.
