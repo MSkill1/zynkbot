@@ -15,7 +15,7 @@ A kit is data, not code. Four parts, shipped as one JSON file:
 | Standing instructions | A short block injected into the system prompt while the kit is on; the standing-instructions memory tier from `labs/` is the carrier | "The user is tracking what they cook and eat. When they describe a meal, store it as a memory with the date, the dish, and any quantities they state (carbs, calories). When they ask what to cook, prefer dishes they have liked and avoid ingredients they have refused. Keep answers short." |
 | Namespace | A memory category the kit writes into, so its memories can be shown, exported or deleted together | `kitchen` |
 | Opening questions | Asked once when the kit is switched on; answers become the first memories | "Are you following a way of eating right now (keto, vegetarian, none)?", "Foods you will not eat?", "Any allergies?", "How many people do you usually cook for?" |
-| Quick prompts | Two or three chips above the message box while the kit is on | "What can I make tonight?", "Log what I just ate", "How am I doing this week?" |
+| Quick prompts | Two or three ready-made buttons above the message box while the kit is on | "What can I make tonight?", "Log what I just ate", "How am I doing this week?" |
 
 Optional fifth part: a report section, used by the "what do you know about me" memory report when it exists ("Kitchen: 14 meals logged, 3 recipes liked, carbs this week…").
 
@@ -35,7 +35,7 @@ The point in each case is the same: the author supplies the knowledge once, the 
 
 - **End of onboarding:** one card. "Want to try Zynkbot in the kitchen? It will remember what you cook and what you like, and help you plan meals. Everything stays on this device." Buttons: *Turn on* / *Skip*. Skip is the default and nothing is created.
 - **System Controls panel:** a **Kits** section between Snap-ins and Knowledge Base (**decided**). It lists every kit with a switch. Kits that do not exist yet are shown greyed with a "future" tag so the shape of the idea is visible from day one: Kitchen (on/off), Grocery (future), Garden (future), Workouts (future), Reading (future), Household (future). The greyed rows are labels only; nothing behind them.
-- **Turning a kit off** removes its instructions and chips immediately. Its memories stay unless the user presses *Forget everything from this kit*, which deletes the namespace.
+- **Turning a kit off** removes its instructions and its buttons above the message box immediately. Its memories stay unless the user presses *Forget everything from this kit*, which deletes the namespace.
 
 ### "Make it forget and start again"
 
@@ -68,7 +68,7 @@ Zero-trust is unchanged: a kit never routes anything through ContainAI; purchase
 1. Standing-instructions tier: inject a kit's instruction block into the system prompt while the kit is on (`conversation_engine.rs::build_prompt`). The block is per-kit, short, and shown to the user in the Kits section so nothing is hidden.
 2. Namespace on write: memories extracted while a kit is on are tagged with the kit's namespace when the model says the fact belongs to it. (Status 2026-10-25: the extraction call, call 2 in `memory_prompts.rs`, already returns a `namespace` per fact on cloud backends from the canonical list; a kit would add its namespace to that list or map onto one. The MEMORY_EXTRACT line this item named no longer exists.)
 3. Opening questions: a small dialog; answers stored through the normal "Remember:" path with the kit namespace.
-4. Quick prompts: chips above the input, from the kit JSON.
+4. Quick prompts: ready-made buttons above the message box, from the kit JSON.
 5. Kits section in System Controls; onboarding card; "forget this kit" (delete-by-namespace, which exists in the Memory Manager code path).
 6. Event dates on memories (from the 2026-09-07 analyst pass): "what did I eat yesterday" and "this week" need when-it-happened, not when-it-was-said.
 7. Quantities kept as numbers when stated ("32 g carbs") so a weekly total is a sum, not a guess — a small structured field on the memory, optional.
@@ -134,7 +134,7 @@ window reads those memories and writes the tick as a tag change through the norm
 }
 ```
 
-The "My list" chip opens the window rather than sending a message, the one chip that does.
+The "My list" button opens the window rather than sending a message, the one button that does.
 
 **The list window.** Needed items grouped by section in a fixed store order; a tick box per item;
 a ticked item moves to "In the cart" at the bottom and can be unticked; a line at the top adds a

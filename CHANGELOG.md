@@ -13,8 +13,17 @@ For the full commit history, see [GitHub](https://github.com/MSkill1/zynkbot/com
 - **The on-device model is unloaded when idle.** After ten minutes without a local-model call on the phone (thirty on the desktop) the model leaves memory; the next question loads it again, a few seconds, and reads its prompt in full. Before, a 4B model held two to three gigabytes for as long as the app lived, which on a phone costs other apps and makes Android likelier to kill Zynkbot in the background, where the wake-word listener runs.
 - **An unreachable sync partner is left alone for longer and longer.** With the laptop off, the OnePlus pinged it every 15 s and built it a 300-row first-contact slice every few minutes all night (409 failed attempts in eleven hours). Each failure now doubles the wait before the next try: the heartbeat from 15 s up to two minutes, the sync from a minute up to ten. The first sign of life from the partner, its own heartbeat reaching us or an answered ping, ends the wait.
 
+### Kits: Grocery and Kitchen (2026-11-27, Matt's mother's request of 2026-11-26)
+
+- **A Kits page in System Controls**, between Knowledge Base and Snap-ins. A kit is a packaged use of the memory: standing instructions while it is on, a namespace of its own, a couple of opening questions, and two or three ready-made buttons above the message box. What it tells Zynkbot is shown in full; "Forget everything from this kit" deletes its memories on every device. Garden, Workouts, Reading and Household are listed greyed, labels only.
+- **The Grocery kit.** "We're out of milk", typed or said to Hey Zynk, puts milk on the list with its section and any quantity; "got the eggs" ticks it off. The **My list** button above the message box opens the list window: items still needed grouped by section in store order with a tick box each, "In the cart" for what is ticked, a line to add by hand, and "Usual items" with when each was last bought and a + to put it back. Items are memories, so they sync and back up like any other.
+- **The Kitchen kit**, as designed in 2026-09: what you cook, how it went, what you like and refuse; what to make tonight; how the week went.
+- **The TV teaches the voice profile what is not the owner (KI-112).** A wake the profile rejects outright is labelled a false trigger on the spot, and the profile retrains once ten new false clips have arrived, not only after five new real ones. On 27 November the OnePlus took 122 TV triggers in a morning, none of them training material, and answered the few that scored between 0.5 and 0.7.
+- **Timer ring on the lock screen.** The ring notification is now public, so its Stop button shows on the lock screen and works without unlocking; before, the phone had to be unlocked and the app opened (Matt). Its text no longer claims "Hey Zynk" can stop it.
+
 ### Repository
 
+- An unused cloud-only fact-extraction module (`llm_fact_extractor.rs`, superseded on 24 October) is removed, after an audit on 27 November confirmed every memory judgment (extraction, links, the conflict card, the web-search decision, kit list lines) runs on the local model when one is selected; Child Mode remains cloud-only by design.
 - The Tests workflow had failed on every push since 18 November over one unused variable; removed. The Release workflow no longer starts on a version tag (betas are built locally since 9 November); it runs only by hand.
 
 ## [0.9.7-beta1] — 2026-11-27 <!-- branch v1; pre-release for testers, built from 43c2f74 -->

@@ -188,6 +188,10 @@ Each memory title in the report is a link. Tap it to open that memory to edit or
 
 Heard hands-free. Memories that came from a "Hey Zynk" exchange are marked separately and listed in this section, so you can check what the phone picked up when you were not looking at it. Only the last 30 are shown.
 
+### Kits: a grocery list by voice
+
+A kit gives the memory a job. Open System Controls, tap Kits, and tick Grocery; it asks which store you shop at and that is all. From then on, "Hey Zynk, we're out of milk" or a typed "add bananas and dish soap" puts the item on the list, and Zynkbot answers with one line, "Added milk". "Hey Zynk, got the eggs" ticks one off. In the store, tap the **My list** button above the message box: the list window shows what is still needed, grouped by section, with a tick box each; ticked items drop to "In the cart"; a line at the top adds something you just remembered; "Usual items" underneath shows what you have bought before and when, with a + to put it back on. Items are memories, so a list made on the phone is on the desktop too, and "Forget everything from this kit" on the Kits page clears it everywhere. The Kitchen kit works the same way for what you cook and like.
+
 ## 10. Reporting a problem
 
 Two places: the "⚑ Report" button in the sidebar, and a small "⚑ Report" link under any reply from Zynkbot. The second one starts the report with the first 300 characters of that reply.

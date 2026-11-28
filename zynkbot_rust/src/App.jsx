@@ -539,7 +539,7 @@ export default function App() {
   // Collapsible section states - all start collapsed
   // System Controls: which section's page is open (null = the list). One at a time.
   const [controlsPage, setControlsPage] = useState(null);
-  // Kits (2026-11-27): the ones switched on, for the chips above the message box; and the
+  // Kits (2026-11-27): the ones switched on, for the ready-made buttons above the message box; and the
   // kit whose list window is open.
   const [kitsOn, setKitsOn] = useState([]);
   const [listKit, setListKit] = useState(null);
@@ -2599,7 +2599,7 @@ export default function App() {
 
       {controlsPage === 'kits' && (
         <ControlsPage icon="🧰" title="Kits" subtitle="Give the memory a job" accent="#50fa7b" introKey="kits" onClose={() => setControlsPage(null)}
-          intro={<>A kit is a packaged use of Zynkbot's memory, switched on when you want it. The Grocery kit keeps a shopping list you add to by voice and tick off in the store. The Kitchen kit remembers what you cook and what you like. A kit is a set of instructions and a place in memory, nothing more: no permissions, nothing leaves the device, and you can read exactly what it tells Zynkbot. Turn one off and its chips go; its memories stay until you say forget.</>}>
+          intro={<>A kit is a packaged use of Zynkbot's memory, switched on when you want it. The Grocery kit keeps a shopping list you add to by voice and tick off in the store. The Kitchen kit remembers what you cook and what you like. A kit is a set of instructions and a place in memory, nothing more: no permissions, nothing leaves the device, and you can read exactly what it tells Zynkbot. Turn one off and its buttons above the message box go; its memories stay until you say forget.</>}>
           <KitsPanel userId={userId} notify={notify} onChanged={loadKits} />
         </ControlsPage>
       )}
@@ -2943,7 +2943,7 @@ export default function App() {
             </div>
 
             {/* Rotating tip — only shown before first message and while input is empty */}
-            {/* Kit chips (2026-11-27): a kit's two or three ready-made messages while it is on. */}
+            {/* Kit buttons (2026-11-27): a kit's two or three ready-made messages, above the message box while it is on. */}
             {kitsOn.length > 0 && !isLoading && (
               <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', marginBottom: '6px', padding: '0 4px 2px' }}>
                 {kitsOn.flatMap((kit) => (kit.prompts || []).map((pr) => (

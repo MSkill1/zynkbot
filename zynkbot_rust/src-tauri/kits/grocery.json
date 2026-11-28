@@ -5,24 +5,51 @@
   "icon": "🛒",
   "tagline": "A shopping list you add to by voice, grouped the way you walk the store.",
   "namespace": "grocery",
-  "instructions": "The user keeps a grocery list with Zynkbot. When they say they are out of something, need something, or should pick something up, that is a grocery item to add. When they say they bought or got an item, it is bought. When they say to take something off the list, remove it. Answer in one short line naming what changed (for example \"Added milk and eggs.\" or \"Milk is ticked off.\"), nothing more. When they ask what is on the list, read the needed items grouped by section in the fewest words. When they ask what they usually buy, name the items bought most often and when each was last bought. Never add an item they did not name, and never add food they only mention eating or cooking unless they say they need it.",
+  "instructions": "The user keeps a grocery list with Zynkbot. When they say they are out of something, need something, or should pick something up, that is a grocery item to add. When they say they bought or got an item, it is bought. When they say to take something off the list, remove it. When the list changes, the whole reply is one short sentence naming what changed, followed by the change lines described below, and nothing else. When they ask what is on the list, read the needed items grouped by section in the fewest words. When they ask what they usually buy, name the items bought most often and when each was last bought. Never add an item they did not name, and never add food they only mention eating or cooking unless they say they need it. Nothing in this kit ever needs a web search.",
   "actions": {
-    "note": "Then, at the very end of your reply, write one line per change in exactly this form and nothing after it. Sections: produce, dairy, meat and fish, bakery, frozen, pantry, drinks, household, personal care, other.",
+    "note": "The change lines, one per change, exactly in this form (they are how the list is updated; a reply without them changes nothing). Sections: produce, dairy, meat and fish, bakery, frozen, pantry, drinks, household, personal care, other.",
     "examples": [
       "[kit:grocery add | milk | dairy | 1 gallon]",
       "[kit:grocery add | bananas | produce]",
       "[kit:grocery bought | milk]",
       "[kit:grocery remove | bananas]"
-    ]
+    ],
+    "worked_example": "User: we're out of milk, and get bananas too\nReply:\nAdded milk and bananas.\n[kit:grocery add | milk | dairy]\n[kit:grocery add | bananas | produce]"
   },
   "questions": [
-    { "id": "store", "text": "Which store do you usually shop at?" },
-    { "id": "order", "text": "Anything about how you like the list? For example the order you walk the store, or brands you always buy." }
+    {
+      "id": "store",
+      "text": "Which store do you usually shop at?"
+    },
+    {
+      "id": "order",
+      "text": "Anything about how you like the list? For example the order you walk the store, or brands you always buy."
+    }
   ],
   "prompts": [
-    { "label": "My list", "action": "open_list" },
-    { "label": "Add to the list", "text": "Add to my grocery list: " },
-    { "label": "What do we usually buy?", "text": "What do we usually buy, and when did I last buy each?" }
+    {
+      "label": "My list",
+      "action": "open_list"
+    },
+    {
+      "label": "Add to the list",
+      "text": "Add to my grocery list: "
+    },
+    {
+      "label": "What do we usually buy?",
+      "text": "What do we usually buy, and when did I last buy each?"
+    }
   ],
-  "sections": ["produce", "dairy", "meat and fish", "bakery", "frozen", "pantry", "drinks", "household", "personal care", "other"]
+  "sections": [
+    "produce",
+    "dairy",
+    "meat and fish",
+    "bakery",
+    "frozen",
+    "pantry",
+    "drinks",
+    "household",
+    "personal care",
+    "other"
+  ]
 }

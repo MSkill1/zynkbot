@@ -107,6 +107,11 @@ class WakeWordService : Service() {
          *  voice (KI-103). Clock commands stay proof at any score; enrollment clips are
          *  labelled on their own path. */
         const val TRAIN_REAL_MIN_SCORE = 0.80f
+        /** A detection the verifier rejected this surely is labelled false on the spot, so the
+         *  room's own TV and radio become negatives for the next retrain (2026-11-27: the
+         *  OnePlus took 122 TV triggers in a morning, none of them training material, and
+         *  answered the few that scored 0.5 to 0.7). */
+        const val AUTO_FALSE_MAX_SCORE = 0.15f
         /** Strict mode (back-off after misses) is switched off as of 2026-09-20. It was not a
          *  TV detector: three ordinary misses in five minutes (a dismissed session, a
          *  one-word transcript, a video playing nearby) locked the owner out for ten
@@ -425,6 +430,7 @@ class WakeWordService : Service() {
                 trainVerifierInBackground()   // one more real clip: retrain when enough have accumulated
                 return
             }
+            trainVerifierInBackground(delayMs = 5_000)   // one more false clip (NO_QUERY): retrain when enough have accumulated
             recentMisses.addLast(now)
             while (recentMisses.isNotEmpty() && now - recentMisses.first() > MISS_WINDOW_MS) recentMisses.removeFirst()
             if (STRICT_MODE_ENABLED && recentMisses.size >= MISSES_TO_BACK_OFF && strictUntil < now) {
@@ -995,7 +1001,9 @@ class WakeWordService : Service() {
                         level, voice, vScore, if (strict) " (strict mode)" else "", if (playing) " (playback active)" else ""))
                     if (wouldReject) {
                         WakeLog.i(TAG, "Detection ignored: verifier says not the owner (%.3f <= %.2f)".format(vScore, v!!.threshold))
-                        saveTriggerClip(score, pooled)
+                        val surelyNot = vScore < AUTO_FALSE_MAX_SCORE
+                        saveTriggerClip(score, pooled, label = if (surelyNot) false else null)
+                        if (surelyNot) trainVerifierInBackground(delayMs = 5_000)   // retrains only once enough new negatives have arrived
                         consecutiveHighScores = 0
                         cooldownRemaining = COOLDOWN_CHUNKS / 2
                         embBuffer.clear()

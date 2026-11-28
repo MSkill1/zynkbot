@@ -1,4 +1,4 @@
-//! Kits: the System Controls section, the chips and the list window talk to these.
+//! Kits: the System Controls section, the buttons above the message box and the list window talk to these.
 //! The mechanism itself is in `crate::kits`.
 
 use serde::Serialize;

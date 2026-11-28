@@ -82,7 +82,6 @@ mod containment;  // Safety enforcement using toxic-bert + OpenAI API for Child 
 mod nlp_enhancer;
 mod memory;
 mod question_extractor;
-mod llm_fact_extractor;  // LLM-based fact extraction (uses same LLM as conversation)
 mod llm;
 mod conversation_engine;
 mod zynksync;  // Phase 9: Device-to-device memory synchronization

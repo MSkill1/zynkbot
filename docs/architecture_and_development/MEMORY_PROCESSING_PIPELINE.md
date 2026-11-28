@@ -578,7 +578,7 @@ MESSAGE  (send_message_with_memory -> generate_reply)
 Code that exists but is not part of this pipeline:
 
 - `commands/memory.rs` `pre_check_memory` is a registered Tauri command for a duplicate check. Nothing in the pipeline or in the window's code calls it. The duplicate check that runs is the one in 7.3.
-- `llm_fact_extractor.rs` is marked unused (`#![allow(dead_code)]`).
+- `llm_fact_extractor.rs` (the older cloud-only extractor) was removed on 2026-11-28; it had no callers.
 - `question_extractor.rs` is reached only through on-demand commands (`check_question_worthiness` and those in `commands/nlp.rs`), not from the chat path.
 - `lib.rs` `ask_llm_for_extras` is called only by `commands/memory_report.rs` `enrich_memory_backlog`, which fills in the fields of older memories.
 

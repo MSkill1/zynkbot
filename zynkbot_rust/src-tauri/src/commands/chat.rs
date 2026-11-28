@@ -837,11 +837,6 @@ pub async fn generate_reply(
         println!("[Mode] {}", mode.as_deref().unwrap_or(""));
         full_prompt = format!("{}\n\n{}", b, full_prompt);
     }
-    // Then the kits' block (2026-11-27), in front of the mode's.
-    if let Some(b) = &kit_block {
-        println!("[Kits] block of {} chars in front of the prompt", b.len());
-        full_prompt = format!("{}\n\n{}", b, full_prompt);
-    }
 
     // Prepend KB context if available
     if !kb_context.is_empty() {
@@ -916,6 +911,14 @@ pub async fn generate_reply(
     // where identifiers in recalled memories, Knowledge Base passages, earlier turns and
     // pages read from the web are removed. The typed message is already known to hold
     // none (it would have been refused). A picture cannot be read this way.
+    // The kits' block (2026-11-27) goes last, nearest the question: a format asked for at
+    // the end is followed by small models, one asked for 600 tokens earlier is not, and on
+    // the phone a block that changes with the list only invalidates the kept context
+    // after it.
+    if let Some(b) = &kit_block {
+        full_prompt = crate::kits::place_block(&full_prompt, b);
+        println!("[Kits] block of {} chars before the question", b.len());
+    }
     if is_hipaa {
         let (clean, found) = crate::containment::redact_phi(&full_prompt);
         full_prompt = clean;
@@ -1573,6 +1576,10 @@ pub async fn generate_reply(
     // list is not also sent through the memory extractor: the item is the memory.
     let kit_actions = if kit_block.is_some() { crate::kits::take_actions(&mut final_reply_text) } else { Vec::new() };
     let kit_acted = !kit_actions.is_empty();
+    if kit_acted && final_reply_text.trim().is_empty() {
+        final_reply_text = crate::kits::describe(&kit_actions);   // the model wrote only the lines
+        sink.token(&final_reply_text);
+    }
     if kit_acted {
         match sqlx::SqlitePool::connect(&crate::db::get_db_url()).await {
             Ok(pool) => {

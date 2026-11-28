@@ -66,6 +66,7 @@ object WakeVerifierTrainer {
     private const val TAG = "WakeVerifierTrainer"
     const val MIN_REAL_CLIPS = 20          // fewer positives than this: no profile yet
     const val RETRAIN_EVERY_NEW_REAL = 5   // retrain once this many new real clips have arrived
+    const val RETRAIN_EVERY_NEW_FALSE = 10  // ... or this many new false ones (the room's TV, 2026-11-27)
     const val AUTO_ENFORCE_KEEP = 0.9f     // held out: keep at least this share of the owner's wakes ...
     const val AUTO_ENFORCE_STOP = 0.9f     // ... and stop at least this share of the negatives, to enforce on its own
     private const val DIM = 96
@@ -114,7 +115,8 @@ object WakeVerifierTrainer {
             }
             val state = try { JSONObject(stateFile(context).readText()) } catch (_: Exception) { JSONObject() }
             val trainedOn = state.optInt("real_clips", 0)
-            if (profileFile(context).isFile && pos.size < trainedOn + RETRAIN_EVERY_NEW_REAL) return false
+            val trainedOnFalse = state.optInt("false_clips", 0)
+            if (profileFile(context).isFile && pos.size < trainedOn + RETRAIN_EVERY_NEW_REAL && neg.size < trainedOnFalse + RETRAIN_EVERY_NEW_FALSE) return false
 
             val generic = loadGenericNegatives(context)
             val negAll = ArrayList<FloatArray>(neg.size + generic.size).apply { addAll(neg); addAll(generic) }
@@ -150,7 +152,7 @@ object WakeVerifierTrainer {
                 if (worse) {
                     // Not promoted. Remember the clip count so the next attempt waits for
                     // RETRAIN_EVERY_NEW_REAL more real clips instead of retrying every call.
-                    stateFile(context).writeText(state.put("real_clips", pos.size).put("last_rejected", stamp).toString())
+                    stateFile(context).writeText(state.put("real_clips", pos.size).put("false_clips", neg.size).put("last_rejected", stamp).toString())
                     WakeLog.i(TAG, "Candidate profile from ${pos.size} real clips not promoted ($heldOutLine; " +
                         "profile in use had %.0f%% and %.0f%%".format(Locale.US, keepOld * 100, stopOld * 100) + ") — keeping the profile in use")
                     return false

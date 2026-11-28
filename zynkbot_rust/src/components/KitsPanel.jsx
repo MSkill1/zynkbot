@@ -8,7 +8,7 @@ import { invoke } from '@tauri-apps/api/core';
  * are shown in full so nothing is hidden. "Forget everything from this kit" deletes its
  * memories on every device. Kits that do not exist yet are listed greyed, labels only.
  *
- * Props: userId; onChanged() after any switch or forget, so the chips above the message
+ * Props: userId; onChanged() after any switch or forget, so the buttons above the message
  * box follow; notify(text) for errors.
  */
 export default function KitsPanel({ userId, onChanged, notify }) {

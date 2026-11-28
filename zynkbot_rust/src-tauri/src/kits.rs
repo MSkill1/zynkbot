@@ -3,7 +3,7 @@
 //! A kit is a JSON file shipped with the app (`src-tauri/kits/*.json`): standing
 //! instructions that go in front of the prompt while the kit is on, a memory namespace
 //! its items live in, a few opening questions whose answers the model is told, and two or
-//! three chips above the message box. A kit has no code of its own. The one piece of
+//! three ready-made buttons above the message box. A kit has no code of its own. The one piece of
 //! mechanism here is *actions*: a kit may ask the model to end its reply with lines such as
 //! `[kit:grocery add | milk | dairy | 1 gallon]`; those lines are taken off the reply and
 //! turned into memory rows (one row per item, its state in tags), so "we're out of milk"
@@ -29,6 +29,8 @@ pub struct KitPrompt {
 pub struct KitActions {
     #[serde(default)] pub note: String,
     #[serde(default)] pub examples: Vec<String>,
+    /// A whole reply, shown to the model as the shape to copy.
+    #[serde(default)] pub worked_example: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,9 +124,9 @@ pub async fn prompt_block(pool: &SqlitePool, user_id: &str) -> Option<String> {
         let answers = answers(pool, &kit.id).await;
         let said: Vec<String> = kit.questions.iter().filter_map(|q| {
             let a = answers.get(&q.id)?.as_str()?.trim().to_string();
-            if a.is_empty() { None } else { Some(format!("{} {}", q.text.trim_end_matches('?').trim_end_matches(')').split('(').next().unwrap_or("").trim(), a)) }
+            if a.is_empty() { None } else { Some(format!("{}: {}", q.id, a)) }
         }).collect();
-        if !said.is_empty() { s.push_str(&format!("\nWhen the kit was switched on the user said: {}.", said.join("; "))); }
+        if !said.is_empty() { s.push_str(&format!("\nWhat the user told the kit: {}.", said.join("; "))); }
         if kit.actions.is_some() {
             let items = list_items(pool, user_id, &kit.id).await;
             let needed: Vec<&KitItem> = items.iter().filter(|i| i.state == "needed").collect();
@@ -145,10 +147,23 @@ pub async fn prompt_block(pool: &SqlitePool, user_id: &str) -> Option<String> {
         }
         if let Some(a) = &kit.actions {
             s.push_str(&format!("\n{}\n{}", a.note.trim(), a.examples.join("\n")));
+            if !a.worked_example.trim().is_empty() { s.push_str(&format!("\n{}", a.worked_example.trim())); }
         }
         parts.push(s);
     }
     Some(parts.join("\n\n"))
+}
+
+/// The block goes just before the question label the engine ends its prompt with
+/// ("USER'S QUESTION:" on the desktop, "USER'S MESSAGE:" on the phone), so it is the last
+/// instruction before the question and stays on the system side of the split that
+/// local_models.rs makes. A prompt without the label gets it at the end.
+pub fn place_block(prompt: &str, block: &str) -> String {
+    let at = ["USER'S QUESTION:", "USER'S MESSAGE:"].iter().filter_map(|l| prompt.rfind(l)).max();
+    match at {
+        Some(i) => format!("{}\n\n{}\n\n{}", prompt[..i].trim_end(), block.trim(), &prompt[i..]),
+        None => format!("{}\n\n{}", prompt.trim_end(), block.trim()),
+    }
 }
 
 // ── actions ──────────────────────────────────────────────────────────────────
@@ -184,6 +199,22 @@ fn parse_action(line: &str) -> Option<KitAction> {
     let fields: Vec<String> = parts.filter(|p| !p.is_empty()).collect();
     if kit.is_empty() || verb.is_empty() { return None; }
     Some(KitAction { kit, verb, fields })
+}
+
+/// A sentence for the user when the model wrote only the action lines (small models do):
+/// "Added milk and eggs. Ticked off bread."
+pub fn describe(actions: &[KitAction]) -> String {
+    let names = |verbs: &[&str]| -> Vec<String> {
+        actions.iter().filter(|a| verbs.contains(&a.verb.as_str())).filter_map(|a| a.fields.first()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    };
+    let join = |v: Vec<String>| -> String {
+        match v.len() { 0 => String::new(), 1 => v[0].clone(), n => format!("{} and {}", v[..n - 1].join(", "), v[n - 1]) }
+    };
+    let mut parts = Vec::new();
+    let a = join(names(&["add", "need", "needed"])); if !a.is_empty() { parts.push(format!("Added {}.", a)); }
+    let b = join(names(&["bought", "got", "done"])); if !b.is_empty() { parts.push(format!("Ticked off {}.", b)); }
+    let r = join(names(&["remove", "delete", "drop"])); if !r.is_empty() { parts.push(format!("Removed {}.", r)); }
+    parts.join(" ")
 }
 
 /// Apply the actions to the memory rows. Returns one plain line per change, for the log.
@@ -319,7 +350,7 @@ pub async fn add_item(pool: &SqlitePool, user_id: &str, kit: &Kit, item: &str, s
     }
     let content = match quantity { Some(q) if !q.trim().is_empty() => format!("{} ({}) — {}", name, q.trim(), section), _ => format!("{} — {}", name, section) };
     let id = crate::memory::insert_memory(pool, Some(&name), &content, Some("kit"), None, None, None, None,
-        Some(user_id), &kit.namespace, true, false, None, None, None, None).await.map_err(|e| e.to_string())?;
+        Some(user_id), &kit.namespace, true, false, Some(serde_json::json!([])), None, None, None).await.map_err(|e| e.to_string())?;
     let mut tags = vec![kit_tag(kit), "needed".to_string(), format!("section:{}", section)];
     replace_tag(&mut tags, "qty:", quantity);
     replace_tag(&mut tags, "price:", price);
@@ -409,6 +440,22 @@ mod tests {
         assert_eq!(acts.len(), 2);
         assert_eq!(acts[0], KitAction { kit: "grocery".into(), verb: "add".into(), fields: vec!["milk".into(), "dairy".into(), "1 gallon".into()] });
         assert_eq!(acts[1].fields, vec!["bananas".to_string(), "produce".to_string()]);
+    }
+
+    #[test]
+    fn the_block_sits_before_the_question_label() {
+        let p = "System text.\n\nUSER'S QUESTION: hi\n\nYOUR RESPONSE:";
+        let out = place_block(p, "KIT");
+        assert_eq!(out, "System text.\n\nKIT\n\nUSER'S QUESTION: hi\n\nYOUR RESPONSE:");
+        assert_eq!(place_block("no label", "KIT"), "no label\n\nKIT");
+    }
+
+    #[test]
+    fn a_reply_of_only_lines_gets_a_sentence() {
+        let mut reply = "[kit:grocery add | bread | bakery]\n[kit:grocery add | chicken thighs | meat and fish]\n[kit:grocery bought | milk]".to_string();
+        let acts = take_actions(&mut reply);
+        assert_eq!(reply, "");
+        assert_eq!(describe(&acts), "Added bread and chicken thighs. Ticked off milk.");
     }
 
     #[test]
