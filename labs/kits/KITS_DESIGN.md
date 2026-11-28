@@ -163,3 +163,4 @@ items; a planned dish can offer to add what is missing. Not in the first build.
 - **A kit is the same on every device:** the on/off switch and the answers travel to the user's other devices over ZynkSync's key channel (built 2026-11-28); the list items already did, as memories.
 - **The Kits page says** that Zynkbot is free and that buying a kit is how the project is supported.
 - **The Diet idea is not a kit:** meal logging, macros and nutrition databases are a paid snap-in (ROADMAP, Diet Mode). Whether the Kitchen kit drops its two meal-log buttons is still Matt's call.
+- **The Kitchen kit is trimmed to cooking (Matt, 2026-11-28):** the meal-log and weekly-summary buttons and the logging instruction are out; they are the Diet snap-in's. The kit keeps "What can I make tonight?" and "How did it go" (a Remember line for the dish and how it turned out).

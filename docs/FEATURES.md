@@ -47,7 +47,7 @@ A kit is a packaged, opt-in use of the memory system built around one everyday j
 
 **The Grocery kit** keeps a shopping list. Say "we're out of milk" or "add bananas and dish soap", typed or through "Hey Zynk", and Zynkbot answers "Added milk" and puts the item on the list with its store section and any quantity you gave. "Got the eggs" ticks one off; "what's left on the list" reads back what is still needed. The **My list** button above the message box opens the list window: items still needed grouped by section in store order, a tick box each; ticked items drop to "In the cart"; a line at the top adds an item by hand; "Usual items" below shows what you have bought before, when, and a + to put it back. Under the hood each item is a memory in the `grocery` namespace with its state in tags, so it syncs, backs up and appears in the Memory Manager like any other, and the model reports a change with a line it is asked to end its reply with (`[kit:grocery add | milk | dairy | 1 gallon]`), which the app takes off the reply and applies. A turn that changed the list is not also sent through the memory extractor.
 
-**The Kitchen kit** remembers what you cook, how it turned out, what you liked and refused, and how you are trying to eat. Ask it what to make tonight or how your week is going.
+**The Kitchen kit** remembers what you cook, how it turned out, what you liked and refused, and how you are trying to eat. Ask it what to make tonight. (A meal log with macros is the Diet snap-in, not this kit.)
 
 The core app stays free and complete, Grocery and Kitchen kits included. Other kits will be one-time purchases; a kit never routes anything through ContainAI.
 

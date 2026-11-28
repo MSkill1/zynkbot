@@ -102,6 +102,21 @@ async fn put_shared_setting(pool: &SqlitePool, key: &str, value: &str) -> Result
     crate::sync_outbox::record_secret(pool, key, value).await
 }
 
+/// At startup: a kit switched on or answered before these settings travelled (builds up to
+/// 2026-11-28) has rows in app_settings but none in sync_secrets, so nothing would reach the
+/// other devices until the user touched the switch again. Record each such row once.
+pub async fn seed_shared_settings(pool: &SqlitePool) -> Result<usize, String> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM app_settings WHERE key LIKE 'kit\\_%' ESCAPE '\\' \
+         AND key NOT IN (SELECT name FROM sync_secrets)")
+        .fetch_all(pool).await.map_err(|e| format!("kit settings: {}", e))?;
+    let mut n = 0;
+    for (k, v) in rows {
+        if is_kit_setting(&k) { crate::sync_outbox::record_secret(pool, &k, &v).await?; n += 1; }
+    }
+    Ok(n)
+}
+
 /// True for the two settings a kit keeps per device: `kit_<id>_enabled` and `kit_<id>_answers`.
 pub fn is_kit_setting(name: &str) -> bool {
     name.starts_with("kit_") && (name.ends_with("_enabled") || name.ends_with("_answers"))

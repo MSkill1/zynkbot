@@ -198,8 +198,16 @@ retried the outbox every 30 s all night (220 attempts to the laptop, 189 to the 
 21:00 and 08:00), each one rebuilding the 300-row first-contact slice before failing on connect.
 Cheap on a charger, worth a back-off when the phone is on battery.
 
-**(2) On-device model speed.** No local-model request has been made on either phone since the
-on-disk log began (11 November on the OnePlus), so there is no figure for the shipped build yet.
+**(2) On-device model speed — OnePlus 12R, build 3bf911c, 2026-11-28, phone on the charger.**
+Sophro-4B-memory-v1-Q4_0, CPU engine, 4 threads, 4K context. Cold (model just installed and
+not loaded): model load 7.1 s; "In one sentence, why do onions make you cry?" read 930 prompt
+tokens in 20.8 s (45 tok/s), wrote 52 tokens in 5.2 s (10 tok/s), inference 32.9 s, request
+34.7 s. Warm: the breakfast memory statement read 536 new tokens (264 kept) in 11.9 s, wrote 28
+tokens in 2.8 s, inference 14.7 s, request 16.0 s. The prompt read is the cost: 45 tokens a second
+means every 100 tokens of system prompt, memories and kit block is 2.2 s before the first word.
+Warm short question (the onion question again): read 543 new tokens (264 kept) in 13.2 s (41 tok/s), wrote 50 tokens in 5.5 s, inference 18.8 s, request 22.5 s. So on this phone a short answer is 16 to 23 s warm and 35 s cold. Found on the way: KI-113 (the statement's reply was a memory
+line, not an answer). No local-model request has been made on the Pixel's release build since
+the on-disk log began, so the Pixel figure is still open.
 Method, unchanged: the two standard messages, cold and warm, on each phone, with the `Prompt read
 in`, `Generated`, `Local model inference` and `Total request time` lines; on the Pixel (release
 build, no run-as) they are read from logcat.

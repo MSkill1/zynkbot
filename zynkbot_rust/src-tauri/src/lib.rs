@@ -1875,6 +1875,11 @@ pub fn run() {
                             Ok(_) => {}
                             Err(e) => eprintln!("[Dotenv] could not restore keys: {}", e),
                         }
+                        match crate::kits::seed_shared_settings(&pool).await {
+                            Ok(n) if n > 0 => println!("[Kits] {} setting(s) queued for the other devices", n),
+                            Ok(_) => {}
+                            Err(e) => eprintln!("[Kits] could not queue settings: {}", e),
+                        }
                         match sqlx::query("UPDATE memories SET event_date = event_date || 'T00:00:00+00:00' WHERE event_date IS NOT NULL AND length(event_date) = 10").execute(&pool).await {
                             Ok(r) if r.rows_affected() > 0 => println!("[Memory] gave {} date-only event dates a time", r.rows_affected()),
                             Ok(_) => {}
