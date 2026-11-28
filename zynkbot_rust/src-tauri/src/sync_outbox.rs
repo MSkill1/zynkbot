@@ -339,6 +339,7 @@ pub async fn restore_env_from_secrets(pool: &SqlitePool) -> Result<usize, String
             }
             continue;
         }
+        if crate::kits::is_kit_setting(&name) { continue; } // lives in app_settings, nothing to put back
         if !crate::commands::models::PROPAGATABLE_KEYS.contains(&name.as_str()) || value.trim().is_empty() { continue; }
         let missing = std::env::var(&name).map(|v| v.trim().is_empty()).unwrap_or(true);
         if missing {
@@ -687,6 +688,7 @@ pub async fn apply_outbox_batch_from(pool: &SqlitePool, local_user_id: &str, sen
             if let Some(app) = guard.as_ref() {
                 let _ = app.emit("api-keys-updated", serde_json::json!({}));
                 let _ = app.emit("backup-key-updated", serde_json::json!({}));
+                let _ = app.emit("kits-updated", serde_json::json!({}));
             }
         }
     }
@@ -921,7 +923,9 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
     let is_backup_key = sec.name == crate::commands::models::BACKUP_KEY_PUSH_NAME;
     let is_wake_profile = sec.name == crate::wake_profile::WAKE_PROFILE_PUSH_NAME;
     // The backup key and the voice profile go to their files, not to .env.
-    let to_file = is_backup_key || is_wake_profile;
+    // A kit's switch and answers (2026-11-28) go to app_settings, not to .env.
+    let is_kit = crate::kits::is_kit_setting(&sec.name);
+    let to_file = is_backup_key || is_wake_profile || is_kit;
     if !to_file && !crate::commands::models::PROPAGATABLE_KEYS.contains(&sec.name.as_str()) {
         eprintln!("[ZynkSync] outbox: key '{}' is not propagatable, ignored", sec.name);
         return Ok(false);
@@ -957,7 +961,11 @@ async fn apply_secret(tx: &mut Transaction<'_, Sqlite>, sec: &SyncSecret) -> Res
          ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, revision = excluded.revision")
         .bind(&sec.name).bind(&sec.value).bind(sec.updated_at).bind(&sec.name).bind(sec.revision)
         .execute(&mut **tx).await.map_err(|e| format!("outbox: store secret: {}", e))?;
-    if is_backup_key {
+    if is_kit {
+        crate::kits::apply_shared_setting(tx, &sec.name, &sec.value).await?;
+        println!("[ZynkSync] kit setting {} received", sec.name);
+        return Ok(true);
+    } else if is_backup_key {
         crate::commands::backup::install_pushed_backup_key(&sec.value)?;
     } else if is_wake_profile {
         // From a device on an older build. A phone that has a profile keeps its own

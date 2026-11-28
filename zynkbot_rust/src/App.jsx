@@ -281,7 +281,7 @@ export default function App() {
     <>Open <strong>History</strong> to browse past conversations and copy any response.</>,
     <><strong>ZynkSync</strong> keeps your memories in sync across all your devices automatically — no account required.</>,
     <><strong>ZynkLink</strong> lets you share files directly with paired devices over your local network. No cloud, no upload.</>,
-    <><strong>Ensemble mode</strong> queries multiple AI models at once and synthesizes their answers — great for questions where accuracy matters.</>,
+    <><strong>Ensemble</strong> asks several AI models the same question at once and gives you one answer that says where they agree and where they differ. Try "What is in the news today?": it searches the web, pulls the sources together, and shows where the models disagree.</>,
     <>Add documents to the <strong>Knowledge Base</strong> — Zynkbot can answer questions about them using RAG search.</>,
     <>Everything stays on your device. Your memories and conversations never leave unless you choose to back them up.</>,
     <>Include "<strong>Zynkbot</strong>" in your question to ask about its own features — e.g. "Zynkbot, how does Ensemble mode work?"</>,
@@ -547,6 +547,12 @@ export default function App() {
     try { const v = await invoke('list_kits'); setKitsOn((v.kits || []).filter((k) => k.enabled)); } catch (_) { /* no kits */ }
   }, []);
   useEffect(() => { loadKits(); }, [loadKits]);
+  // A kit switched on or answered on another device arrives over ZynkSync (2026-11-28).
+  useEffect(() => {
+    let un = null;
+    listen('kits-updated', () => loadKits()).then((u) => { un = u; }).catch(() => {});
+    return () => { if (un) un(); };
+  }, [loadKits]);
   const kitChip = (kit, prompt) => {
     if (prompt.action === 'open_list') { setListKit(kit); return; }
     const text = prompt.text || '';
@@ -2599,7 +2605,7 @@ export default function App() {
 
       {controlsPage === 'kits' && (
         <ControlsPage icon="🧰" title="Kits" subtitle="Give the memory a job" accent="#50fa7b" introKey="kits" onClose={() => setControlsPage(null)}
-          intro={<>A kit is a packaged use of Zynkbot's memory, switched on when you want it. The Grocery kit keeps a shopping list you add to by voice and tick off in the store. The Kitchen kit remembers what you cook and what you like. A kit is a set of instructions and a place in memory, nothing more: no permissions, nothing leaves the device, and you can read exactly what it tells Zynkbot. Turn a kit off and its buttons above the message box go away, but what it kept (the grocery list, for example) stays on your devices. To delete that too, use "Forget everything from this kit" next to the kit below.</>}>
+          intro={<>A kit is a packaged use of Zynkbot's memory, switched on when you want it. The Grocery kit keeps a shopping list you add to by voice and tick off in the store. The Kitchen kit remembers what you cook and what you like. A kit is a set of instructions and a place in memory, nothing more: no permissions, nothing leaves the device, and you can read exactly what it tells Zynkbot. Zynkbot itself is free and stays free; kits are how the project is supported, and buying one keeps the companion free for everyone. Turn a kit off and its buttons above the message box go away, but what it kept (the grocery list, for example) stays on your devices. To delete that too, use "Forget everything from this kit" next to the kit below.</>}>
           <KitsPanel userId={userId} notify={notify} onChanged={loadKits} />
         </ControlsPage>
       )}

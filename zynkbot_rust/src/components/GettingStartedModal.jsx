@@ -136,9 +136,10 @@ export default function GettingStartedModal({ isOpen, onClose, onOpenAPIKeys }) 
 
             <div className="feature-item">
               <strong>🤝 Ensemble Mode</strong>
-              <p>Click the <strong>Ensemble</strong> button to query multiple models simultaneously.
-              Get a synthesized answer combining Claude, GPT, Grok, Mistral, and local models. Reduces hallucinations
-              and improves clarity by cross-validating responses from different AI systems.</p>
+              <p>Click the <strong>Ensemble</strong> button to ask several AI models the same question at once.
+              You get one answer that says where they agree and where they differ. Try it with
+              <em>"What is in the news today?"</em>: it searches the web, pulls the sources together, and tells you
+              where the models disagree. Good for anything where one model's answer is not enough.</p>
             </div>
 
             <div className="feature-item">

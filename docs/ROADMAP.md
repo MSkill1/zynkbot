@@ -120,6 +120,8 @@ Before v0.9.5 ships, profile the wake word service's battery impact on a real de
 
 ## v1.0 — Stable Release: Desktop + Android, with an on-device model (target 2027-01-07; set 2026-10-07; Elder Mode moved to v1.1 2026-10-22)
 
+**2026-11-28 (Matt):** the AARP declined to hear the pitch, so the 7 January date is no longer a fixed deadline. The scope stands; the order is quality first. Training Sophro's successor (a different base model) can happen whenever it fits.
+
 **Where it starts from (2026-11-03):** 0.9.6 is released and on `main`, tested as a fresh install on four devices, with the on-device model (Sophro), the taught wake-word verifier, cloud backup with keys and voice profile, and Zynkbot's own timers and alarms. The items struck through below were closed by it.
 
 **Scope as of 2026-10-07 (Matt):** v1.0 is complete when the sync refactor has passed the manual and tester rounds, the must-do items below are done, the Kitchen kit ships, and a local model runs on the phone. Target date for all of it: **7 January 2027**. **2026-10-22 (Matt):** Elder Mode is v1.1 in full, not a first form in v1.0; v1.0 is the original project complete — a phone that runs its own model — and 1.1 is Elder Mode built on it. The Secure Vault, ZChat notifications, photo attachments and the like stay on the list and are picked up if time allows; each is about a day. Elder Mode is a simplified UI, so nothing is added to the main UI without need (no "background sync" button: the setting lives in Android Settings → Apps → Zynkbot → Battery).
@@ -402,6 +404,10 @@ A broader, separate idea also worth naming explicitly rather than defaulting int
 The existing containment modes (HIPAA, Guardian, Sovereign, Child) are proofs of concept demonstrating the safety-filter architecture. They are not production-grade for their respective domains. Elder Mode is the first mode that will be developed to a production standard, with Parenting Mode following; both are paid offerings. The others follow in subsequent releases as their use cases are validated.
 
 ---
+
+### Several devices hear the same "Hey Zynk" (parked; Matt 2026-11-28)
+
+Two phones in one room both answered Matt's "Hey Zynk" on 2026-11-28: the OnePlus heard the wake word meant for the Pixel, in Matt's own voice, so the voice check passed it correctly. In a household with four phones running Zynkbot, one "Hey Zynk" would wake all four. Plan: arbitration between the user's own devices (ZynkSync peers on the same network). On a wake, each device announces it with the level it heard and a timestamp; within about a second the loudest one takes the turn and the others drop theirs. Devices that are not paired, or not on the same network, cannot coordinate and answer on their own. Not before v1.0; about a day when it comes up.
 
 ### Timer ring that "Hey Zynk" can be heard over (after v1.0; Matt 2026-10-25)
 

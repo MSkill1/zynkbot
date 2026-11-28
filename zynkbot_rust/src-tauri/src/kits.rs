@@ -89,7 +89,30 @@ pub async fn is_enabled(pool: &SqlitePool, id: &str) -> bool {
 }
 
 pub async fn set_enabled(pool: &SqlitePool, id: &str, on: bool) -> Result<(), String> {
-    put_setting(pool, &enabled_key(id), if on { "1" } else { "0" }).await
+    put_shared_setting(pool, &enabled_key(id), if on { "1" } else { "0" }).await
+}
+
+/// A kit's on/off switch and its answers are the same on every one of the user's
+/// devices (Matt, 2026-11-28: the list made on the Pixel was nowhere on the OnePlus,
+/// because the kit was off there). They ride the outbox's key channel: the row goes
+/// into sync_secrets, whose trigger queues it, and the receiver's apply_secret writes
+/// a `kit_` name to app_settings instead of the .env file.
+async fn put_shared_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<(), String> {
+    put_setting(pool, key, value).await?;
+    crate::sync_outbox::record_secret(pool, key, value).await
+}
+
+/// True for the two settings a kit keeps per device: `kit_<id>_enabled` and `kit_<id>_answers`.
+pub fn is_kit_setting(name: &str) -> bool {
+    name.starts_with("kit_") && (name.ends_with("_enabled") || name.ends_with("_answers"))
+}
+
+/// Write a kit setting that arrived from another device (sync_outbox::apply_secret).
+pub async fn apply_shared_setting(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, key: &str, value: &str) -> Result<(), String> {
+    sqlx::query("INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now')) \
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at")
+        .bind(key).bind(value).execute(&mut **tx).await.map_err(|e| format!("kit setting: {}", e))?;
+    Ok(())
 }
 
 /// The answers to the opening questions, by question id.
@@ -101,7 +124,7 @@ pub async fn answers(pool: &SqlitePool, id: &str) -> serde_json::Map<String, ser
 }
 
 pub async fn set_answers(pool: &SqlitePool, id: &str, answers: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
-    put_setting(pool, &answers_key(id), &serde_json::Value::Object(answers.clone()).to_string()).await
+    put_shared_setting(pool, &answers_key(id), &serde_json::Value::Object(answers.clone()).to_string()).await
 }
 
 pub async fn enabled_kits(pool: &SqlitePool) -> Vec<&'static Kit> {

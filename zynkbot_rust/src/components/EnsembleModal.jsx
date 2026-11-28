@@ -269,7 +269,7 @@ export default function EnsembleModal({
                 ✨ Purpose: Research and fact-checking tool - responses are not stored as memories. Every run is kept under Earlier in this window, on all your devices; Add to conversation also puts the summary in the open conversation.
               </p>
               <p style={{ marginTop: '4px', color: '#9aa5c4', fontSize: '0.8rem', fontStyle: 'italic' }}>
-                Use ensemble for questions like "Compare X vs Y", "What's the latest version of Z?", or when you want multiple AI perspectives on a research question. For personal conversation with memory, use regular chat.
+                Use Ensemble when one model's answer is not enough: "What is in the news today?" (it searches the web, pulls the sources together and says where the models disagree), "Compare X with Y", or "What is the latest version of Z?". For personal conversation with memory, use regular chat.
               </p>
             </div>
 
