@@ -2599,7 +2599,7 @@ export default function App() {
 
       {controlsPage === 'kits' && (
         <ControlsPage icon="🧰" title="Kits" subtitle="Give the memory a job" accent="#50fa7b" introKey="kits" onClose={() => setControlsPage(null)}
-          intro={<>A kit is a packaged use of Zynkbot's memory, switched on when you want it. The Grocery kit keeps a shopping list you add to by voice and tick off in the store. The Kitchen kit remembers what you cook and what you like. A kit is a set of instructions and a place in memory, nothing more: no permissions, nothing leaves the device, and you can read exactly what it tells Zynkbot. Turn one off and its buttons above the message box go; its memories stay until you say forget.</>}>
+          intro={<>A kit is a packaged use of Zynkbot's memory, switched on when you want it. The Grocery kit keeps a shopping list you add to by voice and tick off in the store. The Kitchen kit remembers what you cook and what you like. A kit is a set of instructions and a place in memory, nothing more: no permissions, nothing leaves the device, and you can read exactly what it tells Zynkbot. Turn a kit off and its buttons above the message box go away, but what it kept (the grocery list, for example) stays on your devices. To delete that too, use "Forget everything from this kit" next to the kit below.</>}>
           <KitsPanel userId={userId} notify={notify} onChanged={loadKits} />
         </ControlsPage>
       )}

@@ -334,7 +334,7 @@ This needs to be resolved before Play Store launch. The core tension:
 
 ### Diet Mode — a food log that knows which day a meal belongs to
 
-**Added 2026-10-20 (Matt, from using Zynkbot for dieting).** Not a separate app: a mode on the memory system, the way Elder Mode is. The first test exposed a gap in the memory model that any dated-event use (meals, doses, symptoms, spending) will hit:
+**Added 2026-10-20 (Matt, from using Zynkbot for dieting).** Not a separate app: a mode on the memory system, the way Elder Mode is. **Reshaped 2026-11-28 (Matt):** this is a full snap-in on a monthly subscription, not a kit: macro tracking, a food log, access to nutritional databases, weekly totals. Matt wants to use it for a keto diet first. The Kitchen kit's "Log what I just ate" and "How am I doing this week?" buttons belong here, not in the kit (decision on trimming the kit pending). The first test exposed a gap in the memory model that any dated-event use (meals, doses, symptoms, spending) will hit:
 
 - **Memories carry only a created-at time, not an event date.** "Yesterday I had eggs" and "today I had oatmeal", stored minutes apart, land on the same day and are retrieved together by similarity and recency; a dinner suggestion then totals both days as one.
 - **Design, to decide with Matt before building:** an explicit event date on dated memories, separate from created-at; relative phrases ("today", "yesterday", "this morning") resolved to a calendar date at extraction time instead of defaulting to now; queries about "today's intake" filtered strictly by event date, not recency; a memory with no date language at all asks once rather than guessing. This touches the memory data model, so it is a discussion, not a patch.
